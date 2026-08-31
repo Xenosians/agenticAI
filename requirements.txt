@@ -1,0 +1,14 @@
+# Core local model runtime
+torch
+transformers
+accelerate
+
+# MCP
+mcp>=2,<3
+pydantic>=2
+
+# Directory integration
+ldap3>=2.9
+
+# Configuration
+python-dotenv>=1.0
