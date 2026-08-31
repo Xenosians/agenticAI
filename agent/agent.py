@@ -3,7 +3,7 @@ import re
 
 from .approvals import create_approval
 from .llm import ask
-from .mcp_client import call_mcp_tool
+from .mcp_client import mcp_runtime
 
 from tools.registry import get_tool
 
@@ -58,20 +58,26 @@ RULES:
 
 5. Never invent usernames.
 
-6. Never invent tools.
+6. When producing user_id, copy it EXACTLY from the user's request.
+   Do not correct it.
+   Do not abbreviate it.
+   Do not change spelling.
+   Do not remove characters.
 
-7. Never invent tool results.
+7. Never invent tools.
 
-8. unlock_user and reset_password are mutating operations.
+8. Never invent tool results.
 
-9. Mutating operations require human approval.
+9. unlock_user and reset_password are mutating operations.
 
-10. A proposed action has NOT been executed.
+10. Mutating operations require human approval.
 
-11. Never claim a mutating action succeeded unless actual
-    execution occurred after approval.
+11. A proposed action has NOT been executed.
 
-12. Do not include anything before ACTION or FINAL.
+12. Never claim a mutating action succeeded unless execution
+    occurred after approval.
+
+13. Do not include anything before ACTION or FINAL.
 
 
 EXAMPLES:
@@ -85,11 +91,19 @@ ARGS: {"user_id": "jdoe"}
 
 
 User:
-Does asmith have VPN access?
+Is asmith locked?
+
+Assistant:
+ACTION: account_status
+ARGS: {"user_id": "asmith"}
+
+
+User:
+Does jdoe have VPN access?
 
 Assistant:
 ACTION: check_access
-ARGS: {"user_id": "asmith", "resource": "vpn"}
+ARGS: {"user_id": "jdoe", "resource": "VPN access"}
 
 
 User:
@@ -121,7 +135,87 @@ FINAL_PATTERN = re.compile(
 )
 
 
-def run_agent(
+def _identifier_appears_in_request(
+    identifier: str,
+    user_input: str,
+) -> bool:
+    """
+    Verify that an identifier produced by the LLM
+    actually appears in the original user request.
+
+    Case differences are allowed, but spelling changes
+    are NOT allowed.
+
+    Example:
+
+        user input:
+            "is asmith locked?"
+
+        accepted:
+            asmith
+            ASMITH
+
+        rejected:
+            Amith
+            asmit
+            jsmith
+    """
+
+    pattern = (
+        rf"(?<![A-Za-z0-9._-])"
+        rf"{re.escape(identifier)}"
+        rf"(?![A-Za-z0-9._-])"
+    )
+
+    return (
+        re.search(
+            pattern,
+            user_input,
+            re.IGNORECASE,
+        )
+        is not None
+    )
+
+
+def _validate_identifiers(
+    user_input: str,
+    arguments: dict,
+) -> tuple[bool, str | None]:
+    """
+    Validate identity-sensitive tool arguments.
+
+    Qwen is allowed to choose the operation,
+    but it is NOT trusted to invent or alter identities.
+    """
+
+    user_id = arguments.get("user_id")
+
+    if user_id is None:
+        return True, None
+
+    if not isinstance(user_id, str):
+        return (
+            False,
+            "user_id must be a string.",
+        )
+
+    if not _identifier_appears_in_request(
+        user_id,
+        user_input,
+    ):
+        return (
+            False,
+            (
+                f"The model produced user_id '{user_id}', "
+                "but that identifier does not appear exactly "
+                "in the original request."
+            ),
+        )
+
+    return True, None
+
+
+async def run_agent(
     user_input: str,
 ) -> str:
     messages = [
@@ -138,14 +232,16 @@ def run_agent(
     for _ in range(3):
         response = ask(messages)
 
-        print(f"\n[LLM]\n{response}")
+        print(
+            f"\n[LLM]\n{response}"
+        )
 
         action_match = ACTION_PATTERN.search(
             response
         )
 
         # -------------------------------------------------
-        # TOOL REQUEST
+        # TOOL CALL
         # -------------------------------------------------
 
         if action_match:
@@ -160,7 +256,7 @@ def run_agent(
             except json.JSONDecodeError:
                 return (
                     "The model produced invalid JSON "
-                    "for the tool arguments."
+                    "for tool arguments."
                 )
 
             tool = get_tool(
@@ -169,8 +265,57 @@ def run_agent(
 
             if tool is None:
                 return (
-                    f"Unknown tool requested: {tool_name}"
+                    f"Unknown tool requested: "
+                    f"{tool_name}"
                 )
+
+            # =============================================
+            # IDENTITY GUARD
+            #
+            # Never allow the LLM to silently alter an
+            # account identifier.
+            # =============================================
+
+            valid, validation_error = (
+                _validate_identifiers(
+                    user_input,
+                    arguments,
+                )
+            )
+
+            if not valid:
+                print(
+                    "\n[Identifier Guard]"
+                )
+                print(
+                    validation_error
+                )
+
+                # Give the model ONE MORE opportunity to
+                # copy the identifier correctly.
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": response,
+                    }
+                )
+
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            f"{validation_error}\n\n"
+                            "Try again.\n"
+                            "Copy user_id EXACTLY, "
+                            "character-for-character, from "
+                            "the ORIGINAL user request.\n"
+                            "Do not guess or correct it.\n\n"
+                            "Respond using ACTION and ARGS."
+                        ),
+                    }
+                )
+
+                continue
 
             print("\n[Tool Call]")
             print(f"Name: {tool_name}")
@@ -178,23 +323,14 @@ def run_agent(
             print(f"Risk: {tool['risk']}")
 
             # =============================================
-            # MUTATING TOOL
-            #
-            # Do NOT send through MCP yet.
-            # Create approval instead.
+            # MUTATING OPERATION
             # =============================================
 
             if tool["requires_approval"]:
-                try:
-                    approval = create_approval(
-                        tool_name,
-                        arguments,
-                    )
-
-                except Exception as exc:
-                    return (
-                        f"Failed to create approval: {exc}"
-                    )
+                approval = create_approval(
+                    tool_name,
+                    arguments,
+                )
 
                 print(
                     "\n[Approval Created]\n"
@@ -209,16 +345,16 @@ def run_agent(
                 )
 
             # =============================================
-            # READ-ONLY TOOL
-            #
-            # This now goes through MCP.
+            # READ OPERATION
             # =============================================
 
             print("\n[MCP Call]")
 
-            tool_result = call_mcp_tool(
-                tool_name,
-                arguments,
+            tool_result = (
+                await mcp_runtime.call_tool(
+                    tool_name,
+                    arguments,
+                )
             )
 
             print(
@@ -235,7 +371,6 @@ def run_agent(
                     "MCP tool execution failed.",
                 )
 
-            # Give Qwen the actual MCP result.
             messages.append(
                 {
                     "role": "assistant",
@@ -247,13 +382,11 @@ def run_agent(
                 {
                     "role": "user",
                     "content": (
-                        "The read-only MCP tool "
-                        "has been executed.\n\n"
                         "Tool result:\n"
                         f"{json.dumps(tool_result)}\n\n"
-                        "Answer the ORIGINAL user request "
-                        "using only this result.\n\n"
-                        "Respond exactly as:\n"
+                        "Answer the ORIGINAL request "
+                        "using only this tool result.\n\n"
+                        "Respond exactly:\n"
                         "FINAL: your answer"
                     ),
                 }
@@ -262,7 +395,7 @@ def run_agent(
             continue
 
         # -------------------------------------------------
-        # NORMAL RESPONSE
+        # FINAL RESPONSE
         # -------------------------------------------------
 
         final_match = FINAL_PATTERN.search(
@@ -277,6 +410,6 @@ def run_agent(
         return response.strip()
 
     return (
-        "The agent exceeded the maximum "
-        "number of steps."
+        "The agent could not produce a valid "
+        "tool request after multiple attempts."
     )

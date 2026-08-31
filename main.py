@@ -1,11 +1,19 @@
+import asyncio
+
 from agent.agent import run_agent
 from agent.approvals import (
     approve_approval,
     list_pending_approvals,
 )
+from agent.mcp_client import mcp_runtime
 
 
-def main():
+async def main():
+    print("Starting ITSM Agent...")
+
+    await mcp_runtime.start()
+
+    print()
     print("ITSM Agent")
     print("Commands:")
     print("  approvals")
@@ -13,68 +21,89 @@ def main():
     print("  exit")
     print()
 
-    while True:
-        user_input = input("You > ").strip()
+    try:
+        while True:
+            user_input = input(
+                "You > "
+            ).strip()
 
-        if not user_input:
-            continue
-
-        if user_input.lower() in {
-            "exit",
-            "quit",
-        }:
-            break
-
-        if user_input.lower() in {"approval", "approvals"}:
-            pending = list_pending_approvals()
-
-            if not pending:
-                print("\nNo pending approvals.\n")
+            if not user_input:
                 continue
 
-            print("\nPending approvals:")
+            if user_input.lower() in {
+                "exit",
+                "quit",
+            }:
+                break
 
-            for approval in pending:
-                print(
-                    f"- {approval['id']} | "
-                    f"{approval['tool']} | "
-                    f"risk={approval['risk']} | "
-                    f"args={approval['arguments']}"
+            if user_input.lower() in {
+                "approval",
+                "approvals",
+            }:
+                pending = (
+                    list_pending_approvals()
                 )
 
-            print()
-            continue
+                if not pending:
+                    print(
+                        "\nNo pending approvals.\n"
+                    )
+                    continue
 
-        if user_input.lower().startswith("approve "):
-            approval_id = user_input.split(
-                maxsplit=1
-            )[1].strip()
+                print(
+                    "\nPending approvals:"
+                )
 
-            result = approve_approval(
-                approval_id
-            )
+                for approval in pending:
+                    print(
+                        f"- {approval['id']} | "
+                        f"{approval['tool']} | "
+                        f"risk={approval['risk']} | "
+                        f"args={approval['arguments']}"
+                    )
+
+                print()
+                continue
+
+            if user_input.lower().startswith(
+                "approve "
+            ):
+                approval_id = (
+                    user_input.split(
+                        maxsplit=1
+                    )[1].strip()
+                )
+
+                result = (
+                    await approve_approval(
+                        approval_id
+                    )
+                )
+
+                print(
+                    "\n[Approval Result]\n"
+                    f"{result}\n"
+                )
+
+                continue
+
+            try:
+                response = await run_agent(
+                    user_input
+                )
+
+            except Exception as exc:
+                response = (
+                    f"Agent error: {exc}"
+                )
 
             print(
-                f"\n[Approval Result]\n"
-                f"{result}\n"
+                f"\nAgent > {response}\n"
             )
 
-            continue
-
-        try:
-            response = run_agent(
-                user_input
-            )
-
-        except Exception as exc:
-            response = (
-                f"Agent error: {exc}"
-            )
-
-        print(
-            f"\nAgent > {response}\n"
-        )
+    finally:
+        await mcp_runtime.stop()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

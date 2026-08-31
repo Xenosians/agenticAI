@@ -1,8 +1,7 @@
 from pydantic import BaseModel
 from mcp.server import MCPServer
 
-from tools.account import account_status as local_account_status
-from tools.access import check_access as local_check_access
+from services.directory import get_directory_service
 
 
 mcp = MCPServer("ITSM Tools")
@@ -24,16 +23,25 @@ class AccessCheckResult(BaseModel):
     error: str | None = None
 
 
+class MutationResult(BaseModel):
+    ok: bool
+    status: str
+    changed: bool | None = None
+    user_id: str | None = None
+    password_reset_count: int | None = None
+    message: str | None = None
+    error: str | None = None
+
+
 @mcp.tool()
 def account_status(
     user_id: str,
 ) -> AccountStatusResult:
-    """
-    Check whether an Active Directory account
-    is enabled or locked.
-    """
+    directory = get_directory_service()
 
-    result = local_account_status(user_id)
+    result = directory.account_status(
+        user_id
+    )
 
     return AccountStatusResult(**result)
 
@@ -43,17 +51,40 @@ def check_access(
     user_id: str,
     resource: str,
 ) -> AccessCheckResult:
-    """
-    Check whether a user has access
-    to a resource.
-    """
+    directory = get_directory_service()
 
-    result = local_check_access(
+    result = directory.check_access(
         user_id,
         resource,
     )
 
     return AccessCheckResult(**result)
+
+
+@mcp.tool()
+def unlock_user(
+    user_id: str,
+) -> MutationResult:
+    directory = get_directory_service()
+
+    result = directory.unlock_user(
+        user_id
+    )
+
+    return MutationResult(**result)
+
+
+@mcp.tool()
+def reset_password(
+    user_id: str,
+) -> MutationResult:
+    directory = get_directory_service()
+
+    result = directory.reset_password(
+        user_id
+    )
+
+    return MutationResult(**result)
 
 
 if __name__ == "__main__":

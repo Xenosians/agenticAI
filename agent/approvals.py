@@ -1,9 +1,7 @@
 import uuid
 
-from tools.registry import (
-    execute_tool,
-    get_tool,
-)
+from .mcp_client import mcp_runtime
+from tools.registry import get_tool
 
 
 APPROVALS: dict[str, dict] = {}
@@ -22,7 +20,8 @@ def create_approval(
 
     if not tool["requires_approval"]:
         raise ValueError(
-            f"Tool '{tool_name}' does not require approval."
+            f"Tool '{tool_name}' "
+            "does not require approval."
         )
 
     approval_id = uuid.uuid4().hex[:8]
@@ -44,7 +43,9 @@ def create_approval(
 def get_approval(
     approval_id: str,
 ) -> dict | None:
-    return APPROVALS.get(approval_id)
+    return APPROVALS.get(
+        approval_id
+    )
 
 
 def list_pending_approvals() -> list[dict]:
@@ -55,16 +56,19 @@ def list_pending_approvals() -> list[dict]:
     ]
 
 
-def approve_approval(
+async def approve_approval(
     approval_id: str,
 ) -> dict:
-    approval = get_approval(approval_id)
+    approval = get_approval(
+        approval_id
+    )
 
     if approval is None:
         return {
             "ok": False,
             "error": (
-                f"Approval '{approval_id}' not found."
+                f"Approval '{approval_id}' "
+                "not found."
             ),
         }
 
@@ -72,26 +76,38 @@ def approve_approval(
         return {
             "ok": False,
             "error": (
-                f"Approval '{approval_id}' is already "
-                f"{approval['status']}."
+                f"Approval '{approval_id}' "
+                f"is already {approval['status']}."
             ),
         }
 
-    result = execute_tool(
+    print(
+        f"\n[MCP Mutation] "
+        f"{approval['tool']} "
+        f"{approval['arguments']}"
+    )
+
+    result = await mcp_runtime.call_tool(
         approval["tool"],
         approval["arguments"],
-        allow_mutation=True,
     )
 
     approval["result"] = result
 
-    if result.get("ok", False):
+    if (
+        result.get("ok") is True
+        and result.get("status") == "executed"
+    ):
         approval["status"] = "approved"
+
     else:
         approval["status"] = "failed"
 
     return {
-        "ok": result.get("ok", False),
+        "ok": (
+            approval["status"]
+            == "approved"
+        ),
         "approval": approval,
         "result": result,
     }
