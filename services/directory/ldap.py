@@ -22,7 +22,7 @@ class LdapDirectoryService(DirectoryService):
 
         self.bind_user = get_env(
             "AD_BIND_USER"
-        )
+        ) or get_env("AD_BIND_DN")
 
         self.bind_password = get_env(
             "AD_BIND_PASSWORD"
