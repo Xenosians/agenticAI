@@ -1,7 +1,9 @@
 import json
+from typing import Any
 
 from ldap3 import (
     ALL,
+    MODIFY_REPLACE,
     Connection,
     Server,
 )
@@ -18,19 +20,12 @@ from .base import DirectoryService
 class LdapDirectoryService(DirectoryService):
 
     def __init__(self):
+        # =================================================
+        # LDAP SERVER
+        # =================================================
+
         self.host = get_env("AD_HOST")
-
-        self.bind_user = get_env(
-            "AD_BIND_USER"
-        ) or get_env("AD_BIND_DN")
-
-        self.bind_password = get_env(
-            "AD_BIND_PASSWORD"
-        )
-
-        self.base_dn = get_env(
-            "AD_BASE_DN"
-        )
+        self.base_dn = get_env("AD_BASE_DN")
 
         self.use_ssl = get_bool_env(
             "AD_USE_SSL",
@@ -51,29 +46,68 @@ class LdapDirectoryService(DirectoryService):
             or default_port
         )
 
+        # =================================================
+        # READ-ONLY BIND
+        # =================================================
+
+        self.bind_user = (
+            get_env("AD_BIND_USER")
+            or get_env("AD_BIND_DN")
+        )
+
+        self.bind_password = get_env(
+            "AD_BIND_PASSWORD"
+        )
+
+        # =================================================
+        # WRITE / MUTATION BIND
+        # =================================================
+
+        self.write_bind_user = (
+            get_env("AD_WRITE_BIND_USER")
+            or get_env("AD_WRITE_BIND_DN")
+        )
+
+        self.write_bind_password = get_env(
+            "AD_WRITE_BIND_PASSWORD"
+        )
+
+        # =================================================
+        # ACCESS GROUP MAPPING
+        # =================================================
+
         self.access_groups = (
             self._load_access_groups()
         )
 
         self._validate_config()
 
-    # ---------------------------------------------------------
+    # =====================================================
     # CONFIGURATION
-    # ---------------------------------------------------------
+    # =====================================================
 
     def _validate_config(self):
-        required = {
-            "AD_HOST": self.host,
-            "AD_BIND_USER": self.bind_user,
-            "AD_BIND_PASSWORD": self.bind_password,
-            "AD_BASE_DN": self.base_dn,
-        }
+        missing = []
 
-        missing = [
-            name
-            for name, value in required.items()
-            if not value
-        ]
+        if not self.host:
+            missing.append(
+                "AD_HOST"
+            )
+
+        if not self.bind_user:
+            missing.append(
+                "AD_BIND_USER or AD_BIND_DN"
+            )
+
+        if not self.bind_password:
+            missing.append(
+                "AD_BIND_PASSWORD"
+            )
+
+        if not self.base_dn:
+            missing.append(
+                "AD_BASE_DN"
+            )
 
         if missing:
             raise RuntimeError(
@@ -98,22 +132,35 @@ class LdapDirectoryService(DirectoryService):
                 "AD_ACCESS_GROUPS must be valid JSON."
             ) from exc
 
+        if not isinstance(groups, dict):
+            raise RuntimeError(
+                "AD_ACCESS_GROUPS must be a JSON object."
+            )
+
         return {
             str(key).strip().lower():
             str(value).strip()
             for key, value in groups.items()
         }
 
-    # ---------------------------------------------------------
+    # =====================================================
     # NORMALIZATION
-    # ---------------------------------------------------------
+    # =====================================================
 
+    @staticmethod
+    def _normalize_user_id(
+        user_id: str,
+    ) -> str:
+        return user_id.strip()
+
+    @staticmethod
     def _normalize_resource(
-        self,
         resource: str,
     ) -> str:
         cleaned = (
-            resource.strip().lower()
+            resource
+            .strip()
+            .lower()
         )
 
         aliases = {
@@ -133,38 +180,139 @@ class LdapDirectoryService(DirectoryService):
             cleaned,
         )
 
-    # ---------------------------------------------------------
-    # LDAP CONNECTION
-    # ---------------------------------------------------------
+    # =====================================================
+    # LDAP ATTRIBUTE HELPERS
+    # =====================================================
 
-    def _connect(self) -> Connection:
-        server = Server(
+    @staticmethod
+    def _get_raw_integer_attribute(
+        entry: Any,
+        attribute_name: str,
+        default: int = 0,
+    ) -> int:
+        """
+        Read an integer directly from LDAP raw_values.
+
+        ldap3 may convert some Active Directory attributes,
+        such as lockoutTime, into datetime objects when
+        schema information is available.
+
+        Active Directory stores lockoutTime as an Integer8
+        / Windows FILETIME value, so using raw_values avoids
+        ldap3's automatic conversion.
+        """
+
+        try:
+            attribute = entry[attribute_name]
+
+            raw_values = (
+                attribute.raw_values
+                if attribute is not None
+                else None
+            )
+
+            if not raw_values:
+                return default
+
+            raw_value = raw_values[0]
+
+            if raw_value is None:
+                return default
+
+            if isinstance(raw_value, bytes):
+                raw_value = raw_value.decode(
+                    "utf-8"
+                )
+
+            return int(raw_value)
+
+        except (
+            KeyError,
+            IndexError,
+            TypeError,
+            ValueError,
+            AttributeError,
+            UnicodeDecodeError,
+        ):
+            return default
+
+    # =====================================================
+    # CONNECTIONS
+    # =====================================================
+
+    def _create_server(
+        self,
+    ) -> Server:
+        return Server(
             self.host,
             port=self.port,
             use_ssl=self.use_ssl,
             get_info=ALL,
         )
 
-        connection = Connection(
+    def _connect(
+        self,
+    ) -> Connection:
+        """
+        Read-only directory connection.
+        """
+
+        server = self._create_server()
+
+        return Connection(
             server,
             user=self.bind_user,
             password=self.bind_password,
             auto_bind=True,
         )
 
-        return connection
+    def _connect_write(
+        self,
+    ) -> Connection:
+        """
+        Connection used only for approved mutations.
+        """
 
-    # ---------------------------------------------------------
+        if not self.write_bind_user:
+            raise RuntimeError(
+                "AD_WRITE_BIND_USER or "
+                "AD_WRITE_BIND_DN is not configured."
+            )
+
+        if not self.write_bind_password:
+            raise RuntimeError(
+                "AD_WRITE_BIND_PASSWORD "
+                "is not configured."
+            )
+
+        server = self._create_server()
+
+        return Connection(
+            server,
+            user=self.write_bind_user,
+            password=self.write_bind_password,
+            auto_bind=True,
+        )
+
+    # =====================================================
     # USER LOOKUP
-    # ---------------------------------------------------------
+    # =====================================================
 
     def _find_user(
         self,
         connection: Connection,
         user_id: str,
     ):
-        safe_user_id = escape_filter_chars(
-            user_id.strip()
+        normalized_user = (
+            self._normalize_user_id(
+                user_id
+            )
+        )
+
+        safe_user_id = (
+            escape_filter_chars(
+                normalized_user
+            )
         )
 
         ldap_filter = (
@@ -188,9 +336,9 @@ class LdapDirectoryService(DirectoryService):
 
         return connection.entries[0]
 
-    # ---------------------------------------------------------
+    # =====================================================
     # ACCOUNT STATUS
-    # ---------------------------------------------------------
+    # =====================================================
 
     def account_status(
         self,
@@ -198,35 +346,52 @@ class LdapDirectoryService(DirectoryService):
     ) -> dict:
         connection = None
 
+        normalized_user = (
+            self._normalize_user_id(
+                user_id
+            )
+        )
+
         try:
             connection = self._connect()
 
             entry = self._find_user(
                 connection,
-                user_id,
+                normalized_user,
             )
 
             if entry is None:
                 return {
                     "ok": False,
+                    "user_id": normalized_user,
+                    "enabled": None,
+                    "locked": None,
                     "error": (
-                        f"User '{user_id}' not found."
+                        f"User '{normalized_user}' "
+                        "not found."
                     ),
                 }
 
-            user_account_control = int(
-                entry.userAccountControl.value
-                or 0
+            user_account_control = (
+                self._get_raw_integer_attribute(
+                    entry,
+                    "userAccountControl",
+                    0,
+                )
             )
 
-            lockout_time = int(
-                entry.lockoutTime.value
-                or 0
+            lockout_time = (
+                self._get_raw_integer_attribute(
+                    entry,
+                    "lockoutTime",
+                    0,
+                )
             )
 
-            # Active Directory ACCOUNTDISABLE flag.
+            # ACCOUNTDISABLE flag = 0x0002
             enabled = not bool(
-                user_account_control & 0x0002
+                user_account_control
+                & 0x0002
             )
 
             locked = (
@@ -235,14 +400,18 @@ class LdapDirectoryService(DirectoryService):
 
             return {
                 "ok": True,
-                "user_id": user_id,
+                "user_id": normalized_user,
                 "enabled": enabled,
                 "locked": locked,
+                "error": None,
             }
 
         except Exception as exc:
             return {
                 "ok": False,
+                "user_id": normalized_user,
+                "enabled": None,
+                "locked": None,
                 "error": (
                     "Active Directory query failed: "
                     f"{exc}"
@@ -253,15 +422,23 @@ class LdapDirectoryService(DirectoryService):
             if connection is not None:
                 connection.unbind()
 
-    # ---------------------------------------------------------
+    # =====================================================
     # ACCESS CHECK
-    # ---------------------------------------------------------
+    # =====================================================
 
     def check_access(
         self,
         user_id: str,
         resource: str,
     ) -> dict:
+        connection = None
+
+        normalized_user = (
+            self._normalize_user_id(
+                user_id
+            )
+        )
+
         normalized_resource = (
             self._normalize_resource(
                 resource
@@ -277,7 +454,7 @@ class LdapDirectoryService(DirectoryService):
         if required_group is None:
             return {
                 "ok": False,
-                "user_id": user_id,
+                "user_id": normalized_user,
                 "resource": normalized_resource,
                 "has_access": None,
                 "error": (
@@ -287,35 +464,42 @@ class LdapDirectoryService(DirectoryService):
                 ),
             }
 
-        connection = None
-
         try:
             connection = self._connect()
 
             entry = self._find_user(
                 connection,
-                user_id,
+                normalized_user,
             )
 
             if entry is None:
                 return {
                     "ok": False,
-                    "user_id": user_id,
+                    "user_id": normalized_user,
                     "resource": normalized_resource,
                     "has_access": None,
                     "error": (
-                        f"User '{user_id}' not found."
+                        f"User '{normalized_user}' "
+                        "not found."
                     ),
                 }
 
-            memberships = (
-                entry.memberOf.values
-                if entry.memberOf
-                else []
-            )
+            memberships = []
+
+            try:
+                memberships = (
+                    entry.memberOf.values
+                    if entry.memberOf
+                    else []
+                )
+
+            except AttributeError:
+                memberships = []
 
             required_group_lower = (
-                required_group.lower()
+                required_group
+                .strip()
+                .lower()
             )
 
             has_access = any(
@@ -328,7 +512,7 @@ class LdapDirectoryService(DirectoryService):
 
             return {
                 "ok": True,
-                "user_id": user_id,
+                "user_id": normalized_user,
                 "resource": normalized_resource,
                 "has_access": has_access,
                 "error": None,
@@ -337,7 +521,7 @@ class LdapDirectoryService(DirectoryService):
         except Exception as exc:
             return {
                 "ok": False,
-                "user_id": user_id,
+                "user_id": normalized_user,
                 "resource": normalized_resource,
                 "has_access": None,
                 "error": (
@@ -350,59 +534,222 @@ class LdapDirectoryService(DirectoryService):
             if connection is not None:
                 connection.unbind()
 
-    # ---------------------------------------------------------
-    # GROUP MATCHING
-    # ---------------------------------------------------------
+    # =====================================================
+    # GROUP MATCH
+    # =====================================================
 
     @staticmethod
     def _group_matches(
         group_dn: str,
         required_group: str,
     ) -> bool:
-        """
-        Example:
-
-        CN=VPN-Users,OU=Groups,DC=example,DC=local
-        """
-
-        group_dn_lower = str(
-            group_dn
-        ).lower()
-
-        return group_dn_lower.startswith(
-            f"cn={required_group},"
+        group_dn_lower = (
+            str(group_dn)
+            .strip()
+            .lower()
         )
 
-    # ---------------------------------------------------------
-    # MUTATIONS
-    #
-    # Intentionally disabled for real LDAP right now.
-    # ---------------------------------------------------------
+        required_group_lower = (
+            required_group
+            .strip()
+            .lower()
+        )
+
+        return group_dn_lower.startswith(
+            f"cn={required_group_lower},"
+        )
+
+    # =====================================================
+    # ACCOUNT UNLOCK
+    # =====================================================
 
     def unlock_user(
         self,
         user_id: str,
     ) -> dict:
-        return {
-            "ok": False,
-            "status": "error",
-            "changed": False,
-            "user_id": user_id,
-            "error": (
-                "Real Active Directory account "
-                "unlock is not enabled yet."
-            ),
-        }
+        connection = None
+
+        normalized_user = (
+            self._normalize_user_id(
+                user_id
+            )
+        )
+
+        try:
+            connection = (
+                self._connect_write()
+            )
+
+            entry = self._find_user(
+                connection,
+                normalized_user,
+            )
+
+            if entry is None:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "changed": False,
+                    "user_id": normalized_user,
+                    "message": None,
+                    "error": (
+                        f"User '{normalized_user}' "
+                        "not found."
+                    ),
+                }
+
+            lockout_time = (
+                self._get_raw_integer_attribute(
+                    entry,
+                    "lockoutTime",
+                    0,
+                )
+            )
+
+            # -------------------------------------------------
+            # Nothing to change
+            # -------------------------------------------------
+
+            if lockout_time == 0:
+                return {
+                    "ok": True,
+                    "status": "executed",
+                    "changed": False,
+                    "user_id": normalized_user,
+                    "message": (
+                        f"User '{normalized_user}' "
+                        "is already unlocked."
+                    ),
+                    "error": None,
+                }
+
+            user_dn = entry.entry_dn
+
+            # -------------------------------------------------
+            # Unlock
+            # -------------------------------------------------
+
+            success = connection.modify(
+                user_dn,
+                {
+                    "lockoutTime": [
+                        (
+                            MODIFY_REPLACE,
+                            ["0"],
+                        )
+                    ],
+                },
+            )
+
+            if not success:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "changed": False,
+                    "user_id": normalized_user,
+                    "message": None,
+                    "error": (
+                        "Active Directory unlock "
+                        "failed: "
+                        f"{connection.result}"
+                    ),
+                }
+
+            # -------------------------------------------------
+            # Verify mutation
+            # -------------------------------------------------
+
+            verification_entry = (
+                self._find_user(
+                    connection,
+                    normalized_user,
+                )
+            )
+
+            if verification_entry is None:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "changed": False,
+                    "user_id": normalized_user,
+                    "message": None,
+                    "error": (
+                        "Unable to verify account "
+                        "after unlock."
+                    ),
+                }
+
+            new_lockout_time = (
+                self._get_raw_integer_attribute(
+                    verification_entry,
+                    "lockoutTime",
+                    0,
+                )
+            )
+
+            if new_lockout_time != 0:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "changed": False,
+                    "user_id": normalized_user,
+                    "message": None,
+                    "error": (
+                        "LDAP modification returned "
+                        "success, but account is still "
+                        "reported as locked."
+                    ),
+                }
+
+            return {
+                "ok": True,
+                "status": "executed",
+                "changed": True,
+                "user_id": normalized_user,
+                "message": (
+                    f"User '{normalized_user}' "
+                    "was successfully unlocked."
+                ),
+                "error": None,
+            }
+
+        except Exception as exc:
+            return {
+                "ok": False,
+                "status": "error",
+                "changed": False,
+                "user_id": normalized_user,
+                "message": None,
+                "error": (
+                    "Active Directory unlock failed: "
+                    f"{exc}"
+                ),
+            }
+
+        finally:
+            if connection is not None:
+                connection.unbind()
+
+    # =====================================================
+    # PASSWORD RESET
+    # =====================================================
 
     def reset_password(
         self,
         user_id: str,
     ) -> dict:
+        normalized_user = (
+            self._normalize_user_id(
+                user_id
+            )
+        )
+
         return {
             "ok": False,
             "status": "error",
             "changed": False,
-            "user_id": user_id,
+            "user_id": normalized_user,
+            "message": None,
             "error": (
                 "Real Active Directory password "
                 "reset is not enabled yet."

@@ -16,7 +16,6 @@ from services.directory.ldap import LdapDirectoryService
 def check_config() -> dict:
     required = [
         "AD_HOST",
-        "AD_BIND_USER",
         "AD_BIND_PASSWORD",
         "AD_BASE_DN",
         "AD_TEST_USER",
@@ -27,6 +26,17 @@ def check_config() -> dict:
         for name in required
         if not get_env(name)
     ]
+
+    # Accept either naming convention.
+    bind_identity = (
+        get_env("AD_BIND_USER")
+        or get_env("AD_BIND_DN")
+    )
+
+    if not bind_identity:
+        missing.append(
+            "AD_BIND_USER or AD_BIND_DN"
+        )
 
     return {
         "ok": not missing,
@@ -64,7 +74,7 @@ def main():
     print()
 
     # --------------------------------------------------
-    # CONFIG
+    # CONFIGURATION
     # --------------------------------------------------
 
     config_result = check_config()
@@ -106,24 +116,32 @@ def main():
         "AD_TEST_USER"
     )
 
+    bind_identity = (
+        get_env("AD_BIND_USER")
+        or get_env("AD_BIND_DN")
+    )
+
     print(
         f"Host: {host}:{port}"
     )
 
     print(
-        "SSL:",
-        use_ssl,
+        f"SSL: {use_ssl}"
+    )
+
+    print(
+        f"Bind identity: {bind_identity}"
     )
 
     print(
         f"Test user: {test_user}"
     )
 
-    # Never print bind password.
+    # Never print the password.
     print()
 
     # --------------------------------------------------
-    # NETWORK
+    # TCP / NETWORK
     # --------------------------------------------------
 
     tcp_result = check_tcp(
@@ -144,7 +162,7 @@ def main():
     )
 
     # --------------------------------------------------
-    # LDAP SERVICE
+    # LDAP ADAPTER INITIALIZATION
     # --------------------------------------------------
 
     try:
@@ -164,7 +182,7 @@ def main():
     )
 
     # --------------------------------------------------
-    # BIND
+    # LDAP BIND
     # --------------------------------------------------
 
     connection = None
@@ -190,7 +208,7 @@ def main():
             connection.unbind()
 
     # --------------------------------------------------
-    # ACCOUNT READ
+    # TEST ACCOUNT LOOKUP
     # --------------------------------------------------
 
     result = directory.account_status(
@@ -204,12 +222,14 @@ def main():
         print(
             "[FAIL] Test account lookup"
         )
+
         print(
             result.get(
                 "error",
                 result,
             )
         )
+
         return
 
     print(
@@ -221,6 +241,7 @@ def main():
     print(result)
 
     print()
+
     print(
         "LDAP read-only preflight passed."
     )

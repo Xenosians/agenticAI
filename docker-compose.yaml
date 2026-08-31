@@ -1,0 +1,32 @@
+services:
+  samba-ad:
+    build:
+      context: ./docker/samba-ad
+
+    container_name: itsm-samba-ad
+    hostname: itsmdc
+
+    privileged: true
+
+    environment:
+      SAMBA_DOMAIN: ${SAMBA_DOMAIN:-ITSM}
+      SAMBA_REALM: ${SAMBA_REALM:-itsm.local}
+      SAMBA_NETBIOS: ${SAMBA_NETBIOS:-ITSMDC}
+      SAMBA_ADMIN_PASS: ${SAMBA_ADMIN_PASS:-ItsmAdminDevOnly#2026}
+
+    ports:
+      - "1389:389"
+      - "1636:636"
+
+    volumes:
+      - samba_etc:/etc/samba
+      - samba_lib:/var/lib/samba
+      - samba_cache:/var/cache/samba
+
+    restart: unless-stopped
+
+
+volumes:
+  samba_etc:
+  samba_lib:
+  samba_cache:
