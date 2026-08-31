@@ -1,5 +1,4 @@
 import json
-import os
 
 from ldap3 import (
     ALL,
@@ -8,34 +7,59 @@ from ldap3 import (
 )
 from ldap3.utils.conv import escape_filter_chars
 
+from config import (
+    get_bool_env,
+    get_env,
+)
+
 from .base import DirectoryService
 
 
 class LdapDirectoryService(DirectoryService):
-    def __init__(self):
-        self.host = os.environ.get("AD_HOST")
-        self.bind_user = os.environ.get("AD_BIND_USER")
-        self.bind_password = os.environ.get("AD_BIND_PASSWORD")
-        self.base_dn = os.environ.get("AD_BASE_DN")
 
-        self.use_ssl = (
-            os.environ.get(
-                "AD_USE_SSL",
-                "true",
-            ).lower()
-            == "true"
+    def __init__(self):
+        self.host = get_env("AD_HOST")
+
+        self.bind_user = get_env(
+            "AD_BIND_USER"
+        )
+
+        self.bind_password = get_env(
+            "AD_BIND_PASSWORD"
+        )
+
+        self.base_dn = get_env(
+            "AD_BASE_DN"
+        )
+
+        self.use_ssl = get_bool_env(
+            "AD_USE_SSL",
+            True,
+        )
+
+        default_port = (
+            "636"
+            if self.use_ssl
+            else "389"
         )
 
         self.port = int(
-            os.environ.get(
+            get_env(
                 "AD_PORT",
-                "636" if self.use_ssl else "389",
+                default_port,
             )
+            or default_port
         )
 
-        self.access_groups = self._load_access_groups()
+        self.access_groups = (
+            self._load_access_groups()
+        )
 
         self._validate_config()
+
+    # ---------------------------------------------------------
+    # CONFIGURATION
+    # ---------------------------------------------------------
 
     def _validate_config(self):
         required = {
@@ -58,22 +82,17 @@ class LdapDirectoryService(DirectoryService):
             )
 
     def _load_access_groups(self) -> dict:
-        """
-        Example environment value:
-
-        AD_ACCESS_GROUPS={
-            "vpn": "VPN-Users",
-            "admin": "Domain Admins"
-        }
-        """
-
-        raw = os.environ.get(
-            "AD_ACCESS_GROUPS",
-            "{}",
+        raw = (
+            get_env(
+                "AD_ACCESS_GROUPS",
+                "{}",
+            )
+            or "{}"
         )
 
         try:
             groups = json.loads(raw)
+
         except json.JSONDecodeError as exc:
             raise RuntimeError(
                 "AD_ACCESS_GROUPS must be valid JSON."
@@ -84,6 +103,39 @@ class LdapDirectoryService(DirectoryService):
             str(value).strip()
             for key, value in groups.items()
         }
+
+    # ---------------------------------------------------------
+    # NORMALIZATION
+    # ---------------------------------------------------------
+
+    def _normalize_resource(
+        self,
+        resource: str,
+    ) -> str:
+        cleaned = (
+            resource.strip().lower()
+        )
+
+        aliases = {
+            "vpn": "vpn",
+            "vpn access": "vpn",
+            "virtual private network": "vpn",
+            "virtual private network access": "vpn",
+
+            "admin": "admin",
+            "admin access": "admin",
+            "administrator": "admin",
+            "administrator access": "admin",
+        }
+
+        return aliases.get(
+            cleaned,
+            cleaned,
+        )
+
+    # ---------------------------------------------------------
+    # LDAP CONNECTION
+    # ---------------------------------------------------------
 
     def _connect(self) -> Connection:
         server = Server(
@@ -101,6 +153,10 @@ class LdapDirectoryService(DirectoryService):
         )
 
         return connection
+
+    # ---------------------------------------------------------
+    # USER LOOKUP
+    # ---------------------------------------------------------
 
     def _find_user(
         self,
@@ -132,6 +188,10 @@ class LdapDirectoryService(DirectoryService):
 
         return connection.entries[0]
 
+    # ---------------------------------------------------------
+    # ACCOUNT STATUS
+    # ---------------------------------------------------------
+
     def account_status(
         self,
         user_id: str,
@@ -155,19 +215,23 @@ class LdapDirectoryService(DirectoryService):
                 }
 
             user_account_control = int(
-                entry.userAccountControl.value or 0
+                entry.userAccountControl.value
+                or 0
             )
 
             lockout_time = int(
-                entry.lockoutTime.value or 0
+                entry.lockoutTime.value
+                or 0
             )
 
-            # ACCOUNTDISABLE flag = 0x0002
+            # Active Directory ACCOUNTDISABLE flag.
             enabled = not bool(
                 user_account_control & 0x0002
             )
 
-            locked = lockout_time > 0
+            locked = (
+                lockout_time > 0
+            )
 
             return {
                 "ok": True,
@@ -180,7 +244,8 @@ class LdapDirectoryService(DirectoryService):
             return {
                 "ok": False,
                 "error": (
-                    f"Active Directory query failed: {exc}"
+                    "Active Directory query failed: "
+                    f"{exc}"
                 ),
             }
 
@@ -188,17 +253,25 @@ class LdapDirectoryService(DirectoryService):
             if connection is not None:
                 connection.unbind()
 
+    # ---------------------------------------------------------
+    # ACCESS CHECK
+    # ---------------------------------------------------------
+
     def check_access(
         self,
         user_id: str,
         resource: str,
     ) -> dict:
         normalized_resource = (
-            resource.strip().lower()
+            self._normalize_resource(
+                resource
+            )
         )
 
-        required_group = self.access_groups.get(
-            normalized_resource
+        required_group = (
+            self.access_groups.get(
+                normalized_resource
+            )
         )
 
         if required_group is None:
@@ -209,8 +282,8 @@ class LdapDirectoryService(DirectoryService):
                 "has_access": None,
                 "error": (
                     "No Active Directory group is "
-                    f"configured for resource "
-                    f"'{resource}'."
+                    "configured for resource "
+                    f"'{normalized_resource}'."
                 ),
             }
 
@@ -247,10 +320,10 @@ class LdapDirectoryService(DirectoryService):
 
             has_access = any(
                 self._group_matches(
-                    dn,
+                    group_dn,
                     required_group_lower,
                 )
-                for dn in memberships
+                for group_dn in memberships
             )
 
             return {
@@ -268,7 +341,8 @@ class LdapDirectoryService(DirectoryService):
                 "resource": normalized_resource,
                 "has_access": None,
                 "error": (
-                    f"Active Directory query failed: {exc}"
+                    "Active Directory query failed: "
+                    f"{exc}"
                 ),
             }
 
@@ -276,15 +350,19 @@ class LdapDirectoryService(DirectoryService):
             if connection is not None:
                 connection.unbind()
 
+    # ---------------------------------------------------------
+    # GROUP MATCHING
+    # ---------------------------------------------------------
+
     @staticmethod
     def _group_matches(
         group_dn: str,
         required_group: str,
     ) -> bool:
         """
-        Example DN:
+        Example:
 
-        CN=VPN-Users,OU=Groups,DC=example,DC=com
+        CN=VPN-Users,OU=Groups,DC=example,DC=local
         """
 
         group_dn_lower = str(
@@ -295,15 +373,16 @@ class LdapDirectoryService(DirectoryService):
             f"cn={required_group},"
         )
 
+    # ---------------------------------------------------------
+    # MUTATIONS
+    #
+    # Intentionally disabled for real LDAP right now.
+    # ---------------------------------------------------------
+
     def unlock_user(
         self,
         user_id: str,
     ) -> dict:
-        """
-        Real mutations are intentionally disabled
-        during the first LDAP integration phase.
-        """
-
         return {
             "ok": False,
             "status": "error",
@@ -319,11 +398,6 @@ class LdapDirectoryService(DirectoryService):
         self,
         user_id: str,
     ) -> dict:
-        """
-        Real mutations are intentionally disabled
-        during the first LDAP integration phase.
-        """
-
         return {
             "ok": False,
             "status": "error",
