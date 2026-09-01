@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from subagents.llm.qwen_funcall import QwenFuncCallBackend
 
 
 MODEL_PATH = Path(
@@ -61,36 +62,16 @@ def build_system_prompt() -> str:
         f"{json.dumps(ACCOUNT_TOOLS, indent=2)}"
     )
 
-
 @pytest.fixture(scope="module")
-def model_bundle():
-    assert MODEL_PATH.exists(), (
-        f"Model does not exist at {MODEL_PATH}"
+def backend():
+    return QwenFuncCallBackend(
+        "/mnt/c/project/agenticaiPersonal/models/qwen2.5-0.5b-funccall"
     )
-
-    tokenizer = AutoTokenizer.from_pretrained(
-        MODEL_PATH,
-        local_files_only=True,
-    )
-
-    model = AutoModelForCausalLM.from_pretrained(
-        MODEL_PATH,
-        torch_dtype="auto",
-        device_map="auto",
-        local_files_only=True,
-    )
-
-    model.eval()
-
-    return tokenizer, model
-
 
 def generate_tool_call(
-    model_bundle,
+    backend,
     user_request: str,
 ) -> list[dict]:
-    tokenizer, model = model_bundle
-
     messages = [
         {
             "role": "system",
@@ -102,30 +83,10 @@ def generate_tool_call(
         },
     ]
 
-    inputs = tokenizer.apply_chat_template(
+    response = backend.generate(
         messages,
-        add_generation_prompt=True,
-        return_tensors="pt",
-        return_dict=True,
-    ).to(model.device)
-
-    with torch.no_grad():
-        output = model.generate(
-            **inputs,
-            max_new_tokens=128,
-            do_sample=False,
-            pad_token_id=tokenizer.eos_token_id,
-        )
-
-    generated_tokens = output[
-        0,
-        inputs["input_ids"].shape[1]:,
-    ]
-
-    response = tokenizer.decode(
-        generated_tokens,
-        skip_special_tokens=True,
-    ).strip()
+        max_new_tokens=128,
+    )
 
     print(
         f"\nREQUEST: {user_request}"
@@ -140,9 +101,9 @@ def generate_tool_call(
     return parsed
 
 
-def test_account_status_selection(model_bundle):
+def test_account_status_selection(backend):
     calls = generate_tool_call(
-        model_bundle,
+        backend,
         "Is jdoe locked?",
     )
 
@@ -152,9 +113,9 @@ def test_account_status_selection(model_bundle):
     assert call["arguments"]["user_id"] == "jdoe"
 
 
-def test_unlock_selection(model_bundle):
+def test_unlock_selection(backend):
     calls = generate_tool_call(
-        model_bundle,
+        backend,
         "Unlock jdoe",
     )
 
@@ -164,9 +125,9 @@ def test_unlock_selection(model_bundle):
     assert call["arguments"]["user_id"] == "jdoe"
 
 
-def test_password_reset_selection(model_bundle):
+def test_password_reset_selection(backend):
     calls = generate_tool_call(
-        model_bundle,
+        backend,
         "Reset the password for jdoe",
     )
 
