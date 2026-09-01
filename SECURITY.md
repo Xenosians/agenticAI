@@ -274,7 +274,7 @@ A newly added model must not automatically inherit all available MCP tools.
 
 A future REST or microservice layer may be implemented separately from the Python agent runtime.
 
-If an Elixir/Phoenix or other API service is introduced, it should add—not replace—security controls such as:
+If an Elixir/Phoenix or other API service is introduced, it should add, not replace security controls such as:
 
 * authenticated callers
 * authorization
