@@ -4,7 +4,7 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
-MODEL_PATH = "/mnt/c/project/agenticaiPersonal/Qwen3-0.6B"
+MODEL_PATH = "/mnt/c/project/agenticaiPersonal/models/Qwen3-0.6B"
 
 THINK_PATTERN = re.compile(
     r"<think>.*?</think>",
