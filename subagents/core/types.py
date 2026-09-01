@@ -45,3 +45,23 @@ class AgentResult:
     proposed_arguments: dict[str, Any] | None = None
 
     error: str | None = None
+    
+@dataclass
+class HubResult:
+    """
+    Result returned by the hub/orchestrator.
+    """
+
+    status: str
+    user_request: str
+
+    routes: list[str] = field(
+        default_factory=list
+    )
+
+    results: list[AgentResult] = field(
+        default_factory=list
+    )
+
+    answer: str | None = None
+    error: str | None = None

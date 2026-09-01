@@ -5,7 +5,7 @@ tools:
   - account_status
   - unlock_user
   - reset_password
-model: local-qwen
+model: qwen2.5-0.5b-funccall
 max_steps: 3
 ---
 

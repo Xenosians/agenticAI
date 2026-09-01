@@ -19,7 +19,7 @@ def test_load_agent_definition(tmp_path: Path):
         description: Handles account-related requests.
         tools:
         - account_status
-        model: local-qwen
+        model: qwen2.5-0.5b-funccall
         max_steps: 3
         ---
 
@@ -33,7 +33,7 @@ def test_load_agent_definition(tmp_path: Path):
     assert agent.name == "account-specialist"
     assert agent.description == "Handles account-related requests."
     assert agent.tools == ["account_status"]
-    assert agent.model == "local-qwen"
+    assert agent.model == "qwen2.5-0.5b-funccall"
     assert agent.max_steps == 3
     assert agent.system_prompt == "You are an account specialist."
 
@@ -63,7 +63,7 @@ def test_load_real_account_specialist():
     assert "account_status" in agent.tools
     assert "unlock_user" in agent.tools
     assert "reset_password" in agent.tools
-    assert agent.model == "local-qwen"
+    assert agent.model == "qwen2.5-0.5b-funccall"
     assert agent.max_steps == 3
     assert "ITSM account specialist" in agent.system_prompt
 
@@ -95,7 +95,7 @@ def test_load_real_access_specialist():
 
     assert agent.name == "access-specialist"
     assert agent.tools == ["check_access"]
-    assert agent.model == "local-qwen"
+    assert agent.model == "qwen2.5-0.5b-funccall"
     assert agent.max_steps == 3
     assert "access-management specialist" in agent.system_prompt
     

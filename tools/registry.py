@@ -12,24 +12,55 @@ TOOLS = {
         "description": "Check whether an account is enabled or locked.",
         "risk": "read",
         "requires_approval": False,
+        "parameters": {
+            "user_id": {
+                "type": "str",
+                "description": "Exact user identifier to check.",
+            },
+        },
     },
+
     "check_access": {
         "function": check_access,
         "description": "Check whether a user can access a resource.",
         "risk": "read",
         "requires_approval": False,
+        "parameters": {
+            "user_id": {
+                "type": "str",
+                "description": "Exact user identifier to check.",
+            },
+            "resource": {
+                "type": "str",
+                "description": "Exact resource identifier or name.",
+            },
+        },
     },
+
     "unlock_user": {
         "function": unlock_user,
         "description": "Unlock an account.",
         "risk": "low",
         "requires_approval": True,
+        "parameters": {
+            "user_id": {
+                "type": "str",
+                "description": "Exact user identifier to unlock.",
+            },
+        },
     },
+
     "reset_password": {
         "function": reset_password,
         "description": "Reset an account password.",
         "risk": "high",
         "requires_approval": True,
+        "parameters": {
+            "user_id": {
+                "type": "str",
+                "description": "Exact user identifier.",
+            },
+        },
     },
 }
 
