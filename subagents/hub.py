@@ -8,6 +8,8 @@ from subagents.core.runtime import AgentRuntime
 from subagents.core.tool_gateway import ToolGateway
 from subagents.llm.qwen_funcall import QwenFuncCallBackend
 from subagents.llm.registry import ModelRegistry
+from subagents.core.llm_router import LLMRouter
+from subagents.llm.qwen_hub import QwenHubBackend
 
 
 ACCOUNT_MODEL_NAME = "qwen2.5-0.5b-funccall"
@@ -15,6 +17,10 @@ ACCOUNT_MODEL_NAME = "qwen2.5-0.5b-funccall"
 ACCOUNT_MODEL_PATH = Path(
     "/mnt/c/project/agenticaiPersonal/Models/"
     "qwen2.5-0.5b-funccall"
+)
+
+HUB_MODEL_PATH = Path(
+    "/mnt/c/project/agenticaiPersonal/Models/Qwen3-0.6B"
 )
 
 
@@ -78,9 +84,14 @@ def build_hub() -> Orchestrator:
     # -----------------------------------------
     # Temporary deterministic routing
     # -----------------------------------------
+    
+    hub_backend = QwenHubBackend(
+        HUB_MODEL_PATH 
+    )
 
-    router = Router(
-        registry=agent_registry
+    router = LLMRouter(
+        registry=agent_registry,
+        backend=hub_backend
     )
 
     # -----------------------------------------

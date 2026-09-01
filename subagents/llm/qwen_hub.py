@@ -65,6 +65,8 @@ class QwenHubBackend(LLMBackend):
             messages,
             tokenize=False,
             add_generation_prompt=True,
+            enable_thinking=False,
+            do_sample=False,
         )
 
         inputs = self.tokenizer(
