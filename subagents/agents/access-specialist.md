@@ -3,7 +3,7 @@ name: access-specialist
 description: Handles user access, authorization, group membership, and resource access requests.
 tools:
   - check_access
-model: qwen2.5-0.5b-funccall
+model: qwen3-0.6b
 max_steps: 3
 ---
 

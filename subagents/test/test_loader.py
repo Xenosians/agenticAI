@@ -95,7 +95,7 @@ def test_load_real_access_specialist():
 
     assert agent.name == "access-specialist"
     assert agent.tools == ["check_access"]
-    assert agent.model == "qwen2.5-0.5b-funccall"
+    assert agent.model == "qwen3-0.6b"
     assert agent.max_steps == 3
     assert "access-management specialist" in agent.system_prompt
     

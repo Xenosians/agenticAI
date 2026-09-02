@@ -2,23 +2,13 @@ from functools import lru_cache
 from pathlib import Path
 
 from pydantic import Field
-from pydantic_settings import (
-    BaseSettings,
-    SettingsConfigDict,
-)
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class Settings(BaseSettings):
-    """
-    Central runtime configuration.
-
-    Model locations and runtime choices must not be
-    hardcoded inside Hub/worker implementation code.
-    """
-
     model_config = SettingsConfigDict(
         env_file=PROJECT_ROOT / ".env",
         env_file_encoding="utf-8",
@@ -26,9 +16,9 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # ---------------------------------------------------------
+    # ============================================================
     # AI service
-    # ---------------------------------------------------------
+    # ============================================================
 
     ai_host: str = "127.0.0.1"
 
@@ -38,9 +28,9 @@ class Settings(BaseSettings):
         le=65535,
     )
 
-    # ---------------------------------------------------------
+    # ============================================================
     # Agent definitions
-    # ---------------------------------------------------------
+    # ============================================================
 
     agents_dir: Path = (
         PROJECT_ROOT
@@ -48,21 +38,30 @@ class Settings(BaseSettings):
         / "agents"
     )
 
-    # ---------------------------------------------------------
-    # Hub
-    # ---------------------------------------------------------
+    # ============================================================
+    # Main Hub
+    #
+    # Ministral 3B
+    # ============================================================
 
     hub_backend: str = "ministral"
 
     hub_model_path: Path | None = None
 
-    # RTX 4050 / Ada cannot execute the current
-    # fine-grained FP8 kernel directly.
     hub_dequantize_fp8: bool = True
 
-    # ---------------------------------------------------------
-    # Account worker
-    # ---------------------------------------------------------
+    # Used when device_map="auto" needs to offload
+    # part of Ministral to disk.
+    #
+    # Example:
+    # /tmp/itsm-ministral-offload
+    hub_offload_folder: Path | None = None
+
+    # ============================================================
+    # Account specialist
+    #
+    # Qwen2.5-0.5B FuncCall
+    # ============================================================
 
     account_backend: str = "qwen-funccall"
 
@@ -72,27 +71,41 @@ class Settings(BaseSettings):
 
     account_model_path: Path | None = None
 
-    # ---------------------------------------------------------
-    # Access worker
-    # ---------------------------------------------------------
+    # ============================================================
+    # Access specialist
+    #
+    # Qwen3-0.6B
+    # ============================================================
 
     access_enabled: bool = False
 
-    access_backend: str = "qwen-funccall"
+    access_backend: str = "qwen3"
 
-    access_model_key: str = "access-model-tbd"
+    access_model_key: str = "qwen3-0.6b"
 
     access_model_path: Path | None = None
 
-    # ---------------------------------------------------------
+    # ============================================================
     # Helpers
-    # ---------------------------------------------------------
+    # ============================================================
 
     def require_path(
         self,
         value: Path | None,
         setting_name: str,
     ) -> Path:
+        """
+        Resolve and validate a path that must already exist.
+
+        Appropriate for:
+        - model directories
+        - agent directories
+
+        Do NOT use this helper for the Hub offload folder,
+        because that directory may legitimately not exist yet.
+        The Ministral backend creates it when necessary.
+        """
+
         if value is None:
             raise RuntimeError(
                 f"{setting_name} is not configured."
@@ -107,8 +120,7 @@ class Settings(BaseSettings):
 
         if not path.exists():
             raise RuntimeError(
-                f"{setting_name} does not exist: "
-                f"{path}"
+                f"{setting_name} does not exist: {path}"
             )
 
         return path

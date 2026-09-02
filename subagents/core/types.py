@@ -1,8 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Any
 
-
-@dataclass
 @dataclass
 class AgentDefinition:
     name: str
@@ -15,7 +13,7 @@ class AgentDefinition:
     model: str = "local-qwen"
     max_steps: int = 3
     system_prompt: str = ""
-
+    
 @dataclass
 class AgentTask:
     task_id: str
