@@ -3,38 +3,34 @@ from typing import Any
 
 
 @dataclass
+@dataclass
 class AgentDefinition:
-    """
-    Static configuration describing a sub-agent.
-    """
-
     name: str
     description: str
-    tools: list[str] = field(default_factory=list)
+
+    tools: list[str] = field(
+        default_factory=list
+    )
+
     model: str = "local-qwen"
     max_steps: int = 3
     system_prompt: str = ""
 
-
 @dataclass
 class AgentTask:
-    """
-    A task sent from the hub/orchestrator to a worker agent.
-    """
-
     task_id: str
     agent_name: str
     user_request: str
+
     instructions: str | None = None
-    context: dict[str, Any] = field(default_factory=dict)
+
+    context: dict[str, Any] = field(
+        default_factory=dict
+    )
 
 
 @dataclass
 class AgentResult:
-    """
-    Structured result returned by a worker agent.
-    """
-
     task_id: str
     agent_name: str
     status: str
@@ -42,16 +38,14 @@ class AgentResult:
     answer: str | None = None
 
     proposed_tool: str | None = None
+
     proposed_arguments: dict[str, Any] | None = None
 
     error: str | None = None
-    
+
+
 @dataclass
 class HubResult:
-    """
-    Result returned by the hub/orchestrator.
-    """
-
     status: str
     user_request: str
 
@@ -65,3 +59,43 @@ class HubResult:
 
     answer: str | None = None
     error: str | None = None
+
+
+# ============================================================
+# Planner types
+# ============================================================
+
+
+@dataclass
+class HubTask:
+    """
+    A single task proposed by the Hub planner.
+
+    This is a planning object only. It does not grant
+    permission to execute anything.
+    """
+
+    id: str
+    agent: str
+    instruction: str
+
+    identifiers: list[str] = field(
+        default_factory=list
+    )
+
+    depends_on: list[str] = field(
+        default_factory=list
+    )
+
+    condition: str | None = None
+
+
+@dataclass
+class HubPlan:
+    """
+    Validated task plan produced by the Hub planner.
+    """
+
+    tasks: list[HubTask] = field(
+        default_factory=list
+    )
