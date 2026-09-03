@@ -310,7 +310,8 @@ def test_runtime_returns_approval_required():
     assert result.proposed_arguments == {
         "user_id": "jdoe"
     }
-
+    
+    assert result.approval_id == "approval-123"
     assert "approval-123" in result.answer
 
 

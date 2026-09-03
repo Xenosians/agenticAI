@@ -198,6 +198,7 @@ class AgentRuntime:
                 status="approval_required",
                 proposed_tool=tool_name,
                 proposed_arguments=arguments,
+                approval_id=approval_id,
                 answer=(
                     "Approval required"
                     + (

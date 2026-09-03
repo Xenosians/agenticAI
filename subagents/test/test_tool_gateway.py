@@ -1,10 +1,11 @@
 import asyncio
-import re
 
 from subagents.core.tool_gateway import (
     ToolGateway,
     identifier_appears_in_request,
+    validate_identifiers,
 )
+
 from subagents.core.types import AgentDefinition
 
 
@@ -182,3 +183,30 @@ def test_mutation_requires_approval_without_mcp():
     # Critical security assertion:
     # mutation must NOT execute yet.
     assert mcp.calls == []
+    
+def test_resource_guard_accepts_explicit_resource():
+    valid, error = validate_identifiers(
+        "Does jdoe have VPN access?",
+        {
+            "user_id": "jdoe",
+            "resource": "VPN",
+        },
+    )
+
+    assert valid is True
+    assert error is None
+
+
+def test_resource_guard_rejects_invented_resource():
+    valid, error = validate_identifiers(
+        "Does jdoe have Finance access?",
+        {
+            "user_id": "jdoe",
+            "resource": "VPN",
+        },
+    )
+
+    assert valid is False
+    assert error is not None
+    assert "resource" in error
+    assert "VPN" in error

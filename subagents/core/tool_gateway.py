@@ -32,26 +32,34 @@ def validate_identifiers(
     user_input: str,
     arguments: dict[str, Any],
 ) -> tuple[bool, str | None]:
-    user_id = arguments.get("user_id")
-
-    if user_id is None:
-        return True, None
-
-    if not isinstance(user_id, str):
-        return False, "user_id must be a string."
-
-    if not identifier_appears_in_request(
-        user_id,
-        user_input,
+    for field_name in (
+        "user_id",
+        "resource",
     ):
-        return (
-            False,
-            (
-                f"The model produced user_id '{user_id}', "
-                "but that identifier does not appear exactly "
-                "in the original request."
-            ),
-        )
+        value = arguments.get(field_name)
+
+        if value is None:
+            continue
+
+        if not isinstance(value, str):
+            return (
+                False,
+                f"{field_name} must be a string.",
+            )
+
+        if not identifier_appears_in_request(
+            value,
+            user_input,
+        ):
+            return (
+                False,
+                (
+                    f"The model produced {field_name} "
+                    f"'{value}', but that identifier "
+                    "does not appear exactly in the "
+                    "original request."
+                ),
+            )
 
     return True, None
 

@@ -34,12 +34,10 @@ class AgentResult:
     status: str
 
     answer: str | None = None
-
     proposed_tool: str | None = None
-
     proposed_arguments: dict[str, Any] | None = None
-
     error: str | None = None
+    approval_id: str | None = None
 
 
 @dataclass
