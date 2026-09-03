@@ -100,85 +100,6 @@ class MinistralHubBackend(LLMBackend):
 
         self.model.eval()
 
-    @staticmethod
-    def _clean_response(
-        response: str,
-    ) -> str:
-        response = response.strip()
-
-        fenced_match = re.fullmatch(
-            r"```(?:json)?\s*(.*?)\s*```",
-            response,
-            flags=(
-                re.DOTALL
-                | re.IGNORECASE
-            ),
-        )
-
-        if fenced_match:
-            return (
-                fenced_match
-                .group(1)
-                .strip()
-            )
-
-        # Handle opening fence without closing fence.
-        if response.startswith("```"):
-            newline_index = response.find("\n")
-
-            if newline_index != -1:
-                response = response[
-                    newline_index + 1 :
-                ].strip()
-
-        if response.endswith("```"):
-            response = response[:-3].strip()
-
-        return response
-
-    def generate(
-        self,
-        messages: list[dict[str, str]],
-        max_new_tokens: int = 256,
-    ) -> str:
-        tokenized = (
-            self.tokenizer.apply_chat_template(
-                messages,
-                return_tensors="pt",
-                return_dict=True,
-            )
-        )
-
-        input_device = self.model.device
-
-        for key, value in tokenized.items():
-            if hasattr(value, "to"):
-                tokenized[key] = value.to(
-                    input_device
-                )
-
-        input_length = (
-            tokenized["input_ids"]
-            .shape[-1]
-        )
-
-        output = self.model.generate(
-            **tokenized,
-            max_new_tokens=max_new_tokens,
-            do_sample=False,
-        )[0]
-
-        generated_tokens = output[
-            input_length:
-        ]
-
-        response = self.tokenizer.decode(
-            generated_tokens
-        )
-
-        return self._clean_response(
-            response
-        )
         
     @staticmethod
     def _clean_response(
@@ -250,3 +171,46 @@ class MinistralHubBackend(LLMBackend):
         )
 
         return response.strip()
+    def generate(
+        self,
+        messages: list[dict[str, str]],
+        max_new_tokens: int = 256,
+    ) -> str:
+        tokenized = (
+            self.tokenizer.apply_chat_template(
+                messages,
+                return_tensors="pt",
+                return_dict=True,
+            )
+        )
+
+        input_device = self.model.device
+
+        for key, value in tokenized.items():
+            if hasattr(value, "to"):
+                tokenized[key] = value.to(
+                    input_device
+                )
+
+        input_length = (
+            tokenized["input_ids"]
+            .shape[-1]
+        )
+
+        output = self.model.generate(
+            **tokenized,
+            max_new_tokens=max_new_tokens,
+            do_sample=False,
+        )[0]
+
+        generated_tokens = output[
+            input_length:
+        ]
+
+        response = self.tokenizer.decode(
+            generated_tokens
+        )
+
+        return self._clean_response(
+            response
+        )

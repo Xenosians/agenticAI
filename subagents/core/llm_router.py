@@ -2,6 +2,7 @@ import json
 
 from subagents.core.registry import AgentRegistry
 from subagents.llm.base import LLMBackend
+from subagents.prompts.prompt_loader import load_prompt
 
 
 class LLMRouter:
@@ -36,76 +37,13 @@ class LLMRouter:
             indent=2,
         )
 
-        return (
-            "You are the routing hub for an ITSM multi-agent system.\n\n"
+        template = load_prompt(
+            "hub_router.txt"
+        )
 
-            "Your ONLY task is to select which specialist worker or "
-            "workers should handle the user's request.\n\n"
-
-            "DO NOT answer the user's request.\n"
-            "DO NOT call tools.\n"
-            "DO NOT explain your reasoning.\n"
-            "DO NOT invent agent names.\n\n"
-
-            "ROUTING RULES:\n\n"
-
-            "Use account-specialist for requests about:\n"
-            "- account status\n"
-            "- locked or unlocked accounts\n"
-            "- enabled or disabled accounts\n"
-            "- unlocking an account\n"
-            "- password resets\n"
-            "- account lifecycle operations\n\n"
-
-            "Use access-specialist for requests about:\n"
-            "- VPN access\n"
-            "- application access\n"
-            "- permissions\n"
-            "- authorization\n"
-            "- group membership\n"
-            "- resource access\n\n"
-
-            "If the request contains BOTH account-management work "
-            "and access-management work, return BOTH specialists.\n\n"
-
-            "If the request does not match any available specialist, "
-            "return an empty list.\n\n"
-
-            "AVAILABLE SPECIALISTS:\n"
-            f"{specialists_json}\n\n"
-
-            "EXAMPLES:\n\n"
-
-            'User: "Is jdoe locked?"\n'
-            'Output: {"agents": ["account-specialist"]}\n\n'
-
-            'User: "Is jdoe enabled?"\n'
-            'Output: {"agents": ["account-specialist"]}\n\n'
-
-            'User: "Unlock jdoe"\n'
-            'Output: {"agents": ["account-specialist"]}\n\n'
-
-            'User: "Reset the password for jdoe"\n'
-            'Output: {"agents": ["account-specialist"]}\n\n'
-
-            'User: "Does jdoe have VPN access?"\n'
-            'Output: {"agents": ["access-specialist"]}\n\n'
-
-            'User: "Does jdoe have access to GitLab?"\n'
-            'Output: {"agents": ["access-specialist"]}\n\n'
-
-            'User: "Check whether jdoe is locked and whether '
-            'jdoe has VPN access."\n'
-            'Output: {"agents": ["account-specialist", '
-            '"access-specialist"]}\n\n'
-
-            'User: "Tell me a joke."\n'
-            'Output: {"agents": []}\n\n'
-
-            "Return ONLY one valid JSON object in this exact form:\n"
-            '{"agents": ["agent-name"]}\n\n'
-
-            "No markdown. No explanation. No additional text."
+        return template.replace(
+            "{{SPECIALISTS_JSON}}",
+            specialists_json,
         )
 
     def route(

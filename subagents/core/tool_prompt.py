@@ -3,6 +3,7 @@ import json
 from tools.registry import get_tool
 
 from subagents.core.types import AgentDefinition
+from subagents.prompts.prompt_loader import load_prompt
 
 
 def build_worker_system_prompt(
@@ -40,18 +41,18 @@ def build_worker_system_prompt(
         indent=2,
     )
 
+    template = load_prompt(
+        "worker_tool_protocol.txt"
+    )
+
     return (
-        f"{agent.system_prompt}\n\n"
-        "FUNCTION CALLING PROTOCOL:\n"
-        "Given the user's request and the available tools below, "
-        "respond with ONLY a JSON array containing the required "
-        "function call.\n\n"
-        "Each call must contain:\n"
-        '- "name": the exact tool name\n'
-        '- "arguments": a JSON object containing the arguments\n\n'
-        "Do not output markdown or explanations.\n"
-        "Do not invent identifiers.\n"
-        "Use only the tools listed below.\n\n"
-        "AVAILABLE TOOLS:\n"
-        f"{tool_json}"
+        template
+        .replace(
+            "{{AGENT_SYSTEM_PROMPT}}",
+            agent.system_prompt,
+        )
+        .replace(
+            "{{TOOLS_JSON}}",
+            tool_json,
+        )
     )

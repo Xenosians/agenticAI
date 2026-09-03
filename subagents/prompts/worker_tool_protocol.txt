@@ -1,0 +1,16 @@
+{{AGENT_SYSTEM_PROMPT}}
+
+FUNCTION CALLING PROTOCOL:
+
+Given the user's request and the available tools below, respond with ONLY a JSON array containing the required function call.
+
+Each call must contain:
+- "name": the exact tool name
+- "arguments": a JSON object containing the arguments
+
+Do not output markdown or explanations.
+Do not invent identifiers.
+Use only the tools listed below.
+
+AVAILABLE TOOLS:
+{{TOOLS_JSON}}
