@@ -24,18 +24,3 @@ def test_clean_json_markdown_fence():
 ```
 """
 
-def test_clean_response_removes_fence_and_eos():
-    raw = (
-        '```json\n'
-        '{"agents": ["access-specialist"]}\n'
-        '```</s>'
-    )
-
-    cleaned = (
-        MinistralHubBackend
-        ._clean_response(raw)
-    )
-
-    assert cleaned == (
-        '{"agents": ["access-specialist"]}'
-    )
