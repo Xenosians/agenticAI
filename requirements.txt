@@ -12,3 +12,4 @@ ldap3>=2.9
 
 # Configuration
 python-dotenv>=1.0
+httpx>=0.27,<1
