@@ -12,6 +12,9 @@ from subagents.core.llm_router import (
 from subagents.core.orchestrator import (
     Orchestrator,
 )
+from subagents.core.primary_assistant import (
+    PrimaryAssistant,
+)
 from subagents.core.runtime import (
     AgentRuntime,
 )
@@ -30,34 +33,21 @@ from subagents.llm.registry import (
 
 def build_hub() -> Orchestrator:
     """
-    Build the complete ITSM multi-agent runtime.
+    Build the complete Agentic Developer Hub runtime.
 
-    Current architecture:
+    The Hub model serves two roles:
 
-                        Ministral 3B
-                          Main Hub
-                             |
-                  +----------+----------+
-                  |                     |
-                  v                     v
-          Account Specialist     Access Specialist
-          Qwen2.5 FuncCall       Qwen3-0.6B
-                  |                     |
-                  +----------+----------+
-                             |
-                             v
-                        ToolGateway
-                             |
-                             v
-                            MCP
-                             |
-                             v
-                      LDAP / Samba AD
+    1. Decide whether specialist delegation is useful.
+    2. Act as the primary conversational assistant when no
+       specialist is required.
 
-    Language models propose decisions/actions.
+    Both roles share the same loaded model backend and weights.
+
+    Specialists remain responsible for domain-specific reasoning
+    and governed tool proposals.
 
     Deterministic Python policy remains responsible for
-    validating whether those actions are allowed.
+    validating whether actions are allowed.
     """
 
     settings = get_settings()
@@ -89,8 +79,6 @@ def build_hub() -> Orchestrator:
 
     # ============================================================
     # Account worker
-    #
-    # Qwen2.5-0.5B FuncCall
     # ============================================================
 
     account_model_path = (
@@ -118,8 +106,6 @@ def build_hub() -> Orchestrator:
 
     # ============================================================
     # Access worker
-    #
-    # Qwen3-0.6B
     # ============================================================
 
     if settings.access_enabled:
@@ -163,9 +149,7 @@ def build_hub() -> Orchestrator:
     )
 
     # ============================================================
-    # Main Hub
-    #
-    # Ministral 3B
+    # Hub model
     # ============================================================
 
     hub_model_path = (
@@ -191,11 +175,23 @@ def build_hub() -> Orchestrator:
     )
 
     # ============================================================
-    # Hub router
+    # Specialist router
     # ============================================================
 
     router = LLMRouter(
         registry=agent_registry,
+        backend=hub_backend,
+    )
+
+    # ============================================================
+    # Primary conversational assistant
+    #
+    # IMPORTANT:
+    # This deliberately shares hub_backend with the router.
+    # No second copy of the Hub model is loaded.
+    # ============================================================
+
+    primary_assistant = PrimaryAssistant(
         backend=hub_backend,
     )
 
@@ -206,4 +202,5 @@ def build_hub() -> Orchestrator:
     return Orchestrator(
         router=router,
         runtime=runtime,
+        primary_assistant=primary_assistant,
     )

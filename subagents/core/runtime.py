@@ -1,9 +1,162 @@
+from typing import Any
+
 from subagents.core.registry import AgentRegistry
 from subagents.core.tool_gateway import ToolGateway
 from subagents.core.tool_parser import parse_tool_calls
 from subagents.core.types import AgentResult, AgentTask
 from subagents.llm.registry import ModelRegistry
-from subagents.core.tool_prompt import build_worker_system_prompt
+from subagents.core.tool_prompt import (
+    build_worker_system_prompt,
+)
+
+
+def format_tool_result(
+    tool_name: str,
+    result: dict[str, Any],
+) -> str:
+    """
+    Convert trusted structured tool output into a
+    user-facing sentence.
+
+    Structured tool data stays internal. The frontend receives
+    a normal assistant answer instead of a Python dict.
+    """
+
+    if tool_name == "account_status":
+        user_id = result.get(
+            "user_id",
+            "The account",
+        )
+
+        enabled = result.get(
+            "enabled"
+        )
+
+        locked = result.get(
+            "locked"
+        )
+
+        if enabled is True and locked is True:
+            return (
+                f"{user_id} is enabled, "
+                "but the account is currently locked."
+            )
+
+        if enabled is True and locked is False:
+            return (
+                f"{user_id} is enabled "
+                "and is not locked."
+            )
+
+        if enabled is False and locked is True:
+            return (
+                f"{user_id} is disabled "
+                "and is currently locked."
+            )
+
+        if enabled is False and locked is False:
+            return (
+                f"{user_id} is disabled "
+                "and is not locked."
+            )
+
+        return (
+            f"I retrieved the account status for "
+            f"{user_id}, but the directory did not "
+            "return a complete enabled/locked state."
+        )
+
+    if tool_name == "check_access":
+        user_id = result.get(
+            "user_id",
+            "The user",
+        )
+
+        resource = result.get(
+            "resource",
+            "the requested resource",
+        )
+
+        has_access = result.get(
+            "has_access"
+        )
+
+        if has_access is True:
+            return (
+                f"{user_id} has access to "
+                f"{resource}."
+            )
+
+        if has_access is False:
+            return (
+                f"{user_id} does not have access to "
+                f"{resource}."
+            )
+
+        return (
+            f"I checked {user_id}'s access to "
+            f"{resource}, but the directory did not "
+            "return a definitive access state."
+        )
+
+    #
+    # New tools should get an explicit formatter rather
+    # than leaking their raw internal result to the user.
+    #
+
+    return (
+        f"The {tool_name} operation completed successfully."
+    )
+
+
+def format_approval_required(
+    tool_name: str,
+    arguments: dict[str, Any],
+    approval_id: str | None,
+) -> str:
+    """
+    Produce a user-facing approval message without exposing
+    internal structures.
+    """
+
+    user_id = arguments.get(
+        "user_id"
+    )
+
+    if tool_name == "unlock_user":
+        if user_id:
+            message = (
+                f"Unlocking {user_id} requires approval."
+            )
+        else:
+            message = (
+                "The account unlock requires approval."
+            )
+
+    elif tool_name == "reset_password":
+        if user_id:
+            message = (
+                f"Resetting {user_id}'s password "
+                "requires approval."
+            )
+        else:
+            message = (
+                "The password reset requires approval."
+            )
+
+    else:
+        message = (
+            "This action requires approval."
+        )
+
+    if approval_id:
+        return (
+            f"{message} "
+            f"Approval ID: {approval_id}."
+        )
+
+    return message
+
 
 class AgentRuntime:
     """
@@ -81,7 +234,9 @@ class AgentRuntime:
         messages = [
             {
                 "role": "system",
-                "content": build_worker_system_prompt(agent),
+                "content": build_worker_system_prompt(
+                    agent
+                ),
             },
             {
                 "role": "user",
@@ -199,13 +354,10 @@ class AgentRuntime:
                 proposed_tool=tool_name,
                 proposed_arguments=arguments,
                 approval_id=approval_id,
-                answer=(
-                    "Approval required"
-                    + (
-                        f": {approval_id}"
-                        if approval_id
-                        else "."
-                    )
+                answer=format_approval_required(
+                    tool_name,
+                    arguments,
+                    approval_id,
                 ),
             )
 
@@ -233,15 +385,34 @@ class AgentRuntime:
         # Successful tool execution
         # -------------------------------------------------
 
+        tool_result = gateway_result.get(
+            "result"
+        )
+
+        if not isinstance(
+            tool_result,
+            dict,
+        ):
+            return AgentResult(
+                task_id=task.task_id,
+                agent_name=task.agent_name,
+                status="error",
+                proposed_tool=tool_name,
+                proposed_arguments=arguments,
+                error=(
+                    "Tool returned an invalid "
+                    "structured result."
+                ),
+            )
+
         return AgentResult(
             task_id=task.task_id,
             agent_name=task.agent_name,
             status="success",
             proposed_tool=tool_name,
             proposed_arguments=arguments,
-            answer=str(
-                gateway_result.get(
-                    "result"
-                )
+            answer=format_tool_result(
+                tool_name,
+                tool_result,
             ),
         )

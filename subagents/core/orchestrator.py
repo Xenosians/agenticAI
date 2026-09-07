@@ -1,5 +1,8 @@
 import uuid
 
+from subagents.core.primary_assistant import (
+    PrimaryAssistant,
+)
 from subagents.core.router import Router
 from subagents.core.runtime import AgentRuntime
 from subagents.core.types import (
@@ -11,43 +14,62 @@ from subagents.core.types import (
 
 class Orchestrator:
     """
-    Hub responsible for routing user requests
-    to specialist worker agents.
+    Primary assistant and specialist orchestrator.
+
+    Ordinary requests are answered directly by the primary
+    assistant.
+
+    Requests that match specialist capabilities are delegated
+    through the specialist runtime.
+
+    Specialist implementation details are not exposed in the
+    final user-facing response.
     """
 
     def __init__(
         self,
         router: Router,
         runtime: AgentRuntime,
+        primary_assistant: PrimaryAssistant,
     ) -> None:
         self.router = router
         self.runtime = runtime
+        self.primary_assistant = primary_assistant
 
     async def run(
         self,
         user_request: str,
     ) -> HubResult:
         # -----------------------------------------
-        # Route request
+        # Determine whether specialist delegation
+        # is useful.
         # -----------------------------------------
 
         routes = self.router.route(
             user_request
         )
 
+        # -----------------------------------------
+        # Primary conversational path
+        # -----------------------------------------
+
         if not routes:
+            answer = (
+                self.primary_assistant.respond(
+                    user_request
+                )
+            )
+
             return HubResult(
-                status="no_route",
+                status="success",
                 user_request=user_request,
                 routes=[],
-                answer=(
-                    "No specialist agent matched "
-                    "the request."
-                ),
+                results=[],
+                answer=answer,
             )
 
         # -----------------------------------------
-        # Delegate to workers
+        # Delegate to specialists
         # -----------------------------------------
 
         results: list[AgentResult] = []
@@ -84,7 +106,10 @@ class Orchestrator:
             overall_status = "success"
 
         # -----------------------------------------
-        # V1 response composition
+        # Compose user-facing answer.
+        #
+        # Do not expose internal specialist names or
+        # raw tool structures.
         # -----------------------------------------
 
         answer = self._compose_answer(
@@ -103,35 +128,35 @@ class Orchestrator:
         self,
         results: list[AgentResult],
     ) -> str:
-        """
-        Temporary deterministic result composition.
-
-        Later the Qwen hub can turn these structured
-        results into a natural-language response.
-        """
-
-        parts = []
+        parts: list[str] = []
 
         for result in results:
-            if result.status == "success":
+            if (
+                result.status == "success"
+                and result.answer
+            ):
                 parts.append(
-                    f"[{result.agent_name}] "
-                    f"{result.answer}"
+                    result.answer
                 )
 
             elif (
                 result.status
                 == "approval_required"
+                and result.answer
             ):
                 parts.append(
-                    f"[{result.agent_name}] "
-                    f"{result.answer}"
+                    result.answer
+                )
+
+            elif result.error:
+                parts.append(
+                    result.error
                 )
 
             else:
                 parts.append(
-                    f"[{result.agent_name}] "
-                    f"ERROR: {result.error}"
+                    "The requested operation could not "
+                    "be completed."
                 )
 
         return "\n".join(parts)
