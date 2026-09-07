@@ -11,7 +11,7 @@ from typing import Any
 
 
 # ===========================================================
-# Make repository root importable
+# Make repository root importable.
 # ===========================================================
 
 AI_ROOT = Path(__file__).resolve().parents[1]
