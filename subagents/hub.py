@@ -1,4 +1,6 @@
-from config.settings import get_settings
+from config.settings import (
+    get_settings,
+)
 
 from subagents.core.loader import (
     load_agent_directory,
@@ -35,19 +37,11 @@ def build_hub() -> Orchestrator:
     """
     Build the complete Agentic Developer Hub runtime.
 
-    The Hub model serves two roles:
+    Hub:
+        loaded eagerly because ordinary requests need it.
 
-    1. Decide whether specialist delegation is useful.
-    2. Act as the primary conversational assistant when no
-       specialist is required.
-
-    Both roles share the same loaded model backend and weights.
-
-    Specialists remain responsible for domain-specific reasoning
-    and governed tool proposals.
-
-    Deterministic Python policy remains responsible for
-    validating whether actions are allowed.
+    Specialist workers:
+        registered lazily and loaded only when first used.
     """
 
     settings = get_settings()
@@ -56,15 +50,21 @@ def build_hub() -> Orchestrator:
     # Agent registry
     # ============================================================
 
-    agent_registry = AgentRegistry()
-
-    agents_dir = settings.require_path(
-        settings.agents_dir,
-        "AGENTS_DIR",
+    agent_registry = (
+        AgentRegistry()
     )
 
-    agents = load_agent_directory(
-        agents_dir
+    agents_dir = (
+        settings.require_path(
+            settings.agents_dir,
+            "AGENTS_DIR",
+        )
+    )
+
+    agents = (
+        load_agent_directory(
+            agents_dir
+        )
     )
 
     agent_registry.register_many(
@@ -72,13 +72,15 @@ def build_hub() -> Orchestrator:
     )
 
     # ============================================================
-    # Model registry
+    # Worker model registry
     # ============================================================
 
-    model_registry = ModelRegistry()
+    model_registry = (
+        ModelRegistry()
+    )
 
     # ============================================================
-    # Account worker
+    # Account worker - lazy
     # ============================================================
 
     account_model_path = (
@@ -88,24 +90,27 @@ def build_hub() -> Orchestrator:
         )
     )
 
-    account_backend = (
-        build_worker_backend(
+    account_backend_type = (
+        settings.account_backend
+    )
+
+    def load_account_backend():
+        return build_worker_backend(
             backend_type=(
-                settings.account_backend
+                account_backend_type
             ),
             model_path=(
                 account_model_path
             ),
         )
-    )
 
-    model_registry.register(
+    model_registry.register_lazy(
         settings.account_model_key,
-        account_backend,
+        load_account_backend,
     )
 
     # ============================================================
-    # Access worker
+    # Access worker - lazy
     # ============================================================
 
     if settings.access_enabled:
@@ -116,40 +121,82 @@ def build_hub() -> Orchestrator:
             )
         )
 
-        access_backend = (
-            build_worker_backend(
+        access_backend_type = (
+            settings.access_backend
+        )
+
+        def load_access_backend():
+            return build_worker_backend(
                 backend_type=(
-                    settings.access_backend
+                    access_backend_type
                 ),
                 model_path=(
                     access_model_path
                 ),
             )
+
+        model_registry.register_lazy(
+            settings.access_model_key,
+            load_access_backend,
         )
 
-        model_registry.register(
-            settings.access_model_key,
-            access_backend,
+    # ============================================================
+    # Developer worker - lazy
+    # ============================================================
+
+    if settings.developer_enabled:
+        developer_model_path = (
+            settings.require_path(
+                settings.developer_model_path,
+                "DEVELOPER_MODEL_PATH",
+            )
+        )
+
+        developer_backend_type = (
+            settings.developer_backend
+        )
+
+        def load_developer_backend():
+            return build_worker_backend(
+                backend_type=(
+                    developer_backend_type
+                ),
+                model_path=(
+                    developer_model_path
+                ),
+            )
+
+        model_registry.register_lazy(
+            settings.developer_model_key,
+            load_developer_backend,
         )
 
     # ============================================================
     # Deterministic security / execution boundary
     # ============================================================
 
-    tool_gateway = ToolGateway()
+    tool_gateway = (
+        ToolGateway()
+    )
 
     # ============================================================
     # Specialist runtime
     # ============================================================
 
     runtime = AgentRuntime(
-        agent_registry=agent_registry,
-        model_registry=model_registry,
-        tool_gateway=tool_gateway,
+        agent_registry=(
+            agent_registry
+        ),
+        model_registry=(
+            model_registry
+        ),
+        tool_gateway=(
+            tool_gateway
+        ),
     )
 
     # ============================================================
-    # Hub model
+    # Hub model - eager
     # ============================================================
 
     hub_model_path = (
@@ -159,19 +206,23 @@ def build_hub() -> Orchestrator:
         )
     )
 
-    hub_backend = build_hub_backend(
-        backend_type=(
-            settings.hub_backend
-        ),
-        model_path=(
-            hub_model_path
-        ),
-        dequantize_fp8=(
-            settings.hub_dequantize_fp8
-        ),
-        offload_folder=(
-            settings.hub_offload_folder
-        ),
+    hub_backend = (
+        build_hub_backend(
+            backend_type=(
+                settings.hub_backend
+            ),
+            model_path=(
+                hub_model_path
+            ),
+            dequantize_fp8=(
+                settings
+                .hub_dequantize_fp8
+            ),
+            offload_folder=(
+                settings
+                .hub_offload_folder
+            ),
+        )
     )
 
     # ============================================================
@@ -179,20 +230,26 @@ def build_hub() -> Orchestrator:
     # ============================================================
 
     router = LLMRouter(
-        registry=agent_registry,
-        backend=hub_backend,
+        registry=(
+            agent_registry
+        ),
+        backend=(
+            hub_backend
+        ),
     )
 
     # ============================================================
     # Primary conversational assistant
     #
-    # IMPORTANT:
-    # This deliberately shares hub_backend with the router.
-    # No second copy of the Hub model is loaded.
+    # Shares the Hub backend.
     # ============================================================
 
-    primary_assistant = PrimaryAssistant(
-        backend=hub_backend,
+    primary_assistant = (
+        PrimaryAssistant(
+            backend=(
+                hub_backend
+            ),
+        )
     )
 
     # ============================================================
@@ -202,5 +259,7 @@ def build_hub() -> Orchestrator:
     return Orchestrator(
         router=router,
         runtime=runtime,
-        primary_assistant=primary_assistant,
+        primary_assistant=(
+            primary_assistant
+        ),
     )
