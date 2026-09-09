@@ -1,3 +1,4 @@
+import json
 import re
 from pathlib import Path
 
@@ -68,12 +69,22 @@ class QwenCoderWorkerBackend(
         response: str,
     ) -> str:
         """
-        Normalize harmless Markdown JSON fences.
+        Normalize harmless model-specific formatting.
 
-        Worker protocol still expects structured JSON.
+        Supported normalization:
+        - Markdown JSON fences
+        - one valid tool-call object -> one-element array
+
+        The shared parser remains strict. Invalid JSON or unexpected
+        structures are intentionally left untouched so validation
+        still rejects them later.
         """
 
         response = response.strip()
+
+        # --------------------------------------------------------
+        # Markdown fenced JSON
+        # --------------------------------------------------------
 
         fenced_match = re.fullmatch(
             r"```(?:json)?\s*(.*?)\s*```",
@@ -85,13 +96,13 @@ class QwenCoderWorkerBackend(
         )
 
         if fenced_match:
-            return (
+            response = (
                 fenced_match
                 .group(1)
                 .strip()
             )
 
-        if response.startswith(
+        elif response.startswith(
             "```"
         ):
             newline_index = (
@@ -109,6 +120,56 @@ class QwenCoderWorkerBackend(
             response = (
                 response[:-3]
                 .strip()
+            )
+
+        # --------------------------------------------------------
+        # Qwen Coder singleton tool-call normalization
+        #
+        # Some Qwen Coder generations return:
+        #
+        # {
+        #   "name": "...",
+        #   "arguments": {...}
+        # }
+        #
+        # Our worker protocol requires:
+        #
+        # [
+        #   {
+        #     "name": "...",
+        #     "arguments": {...}
+        #   }
+        # ]
+        #
+        # Only normalize a structurally valid tool-call object.
+        # Anything else remains unchanged and will be rejected by
+        # the shared parser.
+        # --------------------------------------------------------
+
+        try:
+            parsed = json.loads(
+                response
+            )
+        except json.JSONDecodeError:
+            return response
+
+        if (
+            isinstance(parsed, dict)
+            and isinstance(
+                parsed.get("name"),
+                str,
+            )
+            and isinstance(
+                parsed.get("arguments"),
+                dict,
+            )
+        ):
+            return json.dumps(
+                [parsed],
+                separators=(
+                    ",",
+                    ":",
+                ),
             )
 
         return response
