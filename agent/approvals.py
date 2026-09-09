@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 
 from .mcp_client import (
@@ -12,6 +13,11 @@ from tools.registry import (
 APPROVALS: dict[
     str,
     dict,
+] = {}
+
+APPROVAL_LOCKS: dict[
+    str,
+    asyncio.Lock,
 ] = {}
 
 
@@ -70,7 +76,9 @@ def create_approval(
 
         "tool": tool_name,
 
-        "arguments": arguments,
+        "arguments": dict(
+            arguments
+        ),
 
         "risk": effective_risk,
 
@@ -124,65 +132,140 @@ async def approve_approval(
             ),
         }
 
-    if (
-        approval["status"]
-        != "pending"
-    ):
-        return {
-            "ok": False,
-
-            "error": (
-                f"Approval '{approval_id}' "
-                "is already "
-                f"{approval['status']}."
-            ),
-        }
-
-    print(
-        "\n[MCP Mutation] "
-        f"{approval['tool']} "
-        f"{approval['arguments']}"
+    lock = APPROVAL_LOCKS.setdefault(
+        approval_id,
+        asyncio.Lock(),
     )
 
-    result = (
-        await mcp_runtime.call_tool(
-            approval["tool"],
-            approval["arguments"],
+    async with lock:
+        approval = get_approval(
+            approval_id
         )
-    )
 
-    approval[
-        "result"
-    ] = result
+        if approval is None:
+            return {
+                "ok": False,
 
-    successful_statuses = {
-        "executed",
-        "success",
-    }
+                "error": (
+                    f"Approval '{approval_id}' "
+                    "not found."
+                ),
+            }
 
-    if (
-        result.get(
-            "ok"
-        ) is True
-        and result.get(
-            "status"
-        ) in successful_statuses
-    ):
-        approval[
-            "status"
-        ] = "approved"
+        # ----------------------------------------------------
+        # Idempotent replay
+        #
+        # The action already executed successfully.
+        # Return the exact stored result and never execute it
+        # again.
+        # ----------------------------------------------------
 
-    else:
-        approval[
-            "status"
-        ] = "failed"
-
-    return {
-        "ok": (
+        if (
             approval["status"]
             == "approved"
-        ),
+        ):
+            return {
+                "ok": True,
 
-        "approval": approval,
-        "result": result,
-    }
+                "approval": approval,
+
+                "result":
+                    approval["result"],
+
+                "replayed": True,
+            }
+
+        # ----------------------------------------------------
+        # Failed approvals are also terminal.
+        #
+        # Do not retry a mutation automatically because the
+        # failure may be ambiguous.
+        # ----------------------------------------------------
+
+        if (
+            approval["status"]
+            == "failed"
+        ):
+            return {
+                "ok": False,
+
+                "approval": approval,
+
+                "result":
+                    approval["result"],
+
+                "replayed": True,
+
+                "error": (
+                    f"Approval '{approval_id}' "
+                    "previously failed."
+                ),
+            }
+
+        if (
+            approval["status"]
+            != "pending"
+        ):
+            return {
+                "ok": False,
+
+                "approval": approval,
+
+                "error": (
+                    f"Approval '{approval_id}' "
+                    "has invalid status "
+                    f"'{approval['status']}'."
+                ),
+            }
+
+        print(
+            "\n[MCP Mutation] "
+            f"{approval['tool']} "
+            f"{approval['arguments']}"
+        )
+
+        result = (
+            await mcp_runtime.call_tool(
+                approval["tool"],
+                approval["arguments"],
+            )
+        )
+
+        approval[
+            "result"
+        ] = result
+
+        successful_statuses = {
+            "executed",
+            "success",
+        }
+
+        if (
+            result.get(
+                "ok"
+            ) is True
+            and result.get(
+                "status"
+            ) in successful_statuses
+        ):
+            approval[
+                "status"
+            ] = "approved"
+
+        else:
+            approval[
+                "status"
+            ] = "failed"
+
+        return {
+            "ok": (
+                approval["status"]
+                == "approved"
+            ),
+
+            "approval": approval,
+
+            "result": result,
+
+            "replayed": False,
+        }
