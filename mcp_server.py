@@ -11,6 +11,7 @@ from services.process_runner import (
 
 from tools.workspace import (
     workspace_mkdir as run_workspace_mkdir,
+    workspace_read_text as run_workspace_read_text,
 )
 
 
@@ -84,6 +85,19 @@ class ProcessExecResult(
     timed_out: bool | None = None
 
     duration_ms: int | None = None
+
+    error: str | None = None
+
+
+class WorkspaceReadTextResult(
+    BaseModel
+):
+    ok: bool
+    status: str
+
+    path: str | None = None
+    content: str | None = None
+    truncated: bool | None = None
 
     error: str | None = None
 
@@ -214,6 +228,24 @@ def workspace_mkdir(
     )
 
     return ProcessExecResult(
+        **result
+    )
+
+
+@mcp.tool()
+def workspace_read_text(
+    relative_path: str,
+) -> WorkspaceReadTextResult:
+    """
+    Read one approved UTF-8 text/source file from the
+    configured developer workspace.
+    """
+
+    result = run_workspace_read_text(
+        relative_path=relative_path,
+    )
+
+    return WorkspaceReadTextResult(
         **result
     )
 

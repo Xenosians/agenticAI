@@ -10,7 +10,10 @@ from .account import (
 
 from .access import check_access
 from .process import process_exec
-from .workspace import workspace_mkdir
+from .workspace import (
+    workspace_mkdir,
+    workspace_read_text,
+)
 
 
 TOOLS = {
@@ -200,8 +203,6 @@ TOOLS = {
         "risk": "low",
         "requires_approval": True,
 
-        # The model may choose the capability, but it may not
-        # invent the directory identifier.
         "grounded_arguments": [
             "directory_name",
         ],
@@ -232,6 +233,36 @@ TOOLS = {
                 "description": (
                     "Execution timeout from "
                     "1 to 30 seconds."
+                ),
+            },
+        },
+    },
+
+    "workspace_read_text": {
+        "function": workspace_read_text,
+
+        "description": (
+            "Read one approved UTF-8 text or source "
+            "file from the developer workspace."
+        ),
+
+        "risk": "read",
+        "requires_approval": False,
+
+        # A model must not invent a file path.
+        # The requested relative path must appear literally
+        # in the original user request.
+        "grounded_arguments": [
+            "relative_path",
+        ],
+
+        "parameters": {
+            "relative_path": {
+                "type": "str",
+
+                "description": (
+                    "Exact workspace-relative file path "
+                    "explicitly supplied by the user."
                 ),
             },
         },

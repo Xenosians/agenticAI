@@ -175,6 +175,41 @@ def format_tool_result(
             "completed successfully."
         )
 
+    if tool_name == "workspace_read_text":
+        path = result.get(
+            "path"
+        )
+
+        content = result.get(
+            "content"
+        )
+
+        truncated = result.get(
+            "truncated",
+            False,
+        )
+
+        if (
+            isinstance(path, str)
+            and isinstance(content, str)
+        ):
+            if truncated:
+                return (
+                    f"Contents of {path} "
+                    "(truncated to the allowed read limit):\n\n"
+                    f"{content}"
+                )
+
+            return (
+                f"Contents of {path}:\n\n"
+                f"{content}"
+            )
+
+        return (
+            "The workspace file was read successfully, "
+            "but the result did not contain valid text."
+        )
+
     #
     # New tools should get an explicit formatter rather
     # than leaking their raw internal result to the user.

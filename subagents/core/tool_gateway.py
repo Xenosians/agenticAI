@@ -34,10 +34,38 @@ def identifier_appears_in_request(
     identifier: str,
     user_input: str,
 ) -> bool:
+    """
+    Check whether an identifier appears literally in the
+    original user request without accepting partial identifiers.
+
+    Examples that should match:
+        Read tools/workspace.py.
+        Read "README.md".
+        Unlock jdoe.
+
+    Examples that should not match:
+        identifier: README.md
+        request: Read backup/README.md
+
+        identifier: README.md
+        request: Read README.md.bak
+
+        identifier: jdoe
+        request: Check jdoe-admin
+    """
+
+    identifier_chars = (
+        r"A-Za-z0-9._/\\-"
+    )
+
     pattern = (
-        rf"(?<![A-Za-z0-9._-])"
+        rf"(?<![{identifier_chars}])"
         rf"{re.escape(identifier)}"
-        rf"(?![A-Za-z0-9._-])"
+        rf"(?="
+        rf"$"
+        rf"|[\s,;:!?()\[\]{{}}\"'`]"
+        rf"|\.(?=\s|$)"
+        rf")"
     )
 
     return (
@@ -407,9 +435,20 @@ class ToolGateway:
             "ok",
             False,
         ):
+            result_status = (
+                result.get(
+                    "status"
+                )
+            )
+
+            if result_status == "denied":
+                failure_status = "denied"
+            else:
+                failure_status = "error"
+
             return {
                 "ok": False,
-                "status": "error",
+                "status": failure_status,
 
                 "tool": tool_name,
 
