@@ -68,6 +68,34 @@ def workspace_mkdir(
     )
 
 
+def workspace_git_status(
+    cwd: str | None = None,
+    timeout_seconds: int = 10,
+) -> dict[str, Any]:
+    """
+    Inspect the Git status of one repository inside the approved
+    developer workspace.
+
+    The command shape is fixed by trusted code:
+        git status --short --branch
+
+    The model cannot supply arbitrary Git arguments.
+    """
+
+    return run_process(
+        executable="git",
+        args=[
+            "status",
+            "--short",
+            "--branch",
+        ],
+        cwd=cwd,
+        timeout_seconds=(
+            timeout_seconds
+        ),
+    )
+
+
 def _validate_readable_text_path(
     relative_path: str,
 ) -> tuple[

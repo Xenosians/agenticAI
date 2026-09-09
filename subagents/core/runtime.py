@@ -210,6 +210,69 @@ def format_tool_result(
             "but the result did not contain valid text."
         )
 
+    if tool_name == "workspace_git_status":
+        stdout = result.get(
+            "stdout"
+        )
+
+        if not isinstance(
+            stdout,
+            str,
+        ):
+            return (
+                "Git status completed successfully, "
+                "but no readable status output was returned."
+            )
+
+        lines = [
+            line
+            for line
+            in stdout.splitlines()
+            if line.strip()
+        ]
+
+        if not lines:
+            return (
+                "Git status completed successfully, "
+                "but no branch information was returned."
+            )
+
+        branch_line = lines[0]
+
+        if branch_line.startswith(
+            "## "
+        ):
+            branch_status = (
+                branch_line[3:]
+                .strip()
+            )
+        else:
+            branch_status = (
+                branch_line.strip()
+            )
+
+        changes = lines[1:]
+
+        if not changes:
+            return (
+                "Git status:\n"
+                f"- Branch: {branch_status}\n"
+                "- Working tree: clean"
+            )
+
+        formatted_changes = "\n".join(
+            f"- {change}"
+            for change
+            in changes
+        )
+
+        return (
+            "Git status:\n"
+            f"- Branch: {branch_status}\n"
+            "- Working tree changes:\n"
+            f"{formatted_changes}"
+        )
+
     #
     # New tools should get an explicit formatter rather
     # than leaking their raw internal result to the user.

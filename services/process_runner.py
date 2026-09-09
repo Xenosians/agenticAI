@@ -46,6 +46,12 @@ ALLOWED_EXECUTABLES = {
         "argument_policy": "none",
     },
 
+    "git": {
+        "risk": "read",
+        "requires_approval": False,
+        "argument_policy": "git_status",
+    },
+
     "mkdir": {
         "risk": "low",
         "requires_approval": True,
@@ -174,6 +180,24 @@ def _validate_process_arguments(
                     f"Executable '{executable}' "
                     "does not accept arguments "
                     "under the current policy."
+                ),
+            )
+
+        return True, None
+
+    if argument_policy == "git_status":
+        expected_args = [
+            "status",
+            "--short",
+            "--branch",
+        ]
+
+        if args != expected_args:
+            return (
+                False,
+                (
+                    "Git currently permits only "
+                    "'git status --short --branch'."
                 ),
             )
 

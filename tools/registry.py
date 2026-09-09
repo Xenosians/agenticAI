@@ -11,6 +11,7 @@ from .account import (
 from .access import check_access
 from .process import process_exec
 from .workspace import (
+    workspace_git_status,
     workspace_mkdir,
     workspace_read_text,
 )
@@ -266,6 +267,26 @@ TOOLS = {
                 ),
             },
         },
+    },
+
+    "workspace_git_status": {
+        "function": workspace_git_status,
+
+        "description": (
+            "Inspect the current Git branch and "
+            "working-tree status of the approved "
+            "developer workspace."
+        ),
+
+        "risk": "read",
+        "requires_approval": False,
+
+        "grounded_arguments": [],
+
+        # V1 deliberately exposes no Git arguments or cwd.
+        # Trusted code owns the exact command:
+        # git status --short --branch
+        "parameters": {},
     },
 }
 

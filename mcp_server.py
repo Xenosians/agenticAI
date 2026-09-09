@@ -10,6 +10,7 @@ from services.process_runner import (
 )
 
 from tools.workspace import (
+    workspace_git_status as run_workspace_git_status,
     workspace_mkdir as run_workspace_mkdir,
     workspace_read_text as run_workspace_read_text,
 )
@@ -246,6 +247,20 @@ def workspace_read_text(
     )
 
     return WorkspaceReadTextResult(
+        **result
+    )
+
+
+@mcp.tool()
+def workspace_git_status() -> ProcessExecResult:
+    """
+    Inspect the current Git branch and working-tree status
+    through the fixed trusted Git-status command.
+    """
+
+    result = run_workspace_git_status()
+
+    return ProcessExecResult(
         **result
     )
 
