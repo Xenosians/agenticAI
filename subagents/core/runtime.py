@@ -140,6 +140,36 @@ def format_tool_result(
                     f"{working_directory}."
                 )
 
+        if (
+            executable == "ls"
+            and isinstance(
+                stdout,
+                str,
+            )
+        ):
+            entries = [
+                line.strip()
+                for line
+                in stdout.splitlines()
+                if line.strip()
+            ]
+
+            if not entries:
+                return (
+                    "The current workspace is empty."
+                )
+
+            formatted_entries = "\n".join(
+                f"- {entry}"
+                for entry
+                in entries
+            )
+
+            return (
+                "The current workspace contains:\n"
+                f"{formatted_entries}"
+            )
+
         return (
             "The approved local process "
             "completed successfully."

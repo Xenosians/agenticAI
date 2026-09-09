@@ -40,6 +40,12 @@ ALLOWED_EXECUTABLES = {
         "argument_policy": "none",
     },
 
+    "ls": {
+        "risk": "read",
+        "requires_approval": False,
+        "argument_policy": "none",
+    },
+
     "mkdir": {
         "risk": "low",
         "requires_approval": True,
