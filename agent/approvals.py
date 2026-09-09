@@ -1,41 +1,87 @@
 import uuid
 
-from .mcp_client import mcp_runtime
-from tools.registry import get_tool
+from .mcp_client import (
+    mcp_runtime,
+)
+
+from tools.registry import (
+    get_tool,
+)
 
 
-APPROVALS: dict[str, dict] = {}
+APPROVALS: dict[
+    str,
+    dict,
+] = {}
 
 
 def create_approval(
     tool_name: str,
     arguments: dict,
+    risk: str | None = None,
 ) -> dict:
-    tool = get_tool(tool_name)
+    """
+    Create an approval record.
+
+    The tool registry remains the conservative fallback.
+
+    A trusted deterministic policy resolver may supply a more
+    specific risk classification for a concrete action.
+    """
+
+    tool = get_tool(
+        tool_name
+    )
 
     if tool is None:
         raise ValueError(
             f"Unknown tool: {tool_name}"
         )
 
-    if not tool["requires_approval"]:
+    if not tool[
+        "requires_approval"
+    ]:
         raise ValueError(
             f"Tool '{tool_name}' "
-            "does not require approval."
+            "does not support approval."
         )
 
-    approval_id = uuid.uuid4().hex[:8]
+    effective_risk = (
+        risk
+        if risk is not None
+        else tool["risk"]
+    )
+
+    if not isinstance(
+        effective_risk,
+        str,
+    ):
+        raise ValueError(
+            "Approval risk must be a string."
+        )
+
+    approval_id = (
+        uuid.uuid4()
+        .hex[:8]
+    )
 
     approval = {
         "id": approval_id,
+
         "tool": tool_name,
+
         "arguments": arguments,
-        "risk": tool["risk"],
+
+        "risk": effective_risk,
+
         "status": "pending",
+
         "result": None,
     }
 
-    APPROVALS[approval_id] = approval
+    APPROVALS[
+        approval_id
+    ] = approval
 
     return approval
 
@@ -51,8 +97,13 @@ def get_approval(
 def list_pending_approvals() -> list[dict]:
     return [
         approval
-        for approval in APPROVALS.values()
-        if approval["status"] == "pending"
+
+        for approval
+        in APPROVALS.values()
+
+        if approval[
+            "status"
+        ] == "pending"
     ]
 
 
@@ -66,48 +117,72 @@ async def approve_approval(
     if approval is None:
         return {
             "ok": False,
+
             "error": (
                 f"Approval '{approval_id}' "
                 "not found."
             ),
         }
 
-    if approval["status"] != "pending":
+    if (
+        approval["status"]
+        != "pending"
+    ):
         return {
             "ok": False,
+
             "error": (
                 f"Approval '{approval_id}' "
-                f"is already {approval['status']}."
+                "is already "
+                f"{approval['status']}."
             ),
         }
 
     print(
-        f"\n[MCP Mutation] "
+        "\n[MCP Mutation] "
         f"{approval['tool']} "
         f"{approval['arguments']}"
     )
 
-    result = await mcp_runtime.call_tool(
-        approval["tool"],
-        approval["arguments"],
+    result = (
+        await mcp_runtime.call_tool(
+            approval["tool"],
+            approval["arguments"],
+        )
     )
 
-    approval["result"] = result
+    approval[
+        "result"
+    ] = result
+
+    successful_statuses = {
+        "executed",
+        "success",
+    }
 
     if (
-        result.get("ok") is True
-        and result.get("status") == "executed"
+        result.get(
+            "ok"
+        ) is True
+        and result.get(
+            "status"
+        ) in successful_statuses
     ):
-        approval["status"] = "approved"
+        approval[
+            "status"
+        ] = "approved"
 
     else:
-        approval["status"] = "failed"
+        approval[
+            "status"
+        ] = "failed"
 
     return {
         "ok": (
             approval["status"]
             == "approved"
         ),
+
         "approval": approval,
         "result": result,
     }

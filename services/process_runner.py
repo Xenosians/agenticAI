@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -18,20 +19,38 @@ MAX_OUTPUT_CHARS = 16_000
 
 
 # ============================================================
-# MVP executable policy
+# Native executable policy
 #
-# Step 1 intentionally allows exactly ONE executable.
+# Single source of truth for:
+# - allowed executables
+# - action risk
+# - approval requirement
+# - argument validation
 #
-# This is expanded later after the execution boundary itself
-# has been proven.
+# ToolGateway may inspect this policy before execution.
+#
+# run_process() evaluates it again immediately before launch,
+# so approval never bypasses the actual execution policy.
 # ============================================================
 
 ALLOWED_EXECUTABLES = {
     "pwd": {
         "risk": "read",
-        "allow_arguments": False,
+        "requires_approval": False,
+        "argument_policy": "none",
+    },
+
+    "mkdir": {
+        "risk": "low",
+        "requires_approval": True,
+        "argument_policy": "single_directory_name",
     },
 }
+
+
+SIMPLE_DIRECTORY_NAME_PATTERN = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+)
 
 
 def workspace_root() -> Path:
@@ -74,7 +93,10 @@ def resolve_cwd(
             f"Workspace root does not exist: {root}"
         )
 
-    if cwd is None or not cwd.strip():
+    if (
+        cwd is None
+        or not cwd.strip()
+    ):
         candidate = root
 
     else:
@@ -84,7 +106,9 @@ def resolve_cwd(
         )
 
         if requested.is_absolute():
-            candidate = requested.resolve()
+            candidate = (
+                requested.resolve()
+            )
 
         else:
             candidate = (
@@ -103,7 +127,7 @@ def resolve_cwd(
 
     if not candidate.is_dir():
         raise ValueError(
-            f"Working directory does not exist: "
+            "Working directory does not exist: "
             f"{candidate}"
         )
 
@@ -122,22 +146,140 @@ def _bounded_output(
     )
 
 
-def run_process(
+def _validate_process_arguments(
+    executable: str,
+    args: list[str],
+    argument_policy: str,
+) -> tuple[
+    bool,
+    str | None,
+]:
+    """
+    Validate executable-specific arguments.
+
+    MVP policies intentionally remain narrow.
+    """
+
+    if argument_policy == "none":
+        if args:
+            return (
+                False,
+                (
+                    f"Executable '{executable}' "
+                    "does not accept arguments "
+                    "under the current policy."
+                ),
+            )
+
+        return True, None
+
+    if (
+        argument_policy
+        == "single_directory_name"
+    ):
+        if len(args) != 1:
+            return (
+                False,
+                (
+                    f"Executable '{executable}' "
+                    "requires exactly one "
+                    "directory-name argument."
+                ),
+            )
+
+        directory_name = args[0]
+
+        if not directory_name:
+            return (
+                False,
+                "Directory name cannot be empty.",
+            )
+
+        if directory_name in {
+            ".",
+            "..",
+        }:
+            return (
+                False,
+                (
+                    "Directory name cannot be "
+                    "'.' or '..'."
+                ),
+            )
+
+        if (
+            "/" in directory_name
+            or "\\" in directory_name
+        ):
+            return (
+                False,
+                (
+                    "mkdir currently accepts only "
+                    "a direct child directory name, "
+                    "not a path."
+                ),
+            )
+
+        if directory_name.startswith(
+            "-"
+        ):
+            return (
+                False,
+                (
+                    "mkdir options and flags are "
+                    "not allowed."
+                ),
+            )
+
+        if (
+            SIMPLE_DIRECTORY_NAME_PATTERN
+            .fullmatch(
+                directory_name
+            )
+            is None
+        ):
+            return (
+                False,
+                (
+                    "Directory name contains "
+                    "characters not allowed by "
+                    "the current policy."
+                ),
+            )
+
+        return True, None
+
+    return (
+        False,
+        (
+            f"Executable '{executable}' "
+            "has an unknown argument policy."
+        ),
+    )
+
+
+def evaluate_process_policy(
     executable: str,
     args: list[str] | None = None,
     cwd: str | None = None,
     timeout_seconds: int = 10,
 ) -> dict[str, Any]:
     """
-    Execute one policy-approved native process.
+    Validate and classify a proposed native process without
+    executing it.
 
-    Important:
-    - no shell=True
-    - no raw command strings
-    - executable and arguments are separate
-    - cwd is restricted to an approved workspace
-    - execution has a bounded timeout
-    - stdout/stderr are bounded
+    This function is deterministic application policy.
+
+    It answers:
+    - is the executable allowed?
+    - are the arguments allowed?
+    - is cwd inside the workspace?
+    - is the timeout allowed?
+    - what risk level applies?
+    - does the action require approval?
+
+    Actual execution must call run_process(), which evaluates
+    this policy again before launching the process.
     """
 
     if not isinstance(
@@ -153,6 +295,15 @@ def run_process(
         }
 
     executable = executable.strip()
+
+    if not executable:
+        return {
+            "ok": False,
+            "status": "denied",
+            "error": (
+                "executable cannot be empty."
+            ),
+        }
 
     policy = ALLOWED_EXECUTABLES.get(
         executable
@@ -196,18 +347,22 @@ def run_process(
             ),
         }
 
-    if (
-        not policy["allow_arguments"]
-        and args
-    ):
+    (
+        arguments_valid,
+        argument_error,
+    ) = _validate_process_arguments(
+        executable=executable,
+        args=args,
+        argument_policy=policy[
+            "argument_policy"
+        ],
+    )
+
+    if not arguments_valid:
         return {
             "ok": False,
             "status": "denied",
-            "error": (
-                f"Executable '{executable}' "
-                "does not accept arguments "
-                "under the current policy."
-            ),
+            "error": argument_error,
         }
 
     if (
@@ -241,12 +396,6 @@ def run_process(
             "error": str(exc),
         }
 
-    #
-    # Resolve the approved executable before launch.
-    #
-    # The model will never control this resolved path.
-    #
-
     executable_path = shutil.which(
         executable
     )
@@ -260,6 +409,94 @@ def run_process(
                 "was not found on this machine."
             ),
         }
+
+    return {
+        "ok": True,
+        "status": "allowed",
+
+        "risk": policy[
+            "risk"
+        ],
+
+        "requires_approval": policy[
+            "requires_approval"
+        ],
+
+        "executable": executable,
+
+        "executable_path": (
+            executable_path
+        ),
+
+        "args": args,
+
+        "cwd": str(
+            resolved_cwd
+        ),
+
+        "timeout_seconds": (
+            timeout_seconds
+        ),
+    }
+
+
+def run_process(
+    executable: str,
+    args: list[str] | None = None,
+    cwd: str | None = None,
+    timeout_seconds: int = 10,
+) -> dict[str, Any]:
+    """
+    Execute one policy-approved native process.
+
+    Important:
+    - no shell=True
+    - no raw command strings
+    - executable and arguments are separate
+    - cwd is restricted to an approved workspace
+    - execution has a bounded timeout
+    - stdout/stderr are bounded
+    - policy is re-evaluated immediately before execution
+    """
+
+    decision = (
+        evaluate_process_policy(
+            executable=executable,
+            args=args,
+            cwd=cwd,
+            timeout_seconds=(
+                timeout_seconds
+            ),
+        )
+    )
+
+    if not decision.get(
+        "ok",
+        False,
+    ):
+        return decision
+
+    executable = decision[
+        "executable"
+    ]
+
+    executable_path = decision[
+        "executable_path"
+    ]
+
+    args = decision[
+        "args"
+    ]
+
+    resolved_cwd = Path(
+        decision[
+            "cwd"
+        ]
+    )
+
+    timeout_seconds = decision[
+        "timeout_seconds"
+    ]
 
     command = [
         executable_path,
@@ -290,21 +527,49 @@ def run_process(
             * 1000
         )
 
+        stdout = (
+            exc.stdout
+            if isinstance(
+                exc.stdout,
+                str,
+            )
+            else ""
+        )
+
+        stderr = (
+            exc.stderr
+            if isinstance(
+                exc.stderr,
+                str,
+            )
+            else ""
+        )
+
         return {
             "ok": False,
             "status": "timeout",
+
             "executable": executable,
             "args": args,
+
             "cwd": str(
                 resolved_cwd
             ),
+
             "exit_code": None,
-            "stdout": _bounded_output(
-                exc.stdout or ""
+
+            "stdout": (
+                _bounded_output(
+                    stdout
+                )
             ),
-            "stderr": _bounded_output(
-                exc.stderr or ""
+
+            "stderr": (
+                _bounded_output(
+                    stderr
+                )
             ),
+
             "timed_out": True,
             "duration_ms": duration_ms,
         }
@@ -314,7 +579,7 @@ def run_process(
             "ok": False,
             "status": "error",
             "error": (
-                f"Process launch failed: "
+                "Process launch failed: "
                 f"{exc}"
             ),
         }
@@ -336,39 +601,32 @@ def run_process(
     )
 
     return {
-        "ok":
-            completed.returncode == 0,
+        "ok": (
+            completed.returncode
+            == 0
+        ),
 
-        "status":
-            (
-                "success"
-                if completed.returncode == 0
-                else "error"
-            ),
+        "status": (
+            "success"
+            if completed.returncode
+            == 0
+            else "error"
+        ),
 
-        "executable":
-            executable,
+        "executable": executable,
+        "args": args,
 
-        "args":
-            args,
+        "cwd": str(
+            resolved_cwd
+        ),
 
-        "cwd":
-            str(
-                resolved_cwd
-            ),
+        "exit_code": (
+            completed.returncode
+        ),
 
-        "exit_code":
-            completed.returncode,
+        "stdout": stdout,
+        "stderr": stderr,
 
-        "stdout":
-            stdout,
-
-        "stderr":
-            stderr,
-
-        "timed_out":
-            False,
-
-        "duration_ms":
-            duration_ms,
+        "timed_out": False,
+        "duration_ms": duration_ms,
     }

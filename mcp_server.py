@@ -4,8 +4,13 @@ from mcp.server import MCPServer
 from services.directory import (
     get_directory_service,
 )
+
 from services.process_runner import (
     run_process,
+)
+
+from tools.workspace import (
+    workspace_mkdir as run_workspace_mkdir,
 )
 
 
@@ -18,9 +23,12 @@ class AccountStatusResult(
     BaseModel
 ):
     ok: bool
+
     user_id: str | None = None
+
     enabled: bool | None = None
     locked: bool | None = None
+
     error: str | None = None
 
 
@@ -28,9 +36,12 @@ class AccessCheckResult(
     BaseModel
 ):
     ok: bool
+
     user_id: str | None = None
     resource: str | None = None
+
     has_access: bool | None = None
+
     error: str | None = None
 
 
@@ -165,16 +176,41 @@ def process_exec(
     """
     Execute a structured native process through the trusted
     local process runner.
-
-    The runner itself owns the executable, argument,
-    workspace, timeout, and output policies.
     """
 
     result = run_process(
         executable=executable,
         args=args,
         cwd=cwd,
-        timeout_seconds=timeout_seconds,
+        timeout_seconds=(
+            timeout_seconds
+        ),
+    )
+
+    return ProcessExecResult(
+        **result
+    )
+
+
+@mcp.tool()
+def workspace_mkdir(
+    directory_name: str,
+    cwd: str | None = None,
+    timeout_seconds: int = 10,
+) -> ProcessExecResult:
+    """
+    Create one direct-child workspace directory through the
+    trusted process runner.
+    """
+
+    result = run_workspace_mkdir(
+        directory_name=(
+            directory_name
+        ),
+        cwd=cwd,
+        timeout_seconds=(
+            timeout_seconds
+        ),
     )
 
     return ProcessExecResult(
