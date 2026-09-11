@@ -102,6 +102,25 @@ class Settings(
     )
 
     # ============================================================
+    # DURABLE APPROVAL STORE
+    # ============================================================
+
+    approval_store_path: Path = (
+        Path(
+            ".runtime/"
+            "approvals.sqlite3"
+        )
+    )
+
+    # ============================================================
+    # PROCESS EXECUTION WORKSPACE
+    # ============================================================
+
+    process_workspace_root: Path = (
+        PROJECT_ROOT
+    )
+
+    # ============================================================
     # AGENT DEFINITIONS
     # ============================================================
 
@@ -483,6 +502,30 @@ class Settings(
 
         Relative runtime paths are anchored to PROJECT_ROOT
         instead of depending on the process working directory.
+        """
+
+        path = (
+            value
+            .expanduser()
+        )
+
+        if not path.is_absolute():
+            path = (
+                PROJECT_ROOT
+                / path
+            )
+
+        return path.resolve()
+
+    def resolve_project_path(
+        self,
+        value: Path,
+    ) -> Path:
+        """
+        Resolve a configured project-relative path.
+
+        Relative paths are anchored to PROJECT_ROOT instead of
+        depending on the process working directory.
         """
 
         path = (

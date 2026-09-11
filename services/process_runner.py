@@ -1,4 +1,3 @@
-import os
 import re
 import shutil
 import subprocess
@@ -7,12 +6,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-
-PROJECT_ROOT = (
-    Path(__file__)
-    .resolve()
-    .parents[1]
+from config import (
+    get_settings,
 )
+
 
 MAX_TIMEOUT_SECONDS = 30
 MAX_OUTPUT_CHARS = 16_000
@@ -70,24 +67,18 @@ def workspace_root() -> Path:
     Return the directory inside which process execution is
     allowed.
 
-    Defaults to this repository.
+    PROCESS_WORKSPACE_ROOT is owned by the centralized Settings
+    provider.
 
-    Later this may be configured to something such as:
-        /mnt/c/project
+    The default remains this repository, preserving the
+    existing MVP behavior.
     """
 
-    configured = os.getenv(
-        "PROCESS_WORKSPACE_ROOT"
+    settings = get_settings()
+
+    return settings.resolve_project_path(
+        settings.process_workspace_root
     )
-
-    if configured:
-        return (
-            Path(configured)
-            .expanduser()
-            .resolve()
-        )
-
-    return PROJECT_ROOT
 
 
 def resolve_cwd(
@@ -617,7 +608,7 @@ def run_process(
     duration_ms = int(
         (
             time.monotonic()
-            - started_at
+                - started_at
         )
         * 1000
     )

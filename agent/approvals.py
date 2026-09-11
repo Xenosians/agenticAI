@@ -1,6 +1,11 @@
 import asyncio
-import os
 import uuid
+
+from pathlib import Path
+
+from config import (
+    get_settings,
+)
 
 from .approval_store import (
     ApprovalEntry,
@@ -25,10 +30,11 @@ APPROVAL_LOCKS: dict[
 _APPROVAL_STORE: ApprovalStore | None = None
 
 
-def approval_store_path() -> str:
-    return os.getenv(
-        "APPROVAL_STORE_PATH",
-        ".runtime/approvals.sqlite3",
+def approval_store_path() -> Path:
+    settings = get_settings()
+
+    return settings.resolve_runtime_path(
+        settings.approval_store_path
     )
 
 
