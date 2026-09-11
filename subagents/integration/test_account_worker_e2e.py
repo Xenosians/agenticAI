@@ -1,28 +1,46 @@
 import asyncio
-from pathlib import Path
 
-from agent.mcp_client import mcp_runtime
-
-from subagents.core.loader import load_agent_directory
-from subagents.core.registry import AgentRegistry
-from subagents.core.runtime import AgentRuntime
-from subagents.core.tool_gateway import ToolGateway
-from subagents.core.types import AgentTask
-from subagents.llm.qwen_funcall import QwenFuncCallBackend
-from subagents.llm.registry import ModelRegistry
-
-
-MODEL_PATH = Path(
-    "/mnt/c/project/agenticaiPersonal/Models/"
-    "qwen2.5-0.5b-funccall"
+from config import (
+    get_settings,
 )
 
-MODEL_NAME = "qwen2.5-0.5b-funccall"
+from agent.mcp_client import (
+    mcp_runtime,
+)
+
+from subagents.core.loader import (
+    load_agent_directory,
+)
+
+from subagents.core.registry import (
+    AgentRegistry,
+)
+
+from subagents.core.runtime import (
+    AgentRuntime,
+)
+
+from subagents.core.tool_gateway import (
+    ToolGateway,
+)
+
+from subagents.core.types import (
+    AgentTask,
+)
+
+from subagents.llm.qwen_funcall import (
+    QwenFuncCallBackend,
+)
+
+from subagents.llm.registry import (
+    ModelRegistry,
+)
 
 
 def fail_if_approval_requested(
     tool_name,
     arguments,
+    risk=None,
 ):
     """
     This integration test is intentionally read-only.
@@ -32,36 +50,64 @@ def fail_if_approval_requested(
     """
 
     raise AssertionError(
-        f"Read-only test unexpectedly requested approval "
-        f"for tool '{tool_name}' with arguments {arguments}"
+        "Read-only test unexpectedly requested "
+        f"approval for tool '{tool_name}' "
+        f"with arguments {arguments} "
+        f"and risk {risk}"
     )
 
 
 def build_runtime() -> AgentRuntime:
+    settings = get_settings()
+
     # -----------------------------------------
     # Agent definitions
     # -----------------------------------------
 
-    agent_registry = AgentRegistry()
-
-    agents = load_agent_directory(
-        "subagents/agents"
+    agent_registry = (
+        AgentRegistry()
     )
 
-    agent_registry.register_many(agents)
+    agents_dir = (
+        settings.require_path(
+            settings.agents_dir,
+            "AGENTS_DIR",
+        )
+    )
+
+    agents = (
+        load_agent_directory(
+            agents_dir
+        )
+    )
+
+    agent_registry.register_many(
+        agents
+    )
 
     # -----------------------------------------
     # Real worker model
     # -----------------------------------------
 
-    model_registry = ModelRegistry()
+    model_registry = (
+        ModelRegistry()
+    )
 
-    backend = QwenFuncCallBackend(
-        MODEL_PATH
+    model_path = (
+        settings.require_path(
+            settings.account_model_path,
+            "ACCOUNT_MODEL_PATH",
+        )
+    )
+
+    backend = (
+        QwenFuncCallBackend(
+            model_path
+        )
     )
 
     model_registry.register(
-        MODEL_NAME,
+        settings.account_model_key,
         backend,
     )
 
@@ -69,15 +115,25 @@ def build_runtime() -> AgentRuntime:
     # Real ToolGateway + real MCP
     # -----------------------------------------
 
-    tool_gateway = ToolGateway(
-        approval_creator=fail_if_approval_requested,
-        mcp=mcp_runtime,
+    tool_gateway = (
+        ToolGateway(
+            approval_creator=(
+                fail_if_approval_requested
+            ),
+            mcp=mcp_runtime,
+        )
     )
 
     return AgentRuntime(
-        agent_registry=agent_registry,
-        model_registry=model_registry,
-        tool_gateway=tool_gateway,
+        agent_registry=(
+            agent_registry
+        ),
+        model_registry=(
+            model_registry
+        ),
+        tool_gateway=(
+            tool_gateway
+        ),
     )
 
 
@@ -85,32 +141,66 @@ async def run_e2e_test():
     await mcp_runtime.start()
 
     try:
-        runtime = build_runtime()
+        runtime = (
+            build_runtime()
+        )
 
         task = AgentTask(
-            task_id="e2e-account-001",
-            agent_name="account-specialist",
-            user_request="Is jdoe locked?",
+            task_id=(
+                "e2e-account-001"
+            ),
+            agent_name=(
+                "account-specialist"
+            ),
+            user_request=(
+                "Is jdoe locked?"
+            ),
         )
 
-        result = await runtime.run(task)
+        result = (
+            await runtime.run(
+                task
+            )
+        )
 
         print()
-        print("===== E2E RESULT =====")
-        print(f"status: {result.status}")
-        print(f"agent: {result.agent_name}")
-        print(f"tool: {result.proposed_tool}")
         print(
-            f"arguments: "
+            "===== E2E RESULT ====="
+        )
+
+        print(
+            f"status: {result.status}"
+        )
+
+        print(
+            f"agent: {result.agent_name}"
+        )
+
+        print(
+            f"tool: {result.proposed_tool}"
+        )
+
+        print(
+            "arguments: "
             f"{result.proposed_arguments}"
         )
-        print(f"answer: {result.answer}")
-        print(f"error: {result.error}")
-        print("======================")
 
-        assert result.status == "success", (
-            result.error
+        print(
+            f"answer: {result.answer}"
         )
+
+        print(
+            f"error: {result.error}"
+        )
+
+        print(
+            "======================"
+        )
+
+        assert (
+            result.status
+            == "success"
+        ), result.error
 
         assert (
             result.agent_name
@@ -122,13 +212,23 @@ async def run_e2e_test():
             == "account_status"
         )
 
-        assert result.proposed_arguments == {
-            "user_id": "jdoe"
-        }
+        assert (
+            result.proposed_arguments
+            == {
+                "user_id":
+                    "jdoe"
+            }
+        )
 
-        assert result.answer is not None
+        assert (
+            result.answer
+            is not None
+        )
 
-        assert "jdoe" in result.answer
+        assert (
+            "jdoe"
+            in result.answer
+        )
 
     finally:
         await mcp_runtime.stop()

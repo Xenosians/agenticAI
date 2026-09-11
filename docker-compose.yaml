@@ -12,7 +12,7 @@ services:
       SAMBA_DOMAIN: ${SAMBA_DOMAIN:-ITSM}
       SAMBA_REALM: ${SAMBA_REALM:-itsm.local}
       SAMBA_NETBIOS: ${SAMBA_NETBIOS:-ITSMDC}
-      SAMBA_ADMIN_PASS: ${SAMBA_ADMIN_PASS:-ItsmAdminDevOnly#2026}
+      SAMBA_ADMIN_PASS: ${SAMBA_ADMIN_PASS:?SAMBA_ADMIN_PASS must be set}
 
     ports:
       - "1389:389"

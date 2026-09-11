@@ -1,48 +1,71 @@
 import json
-from pathlib import Path
 
 import pytest
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from subagents.llm.qwen_funcall import QwenFuncCallBackend
 
+from config import (
+    get_settings,
+)
 
-MODEL_PATH = Path(
-    "/mnt/c/project/agenticaiPersonal/Models/qwen2.5-0.5b-funccall"
+from subagents.llm.qwen_funcall import (
+    QwenFuncCallBackend,
 )
 
 
 ACCOUNT_TOOLS = [
     {
-        "name": "account_status",
+        "name":
+            "account_status",
+
         "description": (
-            "Check whether a user account exists, is enabled, "
-            "and whether it is locked."
+            "Check whether a user account exists, "
+            "is enabled, and whether it is locked."
         ),
+
         "parameters": {
             "user_id": {
-                "description": "Exact user identifier to check.",
-                "type": "str",
+                "description":
+                    "Exact user identifier to check.",
+
+                "type":
+                    "str",
             }
         },
     },
+
     {
-        "name": "unlock_user",
-        "description": "Unlock a locked user account.",
+        "name":
+            "unlock_user",
+
+        "description":
+            "Unlock a locked user account.",
+
         "parameters": {
             "user_id": {
-                "description": "Exact user identifier to unlock.",
-                "type": "str",
+                "description":
+                    "Exact user identifier to unlock.",
+
+                "type":
+                    "str",
             }
         },
     },
+
     {
-        "name": "reset_password",
-        "description": "Request a password reset for a user account.",
+        "name":
+            "reset_password",
+
+        "description": (
+            "Request a password reset "
+            "for a user account."
+        ),
+
         "parameters": {
             "user_id": {
-                "description": "Exact user identifier.",
-                "type": "str",
+                "description":
+                    "Exact user identifier.",
+
+                "type":
+                    "str",
             }
         },
     },
@@ -62,12 +85,24 @@ def build_system_prompt() -> str:
         f"{json.dumps(ACCOUNT_TOOLS, indent=2)}"
     )
 
-@pytest.fixture(scope="module")
+
+@pytest.fixture(
+    scope="module"
+)
 def backend():
-    return QwenFuncCallBackend(
-        "/mnt/c/project/agenticaiPersonal/models/qwen2.5-0.5b-funccall"
+    settings = get_settings()
+
+    model_path = (
+        settings.require_path(
+            settings.account_model_path,
+            "ACCOUNT_MODEL_PATH",
+        )
     )
-    
+
+    return QwenFuncCallBackend(
+        model_path
+    )
+
 
 def generate_tool_call(
     backend,
@@ -75,18 +110,27 @@ def generate_tool_call(
 ) -> list[dict]:
     messages = [
         {
-            "role": "system",
-            "content": build_system_prompt(),
+            "role":
+                "system",
+
+            "content":
+                build_system_prompt(),
         },
+
         {
-            "role": "user",
-            "content": user_request,
+            "role":
+                "user",
+
+            "content":
+                user_request,
         },
     ]
 
-    response = backend.generate(
-        messages,
-        max_new_tokens=128,
+    response = (
+        backend.generate(
+            messages,
+            max_new_tokens=128,
+        )
     )
 
     print(
@@ -94,15 +138,26 @@ def generate_tool_call(
         f"\nRAW MODEL OUTPUT: {response}"
     )
 
-    parsed = json.loads(response)
+    parsed = json.loads(
+        response
+    )
 
-    assert isinstance(parsed, list)
-    assert len(parsed) >= 1
+    assert isinstance(
+        parsed,
+        list,
+    )
+
+    assert (
+        len(parsed)
+        >= 1
+    )
 
     return parsed
 
 
-def test_account_status_selection(backend):
+def test_account_status_selection(
+    backend,
+):
     calls = generate_tool_call(
         backend,
         "Is jdoe locked?",
@@ -110,11 +165,22 @@ def test_account_status_selection(backend):
 
     call = calls[0]
 
-    assert call["name"] == "account_status"
-    assert call["arguments"]["user_id"] == "jdoe"
+    assert (
+        call["name"]
+        == "account_status"
+    )
+
+    assert (
+        call["arguments"][
+            "user_id"
+        ]
+        == "jdoe"
+    )
 
 
-def test_unlock_selection(backend):
+def test_unlock_selection(
+    backend,
+):
     calls = generate_tool_call(
         backend,
         "Unlock jdoe",
@@ -122,11 +188,22 @@ def test_unlock_selection(backend):
 
     call = calls[0]
 
-    assert call["name"] == "unlock_user"
-    assert call["arguments"]["user_id"] == "jdoe"
+    assert (
+        call["name"]
+        == "unlock_user"
+    )
+
+    assert (
+        call["arguments"][
+            "user_id"
+        ]
+        == "jdoe"
+    )
 
 
-def test_password_reset_selection(backend):
+def test_password_reset_selection(
+    backend,
+):
     calls = generate_tool_call(
         backend,
         "Reset the password for jdoe",
@@ -134,5 +211,14 @@ def test_password_reset_selection(backend):
 
     call = calls[0]
 
-    assert call["name"] == "reset_password"
-    assert call["arguments"]["user_id"] == "jdoe"
+    assert (
+        call["name"]
+        == "reset_password"
+    )
+
+    assert (
+        call["arguments"][
+            "user_id"
+        ]
+        == "jdoe"
+    )

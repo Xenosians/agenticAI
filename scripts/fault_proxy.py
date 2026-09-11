@@ -1,38 +1,101 @@
 from __future__ import annotations
 
 import os
-from collections import defaultdict
-from typing import Any
+
+from collections import (
+    defaultdict,
+)
+
+from typing import (
+    Any,
+)
 
 import httpx
+
 from fastapi import (
     FastAPI,
     Request,
     Response,
 )
-from fastapi.responses import JSONResponse
+
+from fastapi.responses import (
+    JSONResponse,
+)
 
 
-REAL_AI_URL = os.getenv(
-    "REAL_AI_URL",
-    "http://127.0.0.1:8003",
-).rstrip("/")
+# ============================================================
+# FAULT TEST CONFIGURATION
+#
+# These values belong to the fault-test harness rather than
+# the production AI runtime.
+#
+# Environment variables allow the harness to run against
+# different local ports or service locations without editing
+# source code.
+# ============================================================
 
-REAL_PHOENIX_URL = os.getenv(
-    "REAL_PHOENIX_URL",
-    "http://127.0.0.1:4000",
-).rstrip("/")
 
-FAIL_COMPLETIONS = int(
-    os.getenv(
+def require_url(
+    name: str,
+) -> str:
+    value = (
+        os.getenv(
+            name
+        )
+    )
+
+    if (
+        value is None
+        or not value.strip()
+    ):
+        raise RuntimeError(
+            f"{name} must be configured "
+            "for the fault proxy."
+        )
+
+    return (
+        value
+        .strip()
+        .rstrip("/")
+    )
+
+
+REAL_AI_URL = require_url(
+    "REAL_AI_URL"
+)
+
+REAL_PHOENIX_URL = require_url(
+    "REAL_PHOENIX_URL"
+)
+
+
+def completion_failure_limit() -> int:
+    raw_value = os.getenv(
         "FAIL_COMPLETIONS",
         "3",
     )
+
+    try:
+        return int(
+            raw_value
+        )
+
+    except ValueError as exc:
+        raise RuntimeError(
+            "FAIL_COMPLETIONS must be "
+            "an integer."
+        ) from exc
+
+
+FAIL_COMPLETIONS = (
+    completion_failure_limit()
 )
 
 
 app = FastAPI(
-    title="ITSM Handshake Fault Proxy",
+    title=(
+        "ITSM Handshake Fault Proxy"
+    ),
 )
 
 
@@ -44,24 +107,39 @@ app = FastAPI(
 completion_failures: dict[
     str,
     int,
-] = defaultdict(int)
+] = defaultdict(
+    int
+)
 
 completion_forwards: dict[
     str,
     int,
-] = defaultdict(int)
+] = defaultdict(
+    int
+)
 
 execution_requests: dict[
     str,
     int,
-] = defaultdict(int)
+] = defaultdict(
+    int
+)
 
-released_jobs: set[str] = set()
+released_jobs: set[
+    str
+] = set()
 
 events: dict[
     str,
-    list[dict[str, Any]],
-] = defaultdict(list)
+    list[
+        dict[
+            str,
+            Any,
+        ]
+    ],
+] = defaultdict(
+    list
+)
 
 
 # ============================================================
@@ -75,11 +153,15 @@ def record_event(
     **details: Any,
 ) -> None:
     entry = {
-        "event": event,
+        "event":
+            event,
+
         **details,
     }
 
-    events[job_id].append(
+    events[
+        job_id
+    ].append(
         entry
     )
 
@@ -95,23 +177,33 @@ async def forward(
     method: str,
     url: str,
     *,
-    headers: dict[str, str] | None = None,
+    headers: (
+        dict[
+            str,
+            str,
+        ]
+        | None
+    ) = None,
     json_body: Any = None,
 ) -> Response:
     async with httpx.AsyncClient(
         timeout=30.0,
     ) as client:
-        response = await client.request(
-            method,
-            url,
-            headers=headers,
-            json=json_body,
+        response = (
+            await client.request(
+                method,
+                url,
+                headers=headers,
+                json=json_body,
+            )
         )
 
     response_headers = {}
 
-    content_type = response.headers.get(
-        "content-type"
+    content_type = (
+        response.headers.get(
+            "content-type"
+        )
     )
 
     if content_type:
@@ -120,16 +212,27 @@ async def forward(
         ] = content_type
 
     return Response(
-        content=response.content,
-        status_code=response.status_code,
-        headers=response_headers,
+        content=(
+            response.content
+        ),
+
+        status_code=(
+            response.status_code
+        ),
+
+        headers=(
+            response_headers
+        ),
     )
 
 
 def forwarded_headers(
     request: Request,
 ) -> dict[str, str]:
-    result: dict[str, str] = {}
+    result: dict[
+        str,
+        str,
+    ] = {}
 
     internal_token = (
         request.headers.get(
@@ -150,13 +253,17 @@ def forwarded_headers(
 # ============================================================
 
 
-@app.get("/__faults")
+@app.get(
+    "/__faults"
+)
 async def fault_state() -> dict:
     return {
         "fail_completions":
             FAIL_COMPLETIONS,
+
         "real_ai_url":
             REAL_AI_URL,
+
         "real_phoenix_url":
             REAL_PHOENIX_URL,
     }
@@ -171,20 +278,28 @@ async def job_fault_state(
     return {
         "job_id":
             job_id,
+
         "execution_requests":
             execution_requests[
                 job_id
             ],
+
         "completion_failures":
             completion_failures[
                 job_id
             ],
+
         "completion_forwards":
             completion_forwards[
                 job_id
             ],
+
         "released":
-            job_id in released_jobs,
+            (
+                job_id
+                in released_jobs
+            ),
+
         "events":
             events[
                 job_id
@@ -210,6 +325,7 @@ async def release_job(
     return {
         "job_id":
             job_id,
+
         "released":
             True,
     }
@@ -248,6 +364,7 @@ async def reset_job(
     return {
         "job_id":
             job_id,
+
         "reset":
             True,
     }
@@ -258,19 +375,29 @@ async def reset_job(
 # ============================================================
 
 
-@app.get("/ready")
+@app.get(
+    "/ready"
+)
 async def ai_ready() -> Response:
     return await forward(
         "GET",
-        f"{REAL_AI_URL}/ready",
+        (
+            f"{REAL_AI_URL}"
+            "/ready"
+        ),
     )
 
 
-@app.get("/health")
+@app.get(
+    "/health"
+)
 async def ai_health() -> Response:
     return await forward(
         "GET",
-        f"{REAL_AI_URL}/health",
+        (
+            f"{REAL_AI_URL}"
+            "/health"
+        ),
     )
 
 
@@ -280,15 +407,21 @@ async def ai_health() -> Response:
 async def execute_job(
     request: Request,
 ) -> Response:
-    payload = await request.json()
-
-    job_id = payload.get(
-        "job_id",
-        "unknown",
+    payload = (
+        await request.json()
     )
 
-    attempt = payload.get(
-        "attempt"
+    job_id = (
+        payload.get(
+            "job_id",
+            "unknown",
+        )
+    )
+
+    attempt = (
+        payload.get(
+            "attempt"
+        )
     )
 
     execution_requests[
@@ -301,20 +434,23 @@ async def execute_job(
         attempt=attempt,
     )
 
-    response = await forward(
-        "POST",
-        (
-            f"{REAL_AI_URL}"
-            "/v1/jobs/execute"
-        ),
-        json_body=payload,
+    response = (
+        await forward(
+            "POST",
+            (
+                f"{REAL_AI_URL}"
+                "/v1/jobs/execute"
+            ),
+            json_body=payload,
+        )
     )
 
     record_event(
         job_id,
         "python_execution_ack",
-        http_status=
-            response.status_code,
+        http_status=(
+            response.status_code
+        ),
     )
 
     return response
@@ -333,10 +469,14 @@ async def completion(
     job_id: str,
     request: Request,
 ) -> Response:
-    payload = await request.json()
+    payload = (
+        await request.json()
+    )
 
-    attempt = payload.get(
-        "attempt"
+    attempt = (
+        payload.get(
+            "attempt"
+        )
     )
 
     failures_so_far = (
@@ -346,9 +486,11 @@ async def completion(
     )
 
     should_fail = (
-        job_id not in released_jobs
+        job_id
+        not in released_jobs
         and (
-            FAIL_COMPLETIONS < 0
+            FAIL_COMPLETIONS
+            < 0
             or failures_so_far
             < FAIL_COMPLETIONS
         )
@@ -369,17 +511,21 @@ async def completion(
             job_id,
             "completion_blocked",
             attempt=attempt,
-            failure_number=
-                failure_number,
+            failure_number=(
+                failure_number
+            ),
         )
 
         return JSONResponse(
             status_code=503,
+
             content={
                 "error":
                     "fault_injection",
+
                 "job_id":
                     job_id,
+
                 "failure":
                     failure_number,
             },
@@ -395,25 +541,32 @@ async def completion(
         attempt=attempt,
     )
 
-    response = await forward(
-        "POST",
-        (
-            f"{REAL_PHOENIX_URL}"
-            f"/api/internal/v1/jobs/"
-            f"{job_id}"
-            "/completion"
-        ),
-        headers=forwarded_headers(
-            request
-        ),
-        json_body=payload,
+    response = (
+        await forward(
+            "POST",
+            (
+                f"{REAL_PHOENIX_URL}"
+                f"/api/internal/v1/jobs/"
+                f"{job_id}"
+                "/completion"
+            ),
+
+            headers=(
+                forwarded_headers(
+                    request
+                )
+            ),
+
+            json_body=payload,
+        )
     )
 
     record_event(
         job_id,
         "phoenix_completion_ack",
-        http_status=
-            response.status_code,
+        http_status=(
+            response.status_code
+        ),
     )
 
     return response
@@ -430,11 +583,16 @@ async def completion(
 async def agent_run(
     request: Request,
 ) -> Response:
-    payload = await request.json()
+    payload = (
+        await request.json()
+    )
 
     return await forward(
         "POST",
-        f"{REAL_AI_URL}/v1/agent/run",
+        (
+            f"{REAL_AI_URL}"
+            "/v1/agent/run"
+        ),
         json_body=payload,
     )
 
