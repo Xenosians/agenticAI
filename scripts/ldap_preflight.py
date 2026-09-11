@@ -3,37 +3,54 @@ import sys
 from pathlib import Path
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = (
+    Path(__file__)
+    .resolve()
+    .parents[1]
+)
 
 if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-
-from config import get_bool_env, get_env
-from services.directory.ldap import LdapDirectoryService
-
-
-def check_config() -> dict:
-    required = [
-        "AD_HOST",
-        "AD_BIND_PASSWORD",
-        "AD_BASE_DN",
-        "AD_TEST_USER",
-    ]
-
-    missing = [
-        name
-        for name in required
-        if not get_env(name)
-    ]
-
-    # Accept either naming convention.
-    bind_identity = (
-        get_env("AD_BIND_USER")
-        or get_env("AD_BIND_DN")
+    sys.path.insert(
+        0,
+        str(PROJECT_ROOT),
     )
 
-    if not bind_identity:
+
+from config import (
+    Settings,
+    get_settings,
+)
+from services.directory.ldap import (
+    LdapDirectoryService,
+)
+
+
+def check_config(
+    settings: Settings,
+) -> dict:
+    missing = []
+
+    if not settings.ad_host:
+        missing.append(
+            "AD_HOST"
+        )
+
+    if not settings.ad_bind_password:
+        missing.append(
+            "AD_BIND_PASSWORD"
+        )
+
+    if not settings.ad_base_dn:
+        missing.append(
+            "AD_BASE_DN"
+        )
+
+    if not settings.ad_test_user:
+        missing.append(
+            "AD_TEST_USER"
+        )
+
+    if not settings.ad_read_bind_identity:
         missing.append(
             "AD_BIND_USER or AD_BIND_DN"
         )
@@ -50,13 +67,16 @@ def check_tcp(
 ) -> dict:
     try:
         with socket.create_connection(
-            (host, port),
+            (
+                host,
+                port,
+            ),
             timeout=5,
         ):
             return {
                 "ok": True,
                 "message": (
-                    f"TCP connection to "
+                    "TCP connection to "
                     f"{host}:{port} succeeded."
                 ),
             }
@@ -69,56 +89,65 @@ def check_tcp(
 
 
 def main():
-    print("LDAP Preflight")
-    print("==============")
+    print(
+        "LDAP Preflight"
+    )
+
+    print(
+        "=============="
+    )
+
     print()
+
+    settings = get_settings()
 
     # --------------------------------------------------
     # CONFIGURATION
     # --------------------------------------------------
 
-    config_result = check_config()
+    config_result = (
+        check_config(
+            settings
+        )
+    )
 
     if not config_result["ok"]:
-        print("[FAIL] Configuration")
+        print(
+            "[FAIL] Configuration"
+        )
+
         print(
             "Missing:",
             ", ".join(
-                config_result["missing"]
+                config_result[
+                    "missing"
+                ]
             ),
         )
+
         return
 
-    print("[OK] Configuration present")
-
-    host = get_env("AD_HOST")
-
-    use_ssl = get_bool_env(
-        "AD_USE_SSL",
-        True,
+    print(
+        "[OK] Configuration present"
     )
 
-    default_port = (
-        636
-        if use_ssl
-        else 389
+    host = settings.ad_host
+
+    use_ssl = (
+        settings.ad_use_ssl
     )
 
-    port = int(
-        get_env(
-            "AD_PORT",
-            str(default_port),
-        )
-        or default_port
+    port = (
+        settings.resolved_ad_port
     )
 
-    test_user = get_env(
-        "AD_TEST_USER"
+    test_user = (
+        settings.ad_test_user
     )
 
     bind_identity = (
-        get_env("AD_BIND_USER")
-        or get_env("AD_BIND_DN")
+        settings
+        .ad_read_bind_identity
     )
 
     print(
@@ -130,14 +159,15 @@ def main():
     )
 
     print(
-        f"Bind identity: {bind_identity}"
+        "Bind identity: "
+        f"{bind_identity}"
     )
 
     print(
         f"Test user: {test_user}"
     )
 
-    # Never print the password.
+    # Never print credentials.
     print()
 
     # --------------------------------------------------
@@ -150,15 +180,21 @@ def main():
     )
 
     if not tcp_result["ok"]:
-        print("[FAIL] TCP connection")
+        print(
+            "[FAIL] TCP connection"
+        )
+
         print(
             tcp_result["error"]
         )
+
         return
 
     print(
         "[OK]",
-        tcp_result["message"],
+        tcp_result[
+            "message"
+        ],
     )
 
     # --------------------------------------------------
@@ -174,7 +210,9 @@ def main():
         print(
             "[FAIL] LDAP configuration"
         )
+
         print(exc)
+
         return
 
     print(
@@ -200,7 +238,9 @@ def main():
         print(
             "[FAIL] LDAP bind"
         )
+
         print(exc)
+
         return
 
     finally:
@@ -211,8 +251,10 @@ def main():
     # TEST ACCOUNT LOOKUP
     # --------------------------------------------------
 
-    result = directory.account_status(
-        test_user
+    result = (
+        directory.account_status(
+            test_user
+        )
     )
 
     if not result.get(
@@ -237,8 +279,14 @@ def main():
     )
 
     print()
-    print("Result:")
-    print(result)
+
+    print(
+        "Result:"
+    )
+
+    print(
+        result
+    )
 
     print()
 

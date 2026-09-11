@@ -1,6 +1,5 @@
 from contextlib import asynccontextmanager
 import asyncio
-import os
 import uuid
 from dataclasses import asdict
 from typing import Any
@@ -20,37 +19,11 @@ from agent.completion_outbox import (
     OutboxEntry,
 )
 from agent.mcp_client import mcp_runtime
+from config import (
+    Settings,
+    get_settings,
+)
 from subagents.hub import build_hub
-
-
-# ============================================================
-# Configuration
-# ============================================================
-
-
-def phoenix_base_url() -> str:
-    return os.getenv(
-        "PHOENIX_BASE_URL",
-        "http://127.0.0.1:4000",
-    ).rstrip("/")
-
-
-def internal_job_token() -> str:
-    return os.getenv(
-        "ITSM_INTERNAL_JOB_TOKEN",
-        "itsm-dev-internal-2026",
-    )
-
-
-def completion_outbox_path() -> str:
-    return os.getenv(
-        "COMPLETION_OUTBOX_PATH",
-        ".runtime/completion_outbox.sqlite3",
-    )
-
-
-OUTBOX_RETRY_SECONDS = 5.0
-OUTBOX_BATCH_SIZE = 100
 
 
 # ============================================================
@@ -59,19 +32,31 @@ OUTBOX_BATCH_SIZE = 100
 
 
 class AgentRunRequest(BaseModel):
-    user_id: str = Field(min_length=1)
-    message: str = Field(min_length=1)
+    user_id: str = Field(
+        min_length=1
+    )
+
+    message: str = Field(
+        min_length=1
+    )
 
 
 class JobExecuteRequest(BaseModel):
-    job_id: str = Field(min_length=1)
+    job_id: str = Field(
+        min_length=1
+    )
 
     attempt: int = Field(
         ge=1,
     )
 
-    user_id: str = Field(min_length=1)
-    message: str = Field(min_length=1)
+    user_id: str = Field(
+        min_length=1
+    )
+
+    message: str = Field(
+        min_length=1
+    )
 
 
 # ============================================================
@@ -106,9 +91,15 @@ def selected_agent(
     )
 
     if (
-        isinstance(routes, list)
+        isinstance(
+            routes,
+            list,
+        )
         and routes
-        and isinstance(routes[0], str)
+        and isinstance(
+            routes[0],
+            str,
+        )
     ):
         return routes[0]
 
@@ -192,10 +183,13 @@ def completion_payload(
 
     else:
         callback["error"] = (
-            result_dict.get("error")
+            result_dict.get(
+                "error"
+            )
             or (
                 "AI job finished with "
-                f"status={result_dict.get('status')}"
+                "status="
+                f"{result_dict.get('status')}"
             )
         )
 
@@ -266,6 +260,7 @@ def response_body(
 ) -> Any:
     try:
         return response.json()
+
     except ValueError:
         return response.text
 
@@ -291,8 +286,12 @@ async def deliver_outbox_entry(
         app.state.phoenix_client
     )
 
+    settings: Settings = (
+        app.state.settings
+    )
+
     url = (
-        f"{phoenix_base_url()}"
+        f"{settings.require_phoenix_base_url()}"
         f"/api/internal/v1/jobs/"
         f"{entry.job_id}"
         f"/completion"
@@ -300,7 +299,8 @@ async def deliver_outbox_entry(
 
     headers = {
         "x-internal-token":
-            internal_job_token(),
+            settings
+            .require_internal_job_token(),
     }
 
     try:
@@ -311,7 +311,9 @@ async def deliver_outbox_entry(
         )
 
     except Exception as exc:
-        error = repr(exc)
+        error = repr(
+            exc
+        )
 
         outbox.mark_delivery_attempt(
             entry.job_id,
@@ -336,7 +338,11 @@ async def deliver_outbox_entry(
     # Phoenix ACK
     # --------------------------------------------------------
 
-    if 200 <= response.status_code < 300:
+    if (
+        200
+        <= response.status_code
+        < 300
+    ):
         outbox.delete(
             entry.job_id,
             entry.attempt,
@@ -360,9 +366,15 @@ async def deliver_outbox_entry(
     # --------------------------------------------------------
 
     if (
-        response.status_code == 409
-        and isinstance(body, dict)
-        and body.get("error")
+        response.status_code
+        == 409
+        and isinstance(
+            body,
+            dict,
+        )
+        and body.get(
+            "error"
+        )
         == "stale_attempt"
     ):
         outbox.delete(
@@ -381,13 +393,6 @@ async def deliver_outbox_entry(
 
     # --------------------------------------------------------
     # Any other rejection remains durable.
-    #
-    # Examples:
-    #   Phoenix temporarily unavailable
-    #   incorrect internal token
-    #   unexpected state conflict
-    #
-    # We do NOT throw the completion away.
     # --------------------------------------------------------
 
     error = (
@@ -432,6 +437,10 @@ async def outbox_delivery_worker(
         app.state.completion_outbox
     )
 
+    settings: Settings = (
+        app.state.settings
+    )
+
     print(
         "[OUTBOX] Delivery worker started "
         f"pending={outbox.count()}"
@@ -439,8 +448,13 @@ async def outbox_delivery_worker(
 
     try:
         while True:
-            entries = outbox.list_pending(
-                limit=OUTBOX_BATCH_SIZE
+            entries = (
+                outbox.list_pending(
+                    limit=(
+                        settings
+                        .outbox_batch_size
+                    )
+                )
             )
 
             for entry in entries:
@@ -451,8 +465,13 @@ async def outbox_delivery_worker(
 
             try:
                 await asyncio.wait_for(
-                    app.state.outbox_wakeup.wait(),
-                    timeout=OUTBOX_RETRY_SECONDS,
+                    app.state
+                    .outbox_wakeup
+                    .wait(),
+                    timeout=(
+                        settings
+                        .outbox_retry_seconds
+                    ),
                 )
 
             except asyncio.TimeoutError:
@@ -478,7 +497,9 @@ async def execute_job(
     app: FastAPI,
     payload: JobExecuteRequest,
 ) -> None:
-    job_id = payload.job_id
+    job_id = (
+        payload.job_id
+    )
 
     try:
         print(
@@ -487,7 +508,9 @@ async def execute_job(
             f"attempt={payload.attempt}"
         )
 
-        hub = app.state.hub
+        hub = (
+            app.state.hub
+        )
 
         result = await hub.run(
             payload.message
@@ -501,7 +524,7 @@ async def execute_job(
             "[JOB] AI finished "
             f"job_id={job_id} "
             f"attempt={payload.attempt} "
-            f"status="
+            "status="
             f"{result_dict.get('status')}"
         )
 
@@ -512,10 +535,6 @@ async def execute_job(
             )
         )
 
-        # Critical durability boundary:
-        #
-        # result is persisted locally BEFORE any callback
-        # attempt is made.
         persist_completion(
             app,
             payload,
@@ -596,6 +615,19 @@ def schedule_job(
 async def lifespan(
     app: FastAPI,
 ):
+    settings = (
+        get_settings()
+    )
+
+    # Validate callback configuration before background runtime
+    # components are started.
+    settings.require_phoenix_base_url()
+    settings.require_internal_job_token()
+
+    app.state.settings = (
+        settings
+    )
+
     app.state.ready = False
     app.state.hub = None
     app.state.active_jobs = {}
@@ -604,8 +636,15 @@ async def lifespan(
     # Durable completion outbox
     # --------------------------------------------------------
 
+    outbox_path = (
+        settings.resolve_runtime_path(
+            settings
+            .completion_outbox_path
+        )
+    )
+
     outbox = CompletionOutbox(
-        completion_outbox_path()
+        outbox_path
     )
 
     outbox.initialize()
@@ -620,7 +659,10 @@ async def lifespan(
 
     app.state.phoenix_client = (
         httpx.AsyncClient(
-            timeout=10.0,
+            timeout=(
+                settings
+                .phoenix_http_timeout_seconds
+            ),
         )
     )
 
@@ -643,9 +685,13 @@ async def lifespan(
             "[API] Loading AI runtime..."
         )
 
-        app.state.hub = build_hub()
+        app.state.hub = (
+            build_hub()
+        )
 
-        app.state.ready = True
+        app.state.ready = (
+            True
+        )
 
         print(
             "[API] AI runtime ready."
@@ -654,18 +700,18 @@ async def lifespan(
         yield
 
     finally:
-        app.state.ready = False
+        app.state.ready = (
+            False
+        )
 
         # ----------------------------------------------------
         # Stop active AI executions.
-        #
-        # Anything already persisted in the outbox survives.
-        # Anything still executing is recovered later through
-        # Phoenix lease recovery.
         # ----------------------------------------------------
 
         active_tasks = list(
-            app.state.active_jobs.values()
+            app.state
+            .active_jobs
+            .values()
         )
 
         for task in active_tasks:
@@ -694,7 +740,11 @@ async def lifespan(
             return_exceptions=True,
         )
 
-        await app.state.phoenix_client.aclose()
+        await (
+            app.state
+            .phoenix_client
+            .aclose()
+        )
 
         app.state.hub = None
 
@@ -722,19 +772,30 @@ app = FastAPI(
 # ============================================================
 
 
-@app.get("/health")
-async def health() -> dict[str, str]:
+@app.get(
+    "/health"
+)
+async def health(
+) -> dict[str, str]:
     return {
-        "status": "ok",
-        "service": "itsm-ai",
+        "status":
+            "ok",
+        "service":
+            "itsm-ai",
     }
 
 
-@app.get("/ready")
+@app.get(
+    "/ready"
+)
 async def ready(
     request: Request,
 ) -> dict[str, str]:
-    if not request.app.state.ready:
+    if not (
+        request.app
+        .state
+        .ready
+    ):
         raise HTTPException(
             status_code=503,
             detail=(
@@ -743,8 +804,10 @@ async def ready(
         )
 
     return {
-        "status": "ready",
-        "service": "itsm-ai",
+        "status":
+            "ready",
+        "service":
+            "itsm-ai",
     }
 
 
@@ -753,12 +816,18 @@ async def ready(
 # ============================================================
 
 
-@app.post("/v1/agent/run")
+@app.post(
+    "/v1/agent/run"
+)
 async def run_agent(
     payload: AgentRunRequest,
     request: Request,
 ) -> dict:
-    if not request.app.state.ready:
+    if not (
+        request.app
+        .state
+        .ready
+    ):
         raise HTTPException(
             status_code=503,
             detail=(
@@ -766,7 +835,9 @@ async def run_agent(
             ),
         )
 
-    hub = request.app.state.hub
+    hub = (
+        request.app.state.hub
+    )
 
     result = await hub.run(
         payload.message
@@ -777,7 +848,9 @@ async def run_agent(
             uuid.uuid4().hex,
         "user_id":
             payload.user_id,
-        **asdict(result),
+        **asdict(
+            result
+        ),
     }
 
 
@@ -789,13 +862,19 @@ async def run_agent(
 
 @app.post(
     "/v1/jobs/execute",
-    status_code=status.HTTP_202_ACCEPTED,
+    status_code=(
+        status.HTTP_202_ACCEPTED
+    ),
 )
 async def execute_durable_job(
     payload: JobExecuteRequest,
     request: Request,
 ) -> dict:
-    if not request.app.state.ready:
+    if not (
+        request.app
+        .state
+        .ready
+    ):
         raise HTTPException(
             status_code=503,
             detail=(
@@ -804,11 +883,15 @@ async def execute_durable_job(
         )
 
     active_jobs = (
-        request.app.state.active_jobs
+        request.app
+        .state
+        .active_jobs
     )
 
-    existing_task = active_jobs.get(
-        payload.job_id
+    existing_task = (
+        active_jobs.get(
+            payload.job_id
+        )
     )
 
     if (
@@ -849,13 +932,18 @@ async def execute_durable_job(
 
 
 @app.post(
-    "/v1/approvals/{approval_id}/approve"
+    "/v1/approvals/"
+    "{approval_id}/approve"
 )
 async def approve(
     approval_id: str,
     request: Request,
 ) -> dict:
-    if not request.app.state.ready:
+    if not (
+        request.app
+        .state
+        .ready
+    ):
         raise HTTPException(
             status_code=503,
             detail=(
@@ -869,15 +957,21 @@ async def approve(
         )
     )
 
-    if not approval_result.get("ok"):
+    if not approval_result.get(
+        "ok"
+    ):
         error = (
-            approval_result.get("error")
+            approval_result.get(
+                "error"
+            )
             or approval_result
             .get(
                 "result",
                 {},
             )
-            .get("error")
+            .get(
+                "error"
+            )
             or (
                 "Approval execution "
                 "failed."
@@ -895,5 +989,7 @@ async def approve(
         "status":
             "executed",
         "result":
-            approval_result["result"],
+            approval_result[
+                "result"
+            ],
     }

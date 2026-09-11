@@ -1,7 +1,11 @@
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlsplit
 
-from pydantic import Field
+from pydantic import (
+    Field,
+    field_validator,
+)
 from pydantic_settings import (
     BaseSettings,
     SettingsConfigDict,
@@ -23,6 +27,14 @@ MODELS_ROOT = (
 class Settings(
     BaseSettings
 ):
+    """
+    Central validated configuration provider for the AI service.
+
+    Deployment-specific values enter application code through
+    this object instead of being read directly from os.environ
+    throughout the runtime.
+    """
+
     model_config = (
         SettingsConfigDict(
             env_file=(
@@ -38,7 +50,7 @@ class Settings(
     )
 
     # ============================================================
-    # AI service
+    # AI SERVICE
     # ============================================================
 
     ai_host: str = (
@@ -52,7 +64,45 @@ class Settings(
     )
 
     # ============================================================
-    # Agent definitions
+    # PHOENIX CALLBACK TRANSPORT
+    # ============================================================
+
+    phoenix_base_url: (
+        str | None
+    ) = None
+
+    itsm_internal_job_token: (
+        str | None
+    ) = None
+
+    phoenix_http_timeout_seconds: float = Field(
+        default=10.0,
+        gt=0,
+    )
+
+    # ============================================================
+    # DURABLE COMPLETION OUTBOX
+    # ============================================================
+
+    completion_outbox_path: Path = (
+        Path(
+            ".runtime/"
+            "completion_outbox.sqlite3"
+        )
+    )
+
+    outbox_retry_seconds: float = Field(
+        default=5.0,
+        gt=0,
+    )
+
+    outbox_batch_size: int = Field(
+        default=100,
+        ge=1,
+    )
+
+    # ============================================================
+    # AGENT DEFINITIONS
     # ============================================================
 
     agents_dir: Path = (
@@ -62,7 +112,7 @@ class Settings(
     )
 
     # ============================================================
-    # Main Hub
+    # MAIN HUB
     #
     # Ministral 3B
     # ============================================================
@@ -84,7 +134,7 @@ class Settings(
     ) = None
 
     # ============================================================
-    # Account specialist
+    # ACCOUNT SPECIALIST
     #
     # Qwen2.5-0.5B FuncCall
     # ============================================================
@@ -102,7 +152,7 @@ class Settings(
     ) = None
 
     # ============================================================
-    # Access specialist
+    # ACCESS SPECIALIST
     #
     # Qwen3-0.6B
     # ============================================================
@@ -124,12 +174,9 @@ class Settings(
     ) = None
 
     # ============================================================
-    # Developer specialist
+    # DEVELOPER SPECIALIST
     #
     # Qwen2.5-Coder-0.5B-Instruct
-    #
-    # Registered lazily.
-    # The model is NOT loaded during application startup.
     # ============================================================
 
     developer_enabled: bool = (
@@ -152,8 +199,304 @@ class Settings(
     )
 
     # ============================================================
-    # Helpers
+    # DIRECTORY PROVIDER
     # ============================================================
+
+    directory_backend: str = (
+        "mock"
+    )
+
+    # ============================================================
+    # LDAP / ACTIVE DIRECTORY
+    # ============================================================
+
+    ad_host: (
+        str | None
+    ) = None
+
+    ad_port: (
+        int | None
+    ) = Field(
+        default=None,
+        ge=1,
+        le=65535,
+    )
+
+    ad_use_ssl: bool = (
+        True
+    )
+
+    ad_base_dn: (
+        str | None
+    ) = None
+
+    # ------------------------------------------------------------
+    # READ-ONLY BIND
+    # ------------------------------------------------------------
+
+    ad_bind_user: (
+        str | None
+    ) = None
+
+    ad_bind_dn: (
+        str | None
+    ) = None
+
+    ad_bind_password: (
+        str | None
+    ) = None
+
+    # ------------------------------------------------------------
+    # WRITE / MUTATION BIND
+    # ------------------------------------------------------------
+
+    ad_write_bind_user: (
+        str | None
+    ) = None
+
+    ad_write_bind_dn: (
+        str | None
+    ) = None
+
+    ad_write_bind_password: (
+        str | None
+    ) = None
+
+    # ------------------------------------------------------------
+    # LOGICAL ACCESS GROUP MAPPING
+    # ------------------------------------------------------------
+
+    ad_access_groups: dict[
+        str,
+        str,
+    ] = Field(
+        default_factory=dict
+    )
+
+    # ------------------------------------------------------------
+    # LOCAL / INTEGRATION TEST IDENTITY
+    # ------------------------------------------------------------
+
+    ad_test_user: (
+        str | None
+    ) = None
+
+    # ============================================================
+    # VALIDATION
+    # ============================================================
+
+    @field_validator(
+        "directory_backend"
+    )
+    @classmethod
+    def validate_directory_backend(
+        cls,
+        value: str,
+    ) -> str:
+        normalized = (
+            value
+            .strip()
+            .lower()
+        )
+
+        supported = {
+            "ldap",
+            "mock",
+        }
+
+        if normalized not in supported:
+            raise ValueError(
+                "DIRECTORY_BACKEND must be one of: "
+                + ", ".join(
+                    sorted(
+                        supported
+                    )
+                )
+            )
+
+        return normalized
+
+    @field_validator(
+        "phoenix_base_url"
+    )
+    @classmethod
+    def validate_phoenix_base_url(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        if value is None:
+            return None
+
+        normalized = (
+            value
+            .strip()
+            .rstrip("/")
+        )
+
+        if not normalized:
+            return None
+
+        parsed = urlsplit(
+            normalized
+        )
+
+        if (
+            parsed.scheme
+            not in {
+                "http",
+                "https",
+            }
+        ):
+            raise ValueError(
+                "PHOENIX_BASE_URL must use "
+                "http or https."
+            )
+
+        if not parsed.hostname:
+            raise ValueError(
+                "PHOENIX_BASE_URL must contain "
+                "a hostname."
+            )
+
+        if (
+            parsed.username is not None
+            or parsed.password is not None
+        ):
+            raise ValueError(
+                "PHOENIX_BASE_URL must not contain "
+                "userinfo."
+            )
+
+        if parsed.query:
+            raise ValueError(
+                "PHOENIX_BASE_URL must not contain "
+                "a query string."
+            )
+
+        if parsed.fragment:
+            raise ValueError(
+                "PHOENIX_BASE_URL must not contain "
+                "a fragment."
+            )
+
+        if parsed.path not in {
+            "",
+            "/",
+        }:
+            raise ValueError(
+                "PHOENIX_BASE_URL must be an origin "
+                "without a path."
+            )
+
+        try:
+            parsed.port
+
+        except ValueError as exc:
+            raise ValueError(
+                "PHOENIX_BASE_URL contains "
+                "an invalid port."
+            ) from exc
+
+        return normalized
+
+    # ============================================================
+    # PHOENIX HELPERS
+    # ============================================================
+
+    def require_phoenix_base_url(
+        self,
+    ) -> str:
+        value = (
+            self.phoenix_base_url
+        )
+
+        if not value:
+            raise RuntimeError(
+                "PHOENIX_BASE_URL "
+                "is not configured."
+            )
+
+        return value
+
+    def require_internal_job_token(
+        self,
+    ) -> str:
+        value = (
+            self.itsm_internal_job_token
+        )
+
+        if (
+            value is None
+            or not value.strip()
+        ):
+            raise RuntimeError(
+                "ITSM_INTERNAL_JOB_TOKEN "
+                "is not configured."
+            )
+
+        return value.strip()
+
+    # ============================================================
+    # DIRECTORY HELPERS
+    # ============================================================
+
+    @property
+    def ad_read_bind_identity(
+        self,
+    ) -> str | None:
+        return (
+            self.ad_bind_user
+            or self.ad_bind_dn
+        )
+
+    @property
+    def ad_write_bind_identity(
+        self,
+    ) -> str | None:
+        return (
+            self.ad_write_bind_user
+            or self.ad_write_bind_dn
+        )
+
+    @property
+    def resolved_ad_port(
+        self,
+    ) -> int:
+        if self.ad_port is not None:
+            return self.ad_port
+
+        if self.ad_use_ssl:
+            return 636
+
+        return 389
+
+    # ============================================================
+    # PATH HELPERS
+    # ============================================================
+
+    def resolve_runtime_path(
+        self,
+        value: Path,
+    ) -> Path:
+        """
+        Resolve a runtime persistence path.
+
+        Relative runtime paths are anchored to PROJECT_ROOT
+        instead of depending on the process working directory.
+        """
+
+        path = (
+            value
+            .expanduser()
+        )
+
+        if not path.is_absolute():
+            path = (
+                PROJECT_ROOT
+                / path
+            )
+
+        return path.resolve()
 
     def require_path(
         self,
@@ -178,7 +521,8 @@ class Settings(
             )
 
         path = (
-            value.expanduser()
+            value
+            .expanduser()
         )
 
         if not path.is_absolute():
@@ -187,7 +531,9 @@ class Settings(
                 / path
             )
 
-        path = path.resolve()
+        path = (
+            path.resolve()
+        )
 
         if not path.exists():
             raise RuntimeError(
@@ -201,4 +547,8 @@ class Settings(
 
 @lru_cache
 def get_settings() -> Settings:
+    """
+    Return the process-wide validated configuration instance.
+    """
+
     return Settings()
