@@ -1,11 +1,13 @@
 import asyncio
 
-from config import (
-    get_settings,
-)
+from pathlib import Path
 
 from agent.mcp_client import (
-    mcp_runtime,
+    MCPRuntime,
+)
+
+from config import (
+    Settings,
 )
 
 from subagents.core.loader import (
@@ -28,12 +30,16 @@ from subagents.core.types import (
     AgentTask,
 )
 
-from subagents.llm.factory import (
-    build_worker_backend,
+from subagents.llm.inference import (
+    InferenceCoordinator,
 )
 
-from subagents.llm.registry import (
-    ModelRegistry,
+from subagents.llm.model_manager import (
+    ModelManager,
+)
+
+from subagents.llm.scheduler import (
+    GpuScheduler,
 )
 
 
@@ -45,25 +51,24 @@ def fail_if_approval_requested(
     """
     This integration test is intentionally read-only.
 
-    If the worker unexpectedly proposes a mutating operation,
-    fail instead of creating an approval.
+    A mutation proposal is a test failure.
     """
 
     raise AssertionError(
-        "Read-only test unexpectedly requested "
-        f"approval for tool '{tool_name}' "
+        "Read-only test unexpectedly "
+        "requested approval for "
+        f"tool '{tool_name}' "
         f"with arguments {arguments} "
         f"and risk {risk}"
     )
 
 
-def build_runtime() -> AgentRuntime:
-    settings = get_settings()
-
-    # -----------------------------------------
-    # Agent definitions
-    # -----------------------------------------
-
+def build_runtime(
+    *,
+    settings: Settings,
+    inference: InferenceCoordinator,
+    mcp: MCPRuntime,
+) -> AgentRuntime:
     agent_registry = (
         AgentRegistry()
     )
@@ -88,7 +93,10 @@ def build_runtime() -> AgentRuntime:
     account_agent = next(
         (
             agent
-            for agent in agents
+
+            for agent
+            in agents
+
             if (
                 agent.name
                 == "account-specialist"
@@ -103,46 +111,27 @@ def build_runtime() -> AgentRuntime:
             "definition was not found."
         )
 
-    # -----------------------------------------
-    # Real worker model
-    # -----------------------------------------
-
-    model_registry = (
-        ModelRegistry()
-    )
-
-    model_config = (
-        settings.require_worker_model(
+    if not (
+        inference
+        .model_manager
+        .exists(
             account_agent.model
         )
-    )
-
-    backend = (
-        build_worker_backend(
-            backend_type=(
-                model_config.backend
-            ),
-            model_path=(
-                model_config.model_path
-            ),
+    ):
+        raise RuntimeError(
+            "Account specialist model "
+            f"'{account_agent.model}' "
+            "is not registered."
         )
-    )
-
-    model_registry.register(
-        account_agent.model,
-        backend,
-    )
-
-    # -----------------------------------------
-    # Real ToolGateway + real MCP
-    # -----------------------------------------
 
     tool_gateway = (
         ToolGateway(
             approval_creator=(
                 fail_if_approval_requested
             ),
-            mcp=mcp_runtime,
+            mcp=(
+                mcp
+            ),
         )
     )
 
@@ -150,8 +139,8 @@ def build_runtime() -> AgentRuntime:
         agent_registry=(
             agent_registry
         ),
-        model_registry=(
-            model_registry
+        inference=(
+            inference
         ),
         tool_gateway=(
             tool_gateway
@@ -160,23 +149,66 @@ def build_runtime() -> AgentRuntime:
 
 
 async def run_e2e_test():
-    await mcp_runtime.start()
+    settings = (
+        Settings()
+    )
+
+    model_manager = (
+        ModelManager(
+            settings=(
+                settings
+            )
+        )
+    )
+
+    scheduler = (
+        GpuScheduler()
+    )
+
+    inference = (
+        InferenceCoordinator(
+            model_manager=(
+                model_manager
+            ),
+            scheduler=(
+                scheduler
+            ),
+        )
+    )
+
+    mcp = (
+        MCPRuntime()
+    )
+
+    await mcp.start()
 
     try:
         runtime = (
-            build_runtime()
+            build_runtime(
+                settings=(
+                    settings
+                ),
+                inference=(
+                    inference
+                ),
+                mcp=(
+                    mcp
+                ),
+            )
         )
 
-        task = AgentTask(
-            task_id=(
-                "e2e-account-001"
-            ),
-            agent_name=(
-                "account-specialist"
-            ),
-            user_request=(
-                "Is jdoe locked?"
-            ),
+        task = (
+            AgentTask(
+                task_id=(
+                    "e2e-account-001"
+                ),
+                agent_name=(
+                    "account-specialist"
+                ),
+                user_request=(
+                    "Is jdoe locked?"
+                ),
+            )
         )
 
         result = (
@@ -186,6 +218,7 @@ async def run_e2e_test():
         )
 
         print()
+
         print(
             "===== E2E RESULT ====="
         )
@@ -253,7 +286,7 @@ async def run_e2e_test():
         )
 
     finally:
-        await mcp_runtime.stop()
+        await mcp.stop()
 
 
 def test_real_account_worker_e2e():

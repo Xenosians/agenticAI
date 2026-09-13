@@ -2,24 +2,8 @@ import asyncio
 
 from pathlib import Path
 
-import agent.approvals as approvals_module
-
-from agent.approvals import (
-    APPROVAL_LOCKS,
-    approve_approval,
-    get_approval,
-)
-
-from agent.approval_store import (
-    ApprovalStore,
-)
-
-from agent.mcp_client import (
-    mcp_runtime,
-)
-
-from subagents.hub import (
-    build_hub,
+from subagents.integration.support import (
+    build_hub_integration_context,
 )
 
 
@@ -27,40 +11,35 @@ async def run_mutation_execution_test(
     approval_db_path: Path,
 ):
     """
-    Real Hub -> Account specialist -> approval -> MCP execution.
+    Real Hub -> Account specialist -> durable approval ->
+    explicit MCP execution.
 
-    The test uses its own temporary durable SQLite approval
-    database so it cannot consume or modify approvals created
-    by manual runs or other tests.
+    The test owns its ApprovalStore and MCP runtime.
+
+    No process-global approval or MCP state is modified.
     """
 
-    # ---------------------------------------------------------
-    # Isolated durable approval store
-    # ---------------------------------------------------------
-
-    store = ApprovalStore(
-        approval_db_path
+    runtime = (
+        build_hub_integration_context(
+            approval_db_path=(
+                approval_db_path
+            )
+        )
     )
 
-    store.initialize()
-
-    approvals_module._APPROVAL_STORE = (
-        store
-    )
-
-    APPROVAL_LOCKS.clear()
-
-    await mcp_runtime.start()
+    await runtime.mcp.start()
 
     try:
-        # -------------------------------------------------
-        # Real Hub + real Account worker
-        # -------------------------------------------------
+        await runtime.inference.warm(
+            runtime
+            .settings
+            .hub_model_key
+        )
 
-        hub = build_hub()
-
-        result = await hub.run(
-            "Unlock jdoe"
+        result = (
+            await runtime.hub.run(
+                "Unlock jdoe"
+            )
         )
 
         print()
@@ -86,17 +65,16 @@ async def run_mutation_execution_test(
             "account-specialist"
         ]
 
-        assert len(
-            result.results
-        ) == 1
+        assert (
+            len(
+                result.results
+            )
+            == 1
+        )
 
         worker = (
             result.results[0]
         )
-
-        # -------------------------------------------------
-        # Worker proposal
-        # -------------------------------------------------
 
         assert (
             worker.agent_name
@@ -126,19 +104,22 @@ async def run_mutation_execution_test(
         )
 
         print(
-            f"approval_id: "
+            "approval_id: "
             f"{approval_id}"
         )
 
-        # -------------------------------------------------
-        # Verify durable approval proposal
-        # -------------------------------------------------
-
-        approval = get_approval(
-            approval_id
+        approval = (
+            runtime
+            .approvals
+            .get_approval(
+                approval_id
+            )
         )
 
-        assert approval is not None
+        assert (
+            approval
+            is not None
+        )
 
         assert (
             approval[
@@ -162,19 +143,17 @@ async def run_mutation_execution_test(
         )
 
         # -------------------------------------------------
-        # Explicit approval
+        # Explicit human-approval execution.
         #
-        # Important:
-        #
-        # We DO NOT run Ministral again.
-        # We DO NOT run Qwen again.
-        #
-        # approve_approval() executes the exact proposal
-        # already persisted above.
+        # No model is invoked again. ApprovalManager executes
+        # the exact durable proposal already stored above.
         # -------------------------------------------------
 
         approval_result = (
-            await approve_approval(
+            await
+            runtime
+            .approvals
+            .approve_approval(
                 approval_id
             )
         )
@@ -192,10 +171,6 @@ async def run_mutation_execution_test(
         print(
             "=============================="
         )
-
-        # -------------------------------------------------
-        # Approval execution succeeded
-        # -------------------------------------------------
 
         assert (
             approval_result[
@@ -240,10 +215,6 @@ async def run_mutation_execution_test(
             }
         )
 
-        # -------------------------------------------------
-        # Real MCP / LDAP result
-        # -------------------------------------------------
-
         assert (
             tool_result[
                 "ok"
@@ -266,25 +237,15 @@ async def run_mutation_execution_test(
         )
 
     finally:
-        await mcp_runtime.stop()
-
-        APPROVAL_LOCKS.clear()
-
-        approvals_module._APPROVAL_STORE = (
-            None
-        )
+        await runtime.mcp.stop()
 
 
 def test_real_hub_mutation_executes_after_approval(
     tmp_path: Path,
 ):
-    approval_db_path = (
-        tmp_path
-        / "approvals.sqlite3"
-    )
-
     asyncio.run(
         run_mutation_execution_test(
-            approval_db_path
+            tmp_path
+            / "approvals.sqlite3"
         )
     )

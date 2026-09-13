@@ -1,29 +1,76 @@
-from contextlib import asynccontextmanager
+from contextlib import (
+    asynccontextmanager,
+)
+
 import asyncio
 import uuid
-from dataclasses import asdict
-from typing import Any
+
+from dataclasses import (
+    asdict,
+)
+
+from typing import (
+    Any,
+)
 
 import httpx
+
 from fastapi import (
     FastAPI,
     HTTPException,
     Request,
     status,
 )
-from pydantic import BaseModel, Field
 
-from agent.approvals import approve_approval
+from pydantic import (
+    BaseModel,
+    Field,
+)
+
+from agent.approvals import (
+    ApprovalManager,
+)
+
+from agent.approval_store import (
+    ApprovalStore,
+)
+
 from agent.completion_outbox import (
     CompletionOutbox,
     OutboxEntry,
 )
-from agent.mcp_client import mcp_runtime
+
+from agent.mcp_client import (
+    MCPRuntime,
+)
+
+from api.runtime import (
+    ApplicationRuntime,
+)
+
 from config import (
     Settings,
-    get_settings,
 )
-from subagents.hub import build_hub
+
+from subagents.core.tool_gateway import (
+    ToolGateway,
+)
+
+from subagents.hub import (
+    build_hub,
+)
+
+from subagents.llm.inference import (
+    InferenceCoordinator,
+)
+
+from subagents.llm.model_manager import (
+    ModelManager,
+)
+
+from subagents.llm.scheduler import (
+    GpuScheduler,
+)
 
 
 # ============================================================
@@ -31,7 +78,9 @@ from subagents.hub import build_hub
 # ============================================================
 
 
-class AgentRunRequest(BaseModel):
+class AgentRunRequest(
+    BaseModel
+):
     user_id: str = Field(
         min_length=1
     )
@@ -41,13 +90,15 @@ class AgentRunRequest(BaseModel):
     )
 
 
-class JobExecuteRequest(BaseModel):
+class JobExecuteRequest(
+    BaseModel
+):
     job_id: str = Field(
         min_length=1
     )
 
     attempt: int = Field(
-        ge=1,
+        ge=1
     )
 
     user_id: str = Field(
@@ -57,6 +108,59 @@ class JobExecuteRequest(BaseModel):
     message: str = Field(
         min_length=1
     )
+
+
+# ============================================================
+# Runtime access
+# ============================================================
+
+
+def application_runtime(
+    app: FastAPI,
+) -> ApplicationRuntime:
+    """
+    Return the explicit application-owned runtime.
+
+    Endpoints should not discover individual process resources
+    through module globals.
+    """
+
+    runtime = getattr(
+        app.state,
+        "runtime",
+        None,
+    )
+
+    if not isinstance(
+        runtime,
+        ApplicationRuntime,
+    ):
+        raise RuntimeError(
+            "AI application runtime "
+            "has not been initialized."
+        )
+
+    return runtime
+
+
+def require_ready_runtime(
+    request: Request,
+) -> ApplicationRuntime:
+    runtime = (
+        application_runtime(
+            request.app
+        )
+    )
+
+    if not runtime.ready:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "AI runtime is not ready."
+            ),
+        )
+
+    return runtime
 
 
 # ============================================================
@@ -65,29 +169,48 @@ class JobExecuteRequest(BaseModel):
 
 
 def completion_status(
-    result_dict: dict[str, Any],
+    result_dict: dict[
+        str,
+        Any,
+    ],
 ) -> str:
-    hub_status = result_dict.get(
-        "status"
+    hub_status = (
+        result_dict.get(
+            "status"
+        )
     )
 
-    if hub_status == "approval_required":
-        return "waiting_approval"
+    if (
+        hub_status
+        == "approval_required"
+    ):
+        return (
+            "waiting_approval"
+        )
 
     if hub_status in {
         "success",
         "no_route",
     }:
-        return "completed"
+        return (
+            "completed"
+        )
 
-    return "failed"
+    return (
+        "failed"
+    )
 
 
 def selected_agent(
-    result_dict: dict[str, Any],
+    result_dict: dict[
+        str,
+        Any,
+    ],
 ) -> str | None:
-    routes = result_dict.get(
-        "routes"
+    routes = (
+        result_dict.get(
+            "routes"
+        )
     )
 
     if (
@@ -101,16 +224,26 @@ def selected_agent(
             str,
         )
     ):
-        return routes[0]
+        return (
+            routes[0]
+        )
 
     return None
 
 
 def proposed_tool(
-    result_dict: dict[str, Any],
-) -> dict[str, Any] | None:
-    results = result_dict.get(
-        "results"
+    result_dict: dict[
+        str,
+        Any,
+    ],
+) -> dict[
+    str,
+    Any,
+] | None:
+    results = (
+        result_dict.get(
+            "results"
+        )
     )
 
     if not isinstance(
@@ -126,8 +259,10 @@ def proposed_tool(
         ):
             continue
 
-        tool_name = result.get(
-            "proposed_tool"
+        tool_name = (
+            result.get(
+                "proposed_tool"
+            )
         )
 
         if not tool_name:
@@ -136,11 +271,14 @@ def proposed_tool(
         return {
             "tool":
                 tool_name,
-            "arguments":
+
+            "arguments": (
                 result.get(
                     "proposed_arguments"
                 )
-                or {},
+                or {}
+            ),
+
             "approval_id":
                 result.get(
                     "approval_id"
@@ -152,21 +290,35 @@ def proposed_tool(
 
 def completion_payload(
     payload: JobExecuteRequest,
-    result_dict: dict[str, Any],
-) -> dict[str, Any]:
-    final_status = completion_status(
-        result_dict
+    result_dict: dict[
+        str,
+        Any,
+    ],
+) -> dict[
+    str,
+    Any,
+]:
+    final_status = (
+        completion_status(
+            result_dict
+        )
     )
 
-    callback: dict[str, Any] = {
+    callback: dict[
+        str,
+        Any,
+    ] = {
         "attempt":
             payload.attempt,
+
         "status":
             final_status,
+
         "selected_agent":
             selected_agent(
                 result_dict
             ),
+
         "proposed_tool":
             proposed_tool(
                 result_dict
@@ -177,12 +329,14 @@ def completion_payload(
         "completed",
         "waiting_approval",
     }:
-        callback["result"] = (
-            result_dict
-        )
+        callback[
+            "result"
+        ] = result_dict
 
     else:
-        callback["error"] = (
+        callback[
+            "error"
+        ] = (
             result_dict.get(
                 "error"
             )
@@ -199,16 +353,25 @@ def completion_payload(
 def failure_payload(
     payload: JobExecuteRequest,
     exc: Exception,
-) -> dict[str, Any]:
+) -> dict[
+    str,
+    Any,
+]:
     return {
         "attempt":
             payload.attempt,
+
         "status":
             "failed",
+
         "error":
-            repr(exc),
+            repr(
+                exc
+            ),
+
         "selected_agent":
             None,
+
         "proposed_tool":
             None,
     }
@@ -220,22 +383,21 @@ def failure_payload(
 
 
 def persist_completion(
-    app: FastAPI,
+    runtime: ApplicationRuntime,
     payload: JobExecuteRequest,
-    callback_payload: dict[str, Any],
+    callback_payload: dict[
+        str,
+        Any,
+    ],
 ) -> None:
     """
-    Persist completion BEFORE attempting network delivery.
+    Persist completion BEFORE network delivery.
 
-    Once this returns successfully, Python may crash and the
-    completion can still be replayed after restart.
+    Once this returns successfully, process failure cannot lose
+    the completion callback.
     """
 
-    outbox: CompletionOutbox = (
-        app.state.completion_outbox
-    )
-
-    outbox.put(
+    runtime.completion_outbox.put(
         payload.job_id,
         payload.attempt,
         callback_payload,
@@ -247,7 +409,7 @@ def persist_completion(
         f"attempt={payload.attempt}"
     )
 
-    app.state.outbox_wakeup.set()
+    runtime.outbox_wakeup.set()
 
 
 # ============================================================
@@ -259,42 +421,39 @@ def response_body(
     response: httpx.Response,
 ) -> Any:
     try:
-        return response.json()
+        return (
+            response.json()
+        )
 
     except ValueError:
-        return response.text
+        return (
+            response.text
+        )
 
 
 async def deliver_outbox_entry(
-    app: FastAPI,
+    runtime: ApplicationRuntime,
     entry: OutboxEntry,
 ) -> bool:
     """
     Deliver one persisted completion.
 
-    Returns True when the entry is resolved and removed from
-    the outbox.
+    True:
+        completion resolved and removed.
 
-    Returns False when it must remain durable for retry.
+    False:
+        completion remains durable for retry.
     """
 
-    outbox: CompletionOutbox = (
-        app.state.completion_outbox
-    )
-
-    client: httpx.AsyncClient = (
-        app.state.phoenix_client
-    )
-
-    settings: Settings = (
-        app.state.settings
+    settings = (
+        runtime.settings
     )
 
     url = (
         f"{settings.require_phoenix_base_url()}"
         f"/api/internal/v1/jobs/"
         f"{entry.job_id}"
-        f"/completion"
+        "/completion"
     )
 
     headers = {
@@ -304,18 +463,29 @@ async def deliver_outbox_entry(
     }
 
     try:
-        response = await client.post(
-            url,
-            headers=headers,
-            json=entry.payload,
+        response = (
+            await
+            runtime
+            .phoenix_client
+            .post(
+                url,
+                headers=(
+                    headers
+                ),
+                json=(
+                    entry.payload
+                ),
+            )
         )
 
     except Exception as exc:
-        error = repr(
-            exc
+        error = (
+            repr(
+                exc
+            )
         )
 
-        outbox.mark_delivery_attempt(
+        runtime.completion_outbox.mark_delivery_attempt(
             entry.job_id,
             entry.attempt,
             error,
@@ -330,8 +500,10 @@ async def deliver_outbox_entry(
 
         return False
 
-    body = response_body(
-        response
+    body = (
+        response_body(
+            response
+        )
     )
 
     # --------------------------------------------------------
@@ -343,7 +515,7 @@ async def deliver_outbox_entry(
         <= response.status_code
         < 300
     ):
-        outbox.delete(
+        runtime.completion_outbox.delete(
             entry.job_id,
             entry.attempt,
         )
@@ -358,11 +530,10 @@ async def deliver_outbox_entry(
         return True
 
     # --------------------------------------------------------
-    # Stale execution attempt
+    # Stale attempt
     #
-    # Phoenix has already moved to a newer attempt.
-    # This old completion must never overwrite it.
-    # It is permanently obsolete and can be removed.
+    # Phoenix has already moved to a newer execution attempt.
+    # The old completion is obsolete and must not overwrite it.
     # --------------------------------------------------------
 
     if (
@@ -377,7 +548,7 @@ async def deliver_outbox_entry(
         )
         == "stale_attempt"
     ):
-        outbox.delete(
+        runtime.completion_outbox.delete(
             entry.job_id,
             entry.attempt,
         )
@@ -392,7 +563,7 @@ async def deliver_outbox_entry(
         return True
 
     # --------------------------------------------------------
-    # Any other rejection remains durable.
+    # Other rejection remains durable.
     # --------------------------------------------------------
 
     error = (
@@ -400,7 +571,7 @@ async def deliver_outbox_entry(
         f"{body!r}"
     )
 
-    outbox.mark_delivery_attempt(
+    runtime.completion_outbox.mark_delivery_attempt(
         entry.job_id,
         entry.attempt,
         error,
@@ -418,40 +589,34 @@ async def deliver_outbox_entry(
 
 
 # ============================================================
-# Persistent outbox delivery worker
+# Durable outbox worker
 # ============================================================
 
 
 async def outbox_delivery_worker(
-    app: FastAPI,
+    runtime: ApplicationRuntime,
 ) -> None:
     """
     Replay persisted completions until Phoenix ACKs them.
 
-    This worker is intentionally independent from AI job
-    execution. It also replays entries left behind by a
-    previous Python process.
+    Delivery remains independent of AI execution.
     """
-
-    outbox: CompletionOutbox = (
-        app.state.completion_outbox
-    )
-
-    settings: Settings = (
-        app.state.settings
-    )
 
     print(
         "[OUTBOX] Delivery worker started "
-        f"pending={outbox.count()}"
+        "pending="
+        f"{runtime.completion_outbox.count()}"
     )
 
     try:
         while True:
             entries = (
-                outbox.list_pending(
+                runtime
+                .completion_outbox
+                .list_pending(
                     limit=(
-                        settings
+                        runtime
+                        .settings
                         .outbox_batch_size
                     )
                 )
@@ -459,17 +624,18 @@ async def outbox_delivery_worker(
 
             for entry in entries:
                 await deliver_outbox_entry(
-                    app,
+                    runtime,
                     entry,
                 )
 
             try:
                 await asyncio.wait_for(
-                    app.state
+                    runtime
                     .outbox_wakeup
                     .wait(),
                     timeout=(
-                        settings
+                        runtime
+                        .settings
                         .outbox_retry_seconds
                     ),
                 )
@@ -478,7 +644,7 @@ async def outbox_delivery_worker(
                 pass
 
             finally:
-                app.state.outbox_wakeup.clear()
+                runtime.outbox_wakeup.clear()
 
     except asyncio.CancelledError:
         print(
@@ -494,7 +660,7 @@ async def outbox_delivery_worker(
 
 
 async def execute_job(
-    app: FastAPI,
+    runtime: ApplicationRuntime,
     payload: JobExecuteRequest,
 ) -> None:
     job_id = (
@@ -508,16 +674,17 @@ async def execute_job(
             f"attempt={payload.attempt}"
         )
 
-        hub = (
-            app.state.hub
+        result = (
+            await
+            runtime.hub.run(
+                payload.message
+            )
         )
 
-        result = await hub.run(
-            payload.message
-        )
-
-        result_dict = asdict(
-            result
+        result_dict = (
+            asdict(
+                result
+            )
         )
 
         print(
@@ -536,7 +703,7 @@ async def execute_job(
         )
 
         persist_completion(
-            app,
+            runtime,
             payload,
             callback_payload,
         )
@@ -567,7 +734,7 @@ async def execute_job(
             )
 
             persist_completion(
-                app,
+                runtime,
                 payload,
                 callback_payload,
             )
@@ -575,31 +742,34 @@ async def execute_job(
         except Exception as outbox_exc:
             print(
                 "[OUTBOX] CRITICAL: "
-                "failed to persist failure completion "
+                "failed to persist failure "
+                "completion "
                 f"job_id={job_id} "
                 f"attempt={payload.attempt} "
                 f"error={outbox_exc!r}"
             )
 
     finally:
-        app.state.active_jobs.pop(
+        runtime.active_jobs.pop(
             job_id,
             None,
         )
 
 
 def schedule_job(
-    app: FastAPI,
+    runtime: ApplicationRuntime,
     payload: JobExecuteRequest,
 ) -> asyncio.Task:
-    task = asyncio.create_task(
-        execute_job(
-            app,
-            payload,
+    task = (
+        asyncio.create_task(
+            execute_job(
+                runtime,
+                payload,
+            )
         )
     )
 
-    app.state.active_jobs[
+    runtime.active_jobs[
         payload.job_id
     ] = task
 
@@ -615,26 +785,34 @@ def schedule_job(
 async def lifespan(
     app: FastAPI,
 ):
+    """
+    Application composition root.
+
+    This is the single lifecycle owner for process-wide runtime
+    resources.
+
+    It intentionally creates ordinary objects rather than
+    process-global Singletons.
+    """
+
+    app.state.runtime = None
+
+    # ========================================================
+    # SETTINGS
+    # ========================================================
+
     settings = (
-        get_settings()
+        Settings()
     )
 
-    # Validate callback configuration before background runtime
-    # components are started.
+    # Validate Phoenix handshake configuration before any
+    # long-lived process resources are started.
     settings.require_phoenix_base_url()
     settings.require_internal_job_token()
 
-    app.state.settings = (
-        settings
-    )
-
-    app.state.ready = False
-    app.state.hub = None
-    app.state.active_jobs = {}
-
-    # --------------------------------------------------------
-    # Durable completion outbox
-    # --------------------------------------------------------
+    # ========================================================
+    # DURABLE COMPLETION OUTBOX
+    # ========================================================
 
     outbox_path = (
         settings.resolve_runtime_path(
@@ -643,21 +821,23 @@ async def lifespan(
         )
     )
 
-    outbox = CompletionOutbox(
-        outbox_path
+    completion_outbox = (
+        CompletionOutbox(
+            outbox_path
+        )
     )
 
-    outbox.initialize()
+    completion_outbox.initialize()
 
-    app.state.completion_outbox = (
-        outbox
-    )
-
-    app.state.outbox_wakeup = (
+    outbox_wakeup = (
         asyncio.Event()
     )
 
-    app.state.phoenix_client = (
+    # ========================================================
+    # PHOENIX CALLBACK CLIENT
+    # ========================================================
+
+    phoenix_client = (
         httpx.AsyncClient(
             timeout=(
                 settings
@@ -666,30 +846,194 @@ async def lifespan(
         )
     )
 
-    app.state.outbox_task = (
-        asyncio.create_task(
-            outbox_delivery_worker(
-                app
+    # ========================================================
+    # MCP RUNTIME
+    # ========================================================
+
+    mcp = (
+        MCPRuntime()
+    )
+
+    # ========================================================
+    # DURABLE APPROVAL EXECUTION
+    # ========================================================
+
+    approval_store_path = (
+        settings.resolve_runtime_path(
+            settings
+            .approval_store_path
+        )
+    )
+
+    approval_store = (
+        ApprovalStore(
+            approval_store_path
+        )
+    )
+
+    approval_store.initialize()
+
+    approvals = (
+        ApprovalManager(
+            store=(
+                approval_store
+            ),
+            mcp=(
+                mcp
+            ),
+        )
+    )
+
+    # ========================================================
+    # MODEL / GPU RUNTIME
+    # ========================================================
+
+    model_manager = (
+        ModelManager(
+            settings=(
+                settings
             )
         )
     )
 
-    # --------------------------------------------------------
-    # MCP + AI runtime
-    # --------------------------------------------------------
+    gpu_scheduler = (
+        GpuScheduler()
+    )
 
-    await mcp_runtime.start()
+    inference = (
+        InferenceCoordinator(
+            model_manager=(
+                model_manager
+            ),
+            scheduler=(
+                gpu_scheduler
+            ),
+        )
+    )
+
+    # ========================================================
+    # TRUSTED TOOL EXECUTION BOUNDARY
+    # ========================================================
+
+    tool_gateway = (
+        ToolGateway(
+            approval_creator=(
+                approvals
+                .create_approval
+            ),
+            mcp=(
+                mcp
+            ),
+        )
+    )
+
+    runtime: (
+        ApplicationRuntime | None
+    ) = None
 
     try:
+        # ====================================================
+        # START MCP
+        # ====================================================
+
+        await mcp.start()
+
+        # ====================================================
+        # WARM HUB MODEL
+        #
+        # Preserve previous readiness semantics: the AI service
+        # does not become ready until its main Hub model is
+        # available.
+        # ====================================================
+
         print(
             "[API] Loading AI runtime..."
         )
 
-        app.state.hub = (
-            build_hub()
+        await inference.warm(
+            settings.hub_model_key
         )
 
-        app.state.ready = (
+        # ====================================================
+        # REASONING GRAPH
+        # ====================================================
+
+        hub = (
+            build_hub(
+                settings=(
+                    settings
+                ),
+                model_manager=(
+                    model_manager
+                ),
+                inference=(
+                    inference
+                ),
+                tool_gateway=(
+                    tool_gateway
+                ),
+            )
+        )
+
+        # ====================================================
+        # APPLICATION RUNTIME CONTAINER
+        # ====================================================
+
+        runtime = (
+            ApplicationRuntime(
+                settings=(
+                    settings
+                ),
+                completion_outbox=(
+                    completion_outbox
+                ),
+                outbox_wakeup=(
+                    outbox_wakeup
+                ),
+                phoenix_client=(
+                    phoenix_client
+                ),
+                mcp=(
+                    mcp
+                ),
+                approvals=(
+                    approvals
+                ),
+                model_manager=(
+                    model_manager
+                ),
+                gpu_scheduler=(
+                    gpu_scheduler
+                ),
+                inference=(
+                    inference
+                ),
+                tool_gateway=(
+                    tool_gateway
+                ),
+                hub=(
+                    hub
+                ),
+            )
+        )
+
+        app.state.runtime = (
+            runtime
+        )
+
+        # ====================================================
+        # OUTBOX REPLAY
+        # ====================================================
+
+        runtime.outbox_task = (
+            asyncio.create_task(
+                outbox_delivery_worker(
+                    runtime
+                )
+            )
+        )
+
+        runtime.ready = (
             True
         )
 
@@ -700,55 +1044,74 @@ async def lifespan(
         yield
 
     finally:
-        app.state.ready = (
-            False
-        )
+        # ====================================================
+        # MARK NOT READY FIRST
+        # ====================================================
 
-        # ----------------------------------------------------
-        # Stop active AI executions.
-        # ----------------------------------------------------
+        if runtime is not None:
+            runtime.ready = (
+                False
+            )
 
-        active_tasks = list(
-            app.state
-            .active_jobs
-            .values()
-        )
+        # ====================================================
+        # STOP ACTIVE AI EXECUTIONS
+        # ====================================================
 
-        for task in active_tasks:
-            task.cancel()
+        if runtime is not None:
+            active_tasks = list(
+                runtime
+                .active_jobs
+                .values()
+            )
 
-        if active_tasks:
+            for task in (
+                active_tasks
+            ):
+                task.cancel()
+
+            if active_tasks:
+                await asyncio.gather(
+                    *active_tasks,
+                    return_exceptions=True,
+                )
+
+            runtime.active_jobs.clear()
+
+        # ====================================================
+        # STOP OUTBOX WORKER
+        # ====================================================
+
+        if (
+            runtime is not None
+            and runtime.outbox_task
+            is not None
+        ):
+            runtime.outbox_task.cancel()
+
             await asyncio.gather(
-                *active_tasks,
+                runtime.outbox_task,
                 return_exceptions=True,
             )
 
-        app.state.active_jobs.clear()
+            runtime.outbox_task = (
+                None
+            )
 
-        # ----------------------------------------------------
-        # Stop outbox worker
-        # ----------------------------------------------------
+        # ====================================================
+        # CLOSE HTTP CLIENT
+        # ====================================================
 
-        outbox_task = (
-            app.state.outbox_task
+        await phoenix_client.aclose()
+
+        # ====================================================
+        # STOP MCP
+        # ====================================================
+
+        await mcp.stop()
+
+        app.state.runtime = (
+            None
         )
-
-        outbox_task.cancel()
-
-        await asyncio.gather(
-            outbox_task,
-            return_exceptions=True,
-        )
-
-        await (
-            app.state
-            .phoenix_client
-            .aclose()
-        )
-
-        app.state.hub = None
-
-        await mcp_runtime.stop()
 
         print(
             "[API] AI runtime stopped."
@@ -776,10 +1139,14 @@ app = FastAPI(
     "/health"
 )
 async def health(
-) -> dict[str, str]:
+) -> dict[
+    str,
+    str,
+]:
     return {
         "status":
             "ok",
+
         "service":
             "itsm-ai",
     }
@@ -790,11 +1157,22 @@ async def health(
 )
 async def ready(
     request: Request,
-) -> dict[str, str]:
-    if not (
-        request.app
-        .state
-        .ready
+) -> dict[
+    str,
+    str,
+]:
+    runtime = getattr(
+        request.app.state,
+        "runtime",
+        None,
+    )
+
+    if (
+        not isinstance(
+            runtime,
+            ApplicationRuntime,
+        )
+        or not runtime.ready
     ):
         raise HTTPException(
             status_code=503,
@@ -806,6 +1184,7 @@ async def ready(
     return {
         "status":
             "ready",
+
         "service":
             "itsm-ai",
     }
@@ -823,31 +1202,26 @@ async def run_agent(
     payload: AgentRunRequest,
     request: Request,
 ) -> dict:
-    if not (
-        request.app
-        .state
-        .ready
-    ):
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "AI runtime is not ready."
-            ),
+    runtime = (
+        require_ready_runtime(
+            request
         )
-
-    hub = (
-        request.app.state.hub
     )
 
-    result = await hub.run(
-        payload.message
+    result = (
+        await
+        runtime.hub.run(
+            payload.message
+        )
     )
 
     return {
         "request_id":
             uuid.uuid4().hex,
+
         "user_id":
             payload.user_id,
+
         **asdict(
             result
         ),
@@ -870,57 +1244,54 @@ async def execute_durable_job(
     payload: JobExecuteRequest,
     request: Request,
 ) -> dict:
-    if not (
-        request.app
-        .state
-        .ready
-    ):
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "AI runtime is not ready."
-            ),
+    runtime = (
+        require_ready_runtime(
+            request
         )
-
-    active_jobs = (
-        request.app
-        .state
-        .active_jobs
     )
 
     existing_task = (
-        active_jobs.get(
+        runtime
+        .active_jobs
+        .get(
             payload.job_id
         )
     )
 
     if (
-        existing_task is not None
+        existing_task
+        is not None
         and not existing_task.done()
     ):
         return {
             "job_id":
                 payload.job_id,
+
             "attempt":
                 payload.attempt,
+
             "status":
                 "accepted",
+
             "duplicate":
                 True,
         }
 
     schedule_job(
-        request.app,
+        runtime,
         payload,
     )
 
     return {
         "job_id":
             payload.job_id,
+
         "attempt":
             payload.attempt,
+
         "status":
             "accepted",
+
         "duplicate":
             False,
     }
@@ -939,20 +1310,17 @@ async def approve(
     approval_id: str,
     request: Request,
 ) -> dict:
-    if not (
-        request.app
-        .state
-        .ready
-    ):
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "AI runtime is not ready."
-            ),
+    runtime = (
+        require_ready_runtime(
+            request
         )
+    )
 
     approval_result = (
-        await approve_approval(
+        await
+        runtime
+        .approvals
+        .approve_approval(
             approval_id
         )
     )
@@ -973,21 +1341,24 @@ async def approve(
                 "error"
             )
             or (
-                "Approval execution "
-                "failed."
+                "Approval execution failed."
             )
         )
 
         raise HTTPException(
             status_code=400,
-            detail=error,
+            detail=(
+                error
+            ),
         )
 
     return {
         "approval_id":
             approval_id,
+
         "status":
             "executed",
+
         "result":
             approval_result[
                 "result"

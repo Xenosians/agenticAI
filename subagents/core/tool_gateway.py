@@ -5,14 +5,6 @@ from typing import (
     Callable,
 )
 
-from agent.approvals import (
-    create_approval,
-)
-
-from agent.mcp_client import (
-    mcp_runtime,
-)
-
 from tools.registry import (
     get_tool,
 )
@@ -37,21 +29,6 @@ def identifier_appears_in_request(
     """
     Check whether an identifier appears literally in the
     original user request without accepting partial identifiers.
-
-    Examples that should match:
-        Read tools/workspace.py.
-        Read "README.md".
-        Unlock jdoe.
-
-    Examples that should not match:
-        identifier: README.md
-        request: Read backup/README.md
-
-        identifier: README.md
-        request: Read README.md.bak
-
-        identifier: jdoe
-        request: Check jdoe-admin
     """
 
     identifier_chars = (
@@ -80,21 +57,25 @@ def identifier_appears_in_request(
 
 def validate_grounded_arguments(
     user_input: str,
-    arguments: dict[str, Any],
-    grounded_arguments: list[str],
+    arguments: dict[
+        str,
+        Any,
+    ],
+    grounded_arguments: list[
+        str
+    ],
 ) -> tuple[
     bool,
     str | None,
 ]:
     """
-    Verify model-produced identifiers that policy declares must
-    originate literally from the user's request.
-
-    Which arguments require grounding is tool metadata, not
-    hardcoded gateway knowledge.
+    Verify model-produced identifiers that trusted tool policy
+    declares must originate literally from the user request.
     """
 
-    for field_name in grounded_arguments:
+    for field_name in (
+        grounded_arguments
+    ):
         value = arguments.get(
             field_name
         )
@@ -121,7 +102,7 @@ def validate_grounded_arguments(
             return (
                 False,
                 (
-                    f"The model produced "
+                    "The model produced "
                     f"{field_name} '{value}', "
                     "but that identifier does "
                     "not appear exactly in the "
@@ -129,30 +110,34 @@ def validate_grounded_arguments(
                 ),
             )
 
-    return True, None
+    return (
+        True,
+        None,
+    )
 
 
 class ToolGateway:
     """
-    Security boundary between sub-agents and executable tools.
+    Deterministic security boundary between model proposals and
+    executable capabilities.
 
-    Workers may propose operations.
+    Runtime dependencies are explicit:
 
-    This gateway decides whether those operations are allowed.
+    - approval_creator
+    - MCP runtime
+    - trusted tool lookup
 
-    Tool metadata may declare:
-    - arguments that must be grounded in the user request
-    - a deterministic policy resolver
-    - static risk and approval requirements
+    No mutable application runtime is imported globally here.
     """
 
     def __init__(
         self,
-        tool_lookup: Callable = get_tool,
-        approval_creator: Callable = (
-            create_approval
+        *,
+        approval_creator: Callable,
+        mcp,
+        tool_lookup: Callable = (
+            get_tool
         ),
-        mcp=mcp_runtime,
     ) -> None:
         self.tool_lookup = (
             tool_lookup
@@ -162,24 +147,38 @@ class ToolGateway:
             approval_creator
         )
 
-        self.mcp = mcp
+        self.mcp = (
+            mcp
+        )
 
     async def execute(
         self,
         agent: AgentDefinition,
         user_input: str,
         tool_name: str,
-        arguments: dict[str, Any],
-    ) -> dict[str, Any]:
+        arguments: dict[
+            str,
+            Any,
+        ],
+    ) -> dict[
+        str,
+        Any,
+    ]:
 
-        # -----------------------------------------
-        # AGENT TOOL PERMISSION
-        # -----------------------------------------
+        # ========================================================
+        # AGENT CAPABILITY PERMISSION
+        # ========================================================
 
-        if tool_name not in agent.tools:
+        if (
+            tool_name
+            not in agent.tools
+        ):
             return {
-                "ok": False,
-                "status": "denied",
+                "ok":
+                    False,
+
+                "status":
+                    "denied",
 
                 "error": (
                     f"Agent '{agent.name}' "
@@ -188,18 +187,23 @@ class ToolGateway:
                 ),
             }
 
-        # -----------------------------------------
+        # ========================================================
         # TOOL EXISTENCE
-        # -----------------------------------------
+        # ========================================================
 
-        tool = self.tool_lookup(
-            tool_name
+        tool = (
+            self.tool_lookup(
+                tool_name
+            )
         )
 
         if tool is None:
             return {
-                "ok": False,
-                "status": "error",
+                "ok":
+                    False,
+
+                "status":
+                    "error",
 
                 "error": (
                     "Unknown tool requested: "
@@ -207,13 +211,15 @@ class ToolGateway:
                 ),
             }
 
-        # -----------------------------------------
+        # ========================================================
         # USER-REQUEST GROUNDING
-        # -----------------------------------------
+        # ========================================================
 
-        grounded_arguments = tool.get(
-            "grounded_arguments",
-            [],
+        grounded_arguments = (
+            tool.get(
+                "grounded_arguments",
+                [],
+            )
         )
 
         if not isinstance(
@@ -221,8 +227,11 @@ class ToolGateway:
             list,
         ):
             return {
-                "ok": False,
-                "status": "error",
+                "ok":
+                    False,
+
+                "status":
+                    "error",
 
                 "error": (
                     "Tool grounding policy "
@@ -235,12 +244,16 @@ class ToolGateway:
                 field_name,
                 str,
             )
+
             for field_name
             in grounded_arguments
         ):
             return {
-                "ok": False,
-                "status": "error",
+                "ok":
+                    False,
+
+                "status":
+                    "error",
 
                 "error": (
                     "Tool grounding fields "
@@ -251,38 +264,58 @@ class ToolGateway:
         (
             valid,
             validation_error,
-        ) = validate_grounded_arguments(
-            user_input=user_input,
-            arguments=arguments,
-            grounded_arguments=(
-                grounded_arguments
-            ),
+        ) = (
+            validate_grounded_arguments(
+                user_input=(
+                    user_input
+                ),
+                arguments=(
+                    arguments
+                ),
+                grounded_arguments=(
+                    grounded_arguments
+                ),
+            )
         )
 
         if not valid:
             return {
-                "ok": False,
-                "status": "denied",
-                "error": validation_error,
+                "ok":
+                    False,
+
+                "status":
+                    "denied",
+
+                "error":
+                    validation_error,
             }
 
-        # -----------------------------------------
-        # EFFECTIVE TOOL POLICY
-        # -----------------------------------------
+        # ========================================================
+        # EFFECTIVE TRUSTED POLICY
+        # ========================================================
 
-        effective_risk = tool.get(
-            "risk"
+        effective_risk = (
+            tool.get(
+                "risk"
+            )
         )
 
-        requires_approval = tool.get(
-            "requires_approval"
+        requires_approval = (
+            tool.get(
+                "requires_approval"
+            )
         )
 
-        policy_resolver = tool.get(
-            "policy_resolver"
+        policy_resolver = (
+            tool.get(
+                "policy_resolver"
+            )
         )
 
-        if policy_resolver is not None:
+        if (
+            policy_resolver
+            is not None
+        ):
             try:
                 policy_result = (
                     policy_resolver(
@@ -292,8 +325,11 @@ class ToolGateway:
 
             except TypeError as exc:
                 return {
-                    "ok": False,
-                    "status": "denied",
+                    "ok":
+                        False,
+
+                    "status":
+                        "denied",
 
                     "error": (
                         "Invalid arguments for "
@@ -304,8 +340,11 @@ class ToolGateway:
 
             except Exception as exc:
                 return {
-                    "ok": False,
-                    "status": "error",
+                    "ok":
+                        False,
+
+                    "status":
+                        "error",
 
                     "error": (
                         "Tool policy evaluation "
@@ -318,8 +357,11 @@ class ToolGateway:
                 dict,
             ):
                 return {
-                    "ok": False,
-                    "status": "error",
+                    "ok":
+                        False,
+
+                    "status":
+                        "error",
 
                     "error": (
                         "Tool policy returned an "
@@ -332,7 +374,8 @@ class ToolGateway:
                 False,
             ):
                 return {
-                    "ok": False,
+                    "ok":
+                        False,
 
                     "status": (
                         policy_result.get(
@@ -341,13 +384,16 @@ class ToolGateway:
                         )
                     ),
 
-                    "tool": tool_name,
+                    "tool":
+                        tool_name,
 
                     "error": (
                         policy_result.get(
                             "error",
-                            "Tool policy denied "
-                            "the operation.",
+                            (
+                                "Tool policy denied "
+                                "the operation."
+                            ),
                         )
                     ),
                 }
@@ -369,8 +415,11 @@ class ToolGateway:
             not in VALID_RISKS
         ):
             return {
-                "ok": False,
-                "status": "error",
+                "ok":
+                    False,
+
+                "status":
+                    "error",
 
                 "error": (
                     "Tool policy returned an "
@@ -383,8 +432,11 @@ class ToolGateway:
             bool,
         ):
             return {
-                "ok": False,
-                "status": "error",
+                "ok":
+                    False,
+
+                "status":
+                    "error",
 
                 "error": (
                     "Tool policy returned an "
@@ -392,37 +444,43 @@ class ToolGateway:
                 ),
             }
 
-        # -----------------------------------------
+        # ========================================================
         # APPROVAL REQUIRED
-        # -----------------------------------------
+        # ========================================================
 
         if requires_approval:
             approval = (
                 self.approval_creator(
                     tool_name,
                     arguments,
-                    risk=effective_risk,
+                    risk=(
+                        effective_risk
+                    ),
                 )
             )
 
             return {
-                "ok": True,
+                "ok":
+                    True,
 
-                "status": (
-                    "approval_required"
-                ),
+                "status":
+                    "approval_required",
 
-                "tool": tool_name,
-                "risk": effective_risk,
+                "tool":
+                    tool_name,
 
-                "approval_id": (
-                    approval["id"]
-                ),
+                "risk":
+                    effective_risk,
+
+                "approval_id":
+                    approval[
+                        "id"
+                    ],
             }
 
-        # -----------------------------------------
-        # AUTO-APPROVED OPERATION
-        # -----------------------------------------
+        # ========================================================
+        # AUTO-APPROVED EXECUTION
+        # ========================================================
 
         result = (
             await self.mcp.call_tool(
@@ -441,16 +499,28 @@ class ToolGateway:
                 )
             )
 
-            if result_status == "denied":
-                failure_status = "denied"
+            if (
+                result_status
+                == "denied"
+            ):
+                failure_status = (
+                    "denied"
+                )
+
             else:
-                failure_status = "error"
+                failure_status = (
+                    "error"
+                )
 
             return {
-                "ok": False,
-                "status": failure_status,
+                "ok":
+                    False,
 
-                "tool": tool_name,
+                "status":
+                    failure_status,
+
+                "tool":
+                    tool_name,
 
                 "error": (
                     result.get(
@@ -464,8 +534,15 @@ class ToolGateway:
             }
 
         return {
-            "ok": True,
-            "status": "success",
-            "tool": tool_name,
-            "result": result,
+            "ok":
+                True,
+
+            "status":
+                "success",
+
+            "tool":
+                tool_name,
+
+            "result":
+                result,
         }
