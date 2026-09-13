@@ -6,6 +6,7 @@ from subagents.core.llm_router import (
 
 from subagents.core.types import (
     AgentDefinition,
+    SpecialistRequest,
 )
 
 from subagents.core.registry import (
@@ -79,8 +80,7 @@ def build_registry(
                 "access-specialist"
             ),
             description=(
-                "Handles access and "
-                "permissions."
+                "Handles access and permissions."
             ),
             model=(
                 "access-test-model"
@@ -120,16 +120,25 @@ def build_router(
     )
 
 
-def test_llm_router_selects_account_agent():
+def test_llm_router_creates_structured_account_delegation():
     (
         router,
         inference,
     ) = build_router(
-        '{"agents": '
-        '["account-specialist"]}'
+        """
+        {
+          "delegations": [
+            {
+              "agent": "account-specialist",
+              "instructions":
+                "Determine whether account jdoe is locked."
+            }
+          ]
+        }
+        """
     )
 
-    routes = (
+    delegations = (
         asyncio.run(
             router.route(
                 "Is jdoe locked?"
@@ -137,8 +146,16 @@ def test_llm_router_selects_account_agent():
         )
     )
 
-    assert routes == [
-        "account-specialist"
+    assert delegations == [
+        SpecialistRequest(
+            agent_name=(
+                "account-specialist"
+            ),
+            instructions=(
+                "Determine whether account "
+                "jdoe is locked."
+            ),
+        )
     ]
 
     assert (
@@ -151,20 +168,30 @@ def test_llm_router_selects_account_agent():
     )
 
 
-def test_llm_router_supports_multiple_agents():
+def test_llm_router_supports_multiple_delegations():
     (
         router,
         _inference,
     ) = build_router(
-        (
-            '{"agents": ['
-            '"account-specialist", '
-            '"access-specialist"'
-            ']}'
-        )
+        """
+        {
+          "delegations": [
+            {
+              "agent": "account-specialist",
+              "instructions":
+                "Check account jdoe."
+            },
+            {
+              "agent": "access-specialist",
+              "instructions":
+                "Check VPN access for jdoe."
+            }
+          ]
+        }
+        """
     )
 
-    routes = (
+    delegations = (
         asyncio.run(
             router.route(
                 "Check jdoe account "
@@ -173,10 +200,20 @@ def test_llm_router_supports_multiple_agents():
         )
     )
 
-    assert routes == [
+    assert [
+        item.agent_name
+        for item in delegations
+    ] == [
         "account-specialist",
         "access-specialist",
     ]
+
+    assert (
+        delegations[
+            1
+        ].instructions
+        == "Check VPN access for jdoe."
+    )
 
 
 def test_llm_router_rejects_unknown_agent():
@@ -184,15 +221,23 @@ def test_llm_router_rejects_unknown_agent():
         router,
         _inference,
     ) = build_router(
-        (
-            '{"agents": ['
-            '"account-specialist", '
-            '"fake-specialist"'
-            ']}'
-        )
+        """
+        {
+          "delegations": [
+            {
+              "agent": "account-specialist",
+              "instructions": "Check jdoe."
+            },
+            {
+              "agent": "fake-specialist",
+              "instructions": "Do something."
+            }
+          ]
+        }
+        """
     )
 
-    routes = (
+    delegations = (
         asyncio.run(
             router.route(
                 "Check jdoe."
@@ -200,9 +245,40 @@ def test_llm_router_rejects_unknown_agent():
         )
     )
 
-    assert routes == [
+    assert [
+        item.agent_name
+        for item in delegations
+    ] == [
         "account-specialist"
     ]
+
+
+def test_llm_router_rejects_empty_instructions():
+    (
+        router,
+        _inference,
+    ) = build_router(
+        """
+        {
+          "delegations": [
+            {
+              "agent": "account-specialist",
+              "instructions": ""
+            }
+          ]
+        }
+        """
+    )
+
+    delegations = (
+        asyncio.run(
+            router.route(
+                "Check jdoe."
+            )
+        )
+    )
+
+    assert delegations == []
 
 
 def test_llm_router_rejects_invalid_json():
@@ -217,7 +293,7 @@ def test_llm_router_rejects_invalid_json():
         )
     )
 
-    routes = (
+    delegations = (
         asyncio.run(
             router.route(
                 "Check jdoe."
@@ -226,7 +302,7 @@ def test_llm_router_rejects_invalid_json():
     )
 
     assert (
-        routes
+        delegations
         == []
     )
 
@@ -236,10 +312,14 @@ def test_llm_router_handles_no_match():
         router,
         _inference,
     ) = build_router(
-        '{"agents": []}'
+        """
+        {
+          "delegations": []
+        }
+        """
     )
 
-    routes = (
+    delegations = (
         asyncio.run(
             router.route(
                 "Tell me a joke."
@@ -248,6 +328,6 @@ def test_llm_router_handles_no_match():
     )
 
     assert (
-        routes
+        delegations
         == []
     )

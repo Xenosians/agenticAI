@@ -4,6 +4,7 @@ from config import (
 )
 
 from subagents.llm.base import (
+    GenerationOutput,
     LLMBackend,
 )
 
@@ -25,6 +26,7 @@ class ModelManager:
     - lazy backend construction
     - backend caching through ModelRegistry
     - explicit load/unload lifecycle
+    - backend-native generation measurements
     - diagnostics
 
     It deliberately does NOT decide request priority or GPU
@@ -34,7 +36,10 @@ class ModelManager:
     def __init__(
         self,
         settings: Settings,
-        registry: ModelRegistry | None = None,
+        registry: (
+            ModelRegistry
+            | None
+        ) = None,
     ) -> None:
         self.settings = (
             settings
@@ -65,8 +70,10 @@ class ModelManager:
             def loader(
                 model_key=model_key,
             ) -> LLMBackend:
-                return self._build_backend(
-                    model_key
+                return (
+                    self._build_backend(
+                        model_key
+                    )
                 )
 
             self.registry.register_lazy(
@@ -91,8 +98,10 @@ class ModelManager:
             f"backend='{profile.backend}'"
         )
 
-        return build_model_backend(
-            profile
+        return (
+            build_model_backend(
+                profile
+            )
         )
 
     def model_profile(
@@ -108,7 +117,7 @@ class ModelManager:
 
         if profile is None:
             raise KeyError(
-                f"Model profile "
+                "Model profile "
                 f"'{model_key}' "
                 "is not configured."
             )
@@ -119,24 +128,33 @@ class ModelManager:
         self,
         model_key: str,
     ) -> bool:
-        return self.registry.exists(
-            model_key
+        return (
+            self.registry
+            .exists(
+                model_key
+            )
         )
 
     def load(
         self,
         model_key: str,
     ) -> LLMBackend:
-        return self.registry.get(
-            model_key
+        return (
+            self.registry
+            .get(
+                model_key
+            )
         )
 
     def unload(
         self,
         model_key: str,
     ) -> bool:
-        return self.registry.unload(
-            model_key
+        return (
+            self.registry
+            .unload(
+                model_key
+            )
         )
 
     def generate(
@@ -147,29 +165,75 @@ class ModelManager:
         ],
         max_new_tokens: int,
     ) -> str:
-        backend = self.load(
-            model_key
+        backend = (
+            self.load(
+                model_key
+            )
         )
 
-        return backend.generate(
-            messages,
-            max_new_tokens=(
-                max_new_tokens
-            ),
+        return (
+            backend.generate(
+                messages,
+                max_new_tokens=(
+                    max_new_tokens
+                ),
+            )
+        )
+
+    def generate_observed(
+        self,
+        model_key: str,
+        messages: list[
+            dict[str, str]
+        ],
+        max_new_tokens: int,
+    ) -> GenerationOutput:
+        """
+        Execute generation while preserving backend-native
+        observability information.
+
+        Backends that support exact token accounting return it
+        through GenerationOutput.
+
+        Backends that have not yet implemented specialized
+        instrumentation inherit LLMBackend.generate_observed(),
+        which remains backward compatible.
+        """
+
+        backend = (
+            self.load(
+                model_key
+            )
+        )
+
+        return (
+            backend
+            .generate_observed(
+                messages,
+                max_new_tokens=(
+                    max_new_tokens
+                ),
+            )
         )
 
     def is_loaded(
         self,
         model_key: str,
     ) -> bool:
-        return self.registry.is_loaded(
-            model_key
+        return (
+            self.registry
+            .is_loaded(
+                model_key
+            )
         )
 
     def list_models(
         self,
     ) -> list[str]:
-        return self.registry.list_models()
+        return (
+            self.registry
+            .list_models()
+        )
 
     def list_loaded_models(
         self,

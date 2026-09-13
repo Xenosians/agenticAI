@@ -28,16 +28,6 @@ from subagents.llm.qwen_coder_worker import (
 def require_local_model_path(
     profile: ModelProfileSettings,
 ) -> Path:
-    """
-    Return the configured local checkpoint path.
-
-    Current local backends require an on-disk model.
-
-    Remote/API-backed providers may eventually use a different
-    provider implementation and therefore need a different
-    validation path.
-    """
-
     model_path = (
         profile.model_path
     )
@@ -58,11 +48,11 @@ def build_model_backend(
     """
     Construct one backend from a logical model profile.
 
-    Callers do not distinguish Hub models from specialist
-    models here.
+    Model brand, quantization strategy, device placement, and
+    checkpoint path are deployment concerns.
 
-    Role -> logical model key mapping belongs to configuration.
-    Backend implementation selection belongs here.
+    Router/PrimaryAssistant/AgentRuntime continue to depend only
+    on logical model keys.
     """
 
     backend_type = (
@@ -86,10 +76,37 @@ def build_model_backend(
                 model_path=(
                     model_path
                 ),
+
+                quantization=(
+                    profile
+                    .quantization
+                ),
+
+                compute_dtype=(
+                    profile
+                    .compute_dtype
+                ),
+
+                device_map=(
+                    profile
+                    .device_map
+                ),
+
                 dequantize_fp8=(
                     profile
                     .dequantize_fp8
                 ),
+
+                bnb_4bit_quant_type=(
+                    profile
+                    .bnb_4bit_quant_type
+                ),
+
+                bnb_4bit_use_double_quant=(
+                    profile
+                    .bnb_4bit_use_double_quant
+                ),
+
                 offload_folder=(
                     profile
                     .offload_folder

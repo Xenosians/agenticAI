@@ -6,6 +6,7 @@ from subagents.core.orchestrator import (
 
 from subagents.core.types import (
     AgentResult,
+    SpecialistRequest,
 )
 
 
@@ -13,8 +14,16 @@ class FakeRouter:
     def __init__(
         self,
     ):
-        self.routes = [
-            "account-specialist"
+        self.delegations = [
+            SpecialistRequest(
+                agent_name=(
+                    "account-specialist"
+                ),
+                instructions=(
+                    "Determine whether "
+                    "jdoe is locked."
+                ),
+            )
         ]
 
         self.requests = []
@@ -22,12 +31,12 @@ class FakeRouter:
     async def route(
         self,
         user_request: str,
-    ) -> list[str]:
+    ):
         self.requests.append(
             user_request
         )
 
-        return self.routes
+        return self.delegations
 
 
 class FakeRuntime:
@@ -65,9 +74,8 @@ class FakeRuntime:
             },
 
             answer=(
-                "{'ok': True, "
-                "'user_id': 'jdoe', "
-                "'locked': False}"
+                "Account jdoe is enabled "
+                "and is not locked."
             ),
         )
 
@@ -77,6 +85,11 @@ class FakePrimaryAssistant:
         self,
     ):
         self.requests = []
+        self.synthesis_calls = []
+
+        self.synthesis_response = (
+            "jdoe is not locked."
+        )
 
     async def respond(
         self,
@@ -89,6 +102,25 @@ class FakePrimaryAssistant:
         return (
             "This is a primary "
             "assistant response."
+        )
+
+    async def synthesize(
+        self,
+        user_request,
+        results,
+    ) -> str:
+        self.synthesis_calls.append(
+            {
+                "user_request":
+                    user_request,
+
+                "results":
+                    results,
+            }
+        )
+
+        return (
+            self.synthesis_response
         )
 
 
@@ -130,7 +162,7 @@ def build_orchestrator(
     )
 
 
-def test_orchestrator_routes_to_worker():
+def test_orchestrator_runs_main_specialist_main_flow():
     (
         orchestrator,
         router,
@@ -161,24 +193,10 @@ def test_orchestrator_routes_to_worker():
     )
 
     assert (
-        result.results[
+        runtime.tasks[
             0
         ].agent_name
         == "account-specialist"
-    )
-
-    assert (
-        result.results[
-            0
-        ].proposed_tool
-        == "account_status"
-    )
-
-    assert (
-        len(
-            runtime.tasks
-        )
-        == 1
     )
 
     assert (
@@ -188,10 +206,45 @@ def test_orchestrator_routes_to_worker():
         == "Is jdoe locked?"
     )
 
+    assert (
+        runtime.tasks[
+            0
+        ].instructions
+        == (
+            "Determine whether "
+            "jdoe is locked."
+        )
+    )
+
     assert router.requests == [
         "Is jdoe locked?"
     ]
 
+    # Specialist success must return through the Main model.
+    assert (
+        len(
+            primary_assistant
+            .synthesis_calls
+        )
+        == 1
+    )
+
+    assert (
+        primary_assistant
+        .synthesis_calls[
+            0
+        ][
+            "user_request"
+        ]
+        == "Is jdoe locked?"
+    )
+
+    assert (
+        result.answer
+        == "jdoe is not locked."
+    )
+
+    # Direct-response mode was not used.
     assert (
         primary_assistant.requests
         == []
@@ -203,7 +256,7 @@ def test_orchestrator_handles_no_route():
         FakeRouter()
     )
 
-    router.routes = []
+    router.delegations = []
 
     runtime = (
         FakeRuntime()
@@ -237,15 +290,8 @@ def test_orchestrator_handles_no_route():
         == "success"
     )
 
-    assert (
-        result.routes
-        == []
-    )
-
-    assert (
-        result.results
-        == []
-    )
+    assert result.routes == []
+    assert result.results == []
 
     assert (
         result.answer
@@ -263,19 +309,38 @@ def test_orchestrator_handles_no_route():
     )
 
     assert (
-        runtime.tasks
+        primary_assistant
+        .synthesis_calls
         == []
     )
 
+    assert runtime.tasks == []
 
-def test_orchestrator_handles_multiple_workers():
+
+def test_orchestrator_handles_multiple_specialists():
     router = (
         FakeRouter()
     )
 
-    router.routes = [
-        "account-specialist",
-        "access-specialist",
+    router.delegations = [
+        SpecialistRequest(
+            agent_name=(
+                "account-specialist"
+            ),
+            instructions=(
+                "Check account jdoe."
+            ),
+        ),
+
+        SpecialistRequest(
+            agent_name=(
+                "access-specialist"
+            ),
+            instructions=(
+                "Check VPN access "
+                "for jdoe."
+            ),
+        ),
     ]
 
     runtime = (
@@ -306,12 +371,10 @@ def test_orchestrator_handles_multiple_workers():
         )
     )
 
-    assert (
-        len(
-            result.routes
-        )
-        == 2
-    )
+    assert result.routes == [
+        "account-specialist",
+        "access-specialist",
+    ]
 
     assert (
         len(
@@ -328,12 +391,15 @@ def test_orchestrator_handles_multiple_workers():
     )
 
     assert (
-        primary_assistant.requests
-        == []
+        len(
+            primary_assistant
+            .synthesis_calls
+        )
+        == 1
     )
 
 
-def test_orchestrator_propagates_approval():
+def test_orchestrator_does_not_synthesize_approval():
     router = (
         FakeRouter()
     )
@@ -364,6 +430,10 @@ def test_orchestrator_propagates_approval():
                     "user_id":
                         "jdoe"
                 },
+
+                approval_id=(
+                    "approval-123"
+                ),
 
                 answer=(
                     "Approval required: "
@@ -404,21 +474,68 @@ def test_orchestrator_propagates_approval():
     assert (
         result.results[
             0
-        ].proposed_tool
-        == "unlock_user"
+        ].approval_id
+        == "approval-123"
     )
 
     assert (
-        result.results[
-            0
-        ].proposed_arguments
-        == {
-            "user_id":
-                "jdoe"
-        }
+        result.answer
+        == (
+            "Approval required: "
+            "approval-123"
+        )
     )
 
     assert (
-        primary_assistant.requests
+        primary_assistant
+        .synthesis_calls
         == []
+    )
+
+
+def test_orchestrator_falls_back_if_main_synthesis_fails():
+    class BrokenPrimaryAssistant(
+        FakePrimaryAssistant
+    ):
+        async def synthesize(
+            self,
+            user_request,
+            results,
+        ):
+            raise RuntimeError(
+                "main synthesis unavailable"
+            )
+
+    primary_assistant = (
+        BrokenPrimaryAssistant()
+    )
+
+    (
+        orchestrator,
+        _router,
+        _runtime,
+        _primary_assistant,
+    ) = build_orchestrator(
+        primary_assistant=(
+            primary_assistant
+        )
+    )
+
+    result = asyncio.run(
+        orchestrator.run(
+            "Is jdoe locked?"
+        )
+    )
+
+    assert (
+        result.status
+        == "success"
+    )
+
+    assert (
+        result.answer
+        == (
+            "Account jdoe is enabled "
+            "and is not locked."
+        )
     )

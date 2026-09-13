@@ -29,7 +29,10 @@ class ModelProfileSettings(
 
     Roles such as Hub, Account, Access, or Developer refer to
     logical model keys instead of directly depending on model
-    brands, filesystem paths, or backend implementations.
+    brands, filesystem paths, quantization methods, or backend
+    implementations.
+
+    Deployment-specific runtime choices belong here.
     """
 
     backend: str
@@ -40,11 +43,58 @@ class ModelProfileSettings(
 
     enabled: bool = True
 
-    # Backend-specific local-model options.
+    # ============================================================
+    # MODEL RUNTIME PROFILE
+    # ============================================================
+
+    # auto:
+    #   Detect checkpoint-native quantization where supported.
     #
-    # These are currently used by Ministral and safely ignored
-    # by backends that do not need them.
-    dequantize_fp8: bool = True
+    # none:
+    #   Load without additional quantization.
+    #
+    # fp8:
+    #   Transformers FineGrainedFP8Config.
+    #
+    # bnb4:
+    #   bitsandbytes 4-bit quantization.
+    quantization: str = (
+        "auto"
+    )
+
+    compute_dtype: str = (
+        "bfloat16"
+    )
+
+    device_map: (
+        str | None
+    ) = (
+        "auto"
+    )
+
+    # ============================================================
+    # FP8 OPTIONS
+    # ============================================================
+
+    dequantize_fp8: bool = (
+        True
+    )
+
+    # ============================================================
+    # BITSANDBYTES 4-BIT OPTIONS
+    # ============================================================
+
+    bnb_4bit_quant_type: str = (
+        "nf4"
+    )
+
+    bnb_4bit_use_double_quant: bool = (
+        True
+    )
+
+    # ============================================================
+    # OPTIONAL OFFLOAD
+    # ============================================================
 
     offload_folder: (
         Path | None
@@ -68,6 +118,126 @@ class ModelProfileSettings(
             raise ValueError(
                 "Model backend must not be empty."
             )
+
+        return normalized
+
+    @field_validator(
+        "quantization"
+    )
+    @classmethod
+    def validate_quantization(
+        cls,
+        value: str,
+    ) -> str:
+        normalized = (
+            value
+            .strip()
+            .lower()
+        )
+
+        supported = {
+            "auto",
+            "bnb4",
+            "fp8",
+            "none",
+        }
+
+        if normalized not in supported:
+            raise ValueError(
+                "Model quantization must be one of: "
+                + ", ".join(
+                    sorted(
+                        supported
+                    )
+                )
+            )
+
+        return normalized
+
+    @field_validator(
+        "compute_dtype"
+    )
+    @classmethod
+    def validate_compute_dtype(
+        cls,
+        value: str,
+    ) -> str:
+        normalized = (
+            value
+            .strip()
+            .lower()
+        )
+
+        supported = {
+            "bfloat16",
+            "float16",
+            "float32",
+        }
+
+        if normalized not in supported:
+            raise ValueError(
+                "Model compute_dtype must be one of: "
+                + ", ".join(
+                    sorted(
+                        supported
+                    )
+                )
+            )
+
+        return normalized
+
+    @field_validator(
+        "bnb_4bit_quant_type"
+    )
+    @classmethod
+    def validate_bnb_quant_type(
+        cls,
+        value: str,
+    ) -> str:
+        normalized = (
+            value
+            .strip()
+            .lower()
+        )
+
+        supported = {
+            "fp4",
+            "nf4",
+        }
+
+        if normalized not in supported:
+            raise ValueError(
+                "bnb_4bit_quant_type must be one of: "
+                + ", ".join(
+                    sorted(
+                        supported
+                    )
+                )
+            )
+
+        return normalized
+
+    @field_validator(
+        "device_map"
+    )
+    @classmethod
+    def validate_device_map(
+        cls,
+        value: (
+            str | None
+        ),
+    ) -> (
+        str | None
+    ):
+        if value is None:
+            return None
+
+        normalized = (
+            value.strip()
+        )
+
+        if not normalized:
+            return None
 
         return normalized
 
@@ -130,13 +300,6 @@ class Settings(
 
     # ============================================================
     # DURABLE JOB LIVENESS
-    #
-    # Must remain comfortably below the Phoenix processing lease.
-    #
-    # Current development values:
-    #
-    #   heartbeat: 30 seconds
-    #   lease:     300 seconds
     # ============================================================
 
     job_heartbeat_interval_seconds: float = Field(
@@ -196,12 +359,6 @@ class Settings(
 
     # ============================================================
     # MODEL PROFILES
-    #
-    # Roles reference logical model keys.
-    #
-    # The Hub role uses HUB_MODEL_KEY.
-    # Specialist roles use the `model:` value in their
-    # agent-definition front matter.
     # ============================================================
 
     hub_model_key: str = (
@@ -280,7 +437,7 @@ class Settings(
     ) = None
 
     # ------------------------------------------------------------
-    # LOGICAL ACCESS GROUP MAPPING
+    # LOGICAL RESOURCE -> AD GROUP MAPPING
     # ------------------------------------------------------------
 
     ad_access_groups: dict[
@@ -372,9 +529,10 @@ class Settings(
             ModelProfileSettings,
         ] = {}
 
-        for model_key, profile in (
-            value.items()
-        ):
+        for (
+            model_key,
+            profile,
+        ) in value.items():
             if not isinstance(
                 model_key,
                 str,
@@ -413,8 +571,12 @@ class Settings(
     @classmethod
     def validate_phoenix_base_url(
         cls,
-        value: str | None,
-    ) -> str | None:
+        value: (
+            str | None
+        ),
+    ) -> (
+        str | None
+    ):
         if value is None:
             return None
 
@@ -427,8 +589,10 @@ class Settings(
         if not normalized:
             return None
 
-        parsed = urlsplit(
-            normalized
+        parsed = (
+            urlsplit(
+                normalized
+            )
         )
 
         if (
@@ -525,7 +689,9 @@ class Settings(
                 "is not configured."
             )
 
-        return value.strip()
+        return (
+            value.strip()
+        )
 
     # ============================================================
     # MODEL PROFILE HELPERS
@@ -534,17 +700,25 @@ class Settings(
     def model_profile(
         self,
         model_key: str,
-    ) -> ModelProfileSettings | None:
-        return self.model_profiles.get(
-            model_key
+    ) -> (
+        ModelProfileSettings
+        | None
+    ):
+        return (
+            self.model_profiles
+            .get(
+                model_key
+            )
         )
 
     def require_model_profile(
         self,
         model_key: str,
     ) -> ModelProfileSettings:
-        profile = self.model_profile(
-            model_key
+        profile = (
+            self.model_profile(
+                model_key
+            )
         )
 
         if profile is None:
@@ -593,14 +767,16 @@ class Settings(
                 )
             )
 
-        return profile.model_copy(
-            update={
-                "model_path":
-                    resolved_model_path,
+        return (
+            profile.model_copy(
+                update={
+                    "model_path":
+                        resolved_model_path,
 
-                "offload_folder":
-                    resolved_offload_folder,
-            }
+                    "offload_folder":
+                        resolved_offload_folder,
+                }
+            )
         )
 
     # ============================================================
@@ -610,7 +786,9 @@ class Settings(
     @property
     def ad_read_bind_identity(
         self,
-    ) -> str | None:
+    ) -> (
+        str | None
+    ):
         return (
             self.ad_bind_user
             or self.ad_bind_dn
@@ -619,7 +797,9 @@ class Settings(
     @property
     def ad_write_bind_identity(
         self,
-    ) -> str | None:
+    ) -> (
+        str | None
+    ):
         return (
             self.ad_write_bind_user
             or self.ad_write_bind_dn
@@ -630,7 +810,9 @@ class Settings(
         self,
     ) -> int:
         if self.ad_port is not None:
-            return self.ad_port
+            return (
+                self.ad_port
+            )
 
         if self.ad_use_ssl:
             return 636
@@ -645,13 +827,6 @@ class Settings(
         self,
         value: Path,
     ) -> Path:
-        """
-        Resolve a runtime persistence path.
-
-        Relative runtime paths are anchored to PROJECT_ROOT
-        instead of depending on the process working directory.
-        """
-
         path = (
             value
             .expanduser()
@@ -663,16 +838,14 @@ class Settings(
                 / path
             )
 
-        return path.resolve()
+        return (
+            path.resolve()
+        )
 
     def resolve_project_path(
         self,
         value: Path,
     ) -> Path:
-        """
-        Resolve a configured project-relative path.
-        """
-
         path = (
             value
             .expanduser()
@@ -684,17 +857,17 @@ class Settings(
                 / path
             )
 
-        return path.resolve()
+        return (
+            path.resolve()
+        )
 
     def require_path(
         self,
-        value: Path | None,
+        value: (
+            Path | None
+        ),
         setting_name: str,
     ) -> Path:
-        """
-        Resolve and validate a path that must already exist.
-        """
-
         if value is None:
             raise RuntimeError(
                 f"{setting_name} "
@@ -712,7 +885,9 @@ class Settings(
                 / path
             )
 
-        path = path.resolve()
+        path = (
+            path.resolve()
+        )
 
         if not path.exists():
             raise RuntimeError(
@@ -725,16 +900,10 @@ class Settings(
 
 
 @lru_cache
-def get_settings() -> Settings:
+def get_settings(
+) -> Settings:
     """
     Return the process-cached validated Settings instance.
-
-    Application composition roots may instantiate Settings
-    explicitly when lifecycle ownership matters.
-
-    This accessor remains available for lightweight scripts and
-    components that only need centralized immutable
-    configuration discovery.
     """
 
     return Settings()

@@ -4,6 +4,10 @@ from subagents.core.registry import (
     AgentRegistry,
 )
 
+from subagents.core.types import (
+    SpecialistRequest,
+)
+
 from subagents.llm.inference import (
     InferenceEngine,
 )
@@ -19,14 +23,15 @@ from subagents.prompts.prompt_loader import (
 
 class LLMRouter:
     """
-    Uses the configured Hub model profile to select specialist
-    workers.
+    Uses the configured Hub model profile to create structured
+    specialist delegations.
 
     The router does not own model weights or backend objects.
 
-    All model execution passes through the shared inference
-    boundary so GPU admission, model residency, and future
-    scheduling policy remain outside orchestration code.
+    Delegation instructions are advisory task context only.
+    They are never treated as authorization.
+
+    Tool authorization remains inside trusted ToolGateway code.
     """
 
     def __init__(
@@ -87,7 +92,9 @@ class LLMRouter:
     async def route(
         self,
         user_request: str,
-    ) -> list[str]:
+    ) -> list[
+        SpecialistRequest
+    ]:
         messages = [
             {
                 "role":
@@ -114,7 +121,7 @@ class LLMRouter:
                 messages=(
                     messages
                 ),
-                max_new_tokens=128,
+                max_new_tokens=256,
                 priority=(
                     InferencePriority
                     .HUB_ROUTING
@@ -145,38 +152,95 @@ class LLMRouter:
         ):
             return []
 
-        routes = (
+        delegations = (
             parsed.get(
-                "agents"
+                "delegations"
             )
         )
 
         if not isinstance(
-            routes,
+            delegations,
             list,
         ):
             return []
 
-        validated_routes = []
+        validated: list[
+            SpecialistRequest
+        ] = []
 
-        for route in routes:
+        seen_agents: set[str] = (
+            set()
+        )
+
+        for delegation in delegations:
             if not isinstance(
-                route,
+                delegation,
+                dict,
+            ):
+                continue
+
+            agent_name = (
+                delegation.get(
+                    "agent"
+                )
+            )
+
+            instructions = (
+                delegation.get(
+                    "instructions"
+                )
+            )
+
+            if not isinstance(
+                agent_name,
                 str,
             ):
                 continue
 
-            # Hub cannot invent specialist names.
-            if self.registry.exists(
-                route
+            if not isinstance(
+                instructions,
+                str,
             ):
-                validated_routes.append(
-                    route
-                )
+                continue
 
-        # Remove duplicates while preserving order.
-        return list(
-            dict.fromkeys(
-                validated_routes
+            agent_name = (
+                agent_name.strip()
             )
-        )
+
+            instructions = (
+                instructions.strip()
+            )
+
+            if not agent_name:
+                continue
+
+            if not instructions:
+                continue
+
+            # Hub cannot invent specialist names.
+            if not self.registry.exists(
+                agent_name
+            ):
+                continue
+
+            # One delegation per specialist for this runtime
+            # version.
+            if agent_name in seen_agents:
+                continue
+
+            seen_agents.add(
+                agent_name
+            )
+
+            validated.append(
+                SpecialistRequest(
+                    agent_name=(
+                        agent_name
+                    ),
+                    instructions=(
+                        instructions
+                    ),
+                )
+            )
+
+        return validated

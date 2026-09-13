@@ -2,8 +2,20 @@ from typing import (
     Protocol,
 )
 
+from subagents.llm.base import (
+    GenerationOutput,
+)
+
 from subagents.llm.model_manager import (
     ModelManager,
+)
+
+from subagents.llm.observability import (
+    InferenceMetric,
+    MemorySampler,
+    MetricSink,
+    capture_cuda_memory,
+    emit_inference_metric,
 )
 
 from subagents.llm.scheduler import (
@@ -15,14 +27,6 @@ from subagents.llm.scheduler import (
 class InferenceEngine(
     Protocol
 ):
-    """
-    Interface consumed by reasoning/orchestration components.
-
-    Callers request inference by logical model key.
-
-    They never receive or own model backend objects.
-    """
-
     async def generate(
         self,
         *,
@@ -40,22 +44,32 @@ class InferenceCoordinator:
     """
     Central inference entry point.
 
-    This boundary hides:
+    Scheduling policy remains unchanged.
 
-    - model backend construction
-    - cached model instances
-    - GPU admission
-    - inference priority
+    This layer now measures:
 
-    Future GPU residency, eviction, model-version promotion,
-    and scheduling policy can evolve behind this interface
-    without changing Router, PrimaryAssistant, or AgentRuntime.
+    - queue wait
+    - execution latency
+    - total scheduler latency
+    - cold/hot model state
+    - VRAM state
+    - exact generated-token count when supported
+    - tokens/sec when token count is available
+    - true TTFT when a backend eventually supports it
     """
 
     def __init__(
         self,
         model_manager: ModelManager,
         scheduler: GpuScheduler,
+        memory_sampler: (
+            MemorySampler
+            | None
+        ) = None,
+        metric_sink: (
+            MetricSink
+            | None
+        ) = None,
     ) -> None:
         self.model_manager = (
             model_manager
@@ -63,6 +77,20 @@ class InferenceCoordinator:
 
         self.scheduler = (
             scheduler
+        )
+
+        self.memory_sampler = (
+            memory_sampler
+            if memory_sampler
+            is not None
+            else capture_cuda_memory
+        )
+
+        self.metric_sink = (
+            metric_sink
+            if metric_sink
+            is not None
+            else emit_inference_metric
         )
 
     async def generate(
@@ -75,73 +103,269 @@ class InferenceCoordinator:
         max_new_tokens: int,
         priority: int,
     ) -> str:
-        """
-        Execute one model generation through the shared
-        scheduler.
-
-        The caller never receives the underlying backend.
-        """
-
-        if not self.model_manager.exists(
-            model_key
+        if not (
+            self.model_manager
+            .exists(
+                model_key
+            )
         ):
             raise KeyError(
                 f"Model '{model_key}' "
                 "is not registered."
             )
 
-        def work() -> str:
+        loaded_before = (
+            self.model_manager
+            .is_loaded(
+                model_key
+            )
+        )
+
+        memory_before = (
+            self.memory_sampler()
+        )
+
+        def work(
+        ) -> GenerationOutput:
             return (
                 self.model_manager
-                .generate(
+                .generate_observed(
                     model_key=(
                         model_key
                     ),
+
                     messages=(
                         messages
                     ),
+
                     max_new_tokens=(
                         max_new_tokens
                     ),
                 )
             )
 
-        return await self.scheduler.run(
-            priority=(
-                priority
-            ),
-            work=work,
+        scheduled = (
+            await self.scheduler
+            .run_observed(
+                priority=(
+                    priority
+                ),
+
+                work=(
+                    work
+                ),
+            )
+        )
+
+        generation = (
+            scheduled.value
+        )
+
+        memory_after = (
+            self.memory_sampler()
+        )
+
+        loaded_after = (
+            self.model_manager
+            .is_loaded(
+                model_key
+            )
+        )
+
+        tokens_per_second: (
+            float | None
+        ) = None
+
+        if (
+            generation.generated_tokens
+            is not None
+            and generation.generated_tokens
+            >= 0
+            and scheduled.metrics
+            .execution_seconds
+            > 0
+        ):
+            tokens_per_second = (
+                generation.generated_tokens
+                / scheduled.metrics
+                .execution_seconds
+            )
+
+        self.metric_sink(
+            InferenceMetric(
+                operation=(
+                    "generate"
+                ),
+
+                model_key=(
+                    model_key
+                ),
+
+                priority=int(
+                    priority
+                ),
+
+                loaded_before=(
+                    loaded_before
+                ),
+
+                loaded_after=(
+                    loaded_after
+                ),
+
+                queue_wait_seconds=(
+                    scheduled
+                    .metrics
+                    .queue_wait_seconds
+                ),
+
+                execution_seconds=(
+                    scheduled
+                    .metrics
+                    .execution_seconds
+                ),
+
+                total_seconds=(
+                    scheduled
+                    .metrics
+                    .total_seconds
+                ),
+
+                generated_tokens=(
+                    generation
+                    .generated_tokens
+                ),
+
+                tokens_per_second=(
+                    tokens_per_second
+                ),
+
+                first_token_seconds=(
+                    generation
+                    .first_token_seconds
+                ),
+
+                memory_before=(
+                    memory_before
+                ),
+
+                memory_after=(
+                    memory_after
+                ),
+            )
+        )
+
+        return (
+            generation.text
         )
 
     async def warm(
         self,
         model_key: str,
     ) -> None:
-        """
-        Load a model through the same resource-admission
-        boundary used for normal inference.
-
-        This will later allow startup warming to obey the same
-        GPU ownership rules as runtime inference.
-        """
-
-        if not self.model_manager.exists(
-            model_key
+        if not (
+            self.model_manager
+            .exists(
+                model_key
+            )
         ):
             raise KeyError(
                 f"Model '{model_key}' "
                 "is not registered."
             )
 
-        await self.scheduler.run(
-            priority=(
-                InferencePriority
-                .STARTUP
-            ),
-            work=lambda: (
-                self.model_manager
-                .load(
+        loaded_before = (
+            self.model_manager
+            .is_loaded(
+                model_key
+            )
+        )
+
+        memory_before = (
+            self.memory_sampler()
+        )
+
+        scheduled = (
+            await self.scheduler
+            .run_observed(
+                priority=(
+                    InferencePriority
+                    .STARTUP
+                ),
+
+                work=lambda: (
+                    self.model_manager
+                    .load(
+                        model_key
+                    )
+                ),
+            )
+        )
+
+        memory_after = (
+            self.memory_sampler()
+        )
+
+        loaded_after = (
+            self.model_manager
+            .is_loaded(
+                model_key
+            )
+        )
+
+        self.metric_sink(
+            InferenceMetric(
+                operation=(
+                    "warm"
+                ),
+
+                model_key=(
                     model_key
-                )
-            ),
+                ),
+
+                priority=int(
+                    InferencePriority
+                    .STARTUP
+                ),
+
+                loaded_before=(
+                    loaded_before
+                ),
+
+                loaded_after=(
+                    loaded_after
+                ),
+
+                queue_wait_seconds=(
+                    scheduled
+                    .metrics
+                    .queue_wait_seconds
+                ),
+
+                execution_seconds=(
+                    scheduled
+                    .metrics
+                    .execution_seconds
+                ),
+
+                total_seconds=(
+                    scheduled
+                    .metrics
+                    .total_seconds
+                ),
+
+                generated_tokens=None,
+
+                tokens_per_second=None,
+
+                first_token_seconds=None,
+
+                memory_before=(
+                    memory_before
+                ),
+
+                memory_after=(
+                    memory_after
+                ),
+            )
         )

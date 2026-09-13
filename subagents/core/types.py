@@ -26,6 +26,22 @@ class AgentDefinition:
 
 
 @dataclass
+class SpecialistRequest:
+    """
+    Structured Hub -> specialist delegation.
+
+    The Hub may describe what it wants the specialist to inspect,
+    but this object is NOT authorization.
+
+    Trusted tool authorization still belongs to ToolGateway.
+    """
+
+    agent_name: str
+
+    instructions: str
+
+
+@dataclass
 class AgentTask:
     task_id: str
 

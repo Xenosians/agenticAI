@@ -119,6 +119,17 @@ def router_runtime():
         runner.close()
 
 
+def route_names(
+    delegations,
+):
+    return [
+        delegation.agent_name
+
+        for delegation
+        in delegations
+    ]
+
+
 def test_ministral_routes_account(
     router_runtime,
 ):
@@ -127,7 +138,7 @@ def test_ministral_routes_account(
         router,
     ) = router_runtime
 
-    routes = (
+    delegations = (
         runner.run(
             router.route(
                 "Is jdoe locked?"
@@ -137,12 +148,20 @@ def test_ministral_routes_account(
 
     print(
         "ACCOUNT:",
-        routes,
+        delegations,
     )
 
-    assert routes == [
+    assert route_names(
+        delegations
+    ) == [
         "account-specialist"
     ]
+
+    assert (
+        delegations[
+            0
+        ].instructions
+    )
 
 
 def test_ministral_routes_access(
@@ -153,7 +172,7 @@ def test_ministral_routes_access(
         router,
     ) = router_runtime
 
-    routes = (
+    delegations = (
         runner.run(
             router.route(
                 "Does jdoe have VPN access?"
@@ -163,12 +182,20 @@ def test_ministral_routes_access(
 
     print(
         "ACCESS:",
-        routes,
+        delegations,
     )
 
-    assert routes == [
+    assert route_names(
+        delegations
+    ) == [
         "access-specialist"
     ]
+
+    assert (
+        delegations[
+            0
+        ].instructions
+    )
 
 
 def test_ministral_routes_multiple(
@@ -179,7 +206,7 @@ def test_ministral_routes_multiple(
         router,
     ) = router_runtime
 
-    routes = (
+    delegations = (
         runner.run(
             router.route(
                 (
@@ -192,10 +219,12 @@ def test_ministral_routes_multiple(
 
     print(
         "MULTI:",
-        routes,
+        delegations,
     )
 
-    assert routes == [
+    assert route_names(
+        delegations
+    ) == [
         "account-specialist",
         "access-specialist",
     ]
@@ -209,7 +238,7 @@ def test_ministral_no_route(
         router,
     ) = router_runtime
 
-    routes = (
+    delegations = (
         runner.run(
             router.route(
                 "Tell me a joke."
@@ -219,10 +248,7 @@ def test_ministral_no_route(
 
     print(
         "NO ROUTE:",
-        routes,
+        delegations,
     )
 
-    assert (
-        routes
-        == []
-    )
+    assert delegations == []

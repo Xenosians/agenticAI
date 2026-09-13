@@ -21,13 +21,30 @@ from subagents.core.types import (
 
 class Orchestrator:
     """
-    Primary assistant and specialist orchestrator.
+    Main -> Specialist -> Main orchestration.
 
-    Ordinary requests are answered directly by the primary
-    assistant.
+    Direct path:
 
-    Requests that benefit from specialist capabilities are
-    delegated through the specialist runtime.
+        Main routing
+            ↓
+        no delegation
+            ↓
+        Main direct response
+
+    Specialist path:
+
+        Main routing
+            ↓
+        structured specialist request
+            ↓
+        Specialist runtime
+            ↓
+        trusted structured result
+            ↓
+        Main synthesis
+
+    Approval and error states remain deterministic and are not
+    rewritten by the Main model.
     """
 
     def __init__(
@@ -53,10 +70,10 @@ class Orchestrator:
         user_request: str,
     ) -> HubResult:
         # -------------------------------------------------
-        # Determine whether specialist delegation is useful.
+        # Main routing / structured delegation
         # -------------------------------------------------
 
-        routes = (
+        delegations = (
             await self.router.route(
                 user_request
             )
@@ -66,7 +83,7 @@ class Orchestrator:
         # Primary conversational path
         # -------------------------------------------------
 
-        if not routes:
+        if not delegations:
             answer = (
                 await
                 self.primary_assistant
@@ -86,14 +103,20 @@ class Orchestrator:
             )
 
         # -------------------------------------------------
-        # Specialist path
+        # Specialist execution
         # -------------------------------------------------
 
         results: list[
             AgentResult
         ] = []
 
-        for agent_name in routes:
+        routes: list[str] = []
+
+        for delegation in delegations:
+            routes.append(
+                delegation.agent_name
+            )
+
             task = AgentTask(
                 task_id=(
                     str(
@@ -101,10 +124,15 @@ class Orchestrator:
                     )
                 ),
                 agent_name=(
-                    agent_name
+                    delegation
+                    .agent_name
                 ),
                 user_request=(
                     user_request
+                ),
+                instructions=(
+                    delegation
+                    .instructions
                 ),
             )
 
@@ -125,9 +153,23 @@ class Orchestrator:
             in results
         }
 
+        # -------------------------------------------------
+        # Fail / approval states remain deterministic.
+        #
+        # Do not let a generative synthesis step obscure an
+        # approval requirement or runtime failure.
+        # -------------------------------------------------
+
         if "error" in statuses:
             overall_status = (
                 "partial_error"
+            )
+
+            answer = (
+                self
+                ._compose_deterministic_answer(
+                    results
+                )
             )
 
         elif (
@@ -138,16 +180,52 @@ class Orchestrator:
                 "approval_required"
             )
 
+            answer = (
+                self
+                ._compose_deterministic_answer(
+                    results
+                )
+            )
+
         else:
             overall_status = (
                 "success"
             )
 
-        answer = (
-            self._compose_answer(
-                results
-            )
-        )
+            # ---------------------------------------------
+            # Main synthesis pass
+            # ---------------------------------------------
+
+            try:
+                answer = (
+                    await
+                    self.primary_assistant
+                    .synthesize(
+                        user_request,
+                        results,
+                    )
+                )
+
+            except Exception as exc:
+                print(
+                    "[HUB] Main synthesis failed "
+                    f"error={exc!r}"
+                )
+
+                answer = (
+                    self
+                    ._compose_deterministic_answer(
+                        results
+                    )
+                )
+
+            if not answer:
+                answer = (
+                    self
+                    ._compose_deterministic_answer(
+                        results
+                    )
+                )
 
         return HubResult(
             status=(
@@ -156,12 +234,18 @@ class Orchestrator:
             user_request=(
                 user_request
             ),
-            routes=routes,
-            results=results,
-            answer=answer,
+            routes=(
+                routes
+            ),
+            results=(
+                results
+            ),
+            answer=(
+                answer
+            ),
         )
 
-    def _compose_answer(
+    def _compose_deterministic_answer(
         self,
         results: list[
             AgentResult
@@ -172,16 +256,10 @@ class Orchestrator:
         for result in results:
             if (
                 result.status
-                == "success"
-                and result.answer
-            ):
-                parts.append(
-                    result.answer
-                )
-
-            elif (
-                result.status
-                == "approval_required"
+                in {
+                    "success",
+                    "approval_required",
+                }
                 and result.answer
             ):
                 parts.append(

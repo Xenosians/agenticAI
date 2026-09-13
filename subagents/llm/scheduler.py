@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import heapq
 import itertools
+import time
 
 from dataclasses import (
     dataclass,
@@ -13,6 +14,7 @@ from enum import IntEnum
 
 from typing import (
     Callable,
+    Generic,
     TypeVar,
 )
 
@@ -62,6 +64,28 @@ class _GpuWaiter:
     )
 
 
+@dataclass(
+    frozen=True
+)
+class SchedulerRunMetrics:
+    queue_wait_seconds: float
+
+    execution_seconds: float
+
+    total_seconds: float
+
+
+@dataclass(
+    frozen=True
+)
+class ScheduledResult(
+    Generic[T]
+):
+    value: T
+
+    metrics: SchedulerRunMetrics
+
+
 class GpuScheduler:
     """
     Process-local serialized inference admission boundary.
@@ -76,9 +100,11 @@ class GpuScheduler:
     - cancellation never releases the GPU slot while blocking
       model work is still executing
 
-    Future VRAM measurement, HOT/WARM/COLD residency, measured
-    eviction, and validated overlap can evolve behind this
-    boundary.
+    Observability is intentionally measured here because this is
+    the resource-admission boundary.
+
+    Future HOT/WARM/COLD residency, measured eviction, and
+    validated overlap can evolve behind this boundary.
     """
 
     def __init__(
@@ -129,8 +155,45 @@ class GpuScheduler:
             T,
         ],
     ) -> T:
+        """
+        Compatibility entry point.
+
+        Existing callers receive the original value while
+        observability-aware callers may use run_observed().
+        """
+
+        result = (
+            await self.run_observed(
+                priority=(
+                    priority
+                ),
+                work=(
+                    work
+                ),
+            )
+        )
+
+        return result.value
+
+    async def run_observed(
+        self,
+        *,
+        priority: int,
+        work: Callable[
+            [],
+            T,
+        ],
+    ) -> ScheduledResult[T]:
+        submitted_at = (
+            time.perf_counter()
+        )
+
         await self._acquire(
             priority
+        )
+
+        admitted_at = (
+            time.perf_counter()
         )
 
         worker_task: (
@@ -138,15 +201,6 @@ class GpuScheduler:
         ) = None
 
         try:
-            # ----------------------------------------------------
-            # Blocking HF/PyTorch inference must not block the
-            # FastAPI event loop.
-            #
-            # Keep an explicit Task around the thread operation.
-            # asyncio.to_thread() itself cannot stop the native
-            # work when its awaiting coroutine is cancelled.
-            # ----------------------------------------------------
-
             worker_task = (
                 asyncio.create_task(
                     asyncio.to_thread(
@@ -156,41 +210,52 @@ class GpuScheduler:
             )
 
             try:
-                return await asyncio.shield(
-                    worker_task
+                value = (
+                    await asyncio.shield(
+                        worker_task
+                    )
                 )
 
             except asyncio.CancelledError:
-                # ------------------------------------------------
-                # Critical GPU safety rule:
-                #
-                # The Python coroutine may be cancelled, but the
-                # underlying model call is still running in its
-                # worker thread.
-                #
-                # Do not release GPU admission until that native
-                # operation has actually finished.
-                # ------------------------------------------------
-
                 try:
                     await worker_task
 
                 except Exception:
-                    # The caller was cancelled, so cancellation
-                    # remains the externally visible outcome.
-                    #
-                    # The worker exception is intentionally not
-                    # substituted for CancelledError here.
                     pass
 
                 raise
 
-        finally:
-            # ----------------------------------------------------
-            # At this point the admitted blocking operation is no
-            # longer running.
-            # ----------------------------------------------------
+            completed_at = (
+                time.perf_counter()
+            )
 
+            metrics = (
+                SchedulerRunMetrics(
+                    queue_wait_seconds=(
+                        admitted_at
+                        - submitted_at
+                    ),
+
+                    execution_seconds=(
+                        completed_at
+                        - admitted_at
+                    ),
+
+                    total_seconds=(
+                        completed_at
+                        - submitted_at
+                    ),
+                )
+            )
+
+            return (
+                ScheduledResult(
+                    value=value,
+                    metrics=metrics,
+                )
+            )
+
+        finally:
             await self._release()
 
     async def _acquire(
@@ -231,9 +296,6 @@ class GpuScheduler:
 
         except asyncio.CancelledError:
             async with self._lock:
-                # If admission was granted but the coroutine was
-                # cancelled before it started its blocking work,
-                # return the slot immediately.
                 if waiter.granted:
                     self._active = False
 
