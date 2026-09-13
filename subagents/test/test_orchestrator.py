@@ -17,10 +17,16 @@ class FakeRouter:
             "account-specialist"
         ]
 
-    def route(
+        self.requests = []
+
+    async def route(
         self,
         user_request: str,
     ) -> list[str]:
+        self.requests.append(
+            user_request
+        )
+
         return self.routes
 
 
@@ -39,7 +45,9 @@ class FakeRuntime:
         )
 
         return AgentResult(
-            task_id=task.task_id,
+            task_id=(
+                task.task_id
+            ),
 
             agent_name=(
                 task.agent_name
@@ -70,7 +78,7 @@ class FakePrimaryAssistant:
     ):
         self.requests = []
 
-    def respond(
+    async def respond(
         self,
         user_request: str,
     ) -> str:
@@ -90,24 +98,28 @@ def build_orchestrator(
     primary_assistant=None,
 ):
     if router is None:
-        router = FakeRouter()
+        router = (
+            FakeRouter()
+        )
 
     if runtime is None:
-        runtime = FakeRuntime()
+        runtime = (
+            FakeRuntime()
+        )
 
     if primary_assistant is None:
         primary_assistant = (
             FakePrimaryAssistant()
         )
 
-    orchestrator = Orchestrator(
-        router=router,
-
-        runtime=runtime,
-
-        primary_assistant=(
-            primary_assistant
-        ),
+    orchestrator = (
+        Orchestrator(
+            router=router,
+            runtime=runtime,
+            primary_assistant=(
+                primary_assistant
+            ),
+        )
     )
 
     return (
@@ -121,7 +133,7 @@ def build_orchestrator(
 def test_orchestrator_routes_to_worker():
     (
         orchestrator,
-        _router,
+        router,
         runtime,
         primary_assistant,
     ) = build_orchestrator()
@@ -176,8 +188,10 @@ def test_orchestrator_routes_to_worker():
         == "Is jdoe locked?"
     )
 
-    # A routed request should not use
-    # the primary conversational path.
+    assert router.requests == [
+        "Is jdoe locked?"
+    ]
+
     assert (
         primary_assistant.requests
         == []
@@ -185,11 +199,15 @@ def test_orchestrator_routes_to_worker():
 
 
 def test_orchestrator_handles_no_route():
-    router = FakeRouter()
+    router = (
+        FakeRouter()
+    )
 
     router.routes = []
 
-    runtime = FakeRuntime()
+    runtime = (
+        FakeRuntime()
+    )
 
     primary_assistant = (
         FakePrimaryAssistant()
@@ -202,9 +220,7 @@ def test_orchestrator_handles_no_route():
         _primary_assistant,
     ) = build_orchestrator(
         router=router,
-
         runtime=runtime,
-
         primary_assistant=(
             primary_assistant
         ),
@@ -216,10 +232,6 @@ def test_orchestrator_handles_no_route():
         )
     )
 
-    # No specialist route now means:
-    #
-    # primary conversational assistant
-    # handles the request successfully.
     assert (
         result.status
         == "success"
@@ -250,7 +262,6 @@ def test_orchestrator_handles_no_route():
         ]
     )
 
-    # No specialist work should run.
     assert (
         runtime.tasks
         == []
@@ -258,14 +269,18 @@ def test_orchestrator_handles_no_route():
 
 
 def test_orchestrator_handles_multiple_workers():
-    router = FakeRouter()
+    router = (
+        FakeRouter()
+    )
 
     router.routes = [
         "account-specialist",
         "access-specialist",
     ]
 
-    runtime = FakeRuntime()
+    runtime = (
+        FakeRuntime()
+    )
 
     primary_assistant = (
         FakePrimaryAssistant()
@@ -278,9 +293,7 @@ def test_orchestrator_handles_multiple_workers():
         _primary_assistant,
     ) = build_orchestrator(
         router=router,
-
         runtime=runtime,
-
         primary_assistant=(
             primary_assistant
         ),
@@ -314,8 +327,6 @@ def test_orchestrator_handles_multiple_workers():
         == 2
     )
 
-    # Routed requests should not use
-    # the primary conversational path.
     assert (
         primary_assistant.requests
         == []
@@ -323,7 +334,9 @@ def test_orchestrator_handles_multiple_workers():
 
 
 def test_orchestrator_propagates_approval():
-    router = FakeRouter()
+    router = (
+        FakeRouter()
+    )
 
     class ApprovalRuntime:
         async def run(
@@ -369,11 +382,9 @@ def test_orchestrator_propagates_approval():
         _primary_assistant,
     ) = build_orchestrator(
         router=router,
-
         runtime=(
             ApprovalRuntime()
         ),
-
         primary_assistant=(
             primary_assistant
         ),
@@ -407,9 +418,6 @@ def test_orchestrator_propagates_approval():
         }
     )
 
-    # Approval-producing specialist requests
-    # should not fall through to the primary
-    # conversational assistant.
     assert (
         primary_assistant.requests
         == []

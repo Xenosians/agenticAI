@@ -4,7 +4,9 @@ from dataclasses import dataclass
 from threading import RLock
 from typing import Callable
 
-from subagents.llm.base import LLMBackend
+from subagents.llm.base import (
+    LLMBackend,
+)
 
 
 ModelLoader = Callable[
@@ -18,27 +20,26 @@ class ModelEntry:
     """
     One logical model registration.
 
-    A model may be registered either:
-
-    - eagerly with an already-created backend
-    - lazily with a loader function
-
-    Lazy backends are created only on the first get().
+    A model may be registered either eagerly with an existing
+    backend or lazily through a loader.
     """
 
     loader: ModelLoader | None = None
-    backend: LLMBackend | None = None
+
+    backend: (
+        LLMBackend | None
+    ) = None
 
 
 class ModelRegistry:
     """
-    Stores model backends by logical model name.
+    Thread-safe logical model registry.
 
-    Specialist models may be registered lazily so merely
-    registering an agent does not load its model weights.
+    This object owns backend caching only.
 
-    The first get(name) loads the backend and caches it.
-    Later calls return the same backend instance.
+    GPU admission, request priority, and orchestration do not
+    belong here. Those responsibilities sit above the registry
+    in ModelManager / InferenceCoordinator.
     """
 
     def __init__(
@@ -49,33 +50,24 @@ class ModelRegistry:
             ModelEntry,
         ] = {}
 
-        #
-        # Prevent two simultaneous first requests from loading
-        # the same model twice.
-        #
-        self._lock = RLock()
+        self._lock = (
+            RLock()
+        )
 
     def register(
         self,
         name: str,
         backend: LLMBackend,
     ) -> None:
-        """
-        Register an already-created backend.
-
-        Kept for compatibility with code that intentionally
-        wants eager registration.
-        """
-
         with self._lock:
             self._ensure_available_name(
                 name
             )
 
-            self._models[name] = (
-                ModelEntry(
-                    backend=backend,
-                )
+            self._models[
+                name
+            ] = ModelEntry(
+                backend=backend,
             )
 
     def register_lazy(
@@ -83,13 +75,6 @@ class ModelRegistry:
         name: str,
         loader: ModelLoader,
     ) -> None:
-        """
-        Register a model loader without loading its weights.
-
-        The loader is executed only when get(name) is called
-        for the first time.
-        """
-
         if not callable(
             loader
         ):
@@ -102,23 +87,16 @@ class ModelRegistry:
                 name
             )
 
-            self._models[name] = (
-                ModelEntry(
-                    loader=loader,
-                )
+            self._models[
+                name
+            ] = ModelEntry(
+                loader=loader,
             )
 
     def get(
         self,
         name: str,
     ) -> LLMBackend:
-        """
-        Return a backend.
-
-        For a lazy model this is the point at which its model
-        weights are actually loaded.
-        """
-
         with self._lock:
             entry = self._models.get(
                 name
@@ -140,11 +118,13 @@ class ModelRegistry:
                 )
 
             print(
-                "[MODEL] Lazy-loading worker "
+                "[MODEL] Lazy-loading "
                 f"model '{name}'..."
             )
 
-            backend = entry.loader()
+            backend = (
+                entry.loader()
+            )
 
             if not isinstance(
                 backend,
@@ -155,10 +135,12 @@ class ModelRegistry:
                     "did not return an LLMBackend."
                 )
 
-            entry.backend = backend
+            entry.backend = (
+                backend
+            )
 
             print(
-                "[MODEL] Worker model ready "
+                "[MODEL] Model ready "
                 f"'{name}'."
             )
 
@@ -178,14 +160,11 @@ class ModelRegistry:
         self,
         name: str,
     ) -> bool:
-        """
-        Return whether the registered model currently has a
-        live backend instance.
-        """
-
         with self._lock:
-            entry = self._models.get(
-                name
+            entry = (
+                self._models.get(
+                    name
+                )
             )
 
             if entry is None:
@@ -195,6 +174,52 @@ class ModelRegistry:
                 entry.backend
                 is not None
             )
+
+    def unload(
+        self,
+        name: str,
+    ) -> bool:
+        """
+        Remove a cached backend while preserving its loader.
+
+        This is the lifecycle seam future HOT/WARM/COLD eviction
+        logic can call. Actual VRAM cleanup remains backend-specific.
+        """
+
+        with self._lock:
+            entry = (
+                self._models.get(
+                    name
+                )
+            )
+
+            if entry is None:
+                raise KeyError(
+                    f"Model '{name}' "
+                    "is not registered."
+                )
+
+            if entry.backend is None:
+                return False
+
+            backend = (
+                entry.backend
+            )
+
+            entry.backend = None
+
+        close = getattr(
+            backend,
+            "close",
+            None,
+        )
+
+        if callable(
+            close
+        ):
+            close()
+
+        return True
 
     def list_models(
         self,
@@ -207,17 +232,17 @@ class ModelRegistry:
     def list_loaded_models(
         self,
     ) -> list[str]:
-        """
-        Useful for diagnostics and later model-management UI.
-        """
-
         with self._lock:
             return [
                 name
+
                 for name, entry
                 in self._models.items()
-                if entry.backend
-                is not None
+
+                if (
+                    entry.backend
+                    is not None
+                )
             ]
 
     def _ensure_available_name(

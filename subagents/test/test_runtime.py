@@ -1,16 +1,28 @@
 import asyncio
 
-from subagents.core.loader import load_agent_directory
-from subagents.core.registry import AgentRegistry
-from subagents.core.runtime import AgentRuntime
-from subagents.core.types import AgentTask
-from subagents.llm.base import LLMBackend
-from subagents.llm.registry import ModelRegistry
+from subagents.core.loader import (
+    load_agent_directory,
+)
+
+from subagents.core.registry import (
+    AgentRegistry,
+)
+
+from subagents.core.runtime import (
+    AgentRuntime,
+)
+
+from subagents.core.types import (
+    AgentTask,
+)
 
 
-class FakeLLMBackend(LLMBackend):
-    def __init__(self) -> None:
-        self.last_messages = None
+class FakeInference:
+    def __init__(
+        self,
+    ) -> None:
+        self.calls = []
+
         self.response = """
         [
             {
@@ -22,22 +34,50 @@ class FakeLLMBackend(LLMBackend):
         ]
         """
 
-    def generate(
+        self.error = None
+
+    async def generate(
         self,
-        messages: list[dict[str, str]],
-        max_new_tokens: int = 256,
-    ) -> str:
-        self.last_messages = messages
+        *,
+        model_key,
+        messages,
+        max_new_tokens,
+        priority,
+    ):
+        self.calls.append(
+            {
+                "model_key":
+                    model_key,
+
+                "messages":
+                    messages,
+
+                "max_new_tokens":
+                    max_new_tokens,
+
+                "priority":
+                    priority,
+            }
+        )
+
+        if self.error is not None:
+            raise self.error
+
         return self.response
 
 
 class FakeToolGateway:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+    ) -> None:
         self.calls = []
 
         self.result = {
             "ok": True,
-            "status": "success",
+
+            "status":
+                "success",
+
             "result": {
                 "ok": True,
                 "user_id": "jdoe",
@@ -55,10 +95,17 @@ class FakeToolGateway:
     ):
         self.calls.append(
             {
-                "agent": agent.name,
-                "user_input": user_input,
-                "tool_name": tool_name,
-                "arguments": arguments,
+                "agent":
+                    agent.name,
+
+                "user_input":
+                    user_input,
+
+                "tool_name":
+                    tool_name,
+
+                "arguments":
+                    arguments,
             }
         )
 
@@ -66,187 +113,362 @@ class FakeToolGateway:
 
 
 def build_runtime():
-    agent_registry = AgentRegistry()
-
-    agents = load_agent_directory(
-        "subagents/agents"
+    agent_registry = (
+        AgentRegistry()
     )
 
-    agent_registry.register_many(agents)
-
-    model_registry = ModelRegistry()
-
-    backend = FakeLLMBackend()
-
-    model_registry.register(
-        "qwen2.5-0.5b-funccall",
-        backend,
+    agents = (
+        load_agent_directory(
+            "subagents/agents"
+        )
     )
 
-    gateway = FakeToolGateway()
+    agent_registry.register_many(
+        agents
+    )
+
+    inference = (
+        FakeInference()
+    )
+
+    gateway = (
+        FakeToolGateway()
+    )
 
     runtime = AgentRuntime(
-        agent_registry=agent_registry,
-        model_registry=model_registry,
-        tool_gateway=gateway,
+        agent_registry=(
+            agent_registry
+        ),
+        inference=(
+            inference
+        ),
+        tool_gateway=(
+            gateway
+        ),
     )
 
-    return runtime, backend, gateway
+    return (
+        runtime,
+        inference,
+        gateway,
+    )
 
 
 def test_runtime_executes_account_specialist():
-    runtime, backend, gateway = build_runtime()
+    (
+        runtime,
+        inference,
+        gateway,
+    ) = build_runtime()
 
     task = AgentTask(
         task_id="task-001",
-        agent_name="account-specialist",
-        user_request="Is jdoe locked?",
+        agent_name=(
+            "account-specialist"
+        ),
+        user_request=(
+            "Is jdoe locked?"
+        ),
     )
 
     result = asyncio.run(
-        runtime.run(task)
+        runtime.run(
+            task
+        )
     )
 
-    assert result.task_id == "task-001"
-    assert result.agent_name == "account-specialist"
+    assert (
+        result.task_id
+        == "task-001"
+    )
 
-    assert result.status == "success", result.error
+    assert (
+        result.agent_name
+        == "account-specialist"
+    )
 
-    assert result.proposed_tool == "account_status"
+    assert (
+        result.status
+        == "success"
+    ), result.error
 
-    assert result.proposed_arguments == {
-        "user_id": "jdoe"
-    }
+    assert (
+        result.proposed_tool
+        == "account_status"
+    )
+
+    assert (
+        result.proposed_arguments
+        == {
+            "user_id":
+                "jdoe"
+        }
+    )
 
     assert gateway.calls == [
         {
-            "agent": "account-specialist",
-            "user_input": "Is jdoe locked?",
-            "tool_name": "account_status",
+            "agent":
+                "account-specialist",
+
+            "user_input":
+                "Is jdoe locked?",
+
+            "tool_name":
+                "account_status",
+
             "arguments": {
-                "user_id": "jdoe"
+                "user_id":
+                    "jdoe"
             },
         }
     ]
 
-    assert backend.last_messages[0]["role"] == "system"
-
-    assert "ITSM account specialist" in (
-        backend.last_messages[0]["content"]
+    assert (
+        len(
+            inference.calls
+        )
+        == 1
     )
 
-    assert backend.last_messages[1] == {
-        "role": "user",
-        "content": "Is jdoe locked?",
+    inference_call = (
+        inference.calls[0]
+    )
+
+    assert (
+        inference_call[
+            "model_key"
+        ]
+        == "qwen2.5-0.5b-funccall"
+    )
+
+    messages = (
+        inference_call[
+            "messages"
+        ]
+    )
+
+    assert (
+        messages[0][
+            "role"
+        ]
+        == "system"
+    )
+
+    assert (
+        "ITSM account specialist"
+        in messages[0][
+            "content"
+        ]
+    )
+
+    assert messages[1] == {
+        "role":
+            "user",
+
+        "content":
+            "Is jdoe locked?",
     }
 
 
 def test_runtime_rejects_unknown_agent():
-    runtime, _, gateway = build_runtime()
+    (
+        runtime,
+        inference,
+        gateway,
+    ) = build_runtime()
 
     task = AgentTask(
         task_id="task-002",
-        agent_name="does-not-exist",
+        agent_name=(
+            "does-not-exist"
+        ),
         user_request="Hello",
     )
 
     result = asyncio.run(
-        runtime.run(task)
+        runtime.run(
+            task
+        )
     )
 
-    assert result.status == "error"
-    assert result.answer is None
-    assert result.error is not None
-
-    assert gateway.calls == []
-
-
-def test_runtime_rejects_missing_model():
-    agent_registry = AgentRegistry()
-
-    agents = load_agent_directory(
-        "subagents/agents"
+    assert (
+        result.status
+        == "error"
     )
 
-    agent_registry.register_many(agents)
+    assert (
+        result.answer
+        is None
+    )
 
-    model_registry = ModelRegistry()
+    assert (
+        result.error
+        is not None
+    )
 
-    gateway = FakeToolGateway()
+    assert (
+        inference.calls
+        == []
+    )
 
-    runtime = AgentRuntime(
-        agent_registry=agent_registry,
-        model_registry=model_registry,
-        tool_gateway=gateway,
+    assert (
+        gateway.calls
+        == []
+    )
+
+
+def test_runtime_returns_model_failure():
+    (
+        runtime,
+        inference,
+        gateway,
+    ) = build_runtime()
+
+    inference.error = KeyError(
+        "Model is unavailable."
     )
 
     task = AgentTask(
         task_id="task-003",
-        agent_name="account-specialist",
-        user_request="Is jdoe locked?",
+        agent_name=(
+            "account-specialist"
+        ),
+        user_request=(
+            "Is jdoe locked?"
+        ),
     )
 
     result = asyncio.run(
-        runtime.run(task)
+        runtime.run(
+            task
+        )
     )
 
-    assert result.status == "error"
-    assert result.error is not None
+    assert (
+        result.status
+        == "error"
+    )
 
-    assert gateway.calls == []
+    assert (
+        result.error
+        is not None
+    )
+
+    assert (
+        "Worker model failed"
+        in result.error
+    )
+
+    assert (
+        gateway.calls
+        == []
+    )
 
 
 def test_runtime_passes_additional_instructions():
-    runtime, backend, _ = build_runtime()
+    (
+        runtime,
+        inference,
+        _gateway,
+    ) = build_runtime()
 
     task = AgentTask(
         task_id="task-004",
-        agent_name="account-specialist",
-        user_request="Check jdoe.",
-        instructions="Preserve the identifier exactly.",
+        agent_name=(
+            "account-specialist"
+        ),
+        user_request=(
+            "Check jdoe."
+        ),
+        instructions=(
+            "Preserve the identifier exactly."
+        ),
     )
 
     result = asyncio.run(
-        runtime.run(task)
+        runtime.run(
+            task
+        )
     )
 
-    assert result.status == "success", result.error
+    assert (
+        result.status
+        == "success"
+    ), result.error
 
-    assert backend.last_messages[2]["role"] == "user"
+    messages = (
+        inference.calls[0][
+            "messages"
+        ]
+    )
+
+    assert (
+        messages[2][
+            "role"
+        ]
+        == "user"
+    )
 
     assert (
         "Preserve the identifier exactly."
-        in backend.last_messages[2]["content"]
+        in messages[2][
+            "content"
+        ]
     )
 
 
 def test_runtime_rejects_invalid_worker_json():
-    runtime, backend, gateway = build_runtime()
+    (
+        runtime,
+        inference,
+        gateway,
+    ) = build_runtime()
 
-    backend.response = (
-        "I think you should call account_status."
+    inference.response = (
+        "I think you should call "
+        "account_status."
     )
 
     task = AgentTask(
         task_id="task-005",
-        agent_name="account-specialist",
-        user_request="Is jdoe locked?",
+        agent_name=(
+            "account-specialist"
+        ),
+        user_request=(
+            "Is jdoe locked?"
+        ),
     )
 
     result = asyncio.run(
-        runtime.run(task)
+        runtime.run(
+            task
+        )
     )
 
-    assert result.status == "error"
-    assert result.error is not None
+    assert (
+        result.status
+        == "error"
+    )
 
-    assert gateway.calls == []
+    assert (
+        result.error
+        is not None
+    )
+
+    assert (
+        gateway.calls
+        == []
+    )
 
 
 def test_runtime_rejects_multiple_tool_calls():
-    runtime, backend, gateway = build_runtime()
+    (
+        runtime,
+        inference,
+        gateway,
+    ) = build_runtime()
 
-    backend.response = """
+    inference.response = """
     [
         {
             "name": "account_status",
@@ -265,77 +487,143 @@ def test_runtime_rejects_multiple_tool_calls():
 
     task = AgentTask(
         task_id="task-006",
-        agent_name="account-specialist",
-        user_request="Check and unlock jdoe.",
+        agent_name=(
+            "account-specialist"
+        ),
+        user_request=(
+            "Check and unlock jdoe."
+        ),
     )
 
     result = asyncio.run(
-        runtime.run(task)
+        runtime.run(
+            task
+        )
     )
 
-    assert result.status == "error"
+    assert (
+        result.status
+        == "error"
+    )
 
     assert (
         "exactly one tool call"
         in result.error
     )
 
-    assert gateway.calls == []
+    assert (
+        gateway.calls
+        == []
+    )
 
 
 def test_runtime_returns_approval_required():
-    runtime, _, gateway = build_runtime()
+    (
+        runtime,
+        _inference,
+        gateway,
+    ) = build_runtime()
 
     gateway.result = {
         "ok": True,
-        "status": "approval_required",
-        "tool": "account_status",
-        "approval_id": "approval-123",
+
+        "status":
+            "approval_required",
+
+        "tool":
+            "account_status",
+
+        "approval_id":
+            "approval-123",
     }
 
     task = AgentTask(
         task_id="task-007",
-        agent_name="account-specialist",
-        user_request="Is jdoe locked?",
+        agent_name=(
+            "account-specialist"
+        ),
+        user_request=(
+            "Is jdoe locked?"
+        ),
     )
 
     result = asyncio.run(
-        runtime.run(task)
+        runtime.run(
+            task
+        )
     )
 
-    assert result.status == "approval_required"
+    assert (
+        result.status
+        == "approval_required"
+    )
 
-    assert result.proposed_tool == "account_status"
+    assert (
+        result.proposed_tool
+        == "account_status"
+    )
 
-    assert result.proposed_arguments == {
-        "user_id": "jdoe"
-    }
-    
-    assert result.approval_id == "approval-123"
-    assert "approval-123" in result.answer
+    assert (
+        result.proposed_arguments
+        == {
+            "user_id":
+                "jdoe"
+        }
+    )
+
+    assert (
+        result.approval_id
+        == "approval-123"
+    )
+
+    assert (
+        "approval-123"
+        in result.answer
+    )
 
 
 def test_runtime_returns_gateway_error():
-    runtime, _, gateway = build_runtime()
+    (
+        runtime,
+        _inference,
+        gateway,
+    ) = build_runtime()
 
     gateway.result = {
         "ok": False,
         "status": "denied",
-        "error": "Execution denied.",
+        "error": (
+            "Execution denied."
+        ),
     }
 
     task = AgentTask(
         task_id="task-008",
-        agent_name="account-specialist",
-        user_request="Is jdoe locked?",
+        agent_name=(
+            "account-specialist"
+        ),
+        user_request=(
+            "Is jdoe locked?"
+        ),
     )
 
     result = asyncio.run(
-        runtime.run(task)
+        runtime.run(
+            task
+        )
     )
 
-    assert result.status == "error"
+    assert (
+        result.status
+        == "error"
+    )
 
-    assert result.proposed_tool == "account_status"
+    assert (
+        result.proposed_tool
+        == "account_status"
+    )
 
-    assert result.error == "Execution denied."
+    assert (
+        result.error
+        == "Execution denied."
+    )

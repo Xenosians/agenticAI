@@ -1,4 +1,4 @@
-from config.settings import (
+from config import (
     get_settings,
 )
 
@@ -30,30 +30,88 @@ from subagents.core.tool_gateway import (
     ToolGateway,
 )
 
-from subagents.llm.factory import (
-    build_hub_backend,
-    build_worker_backend,
+from subagents.llm.inference import (
+    InferenceCoordinator,
 )
 
-from subagents.llm.registry import (
-    ModelRegistry,
+from subagents.llm.model_manager import (
+    ModelManager,
+)
+
+from subagents.llm.scheduler import (
+    GpuScheduler,
 )
 
 
 def build_hub() -> Orchestrator:
     """
-    Build the complete Agentic Developer Hub runtime.
+    Transitional AI composition point.
 
-    Agent definitions determine which logical worker models are
-    required.
+    Model ownership is now centralized behind:
 
-    WORKER_MODELS provides deployment configuration for those
-    logical model names.
+        ModelManager
+            ↓
+        GpuScheduler
+            ↓
+        InferenceCoordinator
 
-    No specialist type is wired explicitly here.
+    Router, PrimaryAssistant, and AgentRuntime consume only the
+    InferenceCoordinator boundary.
+
+    FastAPI lifespan will become the final application
+    composition root during the next cleanup stage.
     """
 
-    settings = get_settings()
+    settings = (
+        get_settings()
+    )
+
+    # ============================================================
+    # Model runtime
+    # ============================================================
+
+    model_manager = (
+        ModelManager(
+            settings=settings,
+        )
+    )
+
+    scheduler = (
+        GpuScheduler()
+    )
+
+    inference = (
+        InferenceCoordinator(
+            model_manager=(
+                model_manager
+            ),
+            scheduler=(
+                scheduler
+            ),
+        )
+    )
+
+    # ============================================================
+    # Hub model
+    #
+    # Preserve current readiness behavior:
+    # the Hub is loaded while build_hub() executes.
+    #
+    # Specialist models remain lazy.
+    # ============================================================
+
+    if not model_manager.exists(
+        settings.hub_model_key
+    ):
+        raise RuntimeError(
+            "HUB_MODEL_KEY references "
+            "an unknown or disabled model "
+            f"profile: {settings.hub_model_key}"
+        )
+
+    model_manager.load(
+        settings.hub_model_key
+    )
 
     # ============================================================
     # Load agent definitions
@@ -72,37 +130,24 @@ def build_hub() -> Orchestrator:
         )
     )
 
-    # ============================================================
-    # Select enabled agents
-    #
-    # An agent becomes available when:
-    #
-    # 1. its definition exists in AGENTS_DIR
-    # 2. its logical model exists in WORKER_MODELS
-    # 3. that worker model is enabled
-    #
-    # This removes specialist-specific enable flags and wiring.
-    # ============================================================
-
     enabled_agents = []
 
     for agent in configured_agents:
-        model_config = (
-            settings.worker_model(
+        profile = (
+            settings.model_profile(
                 agent.model
             )
         )
 
-        if model_config is None:
+        if profile is None:
             raise RuntimeError(
                 f"Agent '{agent.name}' "
-                "references worker model "
+                "references model profile "
                 f"'{agent.model}', but that "
-                "model is not configured in "
-                "WORKER_MODELS."
+                "profile is not configured."
             )
 
-        if not model_config.enabled:
+        if not profile.enabled:
             print(
                 "[HUB] Specialist disabled "
                 f"agent='{agent.name}' "
@@ -110,6 +155,15 @@ def build_hub() -> Orchestrator:
             )
 
             continue
+
+        if not model_manager.exists(
+            agent.model
+        ):
+            raise RuntimeError(
+                f"Agent '{agent.name}' "
+                "references unavailable model "
+                f"'{agent.model}'."
+            )
 
         enabled_agents.append(
             agent
@@ -128,61 +182,7 @@ def build_hub() -> Orchestrator:
     )
 
     # ============================================================
-    # Worker model registry
-    #
-    # Register each logical model exactly once, regardless of
-    # how many agents share it.
-    # ============================================================
-
-    model_registry = (
-        ModelRegistry()
-    )
-
-    required_model_keys = sorted(
-        {
-            agent.model
-            for agent
-            in enabled_agents
-        }
-    )
-
-    for model_key in (
-        required_model_keys
-    ):
-        model_config = (
-            settings.require_worker_model(
-                model_key
-            )
-        )
-
-        backend_type = (
-            model_config.backend
-        )
-
-        model_path = (
-            model_config.model_path
-        )
-
-        def load_worker_backend(
-            backend_type=backend_type,
-            model_path=model_path,
-        ):
-            return build_worker_backend(
-                backend_type=(
-                    backend_type
-                ),
-                model_path=(
-                    model_path
-                ),
-            )
-
-        model_registry.register_lazy(
-            model_key,
-            load_worker_backend,
-        )
-
-    # ============================================================
-    # Deterministic security / execution boundary
+    # Deterministic execution boundary
     # ============================================================
 
     tool_gateway = (
@@ -193,81 +193,57 @@ def build_hub() -> Orchestrator:
     # Specialist runtime
     # ============================================================
 
-    runtime = AgentRuntime(
-        agent_registry=(
-            agent_registry
-        ),
-        model_registry=(
-            model_registry
-        ),
-        tool_gateway=(
-            tool_gateway
-        ),
-    )
-
-    # ============================================================
-    # Hub model
-    #
-    # The Hub remains separate because it has Hub-specific model
-    # options and also powers the primary conversational path.
-    # ============================================================
-
-    hub_model_path = (
-        settings.require_path(
-            settings.hub_model_path,
-            "HUB_MODEL_PATH",
-        )
-    )
-
-    hub_backend = (
-        build_hub_backend(
-            backend_type=(
-                settings.hub_backend
+    runtime = (
+        AgentRuntime(
+            agent_registry=(
+                agent_registry
             ),
-            model_path=(
-                hub_model_path
+            inference=(
+                inference
             ),
-            dequantize_fp8=(
-                settings
-                .hub_dequantize_fp8
-            ),
-            offload_folder=(
-                settings
-                .hub_offload_folder
+            tool_gateway=(
+                tool_gateway
             ),
         )
     )
 
     # ============================================================
-    # Specialist router
+    # Hub router
     # ============================================================
 
-    router = LLMRouter(
-        registry=(
-            agent_registry
-        ),
-        backend=(
-            hub_backend
-        ),
+    router = (
+        LLMRouter(
+            registry=(
+                agent_registry
+            ),
+            inference=(
+                inference
+            ),
+            model_key=(
+                settings
+                .hub_model_key
+            ),
+        )
     )
 
     # ============================================================
-    # Primary conversational assistant
+    # Primary assistant
     #
-    # Shares the Hub backend.
+    # Uses the same logical Hub model through the shared
+    # inference boundary rather than owning the backend object.
     # ============================================================
 
     primary_assistant = (
         PrimaryAssistant(
-            backend=(
-                hub_backend
+            inference=(
+                inference
+            ),
+            model_key=(
+                settings
+                .hub_model_key
             ),
         )
     )
-
-    # ============================================================
-    # Complete orchestrator
-    # ============================================================
 
     return Orchestrator(
         router=router,

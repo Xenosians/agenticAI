@@ -21,29 +21,34 @@ PROJECT_ROOT = (
 )
 
 
-class WorkerModelSettings(
+class ModelProfileSettings(
     BaseModel
 ):
     """
-    Configuration for one logical specialist-worker model.
+    Configuration for one logical model profile.
 
-    The dictionary key in WORKER_MODELS is the logical model
-    name referenced by agent definition files.
-
-    Example:
-
-        "qwen3-0.6b": {
-            "backend": "qwen3",
-            "model_path": "/models/Qwen3-0.6B",
-            "enabled": true
-        }
+    Roles such as Hub, Account, Access, or Developer refer to
+    logical model keys instead of directly depending on model
+    brands, filesystem paths, or backend implementations.
     """
 
     backend: str
 
-    model_path: Path
+    model_path: (
+        Path | None
+    ) = None
 
     enabled: bool = True
+
+    # Backend-specific local-model options.
+    #
+    # These are currently used by Ministral and safely ignored
+    # by backends that do not need them.
+    dequantize_fp8: bool = True
+
+    offload_folder: (
+        Path | None
+    ) = None
 
     @field_validator(
         "backend"
@@ -61,8 +66,7 @@ class WorkerModelSettings(
 
         if not normalized:
             raise ValueError(
-                "Worker model backend "
-                "must not be empty."
+                "Model backend must not be empty."
             )
 
         return normalized
@@ -175,43 +179,22 @@ class Settings(
     )
 
     # ============================================================
-    # MAIN HUB
+    # MODEL PROFILES
     #
-    # The Hub is intentionally separate from worker models
-    # because it has Hub-specific loading options.
+    # Roles reference logical model keys.
+    #
+    # The Hub role uses HUB_MODEL_KEY.
+    # Specialist roles use the `model:` value in their
+    # agent-definition front matter.
     # ============================================================
 
-    hub_backend: str = (
-        "ministral"
+    hub_model_key: str = (
+        "hub-main"
     )
 
-    hub_model_path: (
-        Path | None
-    ) = None
-
-    hub_dequantize_fp8: bool = (
-        True
-    )
-
-    hub_offload_folder: (
-        Path | None
-    ) = None
-
-    # ============================================================
-    # SPECIALIST WORKER MODELS
-    #
-    # Logical model name -> worker model configuration.
-    #
-    # Agent definitions reference these logical keys through
-    # their `model:` front-matter field.
-    #
-    # Adding a new specialist model no longer requires adding
-    # dedicated Settings fields or editing hub.py.
-    # ============================================================
-
-    worker_models: dict[
+    model_profiles: dict[
         str,
-        WorkerModelSettings,
+        ModelProfileSettings,
     ] = Field(
         default_factory=dict
     )
@@ -335,25 +318,45 @@ class Settings(
         return normalized
 
     @field_validator(
-        "worker_models"
+        "hub_model_key"
     )
     @classmethod
-    def validate_worker_models(
+    def validate_hub_model_key(
+        cls,
+        value: str,
+    ) -> str:
+        normalized = (
+            value
+            .strip()
+        )
+
+        if not normalized:
+            raise ValueError(
+                "HUB_MODEL_KEY must not be empty."
+            )
+
+        return normalized
+
+    @field_validator(
+        "model_profiles"
+    )
+    @classmethod
+    def validate_model_profiles(
         cls,
         value: dict[
             str,
-            WorkerModelSettings,
+            ModelProfileSettings,
         ],
     ) -> dict[
         str,
-        WorkerModelSettings,
+        ModelProfileSettings,
     ]:
         normalized: dict[
             str,
-            WorkerModelSettings,
+            ModelProfileSettings,
         ] = {}
 
-        for model_key, config in (
+        for model_key, profile in (
             value.items()
         ):
             if not isinstance(
@@ -361,7 +364,7 @@ class Settings(
                 str,
             ):
                 raise ValueError(
-                    "WORKER_MODELS keys "
+                    "MODEL_PROFILES keys "
                     "must be strings."
                 )
 
@@ -372,19 +375,19 @@ class Settings(
 
             if not key:
                 raise ValueError(
-                    "WORKER_MODELS contains "
+                    "MODEL_PROFILES contains "
                     "an empty model key."
                 )
 
             if key in normalized:
                 raise ValueError(
-                    "WORKER_MODELS contains "
+                    "MODEL_PROFILES contains "
                     f"duplicate model key '{key}'."
                 )
 
             normalized[
                 key
-            ] = config
+            ] = profile
 
         return normalized
 
@@ -509,68 +512,78 @@ class Settings(
         return value.strip()
 
     # ============================================================
-    # WORKER MODEL HELPERS
+    # MODEL PROFILE HELPERS
     # ============================================================
 
-    def worker_model(
+    def model_profile(
         self,
         model_key: str,
-    ) -> WorkerModelSettings | None:
-        """
-        Return worker-model configuration without requiring the
-        model to be enabled or its path to exist.
-
-        Useful while deciding which configured agents should be
-        included in the runtime.
-        """
-
-        return self.worker_models.get(
+    ) -> ModelProfileSettings | None:
+        return self.model_profiles.get(
             model_key
         )
 
-    def require_worker_model(
+    def require_model_profile(
         self,
         model_key: str,
-    ) -> WorkerModelSettings:
-        """
-        Return an enabled worker-model configuration with a
-        resolved existing model path.
-        """
-
-        config = self.worker_model(
+    ) -> ModelProfileSettings:
+        profile = self.model_profile(
             model_key
         )
 
-        if config is None:
+        if profile is None:
             raise RuntimeError(
-                "Worker model "
+                "Model profile "
                 f"'{model_key}' "
                 "is not configured in "
-                "WORKER_MODELS."
+                "MODEL_PROFILES."
             )
 
-        if not config.enabled:
+        if not profile.enabled:
             raise RuntimeError(
-                "Worker model "
+                "Model profile "
                 f"'{model_key}' "
                 "is disabled."
             )
 
-        resolved_path = (
-            self.require_path(
-                config.model_path,
-                (
-                    "WORKER_MODELS"
-                    f"[{model_key}]"
-                    ".model_path"
-                ),
-            )
+        model_path = (
+            profile.model_path
         )
 
-        return config.model_copy(
+        resolved_model_path = None
+
+        if model_path is not None:
+            resolved_model_path = (
+                self.require_path(
+                    model_path,
+                    (
+                        "MODEL_PROFILES"
+                        f"[{model_key}]"
+                        ".model_path"
+                    ),
+                )
+            )
+
+        offload_folder = (
+            profile.offload_folder
+        )
+
+        resolved_offload_folder = None
+
+        if offload_folder is not None:
+            resolved_offload_folder = (
+                self.resolve_project_path(
+                    offload_folder
+                )
+            )
+
+        return profile.model_copy(
             update={
                 "model_path":
-                    resolved_path,
+                    resolved_model_path,
+
+                "offload_folder":
+                    resolved_offload_folder,
             }
         )
 
@@ -642,9 +655,6 @@ class Settings(
     ) -> Path:
         """
         Resolve a configured project-relative path.
-
-        Relative paths are anchored to PROJECT_ROOT instead of
-        depending on the process working directory.
         """
 
         path = (
@@ -667,13 +677,6 @@ class Settings(
     ) -> Path:
         """
         Resolve and validate a path that must already exist.
-
-        Appropriate for:
-        - model directories
-        - agent directories
-
-        Do NOT use for directories that may legitimately be
-        created later, such as the Hub offload directory.
         """
 
         if value is None:
@@ -693,9 +696,7 @@ class Settings(
                 / path
             )
 
-        path = (
-            path.resolve()
-        )
+        path = path.resolve()
 
         if not path.exists():
             raise RuntimeError(
@@ -710,12 +711,10 @@ class Settings(
 @lru_cache
 def get_settings() -> Settings:
     """
-    Return the process-wide validated configuration instance.
+    Transitional process-wide configuration accessor.
 
-    The process-wide Settings lifecycle will be moved into the
-    application runtime container in the next cleanup stage.
-    Keeping this function temporarily preserves current callers
-    while worker topology is decoupled first.
+    Main application lifecycle ownership will move away from
+    this cached accessor during the next cleanup stage.
     """
 
     return Settings()

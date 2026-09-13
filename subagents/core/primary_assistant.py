@@ -1,46 +1,79 @@
-from subagents.llm.base import LLMBackend
-from subagents.prompts.prompt_loader import load_prompt
+from subagents.llm.inference import (
+    InferenceEngine,
+)
+
+from subagents.llm.scheduler import (
+    InferencePriority,
+)
+
+from subagents.prompts.prompt_loader import (
+    load_prompt,
+)
 
 
 class PrimaryAssistant:
     """
     General conversational assistant.
 
-    This assistant handles requests that do not require
-    delegation to a specialist.
+    The assistant references a logical model profile.
 
-    It shares the Hub model backend. No additional model
-    weights are loaded.
+    It does not own, cache, load, or directly call a model
+    backend.
     """
 
     def __init__(
         self,
-        backend: LLMBackend,
+        inference: InferenceEngine,
+        model_key: str,
     ) -> None:
-        self.backend = backend
-
-        self.system_prompt = load_prompt(
-            "primary_assistant.txt"
+        self.inference = (
+            inference
         )
 
-    def respond(
+        self.model_key = (
+            model_key
+        )
+
+        self.system_prompt = (
+            load_prompt(
+                "primary_assistant.txt"
+            )
+        )
+
+    async def respond(
         self,
         user_request: str,
     ) -> str:
         messages = [
             {
-                "role": "system",
-                "content": self.system_prompt,
+                "role":
+                    "system",
+
+                "content":
+                    self.system_prompt,
             },
+
             {
-                "role": "user",
-                "content": user_request,
+                "role":
+                    "user",
+
+                "content":
+                    user_request,
             },
         ]
 
-        response = self.backend.generate(
-            messages,
-            max_new_tokens=384,
+        response = (
+            await self.inference.generate(
+                model_key=(
+                    self.model_key
+                ),
+                messages=messages,
+                max_new_tokens=384,
+                priority=(
+                    InferencePriority
+                    .PRIMARY_RESPONSE
+                ),
+            )
         )
 
         return response.strip()

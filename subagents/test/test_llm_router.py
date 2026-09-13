@@ -1,67 +1,144 @@
-from subagents.core.llm_router import LLMRouter
-from subagents.core.types import AgentDefinition
-from subagents.core.registry import AgentRegistry
-from subagents.llm.base import LLMBackend
+import asyncio
+
+from subagents.core.llm_router import (
+    LLMRouter,
+)
+
+from subagents.core.types import (
+    AgentDefinition,
+)
+
+from subagents.core.registry import (
+    AgentRegistry,
+)
 
 
-class FakeHubBackend(LLMBackend):
+class FakeInference:
     def __init__(
         self,
         response: str,
     ) -> None:
-        self.response = response
-        self.last_messages = None
+        self.response = (
+            response
+        )
 
-    def generate(
+        self.calls = []
+
+    async def generate(
         self,
+        *,
+        model_key,
         messages,
-        max_new_tokens=128,
+        max_new_tokens,
+        priority,
     ):
-        self.last_messages = messages
+        self.calls.append(
+            {
+                "model_key":
+                    model_key,
+
+                "messages":
+                    messages,
+
+                "max_new_tokens":
+                    max_new_tokens,
+
+                "priority":
+                    priority,
+            }
+        )
+
         return self.response
 
 
 def build_registry():
-    registry = AgentRegistry()
+    registry = (
+        AgentRegistry()
+    )
 
     registry.register(
         AgentDefinition(
-            name="account-specialist",
-            description="Handles user accounts.",
+            name=(
+                "account-specialist"
+            ),
+            description=(
+                "Handles user accounts."
+            ),
         )
     )
 
     registry.register(
         AgentDefinition(
-            name="access-specialist",
-            description="Handles access and permissions.",
+            name=(
+                "access-specialist"
+            ),
+            description=(
+                "Handles access and permissions."
+            ),
         )
     )
 
     return registry
 
 
-def test_llm_router_selects_account_agent():
-    backend = FakeHubBackend(
-        '{"agents": ["account-specialist"]}'
+def build_router(
+    response: str,
+):
+    inference = (
+        FakeInference(
+            response
+        )
     )
 
     router = LLMRouter(
-        registry=build_registry(),
-        backend=backend,
+        registry=(
+            build_registry()
+        ),
+        inference=(
+            inference
+        ),
+        model_key=(
+            "hub-main"
+        ),
     )
 
-    routes = router.route(
-        "Is jdoe locked?"
+    return (
+        router,
+        inference,
+    )
+
+
+def test_llm_router_selects_account_agent():
+    (
+        router,
+        inference,
+    ) = build_router(
+        '{"agents": ["account-specialist"]}'
+    )
+
+    routes = asyncio.run(
+        router.route(
+            "Is jdoe locked?"
+        )
     )
 
     assert routes == [
         "account-specialist"
     ]
 
+    assert (
+        inference.calls[0][
+            "model_key"
+        ]
+        == "hub-main"
+    )
+
 
 def test_llm_router_supports_multiple_agents():
-    backend = FakeHubBackend(
+    (
+        router,
+        _inference,
+    ) = build_router(
         (
             '{"agents": ['
             '"account-specialist", '
@@ -70,13 +147,11 @@ def test_llm_router_supports_multiple_agents():
         )
     )
 
-    router = LLMRouter(
-        registry=build_registry(),
-        backend=backend,
-    )
-
-    routes = router.route(
-        "Check jdoe account and VPN access."
+    routes = asyncio.run(
+        router.route(
+            "Check jdoe account "
+            "and VPN access."
+        )
     )
 
     assert routes == [
@@ -86,7 +161,10 @@ def test_llm_router_supports_multiple_agents():
 
 
 def test_llm_router_rejects_unknown_agent():
-    backend = FakeHubBackend(
+    (
+        router,
+        _inference,
+    ) = build_router(
         (
             '{"agents": ['
             '"account-specialist", '
@@ -95,13 +173,10 @@ def test_llm_router_rejects_unknown_agent():
         )
     )
 
-    router = LLMRouter(
-        registry=build_registry(),
-        backend=backend,
-    )
-
-    routes = router.route(
-        "Check jdoe."
+    routes = asyncio.run(
+        router.route(
+            "Check jdoe."
+        )
     )
 
     assert routes == [
@@ -110,30 +185,37 @@ def test_llm_router_rejects_unknown_agent():
 
 
 def test_llm_router_rejects_invalid_json():
-    backend = FakeHubBackend(
-        "I think account-specialist should do it."
+    (
+        router,
+        _inference,
+    ) = build_router(
+        (
+            "I think account-specialist "
+            "should do it."
+        )
     )
 
-    router = LLMRouter(
-        registry=build_registry(),
-        backend=backend,
+    routes = asyncio.run(
+        router.route(
+            "Check jdoe."
+        )
     )
 
-    assert router.route(
-        "Check jdoe."
-    ) == []
+    assert routes == []
 
 
 def test_llm_router_handles_no_match():
-    backend = FakeHubBackend(
+    (
+        router,
+        _inference,
+    ) = build_router(
         '{"agents": []}'
     )
 
-    router = LLMRouter(
-        registry=build_registry(),
-        backend=backend,
+    routes = asyncio.run(
+        router.route(
+            "Tell me a joke."
+        )
     )
 
-    assert router.route(
-        "Tell me a joke."
-    ) == []
+    assert routes == []

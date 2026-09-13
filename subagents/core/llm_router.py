@@ -1,44 +1,82 @@
 import json
 
-from subagents.core.registry import AgentRegistry
-from subagents.llm.base import LLMBackend
-from subagents.prompts.prompt_loader import load_prompt
+from subagents.core.registry import (
+    AgentRegistry,
+)
+
+from subagents.llm.inference import (
+    InferenceEngine,
+)
+
+from subagents.llm.scheduler import (
+    InferencePriority,
+)
+
+from subagents.prompts.prompt_loader import (
+    load_prompt,
+)
 
 
 class LLMRouter:
     """
-    Uses the hub model to select specialist workers.
+    Uses the configured Hub model profile to select specialist
+    workers.
 
-    The hub only decides WHO should handle a request.
-    It does not select or execute tools.
+    The router does not own model weights or backend objects.
+
+    All model execution passes through the shared inference
+    boundary so GPU admission, model residency, and future
+    scheduling policy remain outside orchestration code.
     """
 
     def __init__(
         self,
         registry: AgentRegistry,
-        backend: LLMBackend,
+        inference: InferenceEngine,
+        model_key: str,
     ) -> None:
-        self.registry = registry
-        self.backend = backend
+        self.registry = (
+            registry
+        )
 
-    def _build_system_prompt(self) -> str:
+        self.inference = (
+            inference
+        )
+
+        self.model_key = (
+            model_key
+        )
+
+    def _build_system_prompt(
+        self,
+    ) -> str:
         specialists = []
 
-        for agent in self.registry.list_agents():
+        for agent in (
+            self.registry
+            .list_agents()
+        ):
             specialists.append(
                 {
-                    "name": agent.name,
-                    "description": agent.description,
+                    "name":
+                        agent.name,
+
+                    "description":
+                        agent.description,
                 }
             )
 
-        specialists_json = json.dumps(
-            specialists,
-            indent=2,
+        specialists_json = (
+            json.dumps(
+                specialists,
+                indent=2,
+            )
         )
 
-        template = load_prompt(
-            "hub_router.txt"
+        template = (
+            load_prompt(
+                "hub_router.txt"
+            )
         )
 
         return template.replace(
@@ -46,26 +84,44 @@ class LLMRouter:
             specialists_json,
         )
 
-    def route(
+    async def route(
         self,
         user_request: str,
     ) -> list[str]:
         messages = [
             {
-                "role": "system",
-                "content": self._build_system_prompt(),
+                "role":
+                    "system",
+
+                "content":
+                    self._build_system_prompt(),
             },
+
             {
-                "role": "user",
-                "content": user_request,
+                "role":
+                    "user",
+
+                "content":
+                    user_request,
             },
         ]
 
-        response = self.backend.generate(
-            messages,
-            max_new_tokens=128,
+        response = (
+            await self.inference.generate(
+                model_key=(
+                    self.model_key
+                ),
+                messages=(
+                    messages
+                ),
+                max_new_tokens=128,
+                priority=(
+                    InferencePriority
+                    .HUB_ROUTING
+                ),
+            )
         )
-        
+
         print(
             "\n===== HUB ROUTER ====="
             f"\nUSER: {user_request}"
@@ -74,27 +130,46 @@ class LLMRouter:
         )
 
         try:
-            parsed = json.loads(response)
+            parsed = (
+                json.loads(
+                    response
+                )
+            )
+
         except json.JSONDecodeError:
             return []
 
-        if not isinstance(parsed, dict):
+        if not isinstance(
+            parsed,
+            dict,
+        ):
             return []
 
-        routes = parsed.get("agents")
+        routes = (
+            parsed.get(
+                "agents"
+            )
+        )
 
-        if not isinstance(routes, list):
+        if not isinstance(
+            routes,
+            list,
+        ):
             return []
 
         validated_routes = []
 
         for route in routes:
-            if not isinstance(route, str):
+            if not isinstance(
+                route,
+                str,
+            ):
                 continue
 
-            # Hard validation:
-            # hub cannot invent specialist names.
-            if self.registry.exists(route):
+            # Hub cannot invent specialist names.
+            if self.registry.exists(
+                route
+            ):
                 validated_routes.append(
                     route
                 )
@@ -105,5 +180,3 @@ class LLMRouter:
                 validated_routes
             )
         )
-        
-    

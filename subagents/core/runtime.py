@@ -1,15 +1,32 @@
 from typing import Any
 
-from subagents.core.registry import AgentRegistry
-from subagents.core.tool_gateway import ToolGateway
-from subagents.core.tool_parser import parse_tool_calls
+from subagents.core.registry import (
+    AgentRegistry,
+)
+
+from subagents.core.tool_gateway import (
+    ToolGateway,
+)
+
+from subagents.core.tool_parser import (
+    parse_tool_calls,
+)
+
 from subagents.core.types import (
     AgentResult,
     AgentTask,
 )
-from subagents.llm.registry import ModelRegistry
+
 from subagents.core.tool_prompt import (
     build_worker_system_prompt,
+)
+
+from subagents.llm.inference import (
+    InferenceEngine,
+)
+
+from subagents.llm.scheduler import (
+    InferencePriority,
 )
 
 
@@ -21,8 +38,7 @@ def format_tool_result(
     Convert trusted structured tool output into a
     user-facing sentence.
 
-    Structured tool data stays internal. The frontend receives
-    a normal assistant answer instead of a Python dict.
+    Structured tool data stays internal.
     """
 
     if tool_name == "account_status":
@@ -149,8 +165,10 @@ def format_tool_result(
         ):
             entries = [
                 line.strip()
+
                 for line
                 in stdout.splitlines()
+
                 if line.strip()
             ]
 
@@ -159,10 +177,13 @@ def format_tool_result(
                     "The current workspace is empty."
                 )
 
-            formatted_entries = "\n".join(
-                f"- {entry}"
-                for entry
-                in entries
+            formatted_entries = (
+                "\n".join(
+                    f"- {entry}"
+
+                    for entry
+                    in entries
+                )
             )
 
             return (
@@ -190,13 +211,20 @@ def format_tool_result(
         )
 
         if (
-            isinstance(path, str)
-            and isinstance(content, str)
+            isinstance(
+                path,
+                str,
+            )
+            and isinstance(
+                content,
+                str,
+            )
         ):
             if truncated:
                 return (
                     f"Contents of {path} "
-                    "(truncated to the allowed read limit):\n\n"
+                    "(truncated to the allowed "
+                    "read limit):\n\n"
                     f"{content}"
                 )
 
@@ -226,8 +254,10 @@ def format_tool_result(
 
         lines = [
             line
+
             for line
             in stdout.splitlines()
+
             if line.strip()
         ]
 
@@ -237,7 +267,9 @@ def format_tool_result(
                 "but no branch information was returned."
             )
 
-        branch_line = lines[0]
+        branch_line = (
+            lines[0]
+        )
 
         if branch_line.startswith(
             "## "
@@ -246,12 +278,16 @@ def format_tool_result(
                 branch_line[3:]
                 .strip()
             )
+
         else:
             branch_status = (
-                branch_line.strip()
+                branch_line
+                .strip()
             )
 
-        changes = lines[1:]
+        changes = (
+            lines[1:]
+        )
 
         if not changes:
             return (
@@ -260,10 +296,13 @@ def format_tool_result(
                 "- Working tree: clean"
             )
 
-        formatted_changes = "\n".join(
-            f"- {change}"
-            for change
-            in changes
+        formatted_changes = (
+            "\n".join(
+                f"- {change}"
+
+                for change
+                in changes
+            )
         )
 
         return (
@@ -273,11 +312,6 @@ def format_tool_result(
             f"{formatted_changes}"
         )
 
-    #
-    # New tools should get an explicit formatter rather
-    # than leaking their raw internal result to the user.
-    #
-
     return (
         f"The {tool_name} operation "
         "completed successfully."
@@ -286,16 +320,16 @@ def format_tool_result(
 
 def format_approval_required(
     tool_name: str,
-    arguments: dict[str, Any],
+    arguments: dict[
+        str,
+        Any,
+    ],
     approval_id: str | None,
 ) -> str:
-    """
-    Produce a user-facing approval message without exposing
-    internal structures.
-    """
-
-    user_id = arguments.get(
-        "user_id"
+    user_id = (
+        arguments.get(
+            "user_id"
+        )
     )
 
     if tool_name == "unlock_user":
@@ -304,6 +338,7 @@ def format_approval_required(
                 f"Unlocking {user_id} "
                 "requires approval."
             )
+
         else:
             message = (
                 "The account unlock "
@@ -313,9 +348,10 @@ def format_approval_required(
     elif tool_name == "reset_password":
         if user_id:
             message = (
-                f"Resetting {user_id}'s password "
-                "requires approval."
+                f"Resetting {user_id}'s "
+                "password requires approval."
             )
+
         else:
             message = (
                 "The password reset "
@@ -338,19 +374,21 @@ def format_approval_required(
 
 class AgentRuntime:
     """
-    Executes tasks using registered specialist agents
-    and their configured model backends.
+    Executes specialist tasks.
+
+    Model ownership is deliberately outside this class.
 
     Flow:
+
         AgentTask
             ↓
         AgentDefinition
             ↓
-        ModelRegistry
+        InferenceCoordinator
             ↓
-        Worker model
+        ModelManager / GPU Scheduler
             ↓
-        Tool-call parser
+        Tool parser
             ↓
         ToolGateway
             ↓
@@ -362,15 +400,15 @@ class AgentRuntime:
     def __init__(
         self,
         agent_registry: AgentRegistry,
-        model_registry: ModelRegistry,
+        inference: InferenceEngine,
         tool_gateway: ToolGateway,
     ) -> None:
         self.agent_registry = (
             agent_registry
         )
 
-        self.model_registry = (
-            model_registry
+        self.inference = (
+            inference
         )
 
         self.tool_gateway = (
@@ -381,69 +419,54 @@ class AgentRuntime:
         self,
         task: AgentTask,
     ) -> AgentResult:
-        # -------------------------------------------------
-        # Resolve agent
-        # -------------------------------------------------
-
         try:
             agent = (
-                self.agent_registry.get(
+                self.agent_registry
+                .get(
                     task.agent_name
                 )
             )
 
         except KeyError as exc:
             return AgentResult(
-                task_id=task.task_id,
-                agent_name=task.agent_name,
+                task_id=(
+                    task.task_id
+                ),
+                agent_name=(
+                    task.agent_name
+                ),
                 status="error",
-                error=str(exc),
+                error=str(
+                    exc
+                ),
             )
-
-        # -------------------------------------------------
-        # Resolve model backend
-        # -------------------------------------------------
-
-        try:
-            backend = (
-                self.model_registry.get(
-                    agent.model
-                )
-            )
-
-        except KeyError as exc:
-            return AgentResult(
-                task_id=task.task_id,
-                agent_name=task.agent_name,
-                status="error",
-                error=str(exc),
-            )
-
-        # -------------------------------------------------
-        # Build worker prompt
-        # -------------------------------------------------
 
         messages = [
             {
-                "role": "system",
-                "content": (
+                "role":
+                    "system",
+
+                "content":
                     build_worker_system_prompt(
                         agent
-                    )
-                ),
+                    ),
             },
+
             {
-                "role": "user",
-                "content": (
-                    task.user_request
-                ),
+                "role":
+                    "user",
+
+                "content":
+                    task.user_request,
             },
         ]
 
         if task.instructions:
             messages.append(
                 {
-                    "role": "user",
+                    "role":
+                        "user",
+
                     "content": (
                         "Additional instructions:\n"
                         f"{task.instructions}"
@@ -451,29 +474,35 @@ class AgentRuntime:
                 }
             )
 
-        # -------------------------------------------------
-        # Worker model inference
-        # -------------------------------------------------
-
         try:
-            response = backend.generate(
-                messages
+            response = (
+                await self.inference.generate(
+                    model_key=(
+                        agent.model
+                    ),
+                    messages=messages,
+                    max_new_tokens=256,
+                    priority=(
+                        InferencePriority
+                        .SPECIALIST
+                    ),
+                )
             )
 
         except Exception as exc:
             return AgentResult(
-                task_id=task.task_id,
-                agent_name=task.agent_name,
+                task_id=(
+                    task.task_id
+                ),
+                agent_name=(
+                    task.agent_name
+                ),
                 status="error",
                 error=(
                     "Worker model failed: "
                     f"{exc}"
                 ),
             )
-
-        # -------------------------------------------------
-        # Parse worker tool proposal
-        # -------------------------------------------------
 
         try:
             tool_calls = (
@@ -484,70 +513,90 @@ class AgentRuntime:
 
         except ValueError as exc:
             return AgentResult(
-                task_id=task.task_id,
-                agent_name=task.agent_name,
+                task_id=(
+                    task.task_id
+                ),
+                agent_name=(
+                    task.agent_name
+                ),
                 status="error",
-                error=str(exc),
-            )
-
-        # -------------------------------------------------
-        # V1 restriction:
-        # exactly one tool call per worker task
-        # -------------------------------------------------
-
-        if len(tool_calls) != 1:
-            return AgentResult(
-                task_id=task.task_id,
-                agent_name=task.agent_name,
-                status="error",
-                error=(
-                    "Worker must return exactly one "
-                    "tool call for this runtime version."
+                error=str(
+                    exc
                 ),
             )
 
-        tool_call = tool_calls[0]
+        if len(
+            tool_calls
+        ) != 1:
+            return AgentResult(
+                task_id=(
+                    task.task_id
+                ),
+                agent_name=(
+                    task.agent_name
+                ),
+                status="error",
+                error=(
+                    "Worker must return exactly "
+                    "one tool call for this "
+                    "runtime version."
+                ),
+            )
+
+        tool_call = (
+            tool_calls[0]
+        )
 
         tool_name = (
-            tool_call["name"]
+            tool_call[
+                "name"
+            ]
         )
 
         arguments = (
-            tool_call["arguments"]
+            tool_call[
+                "arguments"
+            ]
         )
-
-        # -------------------------------------------------
-        # Security / execution gateway
-        # -------------------------------------------------
 
         try:
             gateway_result = (
-                await self.tool_gateway.execute(
+                await
+                self.tool_gateway
+                .execute(
                     agent=agent,
                     user_input=(
                         task.user_request
                     ),
-                    tool_name=tool_name,
-                    arguments=arguments,
+                    tool_name=(
+                        tool_name
+                    ),
+                    arguments=(
+                        arguments
+                    ),
                 )
             )
 
         except Exception as exc:
             return AgentResult(
-                task_id=task.task_id,
-                agent_name=task.agent_name,
+                task_id=(
+                    task.task_id
+                ),
+                agent_name=(
+                    task.agent_name
+                ),
                 status="error",
-                proposed_tool=tool_name,
-                proposed_arguments=arguments,
+                proposed_tool=(
+                    tool_name
+                ),
+                proposed_arguments=(
+                    arguments
+                ),
                 error=(
                     "Tool gateway failed: "
                     f"{exc}"
                 ),
             )
-
-        # -------------------------------------------------
-        # Approval required
-        # -------------------------------------------------
 
         if (
             gateway_result.get(
@@ -562,14 +611,24 @@ class AgentRuntime:
             )
 
             return AgentResult(
-                task_id=task.task_id,
-                agent_name=task.agent_name,
+                task_id=(
+                    task.task_id
+                ),
+                agent_name=(
+                    task.agent_name
+                ),
                 status=(
                     "approval_required"
                 ),
-                proposed_tool=tool_name,
-                proposed_arguments=arguments,
-                approval_id=approval_id,
+                proposed_tool=(
+                    tool_name
+                ),
+                proposed_arguments=(
+                    arguments
+                ),
+                approval_id=(
+                    approval_id
+                ),
                 answer=(
                     format_approval_required(
                         tool_name,
@@ -579,20 +638,24 @@ class AgentRuntime:
                 ),
             )
 
-        # -------------------------------------------------
-        # Gateway denied / execution failed
-        # -------------------------------------------------
-
         if not gateway_result.get(
             "ok",
             False,
         ):
             return AgentResult(
-                task_id=task.task_id,
-                agent_name=task.agent_name,
+                task_id=(
+                    task.task_id
+                ),
+                agent_name=(
+                    task.agent_name
+                ),
                 status="error",
-                proposed_tool=tool_name,
-                proposed_arguments=arguments,
+                proposed_tool=(
+                    tool_name
+                ),
+                proposed_arguments=(
+                    arguments
+                ),
                 error=(
                     gateway_result.get(
                         "error",
@@ -600,10 +663,6 @@ class AgentRuntime:
                     )
                 ),
             )
-
-        # -------------------------------------------------
-        # Successful tool execution
-        # -------------------------------------------------
 
         tool_result = (
             gateway_result.get(
@@ -616,11 +675,19 @@ class AgentRuntime:
             dict,
         ):
             return AgentResult(
-                task_id=task.task_id,
-                agent_name=task.agent_name,
+                task_id=(
+                    task.task_id
+                ),
+                agent_name=(
+                    task.agent_name
+                ),
                 status="error",
-                proposed_tool=tool_name,
-                proposed_arguments=arguments,
+                proposed_tool=(
+                    tool_name
+                ),
+                proposed_arguments=(
+                    arguments
+                ),
                 error=(
                     "Tool returned an invalid "
                     "structured result."
@@ -628,13 +695,23 @@ class AgentRuntime:
             )
 
         return AgentResult(
-            task_id=task.task_id,
-            agent_name=task.agent_name,
+            task_id=(
+                task.task_id
+            ),
+            agent_name=(
+                task.agent_name
+            ),
             status="success",
-            proposed_tool=tool_name,
-            proposed_arguments=arguments,
-            answer=format_tool_result(
-                tool_name,
-                tool_result,
+            proposed_tool=(
+                tool_name
+            ),
+            proposed_arguments=(
+                arguments
+            ),
+            answer=(
+                format_tool_result(
+                    tool_name,
+                    tool_result,
+                )
             ),
         )
