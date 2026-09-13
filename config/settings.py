@@ -711,10 +711,14 @@ class Settings(
 @lru_cache
 def get_settings() -> Settings:
     """
-    Transitional process-wide configuration accessor.
+    Return the process-cached validated Settings instance.
 
-    Main application lifecycle ownership will move away from
-    this cached accessor during the next cleanup stage.
+    Application composition roots may instantiate Settings
+    explicitly when lifecycle ownership matters.
+
+    This accessor remains available for lightweight scripts and
+    components that only need centralized immutable
+    configuration discovery.
     """
 
     return Settings()

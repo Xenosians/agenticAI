@@ -48,10 +48,13 @@ class FakeInference:
             }
         )
 
-        return self.response
+        return (
+            self.response
+        )
 
 
-def build_registry():
+def build_registry(
+) -> AgentRegistry:
     registry = (
         AgentRegistry()
     )
@@ -64,6 +67,9 @@ def build_registry():
             description=(
                 "Handles user accounts."
             ),
+            model=(
+                "account-test-model"
+            ),
         )
     )
 
@@ -73,7 +79,11 @@ def build_registry():
                 "access-specialist"
             ),
             description=(
-                "Handles access and permissions."
+                "Handles access and "
+                "permissions."
+            ),
+            model=(
+                "access-test-model"
             ),
         )
     )
@@ -90,16 +100,18 @@ def build_router(
         )
     )
 
-    router = LLMRouter(
-        registry=(
-            build_registry()
-        ),
-        inference=(
-            inference
-        ),
-        model_key=(
-            "hub-main"
-        ),
+    router = (
+        LLMRouter(
+            registry=(
+                build_registry()
+            ),
+            inference=(
+                inference
+            ),
+            model_key=(
+                "hub-main"
+            ),
+        )
     )
 
     return (
@@ -113,12 +125,15 @@ def test_llm_router_selects_account_agent():
         router,
         inference,
     ) = build_router(
-        '{"agents": ["account-specialist"]}'
+        '{"agents": '
+        '["account-specialist"]}'
     )
 
-    routes = asyncio.run(
-        router.route(
-            "Is jdoe locked?"
+    routes = (
+        asyncio.run(
+            router.route(
+                "Is jdoe locked?"
+            )
         )
     )
 
@@ -127,7 +142,9 @@ def test_llm_router_selects_account_agent():
     ]
 
     assert (
-        inference.calls[0][
+        inference.calls[
+            0
+        ][
             "model_key"
         ]
         == "hub-main"
@@ -147,10 +164,12 @@ def test_llm_router_supports_multiple_agents():
         )
     )
 
-    routes = asyncio.run(
-        router.route(
-            "Check jdoe account "
-            "and VPN access."
+    routes = (
+        asyncio.run(
+            router.route(
+                "Check jdoe account "
+                "and VPN access."
+            )
         )
     )
 
@@ -173,9 +192,11 @@ def test_llm_router_rejects_unknown_agent():
         )
     )
 
-    routes = asyncio.run(
-        router.route(
-            "Check jdoe."
+    routes = (
+        asyncio.run(
+            router.route(
+                "Check jdoe."
+            )
         )
     )
 
@@ -190,18 +211,24 @@ def test_llm_router_rejects_invalid_json():
         _inference,
     ) = build_router(
         (
-            "I think account-specialist "
+            "I think "
+            "account-specialist "
             "should do it."
         )
     )
 
-    routes = asyncio.run(
-        router.route(
-            "Check jdoe."
+    routes = (
+        asyncio.run(
+            router.route(
+                "Check jdoe."
+            )
         )
     )
 
-    assert routes == []
+    assert (
+        routes
+        == []
+    )
 
 
 def test_llm_router_handles_no_match():
@@ -212,10 +239,15 @@ def test_llm_router_handles_no_match():
         '{"agents": []}'
     )
 
-    routes = asyncio.run(
-        router.route(
-            "Tell me a joke."
+    routes = (
+        asyncio.run(
+            router.route(
+                "Tell me a joke."
+            )
         )
     )
 
-    assert routes == []
+    assert (
+        routes
+        == []
+    )
