@@ -118,13 +118,6 @@ class JobExecuteRequest(
 def application_runtime(
     app: FastAPI,
 ) -> ApplicationRuntime:
-    """
-    Return the explicit application-owned runtime.
-
-    Endpoints should not discover individual process resources
-    through module globals.
-    """
-
     runtime = getattr(
         app.state,
         "runtime",
@@ -390,13 +383,6 @@ def persist_completion(
         Any,
     ],
 ) -> None:
-    """
-    Persist completion BEFORE network delivery.
-
-    Once this returns successfully, process failure cannot lose
-    the completion callback.
-    """
-
     runtime.completion_outbox.put(
         payload.job_id,
         payload.attempt,
@@ -413,7 +399,7 @@ def persist_completion(
 
 
 # ============================================================
-# Phoenix completion delivery
+# Phoenix transport helpers
 # ============================================================
 
 
@@ -431,20 +417,325 @@ def response_body(
         )
 
 
+# ============================================================
+# Durable job heartbeat
+# ============================================================
+
+
+def valid_heartbeat_ack(
+    *,
+    job_id: str,
+    attempt: int,
+    body: Any,
+) -> bool:
+    if not isinstance(
+        body,
+        dict,
+    ):
+        return False
+
+    if (
+        body.get(
+            "job_id"
+        )
+        != job_id
+    ):
+        return False
+
+    if (
+        body.get(
+            "attempt"
+        )
+        != attempt
+    ):
+        return False
+
+    if (
+        body.get(
+            "status"
+        )
+        != "processing"
+    ):
+        return False
+
+    lease_expires_at = (
+        body.get(
+            "lease_expires_at"
+        )
+    )
+
+    return (
+        isinstance(
+            lease_expires_at,
+            str,
+        )
+        and bool(
+            lease_expires_at.strip()
+        )
+    )
+
+
+async def send_job_heartbeat(
+    runtime: ApplicationRuntime,
+    job_id: str,
+    attempt: int,
+) -> bool:
+    settings = (
+        runtime.settings
+    )
+
+    url = (
+        f"{settings.require_phoenix_base_url()}"
+        f"/api/internal/v1/jobs/"
+        f"{job_id}"
+        "/heartbeat"
+    )
+
+    headers = {
+        "x-internal-token":
+            settings
+            .require_internal_job_token(),
+    }
+
+    try:
+        response = (
+            await
+            runtime
+            .phoenix_client
+            .post(
+                url,
+                headers=(
+                    headers
+                ),
+                json={
+                    "attempt":
+                        attempt,
+                },
+            )
+        )
+
+    except Exception as exc:
+        print(
+            "[HEARTBEAT] Delivery failed "
+            f"job_id={job_id} "
+            f"attempt={attempt} "
+            f"error={exc!r}"
+        )
+
+        return True
+
+    body = (
+        response_body(
+            response
+        )
+    )
+
+    if (
+        200
+        <= response.status_code
+        < 300
+    ):
+        if valid_heartbeat_ack(
+            job_id=(
+                job_id
+            ),
+            attempt=(
+                attempt
+            ),
+            body=(
+                body
+            ),
+        ):
+            print(
+                "[HEARTBEAT] Lease renewed "
+                f"job_id={job_id} "
+                f"attempt={attempt}"
+            )
+
+        else:
+            print(
+                "[HEARTBEAT] Invalid success response "
+                f"job_id={job_id} "
+                f"attempt={attempt} "
+                f"response={body!r}"
+            )
+
+        return True
+
+    terminal_heartbeat_errors = {
+        "job_not_found",
+        "stale_attempt",
+        "job_not_processing",
+        "lease_expired",
+        "lease_missing",
+    }
+
+    if (
+        response.status_code
+        in {
+            404,
+            409,
+        }
+        and isinstance(
+            body,
+            dict,
+        )
+        and body.get(
+            "error"
+        )
+        in terminal_heartbeat_errors
+    ):
+        print(
+            "[HEARTBEAT] Lease ownership ended "
+            f"job_id={job_id} "
+            f"attempt={attempt} "
+            f"response={body}"
+        )
+
+        return False
+
+    print(
+        "[HEARTBEAT] Renewal rejected "
+        f"job_id={job_id} "
+        f"attempt={attempt} "
+        f"status={response.status_code} "
+        f"response={body!r}"
+    )
+
+    return True
+
+
+async def job_heartbeat_worker(
+    runtime: ApplicationRuntime,
+    payload: JobExecuteRequest,
+) -> None:
+    print(
+        "[HEARTBEAT] Worker started "
+        f"job_id={payload.job_id} "
+        f"attempt={payload.attempt}"
+    )
+
+    try:
+        while True:
+            should_continue = (
+                await send_job_heartbeat(
+                    runtime,
+                    payload.job_id,
+                    payload.attempt,
+                )
+            )
+
+            if not should_continue:
+                return
+
+            await asyncio.sleep(
+                runtime
+                .settings
+                .job_heartbeat_interval_seconds
+            )
+
+    except asyncio.CancelledError:
+        print(
+            "[HEARTBEAT] Worker stopped "
+            f"job_id={payload.job_id} "
+            f"attempt={payload.attempt}"
+        )
+
+        raise
+
+
+# ============================================================
+# Completion acknowledgement validation
+# ============================================================
+
+
+def valid_completion_ack(
+    *,
+    entry: OutboxEntry,
+    body: Any,
+) -> bool:
+    """
+    Validate a Phoenix completion acknowledgement before deleting
+    the durable local outbox entry.
+
+    For an acknowledgement of "applied", Phoenix must report the
+    exact status sent by AI.
+
+    For "duplicate", Phoenix may report a different durable
+    terminal/completion status because an earlier completion or
+    fail-closed recovery may already have won.
+    """
+
+    if not isinstance(
+        body,
+        dict,
+    ):
+        return False
+
+    if (
+        body.get(
+            "job_id"
+        )
+        != entry.job_id
+    ):
+        return False
+
+    acknowledgement = (
+        body.get(
+            "acknowledgement"
+        )
+    )
+
+    if acknowledgement not in {
+        "applied",
+        "duplicate",
+    }:
+        return False
+
+    durable_status = (
+        body.get(
+            "status"
+        )
+    )
+
+    valid_statuses = {
+        "completed",
+        "waiting_approval",
+        "failed",
+    }
+
+    if (
+        durable_status
+        not in valid_statuses
+    ):
+        return False
+
+    expected_status = (
+        entry.payload.get(
+            "status"
+        )
+    )
+
+    if (
+        acknowledgement
+        == "applied"
+        and durable_status
+        != expected_status
+    ):
+        return False
+
+    return True
+
+
+# ============================================================
+# Phoenix completion delivery
+# ============================================================
+
+
 async def deliver_outbox_entry(
     runtime: ApplicationRuntime,
     entry: OutboxEntry,
 ) -> bool:
-    """
-    Deliver one persisted completion.
-
-    True:
-        completion resolved and removed.
-
-    False:
-        completion remains durable for retry.
-    """
-
     settings = (
         runtime.settings
     )
@@ -507,7 +798,7 @@ async def deliver_outbox_entry(
     )
 
     # --------------------------------------------------------
-    # Phoenix ACK
+    # Valid Phoenix completion ACK
     # --------------------------------------------------------
 
     if (
@@ -515,25 +806,53 @@ async def deliver_outbox_entry(
         <= response.status_code
         < 300
     ):
-        runtime.completion_outbox.delete(
+        if valid_completion_ack(
+            entry=(
+                entry
+            ),
+            body=(
+                body
+            ),
+        ):
+            runtime.completion_outbox.delete(
+                entry.job_id,
+                entry.attempt,
+            )
+
+            print(
+                "[OUTBOX] Delivery ACK "
+                f"job_id={entry.job_id} "
+                f"attempt={entry.attempt} "
+                f"response={body}"
+            )
+
+            return True
+
+        error = (
+            "Invalid Phoenix completion ACK: "
+            f"{body!r}"
+        )
+
+        runtime.completion_outbox.mark_delivery_attempt(
             entry.job_id,
             entry.attempt,
+            error,
         )
 
         print(
-            "[OUTBOX] Delivery ACK "
+            "[OUTBOX] Invalid completion ACK "
             f"job_id={entry.job_id} "
             f"attempt={entry.attempt} "
-            f"response={body}"
+            f"response={body!r}"
         )
 
-        return True
+        return False
 
     # --------------------------------------------------------
     # Stale attempt
     #
-    # Phoenix has already moved to a newer execution attempt.
-    # The old completion is obsolete and must not overwrite it.
+    # Phoenix has durably moved to another execution attempt.
+    # This exact completion is obsolete.
     # --------------------------------------------------------
 
     if (
@@ -561,10 +880,6 @@ async def deliver_outbox_entry(
         )
 
         return True
-
-    # --------------------------------------------------------
-    # Other rejection remains durable.
-    # --------------------------------------------------------
 
     error = (
         f"HTTP {response.status_code}: "
@@ -596,12 +911,6 @@ async def deliver_outbox_entry(
 async def outbox_delivery_worker(
     runtime: ApplicationRuntime,
 ) -> None:
-    """
-    Replay persisted completions until Phoenix ACKs them.
-
-    Delivery remains independent of AI execution.
-    """
-
     print(
         "[OUTBOX] Delivery worker started "
         "pending="
@@ -623,6 +932,12 @@ async def outbox_delivery_worker(
             )
 
             for entry in entries:
+                await send_job_heartbeat(
+                    runtime,
+                    entry.job_id,
+                    entry.attempt,
+                )
+
                 await deliver_outbox_entry(
                     runtime,
                     entry,
@@ -665,6 +980,15 @@ async def execute_job(
 ) -> None:
     job_id = (
         payload.job_id
+    )
+
+    heartbeat_task = (
+        asyncio.create_task(
+            job_heartbeat_worker(
+                runtime,
+                payload,
+            )
+        )
     )
 
     try:
@@ -750,6 +1074,13 @@ async def execute_job(
             )
 
     finally:
+        heartbeat_task.cancel()
+
+        await asyncio.gather(
+            heartbeat_task,
+            return_exceptions=True,
+        )
+
         runtime.active_jobs.pop(
             job_id,
             None,
@@ -785,34 +1116,14 @@ def schedule_job(
 async def lifespan(
     app: FastAPI,
 ):
-    """
-    Application composition root.
-
-    This is the single lifecycle owner for process-wide runtime
-    resources.
-
-    It intentionally creates ordinary objects rather than
-    process-global Singletons.
-    """
-
     app.state.runtime = None
-
-    # ========================================================
-    # SETTINGS
-    # ========================================================
 
     settings = (
         Settings()
     )
 
-    # Validate Phoenix handshake configuration before any
-    # long-lived process resources are started.
     settings.require_phoenix_base_url()
     settings.require_internal_job_token()
-
-    # ========================================================
-    # DURABLE COMPLETION OUTBOX
-    # ========================================================
 
     outbox_path = (
         settings.resolve_runtime_path(
@@ -833,10 +1144,6 @@ async def lifespan(
         asyncio.Event()
     )
 
-    # ========================================================
-    # PHOENIX CALLBACK CLIENT
-    # ========================================================
-
     phoenix_client = (
         httpx.AsyncClient(
             timeout=(
@@ -846,17 +1153,9 @@ async def lifespan(
         )
     )
 
-    # ========================================================
-    # MCP RUNTIME
-    # ========================================================
-
     mcp = (
         MCPRuntime()
     )
-
-    # ========================================================
-    # DURABLE APPROVAL EXECUTION
-    # ========================================================
 
     approval_store_path = (
         settings.resolve_runtime_path(
@@ -884,10 +1183,6 @@ async def lifespan(
         )
     )
 
-    # ========================================================
-    # MODEL / GPU RUNTIME
-    # ========================================================
-
     model_manager = (
         ModelManager(
             settings=(
@@ -911,10 +1206,6 @@ async def lifespan(
         )
     )
 
-    # ========================================================
-    # TRUSTED TOOL EXECUTION BOUNDARY
-    # ========================================================
-
     tool_gateway = (
         ToolGateway(
             approval_creator=(
@@ -932,19 +1223,7 @@ async def lifespan(
     ) = None
 
     try:
-        # ====================================================
-        # START MCP
-        # ====================================================
-
         await mcp.start()
-
-        # ====================================================
-        # WARM HUB MODEL
-        #
-        # Preserve previous readiness semantics: the AI service
-        # does not become ready until its main Hub model is
-        # available.
-        # ====================================================
 
         print(
             "[API] Loading AI runtime..."
@@ -953,10 +1232,6 @@ async def lifespan(
         await inference.warm(
             settings.hub_model_key
         )
-
-        # ====================================================
-        # REASONING GRAPH
-        # ====================================================
 
         hub = (
             build_hub(
@@ -974,10 +1249,6 @@ async def lifespan(
                 ),
             )
         )
-
-        # ====================================================
-        # APPLICATION RUNTIME CONTAINER
-        # ====================================================
 
         runtime = (
             ApplicationRuntime(
@@ -1021,10 +1292,6 @@ async def lifespan(
             runtime
         )
 
-        # ====================================================
-        # OUTBOX REPLAY
-        # ====================================================
-
         runtime.outbox_task = (
             asyncio.create_task(
                 outbox_delivery_worker(
@@ -1044,18 +1311,10 @@ async def lifespan(
         yield
 
     finally:
-        # ====================================================
-        # MARK NOT READY FIRST
-        # ====================================================
-
         if runtime is not None:
             runtime.ready = (
                 False
             )
-
-        # ====================================================
-        # STOP ACTIVE AI EXECUTIONS
-        # ====================================================
 
         if runtime is not None:
             active_tasks = list(
@@ -1077,10 +1336,6 @@ async def lifespan(
 
             runtime.active_jobs.clear()
 
-        # ====================================================
-        # STOP OUTBOX WORKER
-        # ====================================================
-
         if (
             runtime is not None
             and runtime.outbox_task
@@ -1097,15 +1352,7 @@ async def lifespan(
                 None
             )
 
-        # ====================================================
-        # CLOSE HTTP CLIENT
-        # ====================================================
-
         await phoenix_client.aclose()
-
-        # ====================================================
-        # STOP MCP
-        # ====================================================
 
         await mcp.stop()
 

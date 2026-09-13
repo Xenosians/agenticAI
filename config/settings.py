@@ -129,6 +129,22 @@ class Settings(
     )
 
     # ============================================================
+    # DURABLE JOB LIVENESS
+    #
+    # Must remain comfortably below the Phoenix processing lease.
+    #
+    # Current development values:
+    #
+    #   heartbeat: 30 seconds
+    #   lease:     300 seconds
+    # ============================================================
+
+    job_heartbeat_interval_seconds: float = Field(
+        default=30.0,
+        gt=0,
+    )
+
+    # ============================================================
     # DURABLE COMPLETION OUTBOX
     # ============================================================
 
