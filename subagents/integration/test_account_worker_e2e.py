@@ -28,8 +28,8 @@ from subagents.core.types import (
     AgentTask,
 )
 
-from subagents.llm.qwen_funcall import (
-    QwenFuncCallBackend,
+from subagents.llm.factory import (
+    build_worker_backend,
 )
 
 from subagents.llm.registry import (
@@ -85,6 +85,24 @@ def build_runtime() -> AgentRuntime:
         agents
     )
 
+    account_agent = next(
+        (
+            agent
+            for agent in agents
+            if (
+                agent.name
+                == "account-specialist"
+            )
+        ),
+        None,
+    )
+
+    if account_agent is None:
+        raise RuntimeError(
+            "account-specialist "
+            "definition was not found."
+        )
+
     # -----------------------------------------
     # Real worker model
     # -----------------------------------------
@@ -93,21 +111,25 @@ def build_runtime() -> AgentRuntime:
         ModelRegistry()
     )
 
-    model_path = (
-        settings.require_path(
-            settings.account_model_path,
-            "ACCOUNT_MODEL_PATH",
+    model_config = (
+        settings.require_worker_model(
+            account_agent.model
         )
     )
 
     backend = (
-        QwenFuncCallBackend(
-            model_path
+        build_worker_backend(
+            backend_type=(
+                model_config.backend
+            ),
+            model_path=(
+                model_config.model_path
+            ),
         )
     )
 
     model_registry.register(
-        settings.account_model_key,
+        account_agent.model,
         backend,
     )
 

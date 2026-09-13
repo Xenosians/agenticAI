@@ -5,21 +5,27 @@ from config.settings import (
 from subagents.core.loader import (
     load_agent_directory,
 )
+
 from subagents.core.registry import (
     AgentRegistry,
 )
+
 from subagents.core.llm_router import (
     LLMRouter,
 )
+
 from subagents.core.orchestrator import (
     Orchestrator,
 )
+
 from subagents.core.primary_assistant import (
     PrimaryAssistant,
 )
+
 from subagents.core.runtime import (
     AgentRuntime,
 )
+
 from subagents.core.tool_gateway import (
     ToolGateway,
 )
@@ -28,6 +34,7 @@ from subagents.llm.factory import (
     build_hub_backend,
     build_worker_backend,
 )
+
 from subagents.llm.registry import (
     ModelRegistry,
 )
@@ -37,14 +44,76 @@ def build_hub() -> Orchestrator:
     """
     Build the complete Agentic Developer Hub runtime.
 
-    Hub:
-        loaded eagerly because ordinary requests need it.
+    Agent definitions determine which logical worker models are
+    required.
 
-    Specialist workers:
-        registered lazily and loaded only when first used.
+    WORKER_MODELS provides deployment configuration for those
+    logical model names.
+
+    No specialist type is wired explicitly here.
     """
 
     settings = get_settings()
+
+    # ============================================================
+    # Load agent definitions
+    # ============================================================
+
+    agents_dir = (
+        settings.require_path(
+            settings.agents_dir,
+            "AGENTS_DIR",
+        )
+    )
+
+    configured_agents = (
+        load_agent_directory(
+            agents_dir
+        )
+    )
+
+    # ============================================================
+    # Select enabled agents
+    #
+    # An agent becomes available when:
+    #
+    # 1. its definition exists in AGENTS_DIR
+    # 2. its logical model exists in WORKER_MODELS
+    # 3. that worker model is enabled
+    #
+    # This removes specialist-specific enable flags and wiring.
+    # ============================================================
+
+    enabled_agents = []
+
+    for agent in configured_agents:
+        model_config = (
+            settings.worker_model(
+                agent.model
+            )
+        )
+
+        if model_config is None:
+            raise RuntimeError(
+                f"Agent '{agent.name}' "
+                "references worker model "
+                f"'{agent.model}', but that "
+                "model is not configured in "
+                "WORKER_MODELS."
+            )
+
+        if not model_config.enabled:
+            print(
+                "[HUB] Specialist disabled "
+                f"agent='{agent.name}' "
+                f"model='{agent.model}'"
+            )
+
+            continue
+
+        enabled_agents.append(
+            agent
+        )
 
     # ============================================================
     # Agent registry
@@ -54,121 +123,62 @@ def build_hub() -> Orchestrator:
         AgentRegistry()
     )
 
-    agents_dir = (
-        settings.require_path(
-            settings.agents_dir,
-            "AGENTS_DIR",
-        )
-    )
-
-    agents = (
-        load_agent_directory(
-            agents_dir
-        )
-    )
-
     agent_registry.register_many(
-        agents
+        enabled_agents
     )
 
     # ============================================================
     # Worker model registry
+    #
+    # Register each logical model exactly once, regardless of
+    # how many agents share it.
     # ============================================================
 
     model_registry = (
         ModelRegistry()
     )
 
-    # ============================================================
-    # Account worker - lazy
-    # ============================================================
-
-    account_model_path = (
-        settings.require_path(
-            settings.account_model_path,
-            "ACCOUNT_MODEL_PATH",
-        )
+    required_model_keys = sorted(
+        {
+            agent.model
+            for agent
+            in enabled_agents
+        }
     )
 
-    account_backend_type = (
-        settings.account_backend
-    )
-
-    def load_account_backend():
-        return build_worker_backend(
-            backend_type=(
-                account_backend_type
-            ),
-            model_path=(
-                account_model_path
-            ),
-        )
-
-    model_registry.register_lazy(
-        settings.account_model_key,
-        load_account_backend,
-    )
-
-    # ============================================================
-    # Access worker - lazy
-    # ============================================================
-
-    if settings.access_enabled:
-        access_model_path = (
-            settings.require_path(
-                settings.access_model_path,
-                "ACCESS_MODEL_PATH",
+    for model_key in (
+        required_model_keys
+    ):
+        model_config = (
+            settings.require_worker_model(
+                model_key
             )
         )
 
-        access_backend_type = (
-            settings.access_backend
+        backend_type = (
+            model_config.backend
         )
 
-        def load_access_backend():
+        model_path = (
+            model_config.model_path
+        )
+
+        def load_worker_backend(
+            backend_type=backend_type,
+            model_path=model_path,
+        ):
             return build_worker_backend(
                 backend_type=(
-                    access_backend_type
+                    backend_type
                 ),
                 model_path=(
-                    access_model_path
+                    model_path
                 ),
             )
 
         model_registry.register_lazy(
-            settings.access_model_key,
-            load_access_backend,
-        )
-
-    # ============================================================
-    # Developer worker - lazy
-    # ============================================================
-
-    if settings.developer_enabled:
-        developer_model_path = (
-            settings.require_path(
-                settings.developer_model_path,
-                "DEVELOPER_MODEL_PATH",
-            )
-        )
-
-        developer_backend_type = (
-            settings.developer_backend
-        )
-
-        def load_developer_backend():
-            return build_worker_backend(
-                backend_type=(
-                    developer_backend_type
-                ),
-                model_path=(
-                    developer_model_path
-                ),
-            )
-
-        model_registry.register_lazy(
-            settings.developer_model_key,
-            load_developer_backend,
+            model_key,
+            load_worker_backend,
         )
 
     # ============================================================
@@ -196,7 +206,10 @@ def build_hub() -> Orchestrator:
     )
 
     # ============================================================
-    # Hub model - eager
+    # Hub model
+    #
+    # The Hub remains separate because it has Hub-specific model
+    # options and also powers the primary conversational path.
     # ============================================================
 
     hub_model_path = (

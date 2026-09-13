@@ -3,9 +3,11 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from pydantic import (
+    BaseModel,
     Field,
     field_validator,
 )
+
 from pydantic_settings import (
     BaseSettings,
     SettingsConfigDict,
@@ -18,10 +20,52 @@ PROJECT_ROOT = (
     .parents[1]
 )
 
-MODELS_ROOT = (
-    PROJECT_ROOT.parent
-    / "Models"
-)
+
+class WorkerModelSettings(
+    BaseModel
+):
+    """
+    Configuration for one logical specialist-worker model.
+
+    The dictionary key in WORKER_MODELS is the logical model
+    name referenced by agent definition files.
+
+    Example:
+
+        "qwen3-0.6b": {
+            "backend": "qwen3",
+            "model_path": "/models/Qwen3-0.6B",
+            "enabled": true
+        }
+    """
+
+    backend: str
+
+    model_path: Path
+
+    enabled: bool = True
+
+    @field_validator(
+        "backend"
+    )
+    @classmethod
+    def validate_backend(
+        cls,
+        value: str,
+    ) -> str:
+        normalized = (
+            value
+            .strip()
+            .lower()
+        )
+
+        if not normalized:
+            raise ValueError(
+                "Worker model backend "
+                "must not be empty."
+            )
+
+        return normalized
 
 
 class Settings(
@@ -133,7 +177,8 @@ class Settings(
     # ============================================================
     # MAIN HUB
     #
-    # Ministral 3B
+    # The Hub is intentionally separate from worker models
+    # because it has Hub-specific loading options.
     # ============================================================
 
     hub_backend: str = (
@@ -153,68 +198,22 @@ class Settings(
     ) = None
 
     # ============================================================
-    # ACCOUNT SPECIALIST
+    # SPECIALIST WORKER MODELS
     #
-    # Qwen2.5-0.5B FuncCall
-    # ============================================================
-
-    account_backend: str = (
-        "qwen-funccall"
-    )
-
-    account_model_key: str = (
-        "qwen2.5-0.5b-funccall"
-    )
-
-    account_model_path: (
-        Path | None
-    ) = None
-
-    # ============================================================
-    # ACCESS SPECIALIST
+    # Logical model name -> worker model configuration.
     #
-    # Qwen3-0.6B
-    # ============================================================
-
-    access_enabled: bool = (
-        False
-    )
-
-    access_backend: str = (
-        "qwen3"
-    )
-
-    access_model_key: str = (
-        "qwen3-0.6b"
-    )
-
-    access_model_path: (
-        Path | None
-    ) = None
-
-    # ============================================================
-    # DEVELOPER SPECIALIST
+    # Agent definitions reference these logical keys through
+    # their `model:` front-matter field.
     #
-    # Qwen2.5-Coder-0.5B-Instruct
+    # Adding a new specialist model no longer requires adding
+    # dedicated Settings fields or editing hub.py.
     # ============================================================
 
-    developer_enabled: bool = (
-        True
-    )
-
-    developer_backend: str = (
-        "qwen-coder"
-    )
-
-    developer_model_key: str = (
-        "qwen2.5-coder-0.5b"
-    )
-
-    developer_model_path: (
-        Path | None
-    ) = (
-        MODELS_ROOT
-        / "Qwen2.5-Coder-0.5B-Instruct"
+    worker_models: dict[
+        str,
+        WorkerModelSettings,
+    ] = Field(
+        default_factory=dict
     )
 
     # ============================================================
@@ -332,6 +331,60 @@ class Settings(
                     )
                 )
             )
+
+        return normalized
+
+    @field_validator(
+        "worker_models"
+    )
+    @classmethod
+    def validate_worker_models(
+        cls,
+        value: dict[
+            str,
+            WorkerModelSettings,
+        ],
+    ) -> dict[
+        str,
+        WorkerModelSettings,
+    ]:
+        normalized: dict[
+            str,
+            WorkerModelSettings,
+        ] = {}
+
+        for model_key, config in (
+            value.items()
+        ):
+            if not isinstance(
+                model_key,
+                str,
+            ):
+                raise ValueError(
+                    "WORKER_MODELS keys "
+                    "must be strings."
+                )
+
+            key = (
+                model_key
+                .strip()
+            )
+
+            if not key:
+                raise ValueError(
+                    "WORKER_MODELS contains "
+                    "an empty model key."
+                )
+
+            if key in normalized:
+                raise ValueError(
+                    "WORKER_MODELS contains "
+                    f"duplicate model key '{key}'."
+                )
+
+            normalized[
+                key
+            ] = config
 
         return normalized
 
@@ -454,6 +507,72 @@ class Settings(
             )
 
         return value.strip()
+
+    # ============================================================
+    # WORKER MODEL HELPERS
+    # ============================================================
+
+    def worker_model(
+        self,
+        model_key: str,
+    ) -> WorkerModelSettings | None:
+        """
+        Return worker-model configuration without requiring the
+        model to be enabled or its path to exist.
+
+        Useful while deciding which configured agents should be
+        included in the runtime.
+        """
+
+        return self.worker_models.get(
+            model_key
+        )
+
+    def require_worker_model(
+        self,
+        model_key: str,
+    ) -> WorkerModelSettings:
+        """
+        Return an enabled worker-model configuration with a
+        resolved existing model path.
+        """
+
+        config = self.worker_model(
+            model_key
+        )
+
+        if config is None:
+            raise RuntimeError(
+                "Worker model "
+                f"'{model_key}' "
+                "is not configured in "
+                "WORKER_MODELS."
+            )
+
+        if not config.enabled:
+            raise RuntimeError(
+                "Worker model "
+                f"'{model_key}' "
+                "is disabled."
+            )
+
+        resolved_path = (
+            self.require_path(
+                config.model_path,
+                (
+                    "WORKER_MODELS"
+                    f"[{model_key}]"
+                    ".model_path"
+                ),
+            )
+        )
+
+        return config.model_copy(
+            update={
+                "model_path":
+                    resolved_path,
+            }
+        )
 
     # ============================================================
     # DIRECTORY HELPERS
@@ -592,6 +711,11 @@ class Settings(
 def get_settings() -> Settings:
     """
     Return the process-wide validated configuration instance.
+
+    The process-wide Settings lifecycle will be moved into the
+    application runtime container in the next cleanup stage.
+    Keeping this function temporarily preserves current callers
+    while worker topology is decoupled first.
     """
 
     return Settings()

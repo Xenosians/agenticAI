@@ -6,8 +6,12 @@ from config import (
     get_settings,
 )
 
-from subagents.llm.qwen_funcall import (
-    QwenFuncCallBackend,
+from subagents.core.loader import (
+    load_agent_definition,
+)
+
+from subagents.llm.factory import (
+    build_worker_backend,
 )
 
 
@@ -92,15 +96,26 @@ def build_system_prompt() -> str:
 def backend():
     settings = get_settings()
 
-    model_path = (
-        settings.require_path(
-            settings.account_model_path,
-            "ACCOUNT_MODEL_PATH",
+    agent = (
+        load_agent_definition(
+            "subagents/agents/"
+            "account-specialist.md"
         )
     )
 
-    return QwenFuncCallBackend(
-        model_path
+    model_config = (
+        settings.require_worker_model(
+            agent.model
+        )
+    )
+
+    return build_worker_backend(
+        backend_type=(
+            model_config.backend
+        ),
+        model_path=(
+            model_config.model_path
+        ),
     )
 
 
