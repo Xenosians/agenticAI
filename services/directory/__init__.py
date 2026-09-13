@@ -1,6 +1,13 @@
-from .factory import get_directory_service
+from .base import (
+    DirectoryService,
+)
+
+from .factory import (
+    build_directory_service,
+)
 
 
 __all__ = [
-    "get_directory_service",
+    "DirectoryService",
+    "build_directory_service",
 ]

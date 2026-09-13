@@ -29,10 +29,13 @@ def require_local_model_path(
     profile: ModelProfileSettings,
 ) -> Path:
     """
-    Return the configured local model path.
+    Return the configured local checkpoint path.
 
-    Current local model backends require an on-disk checkpoint.
-    Future remote/provider backends may not.
+    Current local backends require an on-disk model.
+
+    Remote/API-backed providers may eventually use a different
+    provider implementation and therefore need a different
+    validation path.
     """
 
     model_path = (
@@ -53,13 +56,13 @@ def build_model_backend(
     profile: ModelProfileSettings,
 ) -> LLMBackend:
     """
-    Build one configured model backend.
+    Construct one backend from a logical model profile.
 
-    The caller deals only with a model profile.
+    Callers do not distinguish Hub models from specialist
+    models here.
 
-    It does not need to know whether that profile belongs to
-    the Hub, Account specialist, Access specialist, Developer
-    specialist, or a future role.
+    Role -> logical model key mapping belongs to configuration.
+    Backend implementation selection belongs here.
     """
 
     backend_type = (
@@ -74,102 +77,63 @@ def build_model_backend(
         )
     )
 
-    if backend_type == "ministral":
-        return MinistralHubBackend(
-            model_path=(
-                model_path
-            ),
-            dequantize_fp8=(
-                profile
-                .dequantize_fp8
-            ),
-            offload_folder=(
-                profile
-                .offload_folder
-            ),
+    if (
+        backend_type
+        == "ministral"
+    ):
+        return (
+            MinistralHubBackend(
+                model_path=(
+                    model_path
+                ),
+                dequantize_fp8=(
+                    profile
+                    .dequantize_fp8
+                ),
+                offload_folder=(
+                    profile
+                    .offload_folder
+                ),
+            )
         )
 
     if (
         backend_type
         == "qwen-funccall"
     ):
-        return QwenFuncCallBackend(
-            model_path=(
-                model_path
-            ),
+        return (
+            QwenFuncCallBackend(
+                model_path=(
+                    model_path
+                ),
+            )
         )
 
-    if backend_type == "qwen3":
-        return Qwen3WorkerBackend(
-            model_path=(
-                model_path
-            ),
+    if (
+        backend_type
+        == "qwen3"
+    ):
+        return (
+            Qwen3WorkerBackend(
+                model_path=(
+                    model_path
+                ),
+            )
         )
 
     if (
         backend_type
         == "qwen-coder"
     ):
-        return QwenCoderWorkerBackend(
-            model_path=(
-                model_path
-            ),
+        return (
+            QwenCoderWorkerBackend(
+                model_path=(
+                    model_path
+                ),
+            )
         )
 
     raise ValueError(
         "Unsupported model backend: "
         f"{backend_type}"
-    )
-
-
-# ============================================================
-# TRANSITIONAL COMPATIBILITY HELPERS
-#
-# Some current integration tests still import these names.
-#
-# They now delegate to the generic model-profile factory.
-#
-# We will remove these compatibility wrappers before the AI
-# cleanup phase is frozen.
-# ============================================================
-
-
-def build_hub_backend(
-    backend_type: str,
-    model_path: Path,
-    *,
-    dequantize_fp8: bool = True,
-    offload_folder: Path | None = None,
-) -> LLMBackend:
-    return build_model_backend(
-        ModelProfileSettings(
-            backend=(
-                backend_type
-            ),
-            model_path=(
-                model_path
-            ),
-            dequantize_fp8=(
-                dequantize_fp8
-            ),
-            offload_folder=(
-                offload_folder
-            ),
-        )
-    )
-
-
-def build_worker_backend(
-    backend_type: str,
-    model_path: Path,
-) -> LLMBackend:
-    return build_model_backend(
-        ModelProfileSettings(
-            backend=(
-                backend_type
-            ),
-            model_path=(
-                model_path
-            ),
-        )
     )

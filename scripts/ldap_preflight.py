@@ -203,7 +203,11 @@ def main():
 
     try:
         directory = (
-            LdapDirectoryService()
+            LdapDirectoryService(
+                settings=(
+                    settings
+                )
+            )
         )
 
     except Exception as exc:

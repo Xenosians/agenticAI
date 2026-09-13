@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from config import (
@@ -16,16 +18,26 @@ from subagents.core.registry import (
     AgentRegistry,
 )
 
-from subagents.llm.ministral_hub import (
-    MinistralHubBackend,
+from subagents.llm.inference import (
+    InferenceCoordinator,
+)
+
+from subagents.llm.model_manager import (
+    ModelManager,
+)
+
+from subagents.llm.scheduler import (
+    GpuScheduler,
 )
 
 
 @pytest.fixture(
     scope="module"
 )
-def router():
-    settings = get_settings()
+def router_runtime():
+    settings = (
+        get_settings()
+    )
 
     registry = (
         AgentRegistry()
@@ -48,42 +60,79 @@ def router():
         agents
     )
 
-    model_path = (
-        settings.require_path(
-            settings.hub_model_path,
-            "HUB_MODEL_PATH",
+    model_manager = (
+        ModelManager(
+            settings=(
+                settings
+            )
         )
     )
 
-    backend = (
-        MinistralHubBackend(
-            model_path=(
-                model_path
-            ),
+    scheduler = (
+        GpuScheduler()
+    )
 
-            dequantize_fp8=(
-                settings
-                .hub_dequantize_fp8
+    inference = (
+        InferenceCoordinator(
+            model_manager=(
+                model_manager
             ),
-
-            offload_folder=(
-                settings
-                .hub_offload_folder
+            scheduler=(
+                scheduler
             ),
         )
     )
 
-    return LLMRouter(
-        registry=registry,
-        backend=backend,
+    router = (
+        LLMRouter(
+            registry=(
+                registry
+            ),
+            inference=(
+                inference
+            ),
+            model_key=(
+                settings
+                .hub_model_key
+            ),
+        )
     )
+
+    runner = (
+        asyncio.Runner()
+    )
+
+    try:
+        runner.run(
+            inference.warm(
+                settings
+                .hub_model_key
+            )
+        )
+
+        yield (
+            runner,
+            router,
+        )
+
+    finally:
+        runner.close()
 
 
 def test_ministral_routes_account(
-    router,
+    router_runtime,
 ):
-    routes = router.route(
-        "Is jdoe locked?"
+    (
+        runner,
+        router,
+    ) = router_runtime
+
+    routes = (
+        runner.run(
+            router.route(
+                "Is jdoe locked?"
+            )
+        )
     )
 
     print(
@@ -97,10 +146,19 @@ def test_ministral_routes_account(
 
 
 def test_ministral_routes_access(
-    router,
+    router_runtime,
 ):
-    routes = router.route(
-        "Does jdoe have VPN access?"
+    (
+        runner,
+        router,
+    ) = router_runtime
+
+    routes = (
+        runner.run(
+            router.route(
+                "Does jdoe have VPN access?"
+            )
+        )
     )
 
     print(
@@ -114,12 +172,21 @@ def test_ministral_routes_access(
 
 
 def test_ministral_routes_multiple(
-    router,
+    router_runtime,
 ):
-    routes = router.route(
-        (
-            "Check whether jdoe is locked "
-            "and whether jdoe has VPN access."
+    (
+        runner,
+        router,
+    ) = router_runtime
+
+    routes = (
+        runner.run(
+            router.route(
+                (
+                    "Check whether jdoe is locked "
+                    "and whether jdoe has VPN access."
+                )
+            )
         )
     )
 
@@ -135,10 +202,19 @@ def test_ministral_routes_multiple(
 
 
 def test_ministral_no_route(
-    router,
+    router_runtime,
 ):
-    routes = router.route(
-        "Tell me a joke."
+    (
+        runner,
+        router,
+    ) = router_runtime
+
+    routes = (
+        runner.run(
+            router.route(
+                "Tell me a joke."
+            )
+        )
     )
 
     print(

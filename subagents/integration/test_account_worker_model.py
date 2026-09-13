@@ -11,7 +11,7 @@ from subagents.core.loader import (
 )
 
 from subagents.llm.factory import (
-    build_worker_backend,
+    build_model_backend,
 )
 
 
@@ -94,7 +94,9 @@ def build_system_prompt() -> str:
     scope="module"
 )
 def backend():
-    settings = get_settings()
+    settings = (
+        get_settings()
+    )
 
     agent = (
         load_agent_definition(
@@ -103,19 +105,31 @@ def backend():
         )
     )
 
-    model_config = (
-        settings.require_worker_model(
+    profile = (
+        settings
+        .require_model_profile(
             agent.model
         )
     )
 
-    return build_worker_backend(
-        backend_type=(
-            model_config.backend
-        ),
-        model_path=(
-            model_config.model_path
-        ),
+    print()
+    print(
+        "Loading Account specialist model:"
+    )
+    print(
+        f"key={agent.model}"
+    )
+    print(
+        f"backend={profile.backend}"
+    )
+    print(
+        f"path={profile.model_path}"
+    )
+
+    return (
+        build_model_backend(
+            profile
+        )
     )
 
 
@@ -153,8 +167,10 @@ def generate_tool_call(
         f"\nRAW MODEL OUTPUT: {response}"
     )
 
-    parsed = json.loads(
-        response
+    parsed = (
+        json.loads(
+            response
+        )
     )
 
     assert isinstance(
@@ -163,7 +179,9 @@ def generate_tool_call(
     )
 
     assert (
-        len(parsed)
+        len(
+            parsed
+        )
         >= 1
     )
 
@@ -173,12 +191,16 @@ def generate_tool_call(
 def test_account_status_selection(
     backend,
 ):
-    calls = generate_tool_call(
-        backend,
-        "Is jdoe locked?",
+    calls = (
+        generate_tool_call(
+            backend,
+            "Is jdoe locked?",
+        )
     )
 
-    call = calls[0]
+    call = (
+        calls[0]
+    )
 
     assert (
         call["name"]
@@ -186,7 +208,9 @@ def test_account_status_selection(
     )
 
     assert (
-        call["arguments"][
+        call[
+            "arguments"
+        ][
             "user_id"
         ]
         == "jdoe"
@@ -196,12 +220,16 @@ def test_account_status_selection(
 def test_unlock_selection(
     backend,
 ):
-    calls = generate_tool_call(
-        backend,
-        "Unlock jdoe",
+    calls = (
+        generate_tool_call(
+            backend,
+            "Unlock jdoe",
+        )
     )
 
-    call = calls[0]
+    call = (
+        calls[0]
+    )
 
     assert (
         call["name"]
@@ -209,7 +237,9 @@ def test_unlock_selection(
     )
 
     assert (
-        call["arguments"][
+        call[
+            "arguments"
+        ][
             "user_id"
         ]
         == "jdoe"
@@ -219,12 +249,16 @@ def test_unlock_selection(
 def test_password_reset_selection(
     backend,
 ):
-    calls = generate_tool_call(
-        backend,
-        "Reset the password for jdoe",
+    calls = (
+        generate_tool_call(
+            backend,
+            "Reset the password for jdoe",
+        )
     )
 
-    call = calls[0]
+    call = (
+        calls[0]
+    )
 
     assert (
         call["name"]
@@ -232,7 +266,9 @@ def test_password_reset_selection(
     )
 
     assert (
-        call["arguments"][
+        call[
+            "arguments"
+        ][
             "user_id"
         ]
         == "jdoe"

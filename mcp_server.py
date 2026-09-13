@@ -1,8 +1,18 @@
-from pydantic import BaseModel
-from mcp.server import MCPServer
+from pydantic import (
+    BaseModel,
+)
+
+from mcp.server import (
+    MCPServer,
+)
+
+from config import (
+    Settings,
+)
 
 from services.directory import (
-    get_directory_service,
+    DirectoryService,
+    build_directory_service,
 )
 
 from services.process_runner import (
@@ -10,14 +20,14 @@ from services.process_runner import (
 )
 
 from tools.workspace import (
-    workspace_git_status as run_workspace_git_status,
-    workspace_mkdir as run_workspace_mkdir,
-    workspace_read_text as run_workspace_read_text,
-)
+    workspace_git_status
+    as run_workspace_git_status,
 
+    workspace_mkdir
+    as run_workspace_mkdir,
 
-mcp = MCPServer(
-    "ITSM Tools"
+    workspace_read_text
+    as run_workspace_read_text,
 )
 
 
@@ -26,12 +36,21 @@ class AccountStatusResult(
 ):
     ok: bool
 
-    user_id: str | None = None
+    user_id: (
+        str | None
+    ) = None
 
-    enabled: bool | None = None
-    locked: bool | None = None
+    enabled: (
+        bool | None
+    ) = None
 
-    error: str | None = None
+    locked: (
+        bool | None
+    ) = None
+
+    error: (
+        str | None
+    ) = None
 
 
 class AccessCheckResult(
@@ -39,230 +58,330 @@ class AccessCheckResult(
 ):
     ok: bool
 
-    user_id: str | None = None
-    resource: str | None = None
+    user_id: (
+        str | None
+    ) = None
 
-    has_access: bool | None = None
+    resource: (
+        str | None
+    ) = None
 
-    error: str | None = None
+    has_access: (
+        bool | None
+    ) = None
+
+    error: (
+        str | None
+    ) = None
 
 
 class MutationResult(
     BaseModel
 ):
     ok: bool
+
     status: str
 
-    changed: bool | None = None
-    user_id: str | None = None
+    changed: (
+        bool | None
+    ) = None
+
+    user_id: (
+        str | None
+    ) = None
 
     password_reset_count: (
         int | None
     ) = None
 
-    message: str | None = None
-    error: str | None = None
+    message: (
+        str | None
+    ) = None
+
+    error: (
+        str | None
+    ) = None
 
 
 class ProcessExecResult(
     BaseModel
 ):
     ok: bool
+
     status: str
 
-    executable: str | None = None
+    executable: (
+        str | None
+    ) = None
 
     args: (
         list[str] | None
     ) = None
 
-    cwd: str | None = None
+    cwd: (
+        str | None
+    ) = None
 
-    exit_code: int | None = None
+    exit_code: (
+        int | None
+    ) = None
 
-    stdout: str | None = None
-    stderr: str | None = None
+    stdout: (
+        str | None
+    ) = None
 
-    timed_out: bool | None = None
+    stderr: (
+        str | None
+    ) = None
 
-    duration_ms: int | None = None
+    timed_out: (
+        bool | None
+    ) = None
 
-    error: str | None = None
+    duration_ms: (
+        int | None
+    ) = None
+
+    error: (
+        str | None
+    ) = None
 
 
 class WorkspaceReadTextResult(
     BaseModel
 ):
     ok: bool
+
     status: str
 
-    path: str | None = None
-    content: str | None = None
-    truncated: bool | None = None
+    path: (
+        str | None
+    ) = None
 
-    error: str | None = None
+    content: (
+        str | None
+    ) = None
+
+    truncated: (
+        bool | None
+    ) = None
+
+    error: (
+        str | None
+    ) = None
 
 
-@mcp.tool()
-def account_status(
-    user_id: str,
-) -> AccountStatusResult:
-    directory = (
-        get_directory_service()
+def create_mcp_server(
+    *,
+    settings: Settings | None = None,
+    directory: (
+        DirectoryService | None
+    ) = None,
+) -> MCPServer:
+    """
+    Build one MCP server runtime.
+
+    The MCP subprocess owns one DirectoryService instance.
+
+    Tests may inject an isolated DirectoryService instead.
+
+    There is no hidden directory-service cache or service
+    locator.
+    """
+
+    runtime_settings = (
+        settings
+        if settings is not None
+        else Settings()
     )
 
-    result = (
-        directory.account_status(
-            user_id
+    directory_service = (
+        directory
+        if directory is not None
+        else build_directory_service(
+            runtime_settings
         )
     )
 
-    return AccountStatusResult(
-        **result
-    )
-
-
-@mcp.tool()
-def check_access(
-    user_id: str,
-    resource: str,
-) -> AccessCheckResult:
-    directory = (
-        get_directory_service()
-    )
-
-    result = (
-        directory.check_access(
-            user_id,
-            resource,
+    server = (
+        MCPServer(
+            "ITSM Tools"
         )
     )
 
-    return AccessCheckResult(
-        **result
-    )
-
-
-@mcp.tool()
-def unlock_user(
-    user_id: str,
-) -> MutationResult:
-    directory = (
-        get_directory_service()
-    )
-
-    result = (
-        directory.unlock_user(
-            user_id
+    @server.tool()
+    def account_status(
+        user_id: str,
+    ) -> AccountStatusResult:
+        result = (
+            directory_service
+            .account_status(
+                user_id
+            )
         )
-    )
 
-    return MutationResult(
-        **result
-    )
-
-
-@mcp.tool()
-def reset_password(
-    user_id: str,
-) -> MutationResult:
-    directory = (
-        get_directory_service()
-    )
-
-    result = (
-        directory.reset_password(
-            user_id
+        return (
+            AccountStatusResult(
+                **result
+            )
         )
-    )
 
-    return MutationResult(
-        **result
-    )
+    @server.tool()
+    def check_access(
+        user_id: str,
+        resource: str,
+    ) -> AccessCheckResult:
+        result = (
+            directory_service
+            .check_access(
+                user_id,
+                resource,
+            )
+        )
+
+        return (
+            AccessCheckResult(
+                **result
+            )
+        )
+
+    @server.tool()
+    def unlock_user(
+        user_id: str,
+    ) -> MutationResult:
+        result = (
+            directory_service
+            .unlock_user(
+                user_id
+            )
+        )
+
+        return (
+            MutationResult(
+                **result
+            )
+        )
+
+    @server.tool()
+    def reset_password(
+        user_id: str,
+    ) -> MutationResult:
+        result = (
+            directory_service
+            .reset_password(
+                user_id
+            )
+        )
+
+        return (
+            MutationResult(
+                **result
+            )
+        )
+
+    @server.tool()
+    def process_exec(
+        executable: str,
+        args: (
+            list[str] | None
+        ) = None,
+        cwd: (
+            str | None
+        ) = None,
+        timeout_seconds: int = 10,
+    ) -> ProcessExecResult:
+        result = (
+            run_process(
+                executable=(
+                    executable
+                ),
+                args=(
+                    args
+                ),
+                cwd=(
+                    cwd
+                ),
+                timeout_seconds=(
+                    timeout_seconds
+                ),
+            )
+        )
+
+        return (
+            ProcessExecResult(
+                **result
+            )
+        )
+
+    @server.tool()
+    def workspace_mkdir(
+        directory_name: str,
+        cwd: (
+            str | None
+        ) = None,
+        timeout_seconds: int = 10,
+    ) -> ProcessExecResult:
+        result = (
+            run_workspace_mkdir(
+                directory_name=(
+                    directory_name
+                ),
+                cwd=(
+                    cwd
+                ),
+                timeout_seconds=(
+                    timeout_seconds
+                ),
+            )
+        )
+
+        return (
+            ProcessExecResult(
+                **result
+            )
+        )
+
+    @server.tool()
+    def workspace_read_text(
+        relative_path: str,
+    ) -> WorkspaceReadTextResult:
+        result = (
+            run_workspace_read_text(
+                relative_path=(
+                    relative_path
+                ),
+            )
+        )
+
+        return (
+            WorkspaceReadTextResult(
+                **result
+            )
+        )
+
+    @server.tool()
+    def workspace_git_status(
+    ) -> ProcessExecResult:
+        result = (
+            run_workspace_git_status()
+        )
+
+        return (
+            ProcessExecResult(
+                **result
+            )
+        )
+
+    return server
 
 
-@mcp.tool()
-def process_exec(
-    executable: str,
-    args: list[str] | None = None,
-    cwd: str | None = None,
-    timeout_seconds: int = 10,
-) -> ProcessExecResult:
-    """
-    Execute a structured native process through the trusted
-    local process runner.
-    """
-
-    result = run_process(
-        executable=executable,
-        args=args,
-        cwd=cwd,
-        timeout_seconds=(
-            timeout_seconds
-        ),
-    )
-
-    return ProcessExecResult(
-        **result
-    )
-
-
-@mcp.tool()
-def workspace_mkdir(
-    directory_name: str,
-    cwd: str | None = None,
-    timeout_seconds: int = 10,
-) -> ProcessExecResult:
-    """
-    Create one direct-child workspace directory through the
-    trusted process runner.
-    """
-
-    result = run_workspace_mkdir(
-        directory_name=(
-            directory_name
-        ),
-        cwd=cwd,
-        timeout_seconds=(
-            timeout_seconds
-        ),
-    )
-
-    return ProcessExecResult(
-        **result
-    )
-
-
-@mcp.tool()
-def workspace_read_text(
-    relative_path: str,
-) -> WorkspaceReadTextResult:
-    """
-    Read one approved UTF-8 text/source file from the
-    configured developer workspace.
-    """
-
-    result = run_workspace_read_text(
-        relative_path=relative_path,
-    )
-
-    return WorkspaceReadTextResult(
-        **result
-    )
-
-
-@mcp.tool()
-def workspace_git_status() -> ProcessExecResult:
-    """
-    Inspect the current Git branch and working-tree status
-    through the fixed trusted Git-status command.
-    """
-
-    result = run_workspace_git_status()
-
-    return ProcessExecResult(
-        **result
-    )
+# MCP subprocess composition root.
+#
+# This is one explicit server instance owned by this process,
+# not a hidden service locator.
+mcp = (
+    create_mcp_server()
+)
 
 
 if __name__ == "__main__":

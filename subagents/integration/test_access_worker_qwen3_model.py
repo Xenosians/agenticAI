@@ -2,8 +2,17 @@ import json
 
 import pytest
 
-from config.settings import get_settings
-from subagents.llm.qwen_hub import QwenHubBackend
+from config import (
+    get_settings,
+)
+
+from subagents.core.loader import (
+    load_agent_definition,
+)
+
+from subagents.llm.factory import (
+    build_model_backend,
+)
 
 
 SYSTEM_PROMPT = """
@@ -100,58 +109,99 @@ CASES = [
 ]
 
 
-def clean_json_response(raw: str) -> str:
+def clean_json_response(
+    raw: str,
+) -> str:
     """
-    Normalize harmless Markdown fencing from model output.
-
-    Qwen3 sometimes emits:
-
-        ```json
-        [...]
-        ```
-
-    or even an opening fence without the closing fence.
-
-    This function removes only the Markdown wrapper.
-    It does NOT repair or invent JSON.
+    Remove harmless Markdown fencing without repairing or
+    inventing model output.
     """
 
-    text = raw.strip()
+    text = (
+        raw.strip()
+    )
 
-    if text.startswith("```"):
-        newline_index = text.find("\n")
+    if text.startswith(
+        "```"
+    ):
+        newline_index = (
+            text.find(
+                "\n"
+            )
+        )
 
-        if newline_index == -1:
+        if (
+            newline_index
+            == -1
+        ):
             return ""
 
-        text = text[newline_index + 1 :].strip()
+        text = (
+            text[
+                newline_index
+                + 1:
+            ]
+            .strip()
+        )
 
-    if text.endswith("```"):
-        text = text[:-3].strip()
+    if text.endswith(
+        "```"
+    ):
+        text = (
+            text[:-3]
+            .strip()
+        )
 
     return text
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(
+    scope="module"
+)
 def backend():
-    settings = get_settings()
+    settings = (
+        get_settings()
+    )
 
-    model_path = settings.require_path(
-        settings.access_model_path,
-        "ACCESS_MODEL_PATH",
+    agent = (
+        load_agent_definition(
+            "subagents/agents/"
+            "access-specialist.md"
+        )
+    )
+
+    profile = (
+        settings
+        .require_model_profile(
+            agent.model
+        )
     )
 
     print()
-    print("Loading Qwen3 Access candidate:")
-    print(model_path)
+    print(
+        "Loading Access specialist model:"
+    )
+    print(
+        f"key={agent.model}"
+    )
+    print(
+        f"backend={profile.backend}"
+    )
+    print(
+        f"path={profile.model_path}"
+    )
 
-    return QwenHubBackend(
-        model_path=model_path,
+    return (
+        build_model_backend(
+            profile
+        )
     )
 
 
 @pytest.mark.parametrize(
-    "user_request,user_id,resource",
+    "user_request,"
+    "user_id,"
+    "resource",
     CASES,
 )
 def test_qwen3_access_tool_call(
@@ -162,49 +212,106 @@ def test_qwen3_access_tool_call(
 ):
     messages = [
         {
-            "role": "system",
-            "content": SYSTEM_PROMPT,
+            "role":
+                "system",
+
+            "content":
+                SYSTEM_PROMPT,
         },
+
         {
-            "role": "user",
-            "content": user_request,
+            "role":
+                "user",
+
+            "content":
+                user_request,
         },
     ]
 
-    raw = backend.generate(
-        messages,
-        max_new_tokens=128,
+    raw = (
+        backend.generate(
+            messages,
+            max_new_tokens=128,
+        )
     )
 
-    cleaned = clean_json_response(raw)
+    cleaned = (
+        clean_json_response(
+            raw
+        )
+    )
 
     print()
-    print("===== QWEN3 ACCESS =====")
-    print("USER:", user_request)
-    print("RAW:", raw)
-    print("CLEANED:", cleaned)
-    print("========================")
+    print(
+        "===== QWEN3 ACCESS ====="
+    )
+    print(
+        "USER:",
+        user_request,
+    )
+    print(
+        "RAW:",
+        raw,
+    )
+    print(
+        "CLEANED:",
+        cleaned,
+    )
+    print(
+        "========================"
+    )
 
-    payload = json.loads(cleaned)
+    payload = (
+        json.loads(
+            cleaned
+        )
+    )
 
-    assert isinstance(payload, list)
-    assert len(payload) == 1
+    assert isinstance(
+        payload,
+        list,
+    )
 
-    tool_call = payload[0]
+    assert (
+        len(
+            payload
+        )
+        == 1
+    )
 
-    assert tool_call["name"] == "check_access"
+    tool_call = (
+        payload[0]
+    )
 
-    assert tool_call["arguments"] == {
-        "user_id": user_id,
-        "resource": resource,
-    }
+    assert (
+        tool_call[
+            "name"
+        ]
+        == "check_access"
+    )
+
+    assert (
+        tool_call[
+            "arguments"
+        ]
+        == {
+            "user_id":
+                user_id,
+
+            "resource":
+                resource,
+        }
+    )
 
 
 @pytest.mark.parametrize(
     "user_request",
     [
         "Unlock jdoe.",
-        "Reset the password for jdoe.",
+        (
+            "Reset the password "
+            "for jdoe."
+        ),
         "Is jdoe locked?",
         "Hello, how are you?",
     ],
@@ -215,29 +322,62 @@ def test_qwen3_access_rejects_out_of_domain(
 ):
     messages = [
         {
-            "role": "system",
-            "content": SYSTEM_PROMPT,
+            "role":
+                "system",
+
+            "content":
+                SYSTEM_PROMPT,
         },
+
         {
-            "role": "user",
-            "content": user_request,
+            "role":
+                "user",
+
+            "content":
+                user_request,
         },
     ]
 
-    raw = backend.generate(
-        messages,
-        max_new_tokens=128,
+    raw = (
+        backend.generate(
+            messages,
+            max_new_tokens=128,
+        )
     )
 
-    cleaned = clean_json_response(raw)
+    cleaned = (
+        clean_json_response(
+            raw
+        )
+    )
 
     print()
-    print("===== QWEN3 ACCESS OOD =====")
-    print("USER:", user_request)
-    print("RAW:", raw)
-    print("CLEANED:", cleaned)
-    print("============================")
+    print(
+        "===== QWEN3 ACCESS OOD ====="
+    )
+    print(
+        "USER:",
+        user_request,
+    )
+    print(
+        "RAW:",
+        raw,
+    )
+    print(
+        "CLEANED:",
+        cleaned,
+    )
+    print(
+        "============================"
+    )
 
-    payload = json.loads(cleaned)
+    payload = (
+        json.loads(
+            cleaned
+        )
+    )
 
-    assert payload == []
+    assert (
+        payload
+        == []
+    )

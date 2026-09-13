@@ -1,44 +1,58 @@
-from config import get_settings
+from config import (
+    Settings,
+)
 
-from .base import DirectoryService
-from .ldap import LdapDirectoryService
-from .mock import MockDirectoryService
+from .base import (
+    DirectoryService,
+)
+
+from .ldap import (
+    LdapDirectoryService,
+)
+
+from .mock import (
+    MockDirectoryService,
+)
 
 
-_directory_service: (
-    DirectoryService | None
-) = None
-
-
-def get_directory_service(
+def build_directory_service(
+    settings: Settings,
 ) -> DirectoryService:
-    global _directory_service
+    """
+    Build one directory-service implementation from validated
+    application settings.
 
-    if _directory_service is not None:
-        return _directory_service
+    This function does not cache or globally own the service.
 
-    settings = get_settings()
+    The caller is responsible for lifecycle ownership.
+    """
 
     backend = (
-        settings.directory_backend
+        settings
+        .directory_backend
     )
 
-    if backend == "mock":
-        _directory_service = (
+    if (
+        backend
+        == "mock"
+    ):
+        return (
             MockDirectoryService()
         )
 
-    elif backend == "ldap":
-        _directory_service = (
+    if (
+        backend
+        == "ldap"
+    ):
+        return (
             LdapDirectoryService(
-                settings=settings,
+                settings=(
+                    settings
+                ),
             )
         )
 
-    else:
-        raise RuntimeError(
-            "Unsupported directory backend: "
-            f"{backend}"
-        )
-
-    return _directory_service
+    raise RuntimeError(
+        "Unsupported directory backend: "
+        f"{backend}"
+    )

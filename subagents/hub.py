@@ -1,5 +1,5 @@
 from config import (
-    get_settings,
+    Settings,
 )
 
 from subagents.core.loader import (
@@ -31,73 +31,49 @@ from subagents.core.tool_gateway import (
 )
 
 from subagents.llm.inference import (
-    InferenceCoordinator,
+    InferenceEngine,
 )
 
 from subagents.llm.model_manager import (
     ModelManager,
 )
 
-from subagents.llm.scheduler import (
-    GpuScheduler,
-)
 
-
-def build_hub() -> Orchestrator:
+def build_hub(
+    *,
+    settings: Settings,
+    model_manager: ModelManager,
+    inference: InferenceEngine,
+    tool_gateway: ToolGateway,
+) -> Orchestrator:
     """
-    Transitional AI composition point.
+    Build the Hub reasoning and specialist orchestration graph.
 
-    Model ownership is now centralized behind:
+    This function owns no process-wide runtime resources.
 
-        ModelManager
-            ↓
-        GpuScheduler
-            ↓
-        InferenceCoordinator
+    Runtime ownership belongs to the composition root:
 
-    Router, PrimaryAssistant, and AgentRuntime consume only the
-    InferenceCoordinator boundary.
+        FastAPI lifespan
+            |
+            +-- Settings
+            +-- ModelManager
+            +-- GpuScheduler
+            +-- InferenceCoordinator
+            +-- MCPRuntime
+            +-- ApprovalManager
+            +-- ToolGateway
+            |
+            +-- build_hub(...)
 
-    FastAPI lifespan will become the final application
-    composition root during the next cleanup stage.
+    Tests may construct the same graph with isolated runtime
+    dependencies.
+
+    Security policy remains inside trusted ToolGateway/tool
+    registry code rather than model configuration.
     """
 
-    settings = (
-        get_settings()
-    )
-
     # ============================================================
-    # Model runtime
-    # ============================================================
-
-    model_manager = (
-        ModelManager(
-            settings=settings,
-        )
-    )
-
-    scheduler = (
-        GpuScheduler()
-    )
-
-    inference = (
-        InferenceCoordinator(
-            model_manager=(
-                model_manager
-            ),
-            scheduler=(
-                scheduler
-            ),
-        )
-    )
-
-    # ============================================================
-    # Hub model
-    #
-    # Preserve current readiness behavior:
-    # the Hub is loaded while build_hub() executes.
-    #
-    # Specialist models remain lazy.
+    # HUB MODEL
     # ============================================================
 
     if not model_manager.exists(
@@ -105,16 +81,13 @@ def build_hub() -> Orchestrator:
     ):
         raise RuntimeError(
             "HUB_MODEL_KEY references "
-            "an unknown or disabled model "
-            f"profile: {settings.hub_model_key}"
+            "an unknown or disabled "
+            "model profile: "
+            f"{settings.hub_model_key}"
         )
 
-    model_manager.load(
-        settings.hub_model_key
-    )
-
     # ============================================================
-    # Load agent definitions
+    # AGENT DEFINITIONS
     # ============================================================
 
     agents_dir = (
@@ -132,7 +105,9 @@ def build_hub() -> Orchestrator:
 
     enabled_agents = []
 
-    for agent in configured_agents:
+    for agent in (
+        configured_agents
+    ):
         profile = (
             settings.model_profile(
                 agent.model
@@ -161,8 +136,8 @@ def build_hub() -> Orchestrator:
         ):
             raise RuntimeError(
                 f"Agent '{agent.name}' "
-                "references unavailable model "
-                f"'{agent.model}'."
+                "references unavailable "
+                f"model '{agent.model}'."
             )
 
         enabled_agents.append(
@@ -170,7 +145,7 @@ def build_hub() -> Orchestrator:
         )
 
     # ============================================================
-    # Agent registry
+    # AGENT REGISTRY
     # ============================================================
 
     agent_registry = (
@@ -182,15 +157,7 @@ def build_hub() -> Orchestrator:
     )
 
     # ============================================================
-    # Deterministic execution boundary
-    # ============================================================
-
-    tool_gateway = (
-        ToolGateway()
-    )
-
-    # ============================================================
-    # Specialist runtime
+    # SPECIALIST RUNTIME
     # ============================================================
 
     runtime = (
@@ -208,7 +175,7 @@ def build_hub() -> Orchestrator:
     )
 
     # ============================================================
-    # Hub router
+    # HUB ROUTER
     # ============================================================
 
     router = (
@@ -227,10 +194,7 @@ def build_hub() -> Orchestrator:
     )
 
     # ============================================================
-    # Primary assistant
-    #
-    # Uses the same logical Hub model through the shared
-    # inference boundary rather than owning the backend object.
+    # PRIMARY ASSISTANT
     # ============================================================
 
     primary_assistant = (
@@ -246,8 +210,12 @@ def build_hub() -> Orchestrator:
     )
 
     return Orchestrator(
-        router=router,
-        runtime=runtime,
+        router=(
+            router
+        ),
+        runtime=(
+            runtime
+        ),
         primary_assistant=(
             primary_assistant
         ),

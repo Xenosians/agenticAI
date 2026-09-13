@@ -1,33 +1,36 @@
+from typing import (
+    Any,
+    Callable,
+)
+
 from services.process_runner import (
     evaluate_process_policy,
 )
 
-from .account import (
-    account_status,
-    reset_password,
-    unlock_user,
-)
-
-from .access import check_access
-from .process import process_exec
-from .workspace import (
-    workspace_git_status,
-    workspace_mkdir,
-    workspace_read_text,
+from tools.presentation import (
+    format_access_check_result,
+    format_account_status_result,
+    format_generic_approval,
+    format_git_status_result,
+    format_password_reset_approval,
+    format_process_result,
+    format_unlock_approval,
+    format_workspace_read_result,
 )
 
 
 TOOLS = {
     "account_status": {
-        "function": account_status,
-
         "description": (
             "Check whether an account is "
             "enabled or locked."
         ),
 
-        "risk": "read",
-        "requires_approval": False,
+        "risk":
+            "read",
+
+        "requires_approval":
+            False,
 
         "grounded_arguments": [
             "user_id",
@@ -35,7 +38,8 @@ TOOLS = {
 
         "parameters": {
             "user_id": {
-                "type": "str",
+                "type":
+                    "str",
 
                 "description": (
                     "Exact user identifier "
@@ -43,18 +47,23 @@ TOOLS = {
                 ),
             },
         },
+
+        "result_formatter": (
+            format_account_status_result
+        ),
     },
 
     "check_access": {
-        "function": check_access,
-
         "description": (
             "Check whether a user can "
             "access a resource."
         ),
 
-        "risk": "read",
-        "requires_approval": False,
+        "risk":
+            "read",
+
+        "requires_approval":
+            False,
 
         "grounded_arguments": [
             "user_id",
@@ -63,7 +72,8 @@ TOOLS = {
 
         "parameters": {
             "user_id": {
-                "type": "str",
+                "type":
+                    "str",
 
                 "description": (
                     "Exact user identifier "
@@ -72,7 +82,8 @@ TOOLS = {
             },
 
             "resource": {
-                "type": "str",
+                "type":
+                    "str",
 
                 "description": (
                     "Exact resource identifier "
@@ -80,17 +91,21 @@ TOOLS = {
                 ),
             },
         },
+
+        "result_formatter": (
+            format_access_check_result
+        ),
     },
 
     "unlock_user": {
-        "function": unlock_user,
+        "description":
+            "Unlock an account.",
 
-        "description": (
-            "Unlock an account."
-        ),
+        "risk":
+            "low",
 
-        "risk": "low",
-        "requires_approval": True,
+        "requires_approval":
+            True,
 
         "grounded_arguments": [
             "user_id",
@@ -98,7 +113,8 @@ TOOLS = {
 
         "parameters": {
             "user_id": {
-                "type": "str",
+                "type":
+                    "str",
 
                 "description": (
                     "Exact user identifier "
@@ -106,17 +122,21 @@ TOOLS = {
                 ),
             },
         },
+
+        "approval_formatter": (
+            format_unlock_approval
+        ),
     },
 
     "reset_password": {
-        "function": reset_password,
+        "description":
+            "Reset an account password.",
 
-        "description": (
-            "Reset an account password."
-        ),
+        "risk":
+            "high",
 
-        "risk": "high",
-        "requires_approval": True,
+        "requires_approval":
+            True,
 
         "grounded_arguments": [
             "user_id",
@@ -124,56 +144,58 @@ TOOLS = {
 
         "parameters": {
             "user_id": {
-                "type": "str",
+                "type":
+                    "str",
 
-                "description": (
-                    "Exact user identifier."
-                ),
+                "description":
+                    "Exact user identifier.",
             },
         },
+
+        "approval_formatter": (
+            format_password_reset_approval
+        ),
     },
 
     "process_exec": {
-        "function": process_exec,
-
         "description": (
             "Execute an approved native process "
             "inside the configured workspace."
         ),
 
-        "risk": "low",
-        "requires_approval": True,
+        "risk":
+            "low",
+
+        "requires_approval":
+            True,
 
         "policy_resolver": (
             evaluate_process_policy
         ),
 
-        # Not grounded here because requests such as
-        # "What is the current working directory?"
-        # legitimately map to executable="pwd" even though
-        # the literal word "pwd" was not supplied by the user.
-        "grounded_arguments": [],
+        "grounded_arguments":
+            [],
 
         "parameters": {
             "executable": {
-                "type": "str",
+                "type":
+                    "str",
 
-                "description": (
-                    "Approved native executable."
-                ),
+                "description":
+                    "Approved native executable.",
             },
 
             "args": {
-                "type": "list[str]",
+                "type":
+                    "list[str]",
 
-                "description": (
-                    "Structured executable "
-                    "arguments."
-                ),
+                "description":
+                    "Structured executable arguments.",
             },
 
             "cwd": {
-                "type": "str",
+                "type":
+                    "str",
 
                 "description": (
                     "Optional working directory "
@@ -182,7 +204,8 @@ TOOLS = {
             },
 
             "timeout_seconds": {
-                "type": "int",
+                "type":
+                    "int",
 
                 "description": (
                     "Execution timeout from "
@@ -190,19 +213,28 @@ TOOLS = {
                 ),
             },
         },
+
+        "result_formatter": (
+            format_process_result
+        ),
+
+        "approval_formatter": (
+            format_generic_approval
+        ),
     },
 
     "workspace_mkdir": {
-        "function": workspace_mkdir,
-
         "description": (
             "Create exactly one direct-child "
             "directory inside the approved "
             "developer workspace."
         ),
 
-        "risk": "low",
-        "requires_approval": True,
+        "risk":
+            "low",
+
+        "requires_approval":
+            True,
 
         "grounded_arguments": [
             "directory_name",
@@ -210,7 +242,8 @@ TOOLS = {
 
         "parameters": {
             "directory_name": {
-                "type": "str",
+                "type":
+                    "str",
 
                 "description": (
                     "Exact directory name "
@@ -220,7 +253,8 @@ TOOLS = {
             },
 
             "cwd": {
-                "type": "str",
+                "type":
+                    "str",
 
                 "description": (
                     "Optional working directory "
@@ -229,7 +263,8 @@ TOOLS = {
             },
 
             "timeout_seconds": {
-                "type": "int",
+                "type":
+                    "int",
 
                 "description": (
                     "Execution timeout from "
@@ -237,29 +272,32 @@ TOOLS = {
                 ),
             },
         },
+
+        "approval_formatter": (
+            format_generic_approval
+        ),
     },
 
     "workspace_read_text": {
-        "function": workspace_read_text,
-
         "description": (
             "Read one approved UTF-8 text or source "
             "file from the developer workspace."
         ),
 
-        "risk": "read",
-        "requires_approval": False,
+        "risk":
+            "read",
 
-        # A model must not invent a file path.
-        # The requested relative path must appear literally
-        # in the original user request.
+        "requires_approval":
+            False,
+
         "grounded_arguments": [
             "relative_path",
         ],
 
         "parameters": {
             "relative_path": {
-                "type": "str",
+                "type":
+                    "str",
 
                 "description": (
                     "Exact workspace-relative file path "
@@ -267,31 +305,40 @@ TOOLS = {
                 ),
             },
         },
+
+        "result_formatter": (
+            format_workspace_read_result
+        ),
     },
 
     "workspace_git_status": {
-        "function": workspace_git_status,
-
         "description": (
             "Inspect the current Git branch and "
             "working-tree status of the approved "
             "developer workspace."
         ),
 
-        "risk": "read",
-        "requires_approval": False,
+        "risk":
+            "read",
 
-        "grounded_arguments": [],
+        "requires_approval":
+            False,
 
-        # V1 deliberately exposes no Git arguments or cwd.
-        # Trusted code owns the exact command:
-        # git status --short --branch
-        "parameters": {},
+        "grounded_arguments":
+            [],
+
+        "parameters":
+            {},
+
+        "result_formatter": (
+            format_git_status_result
+        ),
     },
 }
 
 
-def list_tools() -> list[str]:
+def list_tools(
+) -> list[str]:
     return list(
         TOOLS.keys()
     )
@@ -300,161 +347,91 @@ def list_tools() -> list[str]:
 def get_tool(
     name: str,
 ) -> dict | None:
-    return TOOLS.get(
-        name
+    return (
+        TOOLS.get(
+            name
+        )
     )
 
 
-def execute_tool(
+def format_tool_result(
     name: str,
-    arguments: dict,
-    allow_mutation: bool = False,
-) -> dict:
-    tool = get_tool(
-        name
+    result: dict[
+        str,
+        Any,
+    ],
+) -> str:
+    tool = (
+        get_tool(
+            name
+        )
     )
 
     if tool is None:
-        return {
-            "ok": False,
-            "status": "error",
+        return (
+            f"The {name} operation "
+            "completed successfully."
+        )
 
-            "error": (
-                f"Unknown tool: {name}"
-            ),
-        }
-
-    requires_approval = tool[
-        "requires_approval"
-    ]
-
-    policy_resolver = tool.get(
-        "policy_resolver"
+    formatter: (
+        Callable | None
+    ) = (
+        tool.get(
+            "result_formatter"
+        )
     )
 
-    if policy_resolver is not None:
-        try:
-            policy_result = (
-                policy_resolver(
-                    **arguments
-                )
-            )
+    if formatter is None:
+        return (
+            f"The {name} operation "
+            "completed successfully."
+        )
 
-        except TypeError as exc:
-            return {
-                "ok": False,
-                "status": "denied",
+    return formatter(
+        result
+    )
 
-                "error": (
-                    "Invalid policy arguments "
-                    f"for '{name}': {exc}"
-                ),
-            }
 
-        except Exception as exc:
-            return {
-                "ok": False,
-                "status": "error",
+def format_approval_required(
+    name: str,
+    arguments: dict[
+        str,
+        Any,
+    ],
+    approval_id: str | None,
+) -> str:
+    tool = (
+        get_tool(
+            name
+        )
+    )
 
-                "error": (
-                    f"Policy evaluation for "
-                    f"'{name}' failed: {exc}"
-                ),
-            }
+    formatter: (
+        Callable | None
+    ) = (
+        tool.get(
+            "approval_formatter"
+        )
+        if tool is not None
+        else None
+    )
 
-        if not isinstance(
-            policy_result,
-            dict,
-        ):
-            return {
-                "ok": False,
-                "status": "error",
+    if formatter is None:
+        message = (
+            "This action requires approval."
+        )
 
-                "error": (
-                    f"Policy for '{name}' returned "
-                    "an invalid result."
-                ),
-            }
-
-        if not policy_result.get(
-            "ok",
-            False,
-        ):
-            return policy_result
-
-        dynamic_requires_approval = (
-            policy_result.get(
-                "requires_approval"
+    else:
+        message = (
+            formatter(
+                arguments
             )
         )
 
-        if not isinstance(
-            dynamic_requires_approval,
-            bool,
-        ):
-            return {
-                "ok": False,
-                "status": "error",
-
-                "error": (
-                    f"Policy for '{name}' did not "
-                    "return a valid approval decision."
-                ),
-            }
-
-        requires_approval = (
-            dynamic_requires_approval
+    if approval_id:
+        return (
+            f"{message} "
+            f"Approval ID: {approval_id}."
         )
 
-    if (
-        requires_approval
-        and not allow_mutation
-    ):
-        return {
-            "ok": False,
-            "status": "blocked",
-
-            "error": (
-                f"Tool '{name}' requires approval."
-            ),
-        }
-
-    try:
-        result = tool[
-            "function"
-        ](
-            **arguments
-        )
-
-    except TypeError as exc:
-        return {
-            "ok": False,
-            "status": "error",
-
-            "error": (
-                "Invalid arguments for "
-                f"'{name}': {exc}"
-            ),
-        }
-
-    except Exception as exc:
-        return {
-            "ok": False,
-            "status": "error",
-
-            "error": (
-                f"Tool '{name}' failed: "
-                f"{exc}"
-            ),
-        }
-
-    if not isinstance(
-        result,
-        dict,
-    ):
-        return {
-            "ok": True,
-            "result": result,
-        }
-
-    return result
+    return message

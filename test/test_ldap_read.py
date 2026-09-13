@@ -1,5 +1,8 @@
 import sys
-from pathlib import Path
+
+from pathlib import (
+    Path,
+)
 
 
 PROJECT_ROOT = (
@@ -8,24 +11,37 @@ PROJECT_ROOT = (
     .parents[1]
 )
 
-if str(PROJECT_ROOT) not in sys.path:
+if (
+    str(
+        PROJECT_ROOT
+    )
+    not in sys.path
+):
     sys.path.insert(
         0,
-        str(PROJECT_ROOT),
+        str(
+            PROJECT_ROOT
+        ),
     )
 
 
-from config import get_settings
+from config import (
+    Settings,
+)
+
 from services.directory import (
-    get_directory_service,
+    build_directory_service,
 )
 
 
 def main():
-    settings = get_settings()
+    settings = (
+        Settings()
+    )
 
     if (
-        settings.directory_backend
+        settings
+        .directory_backend
         != "ldap"
     ):
         print(
@@ -33,27 +49,34 @@ def main():
         )
 
         print(
-            "DIRECTORY_BACKEND is not set to 'ldap'."
+            "DIRECTORY_BACKEND "
+            "is not set to 'ldap'."
         )
 
         return
 
     test_user = (
-        settings.ad_test_user
+        settings
+        .ad_test_user
     )
 
     if not test_user:
         raise RuntimeError(
-            "AD_TEST_USER is not configured."
+            "AD_TEST_USER "
+            "is not configured."
         )
 
     directory = (
-        get_directory_service()
+        build_directory_service(
+            settings
+        )
     )
 
     print(
         "Directory backend:",
-        type(directory).__name__,
+        type(
+            directory
+        ).__name__,
     )
 
     print(
@@ -64,7 +87,8 @@ def main():
     print()
 
     result = (
-        directory.account_status(
+        directory
+        .account_status(
             test_user
         )
     )
