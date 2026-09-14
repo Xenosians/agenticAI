@@ -4,8 +4,18 @@ from tools.developer_presentation import (
     format_project_info_result,
 )
 
+from tools.developer_runtime_presentation import (
+    format_process_snapshot_result,
+    format_service_logs_result,
+    format_service_status_result,
+)
+
 
 DEVELOPER_TOOLS = {
+    # ============================================================
+    # PROJECT DETECTION / EXECUTION
+    # ============================================================
+
     "workspace_project_info": {
         "description": (
             "Detect the supported project type and "
@@ -126,6 +136,110 @@ DEVELOPER_TOOLS = {
 
         "approval_formatter": (
             format_developer_execution_approval
+        ),
+    },
+
+    # ============================================================
+    # RUNTIME / SERVICE INSPECTION
+    # ============================================================
+
+    "workspace_process_snapshot": {
+        "description": (
+            "Inspect a bounded host process snapshot containing "
+            "process identifiers, state, runtime, and executable "
+            "names without command lines or environment values."
+        ),
+
+        "risk":
+            "read",
+
+        "requires_approval":
+            False,
+
+        "grounded_arguments":
+            [],
+
+        "parameters":
+            {},
+
+        "result_formatter": (
+            format_process_snapshot_result
+        ),
+    },
+
+    "workspace_service_status": {
+        "description": (
+            "Inspect declared workspace service status through "
+            "the configured trusted runtime provider."
+        ),
+
+        "risk":
+            "read",
+
+        "requires_approval":
+            False,
+
+        "grounded_arguments":
+            [],
+
+        "parameters": {
+            "relative_path": {
+                "type":
+                    "str",
+
+                "description": (
+                    "Optional workspace-relative directory "
+                    "containing the service configuration."
+                ),
+            },
+        },
+
+        "result_formatter": (
+            format_service_status_result
+        ),
+    },
+
+    "workspace_service_logs": {
+        "description": (
+            "Read a bounded recent log tail for one declared "
+            "workspace service with common secret patterns "
+            "redacted."
+        ),
+
+        "risk":
+            "read",
+
+        "requires_approval":
+            False,
+
+        "grounded_arguments": [
+            "service_name",
+        ],
+
+        "parameters": {
+            "service_name": {
+                "type":
+                    "str",
+
+                "description": (
+                    "Exact declared service name supplied "
+                    "by the user."
+                ),
+            },
+
+            "relative_path": {
+                "type":
+                    "str",
+
+                "description": (
+                    "Optional workspace-relative directory "
+                    "containing the service configuration."
+                ),
+            },
+        },
+
+        "result_formatter": (
+            format_service_logs_result
         ),
     },
 }

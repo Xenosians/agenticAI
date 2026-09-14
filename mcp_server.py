@@ -21,6 +21,10 @@ from services.process_runner import (
     run_process,
 )
 
+from tools.developer_mcp import (
+    register_developer_tools,
+)
+
 from tools.git import (
     workspace_git_branches
     as run_workspace_git_branches,
@@ -123,9 +127,17 @@ class WorkspaceListResult(
     ok: bool
     status: str
     path: str | None = None
-    entries: list[
-        dict[str, Any]
-    ] | None = None
+
+    entries: (
+        list[
+            dict[
+                str,
+                Any,
+            ]
+        ]
+        | None
+    ) = None
+
     truncated: bool | None = None
     error: str | None = None
 
@@ -137,9 +149,17 @@ class WorkspaceSearchResult(
     status: str
     query: str | None = None
     path: str | None = None
-    matches: list[
-        dict[str, Any]
-    ] | None = None
+
+    matches: (
+        list[
+            dict[
+                str,
+                Any,
+            ]
+        ]
+        | None
+    ) = None
+
     files_scanned: int | None = None
     truncated: bool | None = None
     error: str | None = None
@@ -365,9 +385,20 @@ def create_mcp_server(
             **run_workspace_git_changed_files()
         )
 
+    # ============================================================
+    # GOVERNED DEVELOPER CAPABILITIES
+    # ============================================================
+
+    register_developer_tools(
+        server
+    )
+
     return server
 
 
+# MCP subprocess composition root.
+#
+# One explicit server instance belongs to this process.
 mcp = (
     create_mcp_server()
 )

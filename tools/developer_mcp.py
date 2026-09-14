@@ -1,3 +1,5 @@
+from typing import Any
+
 from pydantic import (
     BaseModel,
 )
@@ -15,6 +17,17 @@ from tools.developer_execution import (
 
     workspace_run_tests
     as run_workspace_run_tests,
+)
+
+from tools.developer_runtime import (
+    workspace_process_snapshot
+    as run_workspace_process_snapshot,
+
+    workspace_service_logs
+    as run_workspace_service_logs,
+
+    workspace_service_status
+    as run_workspace_service_status,
 )
 
 
@@ -100,12 +113,112 @@ class DeveloperExecutionResult(
     ) = None
 
 
+class ProcessSnapshotResult(
+    BaseModel
+):
+    ok: bool
+    status: str
+
+    provider: (
+        str | None
+    ) = None
+
+    processes: (
+        list[
+            dict[
+                str,
+                Any,
+            ]
+        ]
+        | None
+    ) = None
+
+    count: (
+        int | None
+    ) = None
+
+    truncated: (
+        bool | None
+    ) = None
+
+    error: (
+        str | None
+    ) = None
+
+
+class ServiceStatusResult(
+    BaseModel
+):
+    ok: bool
+    status: str
+
+    provider: (
+        str | None
+    ) = None
+
+    services: (
+        list[
+            dict[
+                str,
+                Any,
+            ]
+        ]
+        | None
+    ) = None
+
+    service_count: (
+        int | None
+    ) = None
+
+    error: (
+        str | None
+    ) = None
+
+
+class ServiceLogsResult(
+    BaseModel
+):
+    ok: bool
+    status: str
+
+    provider: (
+        str | None
+    ) = None
+
+    service_name: (
+        str | None
+    ) = None
+
+    tail_lines: (
+        int | None
+    ) = None
+
+    logs: (
+        str | None
+    ) = None
+
+    redaction_applied: (
+        bool | None
+    ) = None
+
+    error: (
+        str | None
+    ) = None
+
+
 def register_developer_tools(
     server: MCPServer,
 ) -> None:
     """
-    Register governed developer execution capabilities with MCP.
+    Register governed developer capabilities with MCP.
+
+    This is the developer-tool composition boundary. The main MCP
+    server only needs to register this feature group once.
     """
+
+    # ============================================================
+    # PROJECT DETECTION / EXECUTION
+    # ============================================================
 
     @server.tool()
     def workspace_project_info(
@@ -147,6 +260,45 @@ def register_developer_tools(
                 ),
                 timeout_seconds=(
                     timeout_seconds
+                ),
+            )
+        )
+
+    # ============================================================
+    # RUNTIME / SERVICE INSPECTION
+    # ============================================================
+
+    @server.tool()
+    def workspace_process_snapshot(
+    ) -> ProcessSnapshotResult:
+        return ProcessSnapshotResult(
+            **run_workspace_process_snapshot()
+        )
+
+    @server.tool()
+    def workspace_service_status(
+        relative_path: str = ".",
+    ) -> ServiceStatusResult:
+        return ServiceStatusResult(
+            **run_workspace_service_status(
+                relative_path=(
+                    relative_path
+                )
+            )
+        )
+
+    @server.tool()
+    def workspace_service_logs(
+        service_name: str,
+        relative_path: str = ".",
+    ) -> ServiceLogsResult:
+        return ServiceLogsResult(
+            **run_workspace_service_logs(
+                service_name=(
+                    service_name
+                ),
+                relative_path=(
+                    relative_path
                 ),
             )
         )
