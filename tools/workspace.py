@@ -9,6 +9,7 @@ from services.process_runner import (
 
 MAX_TEXT_READ_CHARS = 16_000
 
+
 ALLOWED_TEXT_SUFFIXES = {
     ".css",
     ".ex",
@@ -25,9 +26,11 @@ ALLOWED_TEXT_SUFFIXES = {
     ".yml",
 }
 
+
 ALLOWED_EXTENSIONLESS_FILES = {
     "LICENSE",
 }
+
 
 DENIED_NAME_FRAGMENTS = {
     "credential",
@@ -45,49 +48,12 @@ def workspace_mkdir(
     """
     Create one direct-child directory through the governed
     native process runner.
-
-    The caller supplies only the directory name.
-
-    The trusted runner still owns:
-    - mkdir executable selection
-    - argument validation
-    - workspace restriction
-    - timeout policy
-    - actual process execution
     """
 
     return run_process(
         executable="mkdir",
         args=[
             directory_name,
-        ],
-        cwd=cwd,
-        timeout_seconds=(
-            timeout_seconds
-        ),
-    )
-
-
-def workspace_git_status(
-    cwd: str | None = None,
-    timeout_seconds: int = 10,
-) -> dict[str, Any]:
-    """
-    Inspect the Git status of one repository inside the approved
-    developer workspace.
-
-    The command shape is fixed by trusted code:
-        git status --short --branch
-
-    The model cannot supply arbitrary Git arguments.
-    """
-
-    return run_process(
-        executable="git",
-        args=[
-            "status",
-            "--short",
-            "--branch",
         ],
         cwd=cwd,
         timeout_seconds=(
@@ -103,10 +69,7 @@ def _validate_readable_text_path(
     str | None,
 ]:
     """
-    Apply conservative file-type policy before reading.
-
-    This first version intentionally supports source code,
-    documentation, and common text configuration formats only.
+    Apply conservative text-file policy before reading.
     """
 
     path = Path(
@@ -114,8 +77,7 @@ def _validate_readable_text_path(
     )
 
     file_name = (
-        path.name
-        .lower()
+        path.name.lower()
     )
 
     if any(
@@ -131,15 +93,20 @@ def _validate_readable_text_path(
             ),
         )
 
-    if path.name in ALLOWED_EXTENSIONLESS_FILES:
+    if (
+        path.name
+        in ALLOWED_EXTENSIONLESS_FILES
+    ):
         return True, None
 
     suffix = (
-        path.suffix
-        .lower()
+        path.suffix.lower()
     )
 
-    if suffix not in ALLOWED_TEXT_SUFFIXES:
+    if (
+        suffix
+        not in ALLOWED_TEXT_SUFFIXES
+    ):
         return (
             False,
             (
@@ -159,15 +126,14 @@ def workspace_read_text(
     workspace.
 
     Security properties:
-    - path must be relative
-    - resolved path must remain inside PROCESS_WORKSPACE_ROOT
-    - directories cannot be read as files
-    - only approved text/source file types are allowed
-    - common sensitive-file names are denied
-    - output is bounded
-    - binary/non-UTF-8 content is rejected
 
-    This capability does not invoke a shell or subprocess.
+    - path must be relative
+    - resolved path remains inside PROCESS_WORKSPACE_ROOT
+    - directories cannot be read as files
+    - only approved source/text formats are allowed
+    - common sensitive filenames are denied
+    - output is bounded
+    - binary/non-UTF-8 data is rejected
     """
 
     if not isinstance(
@@ -230,7 +196,9 @@ def workspace_read_text(
         return {
             "ok": False,
             "status": "denied",
-            "error": policy_error,
+            "error": (
+                policy_error
+            ),
         }
 
     root = workspace_root()
@@ -333,8 +301,16 @@ def workspace_read_text(
     return {
         "ok": True,
         "status": "success",
-        "path": normalized_path,
-        "content": content,
-        "truncated": truncated,
-        "error": None,
+
+        "path":
+            normalized_path,
+
+        "content":
+            content,
+
+        "truncated":
+            truncated,
+
+        "error":
+            None,
     }

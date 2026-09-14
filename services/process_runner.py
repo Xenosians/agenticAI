@@ -16,19 +16,52 @@ MAX_OUTPUT_CHARS = 16_000
 
 
 # ============================================================
-# Native executable policy
+# NATIVE EXECUTABLE POLICY
 #
-# Single source of truth for:
-# - allowed executables
-# - action risk
-# - approval requirement
-# - argument validation
+# This remains the deterministic policy boundary for the
+# generic process_exec capability.
 #
-# ToolGateway may inspect this policy before execution.
-#
-# run_process() evaluates it again immediately before launch,
-# so approval never bypasses the actual execution policy.
+# Higher-level tools such as tools.git own the semantic command
+# shape, while this layer independently verifies that the final
+# native process is one of the explicitly permitted forms.
 # ============================================================
+
+
+GIT_READ_ARGUMENTS = {
+    (
+        "status",
+        "--short",
+        "--branch",
+    ),
+
+    (
+        "branch",
+        "--list",
+        "--no-color",
+    ),
+
+    (
+        "log",
+        "--oneline",
+        "--no-decorate",
+        "-n",
+        "20",
+    ),
+
+    (
+        "diff",
+        "--no-ext-diff",
+        "--no-color",
+        "--unified=3",
+    ),
+
+    (
+        "diff",
+        "--no-ext-diff",
+        "--name-only",
+    ),
+}
+
 
 ALLOWED_EXECUTABLES = {
     "pwd": {
@@ -46,7 +79,7 @@ ALLOWED_EXECUTABLES = {
     "git": {
         "risk": "read",
         "requires_approval": False,
-        "argument_policy": "git_status",
+        "argument_policy": "git_read",
     },
 
     "mkdir": {
@@ -64,14 +97,7 @@ SIMPLE_DIRECTORY_NAME_PATTERN = re.compile(
 
 def workspace_root() -> Path:
     """
-    Return the directory inside which process execution is
-    allowed.
-
-    PROCESS_WORKSPACE_ROOT is owned by the centralized Settings
-    provider.
-
-    The default remains this repository, preserving the
-    existing MVP behavior.
+    Return the configured developer workspace root.
     """
 
     settings = get_settings()
@@ -86,7 +112,7 @@ def resolve_cwd(
 ) -> Path:
     """
     Resolve a requested working directory and guarantee that it
-    stays inside PROCESS_WORKSPACE_ROOT.
+    remains inside PROCESS_WORKSPACE_ROOT.
     """
 
     root = workspace_root()
@@ -149,6 +175,35 @@ def _bounded_output(
     )
 
 
+def _validate_git_arguments(
+    args: list[str],
+) -> tuple[
+    bool,
+    str | None,
+]:
+    """
+    Accept only fixed read-only Git command forms.
+
+    No arbitrary subcommands, revisions, paths, configuration,
+    aliases, remotes, or mutation flags are accepted here.
+    """
+
+    normalized = tuple(
+        args
+    )
+
+    if normalized in GIT_READ_ARGUMENTS:
+        return True, None
+
+    return (
+        False,
+        (
+            "Git arguments are not permitted by "
+            "the current read-only Git policy."
+        ),
+    )
+
+
 def _validate_process_arguments(
     executable: str,
     args: list[str],
@@ -158,9 +213,7 @@ def _validate_process_arguments(
     str | None,
 ]:
     """
-    Validate executable-specific arguments.
-
-    MVP policies intentionally remain narrow.
+    Apply executable-specific deterministic argument policy.
     """
 
     if argument_policy == "none":
@@ -176,23 +229,10 @@ def _validate_process_arguments(
 
         return True, None
 
-    if argument_policy == "git_status":
-        expected_args = [
-            "status",
-            "--short",
-            "--branch",
-        ]
-
-        if args != expected_args:
-            return (
-                False,
-                (
-                    "Git currently permits only "
-                    "'git status --short --branch'."
-                ),
-            )
-
-        return True, None
+    if argument_policy == "git_read":
+        return _validate_git_arguments(
+            args
+        )
 
     if (
         argument_policy
@@ -288,19 +328,6 @@ def evaluate_process_policy(
     """
     Validate and classify a proposed native process without
     executing it.
-
-    This function is deterministic application policy.
-
-    It answers:
-    - is the executable allowed?
-    - are the arguments allowed?
-    - is cwd inside the workspace?
-    - is the timeout allowed?
-    - what risk level applies?
-    - does the action require approval?
-
-    Actual execution must call run_process(), which evaluates
-    this policy again before launching the process.
     """
 
     if not isinstance(
@@ -315,7 +342,9 @@ def evaluate_process_policy(
             ),
         }
 
-    executable = executable.strip()
+    executable = (
+        executable.strip()
+    )
 
     if not executable:
         return {
@@ -326,8 +355,10 @@ def evaluate_process_policy(
             ),
         }
 
-    policy = ALLOWED_EXECUTABLES.get(
-        executable
+    policy = (
+        ALLOWED_EXECUTABLES.get(
+            executable
+        )
     )
 
     if policy is None:
@@ -356,7 +387,10 @@ def evaluate_process_policy(
         }
 
     if not all(
-        isinstance(argument, str)
+        isinstance(
+            argument,
+            str,
+        )
         for argument in args
     ):
         return {
@@ -406,19 +440,25 @@ def evaluate_process_policy(
         }
 
     try:
-        resolved_cwd = resolve_cwd(
-            cwd
+        resolved_cwd = (
+            resolve_cwd(
+                cwd
+            )
         )
 
     except ValueError as exc:
         return {
             "ok": False,
             "status": "denied",
-            "error": str(exc),
+            "error": str(
+                exc
+            ),
         }
 
-    executable_path = shutil.which(
-        executable
+    executable_path = (
+        shutil.which(
+            executable
+        )
     )
 
     if executable_path is None:
@@ -443,21 +483,21 @@ def evaluate_process_policy(
             "requires_approval"
         ],
 
-        "executable": executable,
+        "executable":
+            executable,
 
-        "executable_path": (
-            executable_path
-        ),
+        "executable_path":
+            executable_path,
 
-        "args": args,
+        "args":
+            args,
 
         "cwd": str(
             resolved_cwd
         ),
 
-        "timeout_seconds": (
-            timeout_seconds
-        ),
+        "timeout_seconds":
+            timeout_seconds,
     }
 
 
@@ -470,14 +510,15 @@ def run_process(
     """
     Execute one policy-approved native process.
 
-    Important:
-    - no shell=True
-    - no raw command strings
-    - executable and arguments are separate
-    - cwd is restricted to an approved workspace
-    - execution has a bounded timeout
+    Security properties:
+
+    - shell=False
+    - executable and arguments remain separate
+    - working directory is workspace restricted
+    - timeout is bounded
     - stdout/stderr are bounded
-    - policy is re-evaluated immediately before execution
+    - deterministic policy is evaluated again immediately
+      before execution
     """
 
     decision = (
@@ -497,17 +538,23 @@ def run_process(
     ):
         return decision
 
-    executable = decision[
-        "executable"
-    ]
+    executable = (
+        decision[
+            "executable"
+        ]
+    )
 
-    executable_path = decision[
-        "executable_path"
-    ]
+    executable_path = (
+        decision[
+            "executable_path"
+        ]
+    )
 
-    args = decision[
-        "args"
-    ]
+    args = (
+        decision[
+            "args"
+        ]
+    )
 
     resolved_cwd = Path(
         decision[
@@ -515,28 +562,36 @@ def run_process(
         ]
     )
 
-    timeout_seconds = decision[
-        "timeout_seconds"
-    ]
+    timeout_seconds = (
+        decision[
+            "timeout_seconds"
+        ]
+    )
 
     command = [
         executable_path,
         *args,
     ]
 
-    started_at = time.monotonic()
+    started_at = (
+        time.monotonic()
+    )
 
     try:
-        completed = subprocess.run(
-            command,
-            cwd=str(
-                resolved_cwd
-            ),
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-            shell=False,
-            check=False,
+        completed = (
+            subprocess.run(
+                command,
+                cwd=str(
+                    resolved_cwd
+                ),
+                capture_output=True,
+                text=True,
+                timeout=(
+                    timeout_seconds
+                ),
+                shell=False,
+                check=False,
+            )
         )
 
     except subprocess.TimeoutExpired as exc:
@@ -570,29 +625,34 @@ def run_process(
             "ok": False,
             "status": "timeout",
 
-            "executable": executable,
-            "args": args,
+            "executable":
+                executable,
+
+            "args":
+                args,
 
             "cwd": str(
                 resolved_cwd
             ),
 
-            "exit_code": None,
+            "exit_code":
+                None,
 
-            "stdout": (
+            "stdout":
                 _bounded_output(
                     stdout
-                )
-            ),
+                ),
 
-            "stderr": (
+            "stderr":
                 _bounded_output(
                     stderr
-                )
-            ),
+                ),
 
-            "timed_out": True,
-            "duration_ms": duration_ms,
+            "timed_out":
+                True,
+
+            "duration_ms":
+                duration_ms,
         }
 
     except OSError as exc:
@@ -608,17 +668,21 @@ def run_process(
     duration_ms = int(
         (
             time.monotonic()
-                - started_at
+            - started_at
         )
         * 1000
     )
 
-    stdout = _bounded_output(
-        completed.stdout
+    stdout = (
+        _bounded_output(
+            completed.stdout
+        )
     )
 
-    stderr = _bounded_output(
-        completed.stderr
+    stderr = (
+        _bounded_output(
+            completed.stderr
+        )
     )
 
     return {
@@ -634,20 +698,28 @@ def run_process(
             else "error"
         ),
 
-        "executable": executable,
-        "args": args,
+        "executable":
+            executable,
+
+        "args":
+            args,
 
         "cwd": str(
             resolved_cwd
         ),
 
-        "exit_code": (
-            completed.returncode
-        ),
+        "exit_code":
+            completed.returncode,
 
-        "stdout": stdout,
-        "stderr": stderr,
+        "stdout":
+            stdout,
 
-        "timed_out": False,
-        "duration_ms": duration_ms,
+        "stderr":
+            stderr,
+
+        "timed_out":
+            False,
+
+        "duration_ms":
+            duration_ms,
     }

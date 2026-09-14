@@ -19,10 +19,24 @@ from services.process_runner import (
     run_process,
 )
 
-from tools.workspace import (
+from tools.git import (
+    workspace_git_branches
+    as run_workspace_git_branches,
+
+    workspace_git_changed_files
+    as run_workspace_git_changed_files,
+
+    workspace_git_diff
+    as run_workspace_git_diff,
+
+    workspace_git_log
+    as run_workspace_git_log,
+
     workspace_git_status
     as run_workspace_git_status,
+)
 
+from tools.workspace import (
     workspace_mkdir
     as run_workspace_mkdir,
 
@@ -181,12 +195,11 @@ def create_mcp_server(
     """
     Build one MCP server runtime.
 
-    The MCP subprocess owns one DirectoryService instance.
+    This module is the composition root for deterministic tool
+    implementations exposed through MCP.
 
-    Tests may inject an isolated DirectoryService instead.
-
-    There is no hidden directory-service cache or service
-    locator.
+    External/model-facing names remain stable while concrete
+    adapters live in their own modules.
     """
 
     runtime_settings = (
@@ -208,6 +221,10 @@ def create_mcp_server(
             "ITSM Tools"
         )
     )
+
+    # ============================================================
+    # DIRECTORY / IDENTITY
+    # ============================================================
 
     @server.tool()
     def account_status(
@@ -279,6 +296,10 @@ def create_mcp_server(
             )
         )
 
+    # ============================================================
+    # GENERIC GOVERNED PROCESS
+    # ============================================================
+
     @server.tool()
     def process_exec(
         executable: str,
@@ -312,6 +333,10 @@ def create_mcp_server(
                 **result
             )
         )
+
+    # ============================================================
+    # WORKSPACE
+    # ============================================================
 
     @server.tool()
     def workspace_mkdir(
@@ -359,6 +384,10 @@ def create_mcp_server(
             )
         )
 
+    # ============================================================
+    # GIT — READ ONLY
+    # ============================================================
+
     @server.tool()
     def workspace_git_status(
     ) -> ProcessExecResult:
@@ -372,13 +401,64 @@ def create_mcp_server(
             )
         )
 
+    @server.tool()
+    def workspace_git_branches(
+    ) -> ProcessExecResult:
+        result = (
+            run_workspace_git_branches()
+        )
+
+        return (
+            ProcessExecResult(
+                **result
+            )
+        )
+
+    @server.tool()
+    def workspace_git_log(
+    ) -> ProcessExecResult:
+        result = (
+            run_workspace_git_log()
+        )
+
+        return (
+            ProcessExecResult(
+                **result
+            )
+        )
+
+    @server.tool()
+    def workspace_git_diff(
+    ) -> ProcessExecResult:
+        result = (
+            run_workspace_git_diff()
+        )
+
+        return (
+            ProcessExecResult(
+                **result
+            )
+        )
+
+    @server.tool()
+    def workspace_git_changed_files(
+    ) -> ProcessExecResult:
+        result = (
+            run_workspace_git_changed_files()
+        )
+
+        return (
+            ProcessExecResult(
+                **result
+            )
+        )
+
     return server
 
 
 # MCP subprocess composition root.
 #
-# This is one explicit server instance owned by this process,
-# not a hidden service locator.
+# One explicit server instance belongs to this process.
 mcp = (
     create_mcp_server()
 )

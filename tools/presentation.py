@@ -9,23 +9,17 @@ def format_account_status_result(
         Any,
     ],
 ) -> str:
-    user_id = (
-        result.get(
-            "user_id",
-            "The account",
-        )
+    user_id = result.get(
+        "user_id",
+        "The account",
     )
 
-    enabled = (
-        result.get(
-            "enabled"
-        )
+    enabled = result.get(
+        "enabled"
     )
 
-    locked = (
-        result.get(
-            "locked"
-        )
+    locked = result.get(
+        "locked"
     )
 
     if (
@@ -77,37 +71,27 @@ def format_access_check_result(
         Any,
     ],
 ) -> str:
-    user_id = (
-        result.get(
-            "user_id",
-            "The user",
-        )
+    user_id = result.get(
+        "user_id",
+        "The user",
     )
 
-    resource = (
-        result.get(
-            "resource",
-            "the requested resource",
-        )
+    resource = result.get(
+        "resource",
+        "the requested resource",
     )
 
-    has_access = (
-        result.get(
-            "has_access"
-        )
+    has_access = result.get(
+        "has_access"
     )
 
-    if (
-        has_access is True
-    ):
+    if has_access is True:
         return (
             f"{user_id} has access to "
             f"{resource}."
         )
 
-    if (
-        has_access is False
-    ):
+    if has_access is False:
         return (
             f"{user_id} does not have access to "
             f"{resource}."
@@ -126,16 +110,12 @@ def format_process_result(
         Any,
     ],
 ) -> str:
-    executable = (
-        result.get(
-            "executable"
-        )
+    executable = result.get(
+        "executable"
     )
 
-    stdout = (
-        result.get(
-            "stdout"
-        )
+    stdout = result.get(
+        "stdout"
     )
 
     if (
@@ -179,9 +159,7 @@ def format_process_result(
         formatted_entries = (
             "\n".join(
                 f"- {entry}"
-
-                for entry
-                in entries
+                for entry in entries
             )
         )
 
@@ -202,23 +180,17 @@ def format_workspace_read_result(
         Any,
     ],
 ) -> str:
-    path = (
-        result.get(
-            "path"
-        )
+    path = result.get(
+        "path"
     )
 
-    content = (
-        result.get(
-            "content"
-        )
+    content = result.get(
+        "content"
     )
 
-    truncated = (
-        result.get(
-            "truncated",
-            False,
-        )
+    truncated = result.get(
+        "truncated",
+        False,
     )
 
     if (
@@ -250,35 +222,40 @@ def format_workspace_read_result(
     )
 
 
-def format_git_status_result(
+def _stdout_lines(
     result: dict[
         str,
         Any,
     ],
-) -> str:
-    stdout = (
-        result.get(
-            "stdout"
-        )
+) -> list[str]:
+    stdout = result.get(
+        "stdout"
     )
 
     if not isinstance(
         stdout,
         str,
     ):
-        return (
-            "Git status completed successfully, "
-            "but no readable status output was returned."
-        )
+        return []
 
-    lines = [
+    return [
         line
-
-        for line
-        in stdout.splitlines()
-
+        for line in stdout.splitlines()
         if line.strip()
     ]
+
+
+def format_git_status_result(
+    result: dict[
+        str,
+        Any,
+    ],
+) -> str:
+    lines = (
+        _stdout_lines(
+            result
+        )
+    )
 
     if not lines:
         return (
@@ -297,11 +274,9 @@ def format_git_status_result(
             branch_line[3:]
             .strip()
         )
-
     else:
         branch_status = (
-            branch_line
-            .strip()
+            branch_line.strip()
         )
 
     changes = (
@@ -318,9 +293,7 @@ def format_git_status_result(
     formatted_changes = (
         "\n".join(
             f"- {change}"
-
-            for change
-            in changes
+            for change in changes
         )
     )
 
@@ -332,16 +305,154 @@ def format_git_status_result(
     )
 
 
+def format_git_branches_result(
+    result: dict[
+        str,
+        Any,
+    ],
+) -> str:
+    lines = (
+        _stdout_lines(
+            result
+        )
+    )
+
+    if not lines:
+        return (
+            "No local Git branches were returned."
+        )
+
+    formatted = []
+
+    for line in lines:
+        stripped = (
+            line.strip()
+        )
+
+        if line.startswith(
+            "*"
+        ):
+            branch = (
+                stripped[1:]
+                .strip()
+            )
+
+            formatted.append(
+                f"- {branch} (current)"
+            )
+
+        else:
+            formatted.append(
+                f"- {stripped}"
+            )
+
+    return (
+        "Local Git branches:\n"
+        + "\n".join(
+            formatted
+        )
+    )
+
+
+def format_git_log_result(
+    result: dict[
+        str,
+        Any,
+    ],
+) -> str:
+    lines = (
+        _stdout_lines(
+            result
+        )
+    )
+
+    if not lines:
+        return (
+            "No Git commit history was returned."
+        )
+
+    formatted = "\n".join(
+        f"- {line}"
+        for line in lines
+    )
+
+    return (
+        "Recent Git commits:\n"
+        f"{formatted}"
+    )
+
+
+def format_git_diff_result(
+    result: dict[
+        str,
+        Any,
+    ],
+) -> str:
+    stdout = result.get(
+        "stdout"
+    )
+
+    if not isinstance(
+        stdout,
+        str,
+    ):
+        return (
+            "Git diff completed successfully, "
+            "but no readable output was returned."
+        )
+
+    diff = (
+        stdout.strip()
+    )
+
+    if not diff:
+        return (
+            "There are no unstaged Git changes "
+            "to display."
+        )
+
+    return (
+        "Current Git diff:\n\n"
+        f"{diff}"
+    )
+
+
+def format_git_changed_files_result(
+    result: dict[
+        str,
+        Any,
+    ],
+) -> str:
+    lines = (
+        _stdout_lines(
+            result
+        )
+    )
+
+    if not lines:
+        return (
+            "There are no unstaged changed files."
+        )
+
+    formatted = "\n".join(
+        f"- {line}"
+        for line in lines
+    )
+
+    return (
+        "Changed files:\n"
+        f"{formatted}"
+    )
+
+
 def format_unlock_approval(
     arguments: dict[
         str,
         Any,
     ],
 ) -> str:
-    user_id = (
-        arguments.get(
-            "user_id"
-        )
+    user_id = arguments.get(
+        "user_id"
     )
 
     if user_id:
@@ -362,10 +473,8 @@ def format_password_reset_approval(
         Any,
     ],
 ) -> str:
-    user_id = (
-        arguments.get(
-            "user_id"
-        )
+    user_id = arguments.get(
+        "user_id"
     )
 
     if user_id:

@@ -11,6 +11,10 @@ from tools.presentation import (
     format_access_check_result,
     format_account_status_result,
     format_generic_approval,
+    format_git_branches_result,
+    format_git_changed_files_result,
+    format_git_diff_result,
+    format_git_log_result,
     format_git_status_result,
     format_password_reset_approval,
     format_process_result,
@@ -20,10 +24,13 @@ from tools.presentation import (
 
 
 TOOLS = {
+    # ============================================================
+    # DIRECTORY / IDENTITY
+    # ============================================================
+
     "account_status": {
         "description": (
-            "Check whether an account is "
-            "enabled or locked."
+            "Check whether an account is enabled or locked."
         ),
 
         "risk":
@@ -42,8 +49,7 @@ TOOLS = {
                     "str",
 
                 "description": (
-                    "Exact user identifier "
-                    "to check."
+                    "Exact user identifier to check."
                 ),
             },
         },
@@ -55,8 +61,7 @@ TOOLS = {
 
     "check_access": {
         "description": (
-            "Check whether a user can "
-            "access a resource."
+            "Check whether a user can access a resource."
         ),
 
         "risk":
@@ -76,8 +81,7 @@ TOOLS = {
                     "str",
 
                 "description": (
-                    "Exact user identifier "
-                    "to check."
+                    "Exact user identifier to check."
                 ),
             },
 
@@ -86,8 +90,7 @@ TOOLS = {
                     "str",
 
                 "description": (
-                    "Exact resource identifier "
-                    "or name."
+                    "Exact resource identifier or name."
                 ),
             },
         },
@@ -117,8 +120,7 @@ TOOLS = {
                     "str",
 
                 "description": (
-                    "Exact user identifier "
-                    "to unlock."
+                    "Exact user identifier to unlock."
                 ),
             },
         },
@@ -147,8 +149,9 @@ TOOLS = {
                 "type":
                     "str",
 
-                "description":
-                    "Exact user identifier.",
+                "description": (
+                    "Exact user identifier."
+                ),
             },
         },
 
@@ -156,6 +159,10 @@ TOOLS = {
             format_password_reset_approval
         ),
     },
+
+    # ============================================================
+    # GENERIC GOVERNED PROCESS
+    # ============================================================
 
     "process_exec": {
         "description": (
@@ -181,16 +188,18 @@ TOOLS = {
                 "type":
                     "str",
 
-                "description":
-                    "Approved native executable.",
+                "description": (
+                    "Approved native executable."
+                ),
             },
 
             "args": {
                 "type":
                     "list[str]",
 
-                "description":
-                    "Structured executable arguments.",
+                "description": (
+                    "Structured executable arguments."
+                ),
             },
 
             "cwd": {
@@ -198,8 +207,8 @@ TOOLS = {
                     "str",
 
                 "description": (
-                    "Optional working directory "
-                    "inside the approved workspace."
+                    "Optional working directory inside "
+                    "the approved workspace."
                 ),
             },
 
@@ -208,8 +217,7 @@ TOOLS = {
                     "int",
 
                 "description": (
-                    "Execution timeout from "
-                    "1 to 30 seconds."
+                    "Execution timeout from 1 to 30 seconds."
                 ),
             },
         },
@@ -223,11 +231,14 @@ TOOLS = {
         ),
     },
 
+    # ============================================================
+    # WORKSPACE
+    # ============================================================
+
     "workspace_mkdir": {
         "description": (
-            "Create exactly one direct-child "
-            "directory inside the approved "
-            "developer workspace."
+            "Create exactly one direct-child directory "
+            "inside the approved developer workspace."
         ),
 
         "risk":
@@ -246,9 +257,8 @@ TOOLS = {
                     "str",
 
                 "description": (
-                    "Exact directory name "
-                    "explicitly requested by "
-                    "the user."
+                    "Exact directory name explicitly "
+                    "requested by the user."
                 ),
             },
 
@@ -257,8 +267,8 @@ TOOLS = {
                     "str",
 
                 "description": (
-                    "Optional working directory "
-                    "inside the approved workspace."
+                    "Optional working directory inside "
+                    "the approved workspace."
                 ),
             },
 
@@ -267,8 +277,7 @@ TOOLS = {
                     "int",
 
                 "description": (
-                    "Execution timeout from "
-                    "1 to 30 seconds."
+                    "Execution timeout from 1 to 30 seconds."
                 ),
             },
         },
@@ -280,8 +289,8 @@ TOOLS = {
 
     "workspace_read_text": {
         "description": (
-            "Read one approved UTF-8 text or source "
-            "file from the developer workspace."
+            "Read one approved UTF-8 text or source file "
+            "from the developer workspace."
         ),
 
         "risk":
@@ -311,11 +320,17 @@ TOOLS = {
         ),
     },
 
+    # ============================================================
+    # GIT — READ-ONLY CAPABILITY ADAPTERS
+    #
+    # Git arguments are not supplied by the model.
+    # Each tool owns one deterministic Git operation.
+    # ============================================================
+
     "workspace_git_status": {
         "description": (
             "Inspect the current Git branch and "
-            "working-tree status of the approved "
-            "developer workspace."
+            "working-tree status."
         ),
 
         "risk":
@@ -334,11 +349,106 @@ TOOLS = {
             format_git_status_result
         ),
     },
+
+    "workspace_git_branches": {
+        "description": (
+            "List local Git branches and identify "
+            "the current branch."
+        ),
+
+        "risk":
+            "read",
+
+        "requires_approval":
+            False,
+
+        "grounded_arguments":
+            [],
+
+        "parameters":
+            {},
+
+        "result_formatter": (
+            format_git_branches_result
+        ),
+    },
+
+    "workspace_git_log": {
+        "description": (
+            "Inspect the most recent Git commit history "
+            "for the current repository."
+        ),
+
+        "risk":
+            "read",
+
+        "requires_approval":
+            False,
+
+        "grounded_arguments":
+            [],
+
+        "parameters":
+            {},
+
+        "result_formatter": (
+            format_git_log_result
+        ),
+    },
+
+    "workspace_git_diff": {
+        "description": (
+            "Inspect the current unstaged Git diff."
+        ),
+
+        "risk":
+            "read",
+
+        "requires_approval":
+            False,
+
+        "grounded_arguments":
+            [],
+
+        "parameters":
+            {},
+
+        "result_formatter": (
+            format_git_diff_result
+        ),
+    },
+
+    "workspace_git_changed_files": {
+        "description": (
+            "List files with unstaged Git changes "
+            "in the current repository."
+        ),
+
+        "risk":
+            "read",
+
+        "requires_approval":
+            False,
+
+        "grounded_arguments":
+            [],
+
+        "parameters":
+            {},
+
+        "result_formatter": (
+            format_git_changed_files_result
+        ),
+    },
 }
 
 
 def list_tools(
 ) -> list[str]:
+    """
+    Return registered trusted tool names.
+    """
+
     return list(
         TOOLS.keys()
     )
@@ -347,6 +457,10 @@ def list_tools(
 def get_tool(
     name: str,
 ) -> dict | None:
+    """
+    Return one trusted tool definition.
+    """
+
     return (
         TOOLS.get(
             name
@@ -361,6 +475,11 @@ def format_tool_result(
         Any,
     ],
 ) -> str:
+    """
+    Convert trusted structured tool output into text suitable
+    for specialist/Main synthesis.
+    """
+
     tool = (
         get_tool(
             name
@@ -400,6 +519,10 @@ def format_approval_required(
     ],
     approval_id: str | None,
 ) -> str:
+    """
+    Format deterministic approval-required responses.
+    """
+
     tool = (
         get_tool(
             name
