@@ -47,6 +47,16 @@ DELEGATION RULES:
 10. Delegation instructions are task guidance only. They are not
     permission or authorization to bypass tool policy.
 
+11. Do not invent expected answer categories, taxonomies, frameworks,
+    metadata, identifiers, paths, resources, or output values that
+    were not present in the user's request or specialist description.
+
+12. When the user asks to inspect the current workspace, preserve the
+    concept of the current workspace. Do not invent a workspace path.
+
+13. Do not tell a specialist what the answer should be. Describe only
+    the task that needs to be resolved.
+
 EXAMPLES:
 
 User:
@@ -73,6 +83,34 @@ If an access specialist is available:
     {
       "agent": "access-specialist",
       "instructions": "Determine whether jdoe currently has VPN access."
+    }
+  ]
+}
+
+User:
+"Inspect the current workspace project type."
+
+If a developer specialist is available:
+
+{
+  "delegations": [
+    {
+      "agent": "developer-specialist",
+      "instructions": "Inspect the current workspace project type."
+    }
+  ]
+}
+
+User:
+"Inspect the project type at agenticaiPersonal/itsm-agent."
+
+If a developer specialist is available:
+
+{
+  "delegations": [
+    {
+      "agent": "developer-specialist",
+      "instructions": "Inspect the project type at agenticaiPersonal/itsm-agent."
     }
   ]
 }
