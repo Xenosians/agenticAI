@@ -15,16 +15,30 @@ from .mock import (
 )
 
 from .types import (
+    TicketComment,
+    TicketCommentsResult,
+    TicketFieldChange,
+    TicketHistoryEntry,
+    TicketHistoryResult,
     TicketLookupResult,
     TicketRecord,
+    TicketSearchQuery,
+    TicketSearchResult,
 )
 
 
 __all__ = [
     "JiraTicketService",
     "MockTicketService",
+    "TicketComment",
+    "TicketCommentsResult",
+    "TicketFieldChange",
+    "TicketHistoryEntry",
+    "TicketHistoryResult",
     "TicketLookupResult",
     "TicketRecord",
+    "TicketSearchQuery",
+    "TicketSearchResult",
     "TicketService",
     "build_ticket_service",
 ]

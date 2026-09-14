@@ -43,37 +43,21 @@ class AgentRuntime:
 
     The runtime is intentionally generic.
 
-    It does not know:
-    - backend implementations
-    - GPU ownership details
-    - tool-specific risk rules
-    - tool-specific result presentation
-    - tool-specific approval wording
+    The Hub chooses WHICH specialist should receive a task.
 
-    Those concerns live behind their respective trusted
-    boundaries.
+    The specialist reasons about HOW to satisfy the original
+    user request using its available capabilities.
 
-    Flow:
+    Hub-generated delegation instructions are retained as
+    orchestration metadata, but are deliberately not injected
+    into specialist reasoning.
 
-        AgentTask
-            ↓
-        AgentDefinition
-            ↓
-        InferenceCoordinator
-            ↓
-        ModelManager / GPU Scheduler
-            ↓
-        Tool parser
-            ↓
-        ToolGateway
-            ↓
-        MCP / Approval
-            ↓
-        trusted structured tool result
-            ↓
-        human formatter + optional presentation builder
-            ↓
-        AgentResult
+    This prevents one generative model from accidentally
+    introducing identifiers, interpretations, scopes, or other
+    concrete values that were not present in the original
+    user request.
+
+    Trusted execution policy remains inside ToolGateway.
     """
 
     def __init__(
@@ -120,6 +104,22 @@ class AgentRuntime:
                 ),
             )
 
+        # ========================================================
+        # SPECIALIST CONTEXT
+        #
+        # IMPORTANT:
+        #
+        # The original user request is the specialist's semantic
+        # source of truth.
+        #
+        # Hub delegation instructions are NOT inserted into the
+        # model conversation because they are themselves generated
+        # text and may contain invented interpretations or values.
+        #
+        # The Hub owns routing.
+        # The specialist owns capability reasoning.
+        # ========================================================
+
         messages = [
             {
                 "role":
@@ -139,19 +139,6 @@ class AgentRuntime:
                     task.user_request,
             },
         ]
-
-        if task.instructions:
-            messages.append(
-                {
-                    "role":
-                        "user",
-
-                    "content": (
-                        "Additional instructions:\n"
-                        f"{task.instructions}"
-                    ),
-                }
-            )
 
         try:
             response = (
@@ -173,6 +160,12 @@ class AgentRuntime:
             )
 
         except Exception as exc:
+            print(
+                "[WORKER] Model generation failed "
+                f"agent='{agent.name}' "
+                f"error={exc!r}"
+            )
+
             return AgentResult(
                 task_id=(
                     task.task_id
@@ -187,6 +180,15 @@ class AgentRuntime:
                 ),
             )
 
+        print(
+            "\n===== SPECIALIST WORKER ====="
+            f"\nAGENT: {agent.name}"
+            f"\nUSER: {task.user_request}"
+            f"\nROUTER_METADATA: {task.instructions}"
+            f"\nRAW: {response}"
+            "\n============================="
+        )
+
         try:
             tool_calls = (
                 parse_tool_calls(
@@ -195,6 +197,12 @@ class AgentRuntime:
             )
 
         except ValueError as exc:
+            print(
+                "[WORKER] Tool-call parse failed "
+                f"agent='{agent.name}' "
+                f"error={exc}"
+            )
+
             return AgentResult(
                 task_id=(
                     task.task_id
@@ -214,6 +222,12 @@ class AgentRuntime:
             )
             != 1
         ):
+            print(
+                "[WORKER] Invalid tool-call count "
+                f"agent='{agent.name}' "
+                f"count={len(tool_calls)}"
+            )
+
             return AgentResult(
                 task_id=(
                     task.task_id
@@ -230,7 +244,9 @@ class AgentRuntime:
             )
 
         tool_call = (
-            tool_calls[0]
+            tool_calls[
+                0
+            ]
         )
 
         tool_name = (
@@ -245,6 +261,13 @@ class AgentRuntime:
             ]
         )
 
+        print(
+            "[WORKER] Proposed tool "
+            f"agent='{agent.name}' "
+            f"tool='{tool_name}' "
+            f"arguments={arguments}"
+        )
+
         try:
             gateway_result = (
                 await
@@ -253,12 +276,15 @@ class AgentRuntime:
                     agent=(
                         agent
                     ),
+
                     user_input=(
                         task.user_request
                     ),
+
                     tool_name=(
                         tool_name
                     ),
+
                     arguments=(
                         arguments
                     ),
@@ -266,25 +292,49 @@ class AgentRuntime:
             )
 
         except Exception as exc:
+            print(
+                "[WORKER] Tool gateway failed "
+                f"agent='{agent.name}' "
+                f"tool='{tool_name}' "
+                f"error={exc!r}"
+            )
+
             return AgentResult(
                 task_id=(
                     task.task_id
                 ),
+
                 agent_name=(
                     task.agent_name
                 ),
+
                 status="error",
+
                 proposed_tool=(
                     tool_name
                 ),
+
                 proposed_arguments=(
                     arguments
                 ),
+
                 error=(
                     "Tool gateway failed: "
                     f"{exc}"
                 ),
             )
+
+        print(
+            "[WORKER] Gateway result "
+            f"agent='{agent.name}' "
+            f"tool='{tool_name}' "
+            f"status={gateway_result.get('status')} "
+            f"ok={gateway_result.get('ok')}"
+        )
+
+        # ========================================================
+        # APPROVAL REQUIRED
+        # ========================================================
 
         if (
             gateway_result.get(
@@ -302,21 +352,27 @@ class AgentRuntime:
                 task_id=(
                     task.task_id
                 ),
+
                 agent_name=(
                     task.agent_name
                 ),
+
                 status=(
                     "approval_required"
                 ),
+
                 proposed_tool=(
                     tool_name
                 ),
+
                 proposed_arguments=(
                     arguments
                 ),
+
                 approval_id=(
                     approval_id
                 ),
+
                 answer=(
                     format_approval_required(
                         tool_name,
@@ -326,33 +382,57 @@ class AgentRuntime:
                 ),
             )
 
+        # ========================================================
+        # DENIED / FAILED
+        # ========================================================
+
         if not (
             gateway_result.get(
                 "ok",
                 False,
             )
         ):
+            error = (
+                gateway_result.get(
+                    "error",
+                    "Tool execution failed.",
+                )
+            )
+
+            print(
+                "[WORKER] Tool execution denied/failed "
+                f"agent='{agent.name}' "
+                f"tool='{tool_name}' "
+                f"error={error}"
+            )
+
             return AgentResult(
                 task_id=(
                     task.task_id
                 ),
+
                 agent_name=(
                     task.agent_name
                 ),
+
                 status="error",
+
                 proposed_tool=(
                     tool_name
                 ),
+
                 proposed_arguments=(
                     arguments
                 ),
+
                 error=(
-                    gateway_result.get(
-                        "error",
-                        "Tool execution failed.",
-                    )
+                    error
                 ),
             )
+
+        # ========================================================
+        # TRUSTED STRUCTURED RESULT
+        # ========================================================
 
         tool_result = (
             gateway_result.get(
@@ -364,32 +444,44 @@ class AgentRuntime:
             tool_result,
             dict,
         ):
+            print(
+                "[WORKER] Invalid structured result "
+                f"agent='{agent.name}' "
+                f"tool='{tool_name}'"
+            )
+
             return AgentResult(
                 task_id=(
                     task.task_id
                 ),
+
                 agent_name=(
                     task.agent_name
                 ),
+
                 status="error",
+
                 proposed_tool=(
                     tool_name
                 ),
+
                 proposed_arguments=(
                     arguments
                 ),
+
                 error=(
                     "Tool returned an invalid "
                     "structured result."
                 ),
             )
 
-        # --------------------------------------------------------
-        # Preserve trusted machine data.
+        # ========================================================
+        # DERIVED PRESENTATION
         #
-        # Human-facing prose and UI presentation are both derived
-        # views. Neither replaces the authoritative tool result.
-        # --------------------------------------------------------
+        # Authoritative machine data remains tool_result.
+        #
+        # Human prose and UI presentation are derived views.
+        # ========================================================
 
         presentation = (
             build_tool_presentation(
@@ -398,29 +490,42 @@ class AgentRuntime:
             )
         )
 
+        print(
+            "[WORKER] Completed "
+            f"agent='{agent.name}' "
+            f"tool='{tool_name}'"
+        )
+
         return AgentResult(
             task_id=(
                 task.task_id
             ),
+
             agent_name=(
                 task.agent_name
             ),
+
             status="success",
+
             proposed_tool=(
                 tool_name
             ),
+
             proposed_arguments=(
                 arguments
             ),
+
             answer=(
                 format_tool_result(
                     tool_name,
                     tool_result,
                 )
             ),
+
             tool_result=(
                 tool_result
             ),
+
             presentation=(
                 presentation
             ),
