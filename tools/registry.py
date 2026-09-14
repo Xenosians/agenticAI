@@ -7,6 +7,10 @@ from services.process_runner import (
     evaluate_process_policy,
 )
 
+from tools.developer_catalog import (
+    DEVELOPER_TOOLS,
+)
+
 from tools.presentation import (
     format_access_check_result,
     format_account_status_result,
@@ -255,7 +259,7 @@ TOOLS = {
                 "type": "str",
                 "description": (
                     "Optional workspace-relative directory. "
-                    "Omit it to list the workspace root."
+                    "Defaults to the workspace root."
                 ),
             },
         },
@@ -282,8 +286,7 @@ TOOLS = {
             "relative_path": {
                 "type": "str",
                 "description": (
-                    "Optional workspace-relative directory. "
-                    "Omit it to search the workspace root."
+                    "Optional workspace-relative directory."
                 ),
             },
         },
@@ -386,6 +389,13 @@ TOOLS = {
         ),
     },
 }
+
+
+# Feature/domain catalogs extend the registry without forcing
+# every future tool definition into this module.
+TOOLS.update(
+    DEVELOPER_TOOLS
+)
 
 
 def list_tools(

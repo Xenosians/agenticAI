@@ -12,18 +12,17 @@ from config import (
 
 
 MAX_TIMEOUT_SECONDS = 30
+MAX_TRUSTED_TIMEOUT_SECONDS = 120
 MAX_OUTPUT_CHARS = 16_000
 
 
 # ============================================================
-# NATIVE EXECUTABLE POLICY
+# GENERIC MODEL-FACING PROCESS POLICY
 #
-# This remains the deterministic policy boundary for the
-# generic process_exec capability.
+# Higher-level capability adapters may use run_trusted_process()
+# with fixed command shapes.
 #
-# Higher-level tools such as tools.git own the semantic command
-# shape, while this layer independently verifies that the final
-# native process is one of the explicitly permitted forms.
+# process_exec remains intentionally much narrower.
 # ============================================================
 
 
@@ -33,13 +32,11 @@ GIT_READ_ARGUMENTS = {
         "--short",
         "--branch",
     ),
-
     (
         "branch",
         "--list",
         "--no-color",
     ),
-
     (
         "log",
         "--oneline",
@@ -47,14 +44,12 @@ GIT_READ_ARGUMENTS = {
         "-n",
         "20",
     ),
-
     (
         "diff",
         "--no-ext-diff",
         "--no-color",
         "--unified=3",
     ),
-
     (
         "diff",
         "--no-ext-diff",
@@ -111,11 +106,14 @@ def resolve_cwd(
     cwd: str | None,
 ) -> Path:
     """
-    Resolve a requested working directory and guarantee that it
-    remains inside PROCESS_WORKSPACE_ROOT.
+    Resolve a working directory and guarantee that it remains
+    inside PROCESS_WORKSPACE_ROOT.
     """
 
-    root = workspace_root()
+    root = (
+        workspace_root()
+        .resolve()
+    )
 
     if not root.is_dir():
         raise ValueError(
@@ -170,7 +168,9 @@ def _bounded_output(
         return value
 
     return (
-        value[:MAX_OUTPUT_CHARS]
+        value[
+            :MAX_OUTPUT_CHARS
+        ]
         + "\n...[output truncated]"
     )
 
@@ -181,13 +181,6 @@ def _validate_git_arguments(
     bool,
     str | None,
 ]:
-    """
-    Accept only fixed read-only Git command forms.
-
-    No arbitrary subcommands, revisions, paths, configuration,
-    aliases, remotes, or mutation flags are accepted here.
-    """
-
     normalized = tuple(
         args
     )
@@ -212,10 +205,6 @@ def _validate_process_arguments(
     bool,
     str | None,
 ]:
-    """
-    Apply executable-specific deterministic argument policy.
-    """
-
     if argument_policy == "none":
         if args:
             return (
@@ -248,7 +237,9 @@ def _validate_process_arguments(
                 ),
             )
 
-        directory_name = args[0]
+        directory_name = args[
+            0
+        ]
 
         if not directory_name:
             return (
@@ -319,15 +310,19 @@ def _validate_process_arguments(
     )
 
 
-def evaluate_process_policy(
+def _validate_common_process_request(
+    *,
     executable: str,
-    args: list[str] | None = None,
-    cwd: str | None = None,
-    timeout_seconds: int = 10,
+    args: list[str] | None,
+    cwd: str | None,
+    timeout_seconds: int,
+    max_timeout_seconds: int,
 ) -> dict[str, Any]:
     """
-    Validate and classify a proposed native process without
-    executing it.
+    Validate properties shared by all trusted native execution.
+
+    This does NOT decide whether a model is authorized to choose
+    a particular executable or argument shape.
     """
 
     if not isinstance(
@@ -352,22 +347,6 @@ def evaluate_process_policy(
             "status": "denied",
             "error": (
                 "executable cannot be empty."
-            ),
-        }
-
-    policy = (
-        ALLOWED_EXECUTABLES.get(
-            executable
-        )
-    )
-
-    if policy is None:
-        return {
-            "ok": False,
-            "status": "denied",
-            "error": (
-                f"Executable '{executable}' "
-                "is not allowed."
             ),
         }
 
@@ -402,24 +381,6 @@ def evaluate_process_policy(
             ),
         }
 
-    (
-        arguments_valid,
-        argument_error,
-    ) = _validate_process_arguments(
-        executable=executable,
-        args=args,
-        argument_policy=policy[
-            "argument_policy"
-        ],
-    )
-
-    if not arguments_valid:
-        return {
-            "ok": False,
-            "status": "denied",
-            "error": argument_error,
-        }
-
     if (
         not isinstance(
             timeout_seconds,
@@ -427,7 +388,7 @@ def evaluate_process_policy(
         )
         or timeout_seconds < 1
         or timeout_seconds
-        > MAX_TIMEOUT_SECONDS
+        > max_timeout_seconds
     ):
         return {
             "ok": False,
@@ -435,7 +396,7 @@ def evaluate_process_policy(
             "error": (
                 "timeout_seconds must be "
                 f"between 1 and "
-                f"{MAX_TIMEOUT_SECONDS}."
+                f"{max_timeout_seconds}."
             ),
         }
 
@@ -475,14 +436,6 @@ def evaluate_process_policy(
         "ok": True,
         "status": "allowed",
 
-        "risk": policy[
-            "risk"
-        ],
-
-        "requires_approval": policy[
-            "requires_approval"
-        ],
-
         "executable":
             executable,
 
@@ -501,43 +454,12 @@ def evaluate_process_policy(
     }
 
 
-def run_process(
-    executable: str,
-    args: list[str] | None = None,
-    cwd: str | None = None,
-    timeout_seconds: int = 10,
+def _execute_validated_process(
+    decision: dict[
+        str,
+        Any,
+    ],
 ) -> dict[str, Any]:
-    """
-    Execute one policy-approved native process.
-
-    Security properties:
-
-    - shell=False
-    - executable and arguments remain separate
-    - working directory is workspace restricted
-    - timeout is bounded
-    - stdout/stderr are bounded
-    - deterministic policy is evaluated again immediately
-      before execution
-    """
-
-    decision = (
-        evaluate_process_policy(
-            executable=executable,
-            args=args,
-            cwd=cwd,
-            timeout_seconds=(
-                timeout_seconds
-            ),
-        )
-    )
-
-    if not decision.get(
-        "ok",
-        False,
-    ):
-        return decision
-
     executable = (
         decision[
             "executable"
@@ -673,18 +595,6 @@ def run_process(
         * 1000
     )
 
-    stdout = (
-        _bounded_output(
-            completed.stdout
-        )
-    )
-
-    stderr = (
-        _bounded_output(
-            completed.stderr
-        )
-    )
-
     return {
         "ok": (
             completed.returncode
@@ -712,10 +622,14 @@ def run_process(
             completed.returncode,
 
         "stdout":
-            stdout,
+            _bounded_output(
+                completed.stdout
+            ),
 
         "stderr":
-            stderr,
+            _bounded_output(
+                completed.stderr
+            ),
 
         "timed_out":
             False,
@@ -723,3 +637,216 @@ def run_process(
         "duration_ms":
             duration_ms,
     }
+
+
+def run_trusted_process(
+    executable: str,
+    args: list[str] | None = None,
+    cwd: str | None = None,
+    timeout_seconds: int = 60,
+) -> dict[str, Any]:
+    """
+    Execute a native process selected by trusted application code.
+
+    IMPORTANT:
+
+    This function is NOT a model-facing arbitrary command
+    capability.
+
+    Capability adapters using this function must own the
+    executable and argument shape themselves.
+
+    Workspace confinement, executable discovery, timeout,
+    shell=False, and bounded output still apply.
+    """
+
+    decision = (
+        _validate_common_process_request(
+            executable=executable,
+            args=args,
+            cwd=cwd,
+            timeout_seconds=(
+                timeout_seconds
+            ),
+            max_timeout_seconds=(
+                MAX_TRUSTED_TIMEOUT_SECONDS
+            ),
+        )
+    )
+
+    if not decision.get(
+        "ok",
+        False,
+    ):
+        return decision
+
+    return (
+        _execute_validated_process(
+            decision
+        )
+    )
+
+
+def evaluate_process_policy(
+    executable: str,
+    args: list[str] | None = None,
+    cwd: str | None = None,
+    timeout_seconds: int = 10,
+) -> dict[str, Any]:
+    """
+    Validate the narrow generic process_exec capability.
+    """
+
+    if not isinstance(
+        executable,
+        str,
+    ):
+        return {
+            "ok": False,
+            "status": "denied",
+            "error": (
+                "executable must be a string."
+            ),
+        }
+
+    executable = (
+        executable.strip()
+    )
+
+    policy = (
+        ALLOWED_EXECUTABLES.get(
+            executable
+        )
+    )
+
+    if policy is None:
+        return {
+            "ok": False,
+            "status": "denied",
+            "error": (
+                f"Executable '{executable}' "
+                "is not allowed."
+            ),
+        }
+
+    normalized_args = (
+        []
+        if args is None
+        else args
+    )
+
+    if not isinstance(
+        normalized_args,
+        list,
+    ):
+        return {
+            "ok": False,
+            "status": "denied",
+            "error": (
+                "args must be a list."
+            ),
+        }
+
+    if not all(
+        isinstance(
+            argument,
+            str,
+        )
+        for argument
+        in normalized_args
+    ):
+        return {
+            "ok": False,
+            "status": "denied",
+            "error": (
+                "Every process argument must "
+                "be a string."
+            ),
+        }
+
+    (
+        arguments_valid,
+        argument_error,
+    ) = _validate_process_arguments(
+        executable=executable,
+        args=normalized_args,
+        argument_policy=policy[
+            "argument_policy"
+        ],
+    )
+
+    if not arguments_valid:
+        return {
+            "ok": False,
+            "status": "denied",
+            "error":
+                argument_error,
+        }
+
+    decision = (
+        _validate_common_process_request(
+            executable=executable,
+            args=normalized_args,
+            cwd=cwd,
+            timeout_seconds=(
+                timeout_seconds
+            ),
+            max_timeout_seconds=(
+                MAX_TIMEOUT_SECONDS
+            ),
+        )
+    )
+
+    if not decision.get(
+        "ok",
+        False,
+    ):
+        return decision
+
+    decision[
+        "risk"
+    ] = policy[
+        "risk"
+    ]
+
+    decision[
+        "requires_approval"
+    ] = policy[
+        "requires_approval"
+    ]
+
+    return decision
+
+
+def run_process(
+    executable: str,
+    args: list[str] | None = None,
+    cwd: str | None = None,
+    timeout_seconds: int = 10,
+) -> dict[str, Any]:
+    """
+    Execute one generic model-facing policy-approved process.
+    """
+
+    decision = (
+        evaluate_process_policy(
+            executable=executable,
+            args=args,
+            cwd=cwd,
+            timeout_seconds=(
+                timeout_seconds
+            ),
+        )
+    )
+
+    if not decision.get(
+        "ok",
+        False,
+    ):
+        return decision
+
+    return (
+        _execute_validated_process(
+            decision
+        )
+    )
