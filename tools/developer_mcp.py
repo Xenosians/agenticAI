@@ -31,6 +31,10 @@ from tools.developer_runtime import (
 )
 
 
+DEFAULT_RELATIVE_PATH = "."
+DEFAULT_EXECUTION_TIMEOUT_SECONDS = 60
+
+
 class ProjectInfoResult(
     BaseModel
 ):
@@ -206,6 +210,48 @@ class ServiceLogsResult(
     ) = None
 
 
+def _relative_path_or_default(
+    relative_path: str | None,
+) -> str:
+    """
+    Canonicalize an omitted/null optional workspace path.
+
+    The model may omit the field or emit JSON null for an
+    optional path. Neither gives the model additional authority:
+    both mean the trusted workspace root.
+    """
+
+    if relative_path is None:
+        return DEFAULT_RELATIVE_PATH
+
+    normalized = (
+        relative_path.strip()
+    )
+
+    if not normalized:
+        return DEFAULT_RELATIVE_PATH
+
+    return normalized
+
+
+def _timeout_or_default(
+    timeout_seconds: int | None,
+) -> int:
+    """
+    Canonicalize an omitted/null optional execution timeout.
+
+    Range enforcement still belongs to the trusted execution
+    layer.
+    """
+
+    if timeout_seconds is None:
+        return (
+            DEFAULT_EXECUTION_TIMEOUT_SECONDS
+        )
+
+    return timeout_seconds
+
+
 def register_developer_tools(
     server: MCPServer,
 ) -> None:
@@ -214,6 +260,11 @@ def register_developer_tools(
 
     This is the developer-tool composition boundary. The main MCP
     server only needs to register this feature group once.
+
+    Optional model-facing arguments are canonicalized here before
+    entering trusted adapters. A JSON null for an optional field
+    therefore behaves like an omitted field instead of failing
+    MCP/Pydantic validation before deterministic policy can run.
     """
 
     # ============================================================
@@ -222,44 +273,64 @@ def register_developer_tools(
 
     @server.tool()
     def workspace_project_info(
-        relative_path: str = ".",
+        relative_path: (
+            str | None
+        ) = None,
     ) -> ProjectInfoResult:
         return ProjectInfoResult(
             **run_workspace_project_info(
                 relative_path=(
-                    relative_path
+                    _relative_path_or_default(
+                        relative_path
+                    )
                 )
             )
         )
 
     @server.tool()
     def workspace_run_tests(
-        relative_path: str = ".",
-        timeout_seconds: int = 60,
+        relative_path: (
+            str | None
+        ) = None,
+        timeout_seconds: (
+            int | None
+        ) = None,
     ) -> DeveloperExecutionResult:
         return DeveloperExecutionResult(
             **run_workspace_run_tests(
                 relative_path=(
-                    relative_path
+                    _relative_path_or_default(
+                        relative_path
+                    )
                 ),
                 timeout_seconds=(
-                    timeout_seconds
+                    _timeout_or_default(
+                        timeout_seconds
+                    )
                 ),
             )
         )
 
     @server.tool()
     def workspace_run_build(
-        relative_path: str = ".",
-        timeout_seconds: int = 60,
+        relative_path: (
+            str | None
+        ) = None,
+        timeout_seconds: (
+            int | None
+        ) = None,
     ) -> DeveloperExecutionResult:
         return DeveloperExecutionResult(
             **run_workspace_run_build(
                 relative_path=(
-                    relative_path
+                    _relative_path_or_default(
+                        relative_path
+                    )
                 ),
                 timeout_seconds=(
-                    timeout_seconds
+                    _timeout_or_default(
+                        timeout_seconds
+                    )
                 ),
             )
         )
@@ -277,12 +348,16 @@ def register_developer_tools(
 
     @server.tool()
     def workspace_service_status(
-        relative_path: str = ".",
+        relative_path: (
+            str | None
+        ) = None,
     ) -> ServiceStatusResult:
         return ServiceStatusResult(
             **run_workspace_service_status(
                 relative_path=(
-                    relative_path
+                    _relative_path_or_default(
+                        relative_path
+                    )
                 )
             )
         )
@@ -290,7 +365,9 @@ def register_developer_tools(
     @server.tool()
     def workspace_service_logs(
         service_name: str,
-        relative_path: str = ".",
+        relative_path: (
+            str | None
+        ) = None,
     ) -> ServiceLogsResult:
         return ServiceLogsResult(
             **run_workspace_service_logs(
@@ -298,7 +375,9 @@ def register_developer_tools(
                     service_name
                 ),
                 relative_path=(
-                    relative_path
+                    _relative_path_or_default(
+                        relative_path
+                    )
                 ),
             )
         )

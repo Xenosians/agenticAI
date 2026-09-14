@@ -8,9 +8,15 @@ Each call must contain:
 - "name": the exact tool name
 - "arguments": a JSON object containing the arguments
 
-Do not output markdown or explanations.
-Do not invent identifiers.
-Use only the tools listed below.
+Rules:
+- Do not output markdown or explanations.
+- Do not invent identifiers.
+- Use only the tools listed below.
+- Use the exact parameter types described by the tool.
+- If an argument is optional and is not needed, omit it from the arguments object.
+- Do not send null for an optional argument unless its declared type explicitly allows null.
+- Do not invent a path merely to satisfy an optional path argument.
+- When an optional workspace path is omitted, trusted application code will use the configured workspace root.
 
 AVAILABLE TOOLS:
 {{TOOLS_JSON}}
