@@ -93,6 +93,31 @@ class AgentResult:
         str | None
     ) = None
 
+    # Authoritative structured result returned by the trusted tool.
+    #
+    # This is preserved independently from the human-readable
+    # specialist answer so later orchestration/backend/frontend
+    # layers do not need to reverse-parse prose.
+    tool_result: (
+        dict[
+            str,
+            Any,
+        ]
+        | None
+    ) = None
+
+    # Optional generic UI-oriented representation.
+    #
+    # Presentation is derived from tool_result and never replaces
+    # the authoritative structured result.
+    presentation: (
+        dict[
+            str,
+            Any,
+        ]
+        | None
+    ) = None
+
 
 @dataclass
 class HubResult:

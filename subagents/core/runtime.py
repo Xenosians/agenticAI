@@ -32,6 +32,10 @@ from tools.registry import (
     format_tool_result,
 )
 
+from tools.result_presentation_registry import (
+    build_tool_presentation,
+)
+
 
 class AgentRuntime:
     """
@@ -65,7 +69,9 @@ class AgentRuntime:
             ↓
         MCP / Approval
             ↓
-        trusted tool presentation
+        trusted structured tool result
+            ↓
+        human formatter + optional presentation builder
             ↓
         AgentResult
     """
@@ -378,6 +384,20 @@ class AgentRuntime:
                 ),
             )
 
+        # --------------------------------------------------------
+        # Preserve trusted machine data.
+        #
+        # Human-facing prose and UI presentation are both derived
+        # views. Neither replaces the authoritative tool result.
+        # --------------------------------------------------------
+
+        presentation = (
+            build_tool_presentation(
+                tool_name,
+                tool_result,
+            )
+        )
+
         return AgentResult(
             task_id=(
                 task.task_id
@@ -397,5 +417,11 @@ class AgentRuntime:
                     tool_name,
                     tool_result,
                 )
+            ),
+            tool_result=(
+                tool_result
+            ),
+            presentation=(
+                presentation
             ),
         )

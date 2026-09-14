@@ -1,10 +1,15 @@
 from tools.developer_presentation import (
+    build_developer_execution_card,
+    build_project_info_card,
     format_developer_execution_approval,
     format_developer_execution_result,
     format_project_info_result,
 )
 
 from tools.developer_runtime_presentation import (
+    build_process_snapshot_card,
+    build_service_logs_card,
+    build_service_status_card,
     format_process_snapshot_result,
     format_service_logs_result,
     format_service_status_result,
@@ -47,6 +52,10 @@ DEVELOPER_TOOLS = {
         "result_formatter": (
             format_project_info_result
         ),
+
+        "presentation_builder": (
+            build_project_info_card
+        ),
     },
 
     "workspace_run_tests": {
@@ -87,6 +96,10 @@ DEVELOPER_TOOLS = {
 
         "result_formatter": (
             format_developer_execution_result
+        ),
+
+        "presentation_builder": (
+            build_developer_execution_card
         ),
 
         "approval_formatter": (
@@ -134,6 +147,10 @@ DEVELOPER_TOOLS = {
             format_developer_execution_result
         ),
 
+        "presentation_builder": (
+            build_developer_execution_card
+        ),
+
         "approval_formatter": (
             format_developer_execution_approval
         ),
@@ -164,6 +181,10 @@ DEVELOPER_TOOLS = {
 
         "result_formatter": (
             format_process_snapshot_result
+        ),
+
+        "presentation_builder": (
+            build_process_snapshot_card
         ),
     },
 
@@ -196,6 +217,10 @@ DEVELOPER_TOOLS = {
 
         "result_formatter": (
             format_service_status_result
+        ),
+
+        "presentation_builder": (
+            build_service_status_card
         ),
     },
 
@@ -240,6 +265,10 @@ DEVELOPER_TOOLS = {
 
         "result_formatter": (
             format_service_logs_result
+        ),
+
+        "presentation_builder": (
+            build_service_logs_card
         ),
     },
 }
