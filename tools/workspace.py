@@ -6,38 +6,12 @@ from services.process_runner import (
     workspace_root,
 )
 
+from tools.workspace_policy import (
+    validate_readable_text_path,
+)
+
 
 MAX_TEXT_READ_CHARS = 16_000
-
-
-ALLOWED_TEXT_SUFFIXES = {
-    ".css",
-    ".ex",
-    ".exs",
-    ".html",
-    ".js",
-    ".json",
-    ".md",
-    ".nim",
-    ".py",
-    ".toml",
-    ".txt",
-    ".yaml",
-    ".yml",
-}
-
-
-ALLOWED_EXTENSIONLESS_FILES = {
-    "LICENSE",
-}
-
-
-DENIED_NAME_FRAGMENTS = {
-    "credential",
-    "password",
-    "secret",
-    "token",
-}
 
 
 def workspace_mkdir(
@@ -62,67 +36,11 @@ def workspace_mkdir(
     )
 
 
-def _validate_readable_text_path(
-    relative_path: str,
-) -> tuple[
-    bool,
-    str | None,
-]:
-    """
-    Apply conservative text-file policy before reading.
-    """
-
-    path = Path(
-        relative_path
-    )
-
-    file_name = (
-        path.name.lower()
-    )
-
-    if any(
-        fragment in file_name
-        for fragment
-        in DENIED_NAME_FRAGMENTS
-    ):
-        return (
-            False,
-            (
-                "The requested file name is blocked "
-                "by the sensitive-file policy."
-            ),
-        )
-
-    if (
-        path.name
-        in ALLOWED_EXTENSIONLESS_FILES
-    ):
-        return True, None
-
-    suffix = (
-        path.suffix.lower()
-    )
-
-    if (
-        suffix
-        not in ALLOWED_TEXT_SUFFIXES
-    ):
-        return (
-            False,
-            (
-                "The requested file type is not "
-                "allowed by the current text-read policy."
-            ),
-        )
-
-    return True, None
-
-
 def workspace_read_text(
     relative_path: str,
 ) -> dict[str, Any]:
     """
-    Read one UTF-8 text file from the approved developer
+    Read one approved UTF-8 text file from the developer
     workspace.
 
     Security properties:
@@ -131,7 +49,7 @@ def workspace_read_text(
     - resolved path remains inside PROCESS_WORKSPACE_ROOT
     - directories cannot be read as files
     - only approved source/text formats are allowed
-    - common sensitive filenames are denied
+    - sensitive paths are denied
     - output is bounded
     - binary/non-UTF-8 data is rejected
     """
@@ -188,7 +106,7 @@ def workspace_read_text(
     (
         readable,
         policy_error,
-    ) = _validate_readable_text_path(
+    ) = validate_readable_text_path(
         relative_path
     )
 
@@ -201,7 +119,10 @@ def workspace_read_text(
             ),
         }
 
-    root = workspace_root()
+    root = (
+        workspace_root()
+        .resolve()
+    )
 
     try:
         candidate = (
@@ -249,6 +170,16 @@ def workspace_read_text(
             "error": (
                 "Requested workspace path "
                 "is not a file."
+            ),
+        }
+
+    if candidate.is_symlink():
+        return {
+            "ok": False,
+            "status": "denied",
+            "error": (
+                "Symbolic links cannot be read "
+                "through workspace_read_text."
             ),
         }
 
