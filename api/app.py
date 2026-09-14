@@ -731,7 +731,6 @@ def valid_completion_ack(
 # Phoenix completion delivery
 # ============================================================
 
-
 async def deliver_outbox_entry(
     runtime: ApplicationRuntime,
     entry: OutboxEntry,
@@ -902,7 +901,6 @@ async def deliver_outbox_entry(
 
     return False
 
-
 # ============================================================
 # Durable outbox worker
 # ============================================================
@@ -1019,6 +1017,49 @@ async def execute_job(
             f"{result_dict.get('status')}"
         )
 
+        # ========================================================
+        # LEARNING TRAJECTORY
+        #
+        # Learning capture is best-effort observability.
+        #
+        # Failure to record learning data must never change the
+        # authoritative outcome of the user's job.
+        # ========================================================
+
+        try:
+            trajectory = (
+                runtime
+                .trajectory_recorder
+                .record(
+                    job_id=(
+                        job_id
+                    ),
+
+                    attempt=(
+                        payload.attempt
+                    ),
+
+                    result=(
+                        result
+                    ),
+                )
+            )
+
+            if trajectory is not None:
+                print(
+                    "[LEARNING] Captured trajectory "
+                    "trajectory_id="
+                    f"{trajectory.get('trajectory_id')} "
+                    f"job_id={job_id}"
+                )
+
+        except Exception as learning_exc:
+            print(
+                "[LEARNING] Trajectory capture failed "
+                f"job_id={job_id} "
+                f"error={learning_exc!r}"
+            )
+
         callback_payload = (
             completion_payload(
                 payload,
@@ -1085,7 +1126,6 @@ async def execute_job(
             job_id,
             None,
         )
-
 
 def schedule_job(
     runtime: ApplicationRuntime,

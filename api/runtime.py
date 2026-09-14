@@ -25,6 +25,10 @@ from config import (
     Settings,
 )
 
+from learning.recorder import (
+    TrajectoryRecorder,
+)
+
 from subagents.core.orchestrator import (
     Orchestrator,
 )
@@ -52,10 +56,6 @@ class ApplicationRuntime:
     Explicit process-owned runtime graph for the AI service.
 
     FastAPI lifespan creates exactly one instance.
-
-    This is NOT a Singleton Pattern. The application lifecycle
-    owns this object and passes/retrieves it explicitly through
-    FastAPI app.state.
 
     Tests may construct isolated runtime graphs independently.
     """
@@ -110,3 +110,39 @@ class ApplicationRuntime:
     ) = None
 
     ready: bool = False
+
+    trajectory_recorder: (
+        TrajectoryRecorder
+    ) = field(
+        init=False
+    )
+
+    def __post_init__(
+        self,
+    ) -> None:
+
+        trajectory_path = (
+            self.settings
+            .resolve_runtime_path(
+                self.settings
+                .learning_trajectory_path
+            )
+        )
+
+        self.trajectory_recorder = (
+            TrajectoryRecorder(
+                path=(
+                    trajectory_path
+                ),
+
+                enabled=(
+                    self.settings
+                    .learning_capture_enabled
+                ),
+
+                hub_model=(
+                    self.settings
+                    .hub_model_key
+                ),
+            )
+        )

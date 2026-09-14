@@ -340,6 +340,27 @@ class Settings(
     )
 
     # ============================================================
+    # LEARNING / TRAJECTORY CAPTURE
+    #
+    # Raw runtime trajectories are evidence only.
+    #
+    # They are sanitized before persistence and are NOT
+    # automatically eligible for model training.
+    # ============================================================
+
+    learning_capture_enabled: bool = (
+        False
+    )
+
+    learning_trajectory_path: Path = (
+        Path(
+            ".runtime/"
+            "learning/"
+            "trajectories.jsonl"
+        )
+    )
+
+    # ============================================================
     # DEVELOPER WORKSPACE
     # ============================================================
 
