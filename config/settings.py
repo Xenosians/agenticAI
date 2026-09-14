@@ -340,11 +340,37 @@ class Settings(
     )
 
     # ============================================================
-    # PROCESS EXECUTION WORKSPACE
+    # DEVELOPER WORKSPACE
     # ============================================================
 
     process_workspace_root: Path = (
         PROJECT_ROOT
+    )
+
+    # ============================================================
+    # GOVERNED GIT REPOSITORIES
+    #
+    # Model-facing Git capabilities receive logical repository
+    # identifiers only.
+    #
+    # Physical paths remain trusted configuration.
+    #
+    # Relative repository paths are resolved beneath
+    # PROCESS_WORKSPACE_ROOT.
+    # ============================================================
+
+    git_default_repository: str = (
+        "ai"
+    )
+
+    git_repositories: dict[
+        str,
+        Path,
+    ] = Field(
+        default_factory=lambda: {
+            "ai":
+                Path("."),
+        }
     )
 
     # ============================================================

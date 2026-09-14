@@ -11,15 +11,14 @@ from tools.developer_catalog import (
     DEVELOPER_TOOLS,
 )
 
+from tools.git_catalog import (
+    GIT_TOOLS,
+)
+
 from tools.presentation import (
     format_access_check_result,
     format_account_status_result,
     format_generic_approval,
-    format_git_branches_result,
-    format_git_changed_files_result,
-    format_git_diff_result,
-    format_git_log_result,
-    format_git_status_result,
     format_password_reset_approval,
     format_process_result,
     format_unlock_approval,
@@ -46,93 +45,128 @@ TOOLS = {
         "description": (
             "Check whether an account is enabled or locked."
         ),
-        "risk": "read",
-        "requires_approval": False,
+
+        "risk":
+            "read",
+
+        "requires_approval":
+            False,
+
         "grounded_arguments": [
             "user_id",
         ],
+
         "parameters": {
             "user_id": {
-                "type": "str",
+                "type":
+                    "str",
+
                 "description": (
                     "Exact user identifier to check."
                 ),
             },
         },
-        "result_formatter": (
-            format_account_status_result
-        ),
+
+        "result_formatter":
+            format_account_status_result,
     },
 
     "check_access": {
         "description": (
             "Check whether a user can access a resource."
         ),
-        "risk": "read",
-        "requires_approval": False,
+
+        "risk":
+            "read",
+
+        "requires_approval":
+            False,
+
         "grounded_arguments": [
             "user_id",
             "resource",
         ],
+
         "parameters": {
             "user_id": {
-                "type": "str",
+                "type":
+                    "str",
+
                 "description": (
                     "Exact user identifier to check."
                 ),
             },
+
             "resource": {
-                "type": "str",
+                "type":
+                    "str",
+
                 "description": (
                     "Exact resource identifier or name."
                 ),
             },
         },
-        "result_formatter": (
-            format_access_check_result
-        ),
+
+        "result_formatter":
+            format_access_check_result,
     },
 
     "unlock_user": {
         "description":
             "Unlock an account.",
-        "risk": "low",
-        "requires_approval": True,
+
+        "risk":
+            "low",
+
+        "requires_approval":
+            True,
+
         "grounded_arguments": [
             "user_id",
         ],
+
         "parameters": {
             "user_id": {
-                "type": "str",
+                "type":
+                    "str",
+
                 "description": (
                     "Exact user identifier to unlock."
                 ),
             },
         },
-        "approval_formatter": (
-            format_unlock_approval
-        ),
+
+        "approval_formatter":
+            format_unlock_approval,
     },
 
     "reset_password": {
         "description":
             "Reset an account password.",
-        "risk": "high",
-        "requires_approval": True,
+
+        "risk":
+            "high",
+
+        "requires_approval":
+            True,
+
         "grounded_arguments": [
             "user_id",
         ],
+
         "parameters": {
             "user_id": {
-                "type": "str",
+                "type":
+                    "str",
+
                 "description": (
                     "Exact user identifier."
                 ),
             },
         },
-        "approval_formatter": (
-            format_password_reset_approval
-        ),
+
+        "approval_formatter":
+            format_password_reset_approval,
     },
 
     # ============================================================
@@ -144,45 +178,63 @@ TOOLS = {
             "Execute an approved native process "
             "inside the configured workspace."
         ),
-        "risk": "low",
-        "requires_approval": True,
-        "policy_resolver": (
-            evaluate_process_policy
-        ),
-        "grounded_arguments": [],
+
+        "risk":
+            "low",
+
+        "requires_approval":
+            True,
+
+        "policy_resolver":
+            evaluate_process_policy,
+
+        "grounded_arguments":
+            [],
+
         "parameters": {
             "executable": {
-                "type": "str",
+                "type":
+                    "str",
+
                 "description": (
                     "Approved native executable."
                 ),
             },
+
             "args": {
-                "type": "list[str]",
+                "type":
+                    "list[str]",
+
                 "description": (
                     "Structured executable arguments."
                 ),
             },
+
             "cwd": {
-                "type": "str",
+                "type":
+                    "str",
+
                 "description": (
                     "Optional working directory inside "
                     "the approved workspace."
                 ),
             },
+
             "timeout_seconds": {
-                "type": "int",
+                "type":
+                    "int",
+
                 "description": (
                     "Execution timeout from 1 to 30 seconds."
                 ),
             },
         },
-        "result_formatter": (
-            format_process_result
-        ),
-        "approval_formatter": (
-            format_generic_approval
-        ),
+
+        "result_formatter":
+            format_process_result,
+
+        "approval_formatter":
+            format_generic_approval,
     },
 
     # ============================================================
@@ -194,36 +246,50 @@ TOOLS = {
             "Create exactly one direct-child directory "
             "inside the approved developer workspace."
         ),
-        "risk": "low",
-        "requires_approval": True,
+
+        "risk":
+            "low",
+
+        "requires_approval":
+            True,
+
         "grounded_arguments": [
             "directory_name",
         ],
+
         "parameters": {
             "directory_name": {
-                "type": "str",
+                "type":
+                    "str",
+
                 "description": (
                     "Exact directory name explicitly "
                     "requested by the user."
                 ),
             },
+
             "cwd": {
-                "type": "str",
+                "type":
+                    "str",
+
                 "description": (
                     "Optional working directory inside "
                     "the approved workspace."
                 ),
             },
+
             "timeout_seconds": {
-                "type": "int",
+                "type":
+                    "int",
+
                 "description": (
                     "Execution timeout from 1 to 30 seconds."
                 ),
             },
         },
-        "approval_formatter": (
-            format_generic_approval
-        ),
+
+        "approval_formatter":
+            format_generic_approval,
     },
 
     "workspace_read_text": {
@@ -231,23 +297,31 @@ TOOLS = {
             "Read one approved UTF-8 text or source file "
             "from the developer workspace."
         ),
-        "risk": "read",
-        "requires_approval": False,
+
+        "risk":
+            "read",
+
+        "requires_approval":
+            False,
+
         "grounded_arguments": [
             "relative_path",
         ],
+
         "parameters": {
             "relative_path": {
-                "type": "str",
+                "type":
+                    "str",
+
                 "description": (
                     "Exact workspace-relative file path "
                     "explicitly supplied by the user."
                 ),
             },
         },
-        "result_formatter": (
-            format_workspace_read_result
-        ),
+
+        "result_formatter":
+            format_workspace_read_result,
     },
 
     "workspace_list": {
@@ -255,21 +329,30 @@ TOOLS = {
             "List direct children of a safe workspace "
             "directory without invoking a shell."
         ),
-        "risk": "read",
-        "requires_approval": False,
-        "grounded_arguments": [],
+
+        "risk":
+            "read",
+
+        "requires_approval":
+            False,
+
+        "grounded_arguments":
+            [],
+
         "parameters": {
             "relative_path": {
-                "type": "str",
+                "type":
+                    "str",
+
                 "description": (
                     "Optional workspace-relative directory. "
                     "Defaults to the workspace root."
                 ),
             },
         },
-        "result_formatter": (
-            format_workspace_list_result
-        ),
+
+        "result_formatter":
+            format_workspace_list_result,
     },
 
     "workspace_search": {
@@ -277,26 +360,38 @@ TOOLS = {
             "Search approved source/text files recursively "
             "inside the workspace using a bounded literal query."
         ),
-        "risk": "read",
-        "requires_approval": False,
-        "grounded_arguments": [],
+
+        "risk":
+            "read",
+
+        "requires_approval":
+            False,
+
+        "grounded_arguments":
+            [],
+
         "parameters": {
             "query": {
-                "type": "str",
+                "type":
+                    "str",
+
                 "description": (
                     "Literal source/text phrase to search for."
                 ),
             },
+
             "relative_path": {
-                "type": "str",
+                "type":
+                    "str",
+
                 "description": (
                     "Optional workspace-relative directory."
                 ),
             },
         },
-        "result_formatter": (
-            format_workspace_search_result
-        ),
+
+        "result_formatter":
+            format_workspace_search_result,
     },
 
     "workspace_file_info": {
@@ -304,101 +399,39 @@ TOOLS = {
             "Inspect safe metadata for one workspace "
             "file or directory without reading its contents."
         ),
-        "risk": "read",
-        "requires_approval": False,
-        "grounded_arguments": [],
+
+        "risk":
+            "read",
+
+        "requires_approval":
+            False,
+
+        "grounded_arguments":
+            [],
+
         "parameters": {
             "relative_path": {
-                "type": "str",
+                "type":
+                    "str",
+
                 "description": (
                     "Workspace-relative file or directory path."
                 ),
             },
         },
-        "result_formatter": (
-            format_workspace_file_info_result
-        ),
-    },
 
-    # ============================================================
-    # GIT — READ ONLY
-    # ============================================================
-
-    "workspace_git_status": {
-        "description": (
-            "Inspect the current Git branch and "
-            "working-tree status."
-        ),
-        "risk": "read",
-        "requires_approval": False,
-        "grounded_arguments": [],
-        "parameters": {},
-        "result_formatter": (
-            format_git_status_result
-        ),
-    },
-
-    "workspace_git_branches": {
-        "description": (
-            "List local Git branches and identify "
-            "the current branch."
-        ),
-        "risk": "read",
-        "requires_approval": False,
-        "grounded_arguments": [],
-        "parameters": {},
-        "result_formatter": (
-            format_git_branches_result
-        ),
-    },
-
-    "workspace_git_log": {
-        "description": (
-            "Inspect the most recent Git commit history "
-            "for the current repository."
-        ),
-        "risk": "read",
-        "requires_approval": False,
-        "grounded_arguments": [],
-        "parameters": {},
-        "result_formatter": (
-            format_git_log_result
-        ),
-    },
-
-    "workspace_git_diff": {
-        "description": (
-            "Inspect the current unstaged Git diff."
-        ),
-        "risk": "read",
-        "requires_approval": False,
-        "grounded_arguments": [],
-        "parameters": {},
-        "result_formatter": (
-            format_git_diff_result
-        ),
-    },
-
-    "workspace_git_changed_files": {
-        "description": (
-            "List files with unstaged Git changes "
-            "in the current repository."
-        ),
-        "risk": "read",
-        "requires_approval": False,
-        "grounded_arguments": [],
-        "parameters": {},
-        "result_formatter": (
-            format_git_changed_files_result
-        ),
+        "result_formatter":
+            format_workspace_file_info_result,
     },
 }
 
 
-# Feature/domain catalogs extend the registry without forcing
-# every future tool definition into this module.
 TOOLS.update(
     DEVELOPER_TOOLS
+)
+
+TOOLS.update(
+    GIT_TOOLS
 )
 
 TOOLS.update(
@@ -408,8 +441,10 @@ TOOLS.update(
 
 def list_tools(
 ) -> list[str]:
-    return list(
-        TOOLS.keys()
+    return (
+        list(
+            TOOLS.keys()
+        )
     )
 
 
@@ -456,8 +491,10 @@ def format_tool_result(
             "completed successfully."
         )
 
-    return formatter(
-        result
+    return (
+        formatter(
+            result
+        )
     )
 
 
@@ -503,4 +540,6 @@ def format_approval_required(
             f"Approval ID: {approval_id}."
         )
 
-    return message
+    return (
+        message
+    )
