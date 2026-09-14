@@ -41,8 +41,9 @@ DELEGATION RULES:
    exactly what information or operation that specialist should
    resolve.
 
-9. Preserve identifiers, usernames, resource names, paths, and other
-   concrete values from the user's request exactly.
+9. Preserve identifiers, usernames, resource names, paths, ticket
+   identifiers, and other concrete values from the user's request
+   exactly.
 
 10. Delegation instructions are task guidance only. They are not
     permission or authorization to bypass tool policy.
@@ -56,6 +57,28 @@ DELEGATION RULES:
 
 13. Do not tell a specialist what the answer should be. Describe only
     the task that needs to be resolved.
+
+14. A compact identifier shaped like PROJECT-NUMBER, for example
+    ITSM-101, OPS-42, or ABC-1234, should be treated as a ticket or
+    issue identifier when a ticket specialist is available and the
+    request asks to show, get, inspect, retrieve, check, or determine
+    the status of that identifier.
+
+15. Do not interpret a ticket-like identifier as a developer
+    workspace, source-code project, repository, file, or directory
+    unless the user explicitly describes it as one.
+
+16. Requests about ticket details, issue status, assignee, priority,
+    reporter, or ticket metadata belong to the ticket specialist when
+    that specialist is available.
+
+17. Requests about source files, workspace directories, repositories,
+    Git state, builds, tests, processes, services, or logs belong to
+    the developer specialist when that specialist is available.
+
+18. Never expand a terse request into unrelated work. For example,
+    "Show me ITSM-101" means retrieve ITSM-101. It does not mean
+    inspect source code, configuration files, documentation, or logs.
 
 EXAMPLES:
 
@@ -88,6 +111,48 @@ If an access specialist is available:
 }
 
 User:
+"Show me ITSM-101."
+
+If a ticket specialist is available:
+
+{
+  "delegations": [
+    {
+      "agent": "ticket-specialist",
+      "instructions": "Retrieve ticket ITSM-101."
+    }
+  ]
+}
+
+User:
+"What is the status of OPS-42?"
+
+If a ticket specialist is available:
+
+{
+  "delegations": [
+    {
+      "agent": "ticket-specialist",
+      "instructions": "Retrieve ticket OPS-42 and report its current status."
+    }
+  ]
+}
+
+User:
+"Get issue ABC-1234."
+
+If a ticket specialist is available:
+
+{
+  "delegations": [
+    {
+      "agent": "ticket-specialist",
+      "instructions": "Retrieve ticket ABC-1234."
+    }
+  ]
+}
+
+User:
 "Inspect the current workspace project type."
 
 If a developer specialist is available:
@@ -111,6 +176,20 @@ If a developer specialist is available:
     {
       "agent": "developer-specialist",
       "instructions": "Inspect the project type at agenticaiPersonal/itsm-agent."
+    }
+  ]
+}
+
+User:
+"Show me the Git status for the current repository."
+
+If a developer specialist is available:
+
+{
+  "delegations": [
+    {
+      "agent": "developer-specialist",
+      "instructions": "Inspect the current repository Git status."
     }
   ]
 }

@@ -381,6 +381,35 @@ class Settings(
     )
 
     # ============================================================
+    # TICKETING PROVIDER
+    # ============================================================
+
+    ticketing_backend: str = (
+        "mock"
+    )
+
+    # ============================================================
+    # JIRA
+    # ============================================================
+
+    jira_base_url: (
+        str | None
+    ) = None
+
+    jira_email: (
+        str | None
+    ) = None
+
+    jira_api_token: (
+        str | None
+    ) = None
+
+    jira_http_timeout_seconds: float = Field(
+        default=10.0,
+        gt=0,
+    )
+
+    # ============================================================
     # LDAP / ACTIVE DIRECTORY
     # ============================================================
 
@@ -481,6 +510,37 @@ class Settings(
         if normalized not in supported:
             raise ValueError(
                 "DIRECTORY_BACKEND must be one of: "
+                + ", ".join(
+                    sorted(
+                        supported
+                    )
+                )
+            )
+
+        return normalized
+
+    @field_validator(
+        "ticketing_backend"
+    )
+    @classmethod
+    def validate_ticketing_backend(
+        cls,
+        value: str,
+    ) -> str:
+        normalized = (
+            value
+            .strip()
+            .lower()
+        )
+
+        supported = {
+            "jira",
+            "mock",
+        }
+
+        if normalized not in supported:
+            raise ValueError(
+                "TICKETING_BACKEND must be one of: "
                 + ", ".join(
                     sorted(
                         supported
@@ -654,6 +714,95 @@ class Settings(
 
         return normalized
 
+    @field_validator(
+        "jira_base_url"
+    )
+    @classmethod
+    def validate_jira_base_url(
+        cls,
+        value: (
+            str | None
+        ),
+    ) -> (
+        str | None
+    ):
+        if value is None:
+            return None
+
+        normalized = (
+            value
+            .strip()
+            .rstrip("/")
+        )
+
+        if not normalized:
+            return None
+
+        parsed = (
+            urlsplit(
+                normalized
+            )
+        )
+
+        if (
+            parsed.scheme
+            not in {
+                "http",
+                "https",
+            }
+        ):
+            raise ValueError(
+                "JIRA_BASE_URL must use "
+                "http or https."
+            )
+
+        if not parsed.hostname:
+            raise ValueError(
+                "JIRA_BASE_URL must contain "
+                "a hostname."
+            )
+
+        if (
+            parsed.username is not None
+            or parsed.password is not None
+        ):
+            raise ValueError(
+                "JIRA_BASE_URL must not contain "
+                "credentials."
+            )
+
+        if parsed.query:
+            raise ValueError(
+                "JIRA_BASE_URL must not contain "
+                "a query string."
+            )
+
+        if parsed.fragment:
+            raise ValueError(
+                "JIRA_BASE_URL must not contain "
+                "a fragment."
+            )
+
+        if parsed.path not in {
+            "",
+            "/",
+        }:
+            raise ValueError(
+                "JIRA_BASE_URL must be an origin "
+                "without a path."
+            )
+
+        try:
+            parsed.port
+
+        except ValueError as exc:
+            raise ValueError(
+                "JIRA_BASE_URL contains "
+                "an invalid port."
+            ) from exc
+
+        return normalized
+
     # ============================================================
     # PHOENIX HELPERS
     # ============================================================
@@ -686,6 +835,65 @@ class Settings(
         ):
             raise RuntimeError(
                 "ITSM_INTERNAL_JOB_TOKEN "
+                "is not configured."
+            )
+
+        return (
+            value.strip()
+        )
+
+    # ============================================================
+    # TICKETING HELPERS
+    # ============================================================
+
+    def require_jira_base_url(
+        self,
+    ) -> str:
+        value = (
+            self.jira_base_url
+        )
+
+        if not value:
+            raise RuntimeError(
+                "JIRA_BASE_URL "
+                "is not configured."
+            )
+
+        return value
+
+    def require_jira_email(
+        self,
+    ) -> str:
+        value = (
+            self.jira_email
+        )
+
+        if (
+            value is None
+            or not value.strip()
+        ):
+            raise RuntimeError(
+                "JIRA_EMAIL "
+                "is not configured."
+            )
+
+        return (
+            value.strip()
+        )
+
+    def require_jira_api_token(
+        self,
+    ) -> str:
+        value = (
+            self.jira_api_token
+        )
+
+        if (
+            value is None
+            or not value.strip()
+        ):
+            raise RuntimeError(
+                "JIRA_API_TOKEN "
                 "is not configured."
             )
 

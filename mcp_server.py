@@ -21,6 +21,11 @@ from services.process_runner import (
     run_process,
 )
 
+from services.ticketing import (
+    TicketService,
+    build_ticket_service,
+)
+
 from tools.developer_mcp import (
     register_developer_tools,
 )
@@ -40,6 +45,10 @@ from tools.git import (
 
     workspace_git_status
     as run_workspace_git_status,
+)
+
+from tools.ticketing_mcp import (
+    register_ticketing_tools,
 )
 
 from tools.workspace import (
@@ -182,8 +191,13 @@ class WorkspaceFileInfoResult(
 def create_mcp_server(
     *,
     settings: Settings | None = None,
+
     directory: (
         DirectoryService | None
+    ) = None,
+
+    ticketing: (
+        TicketService | None
     ) = None,
 ) -> MCPServer:
     runtime_settings = (
@@ -196,6 +210,14 @@ def create_mcp_server(
         directory
         if directory is not None
         else build_directory_service(
+            runtime_settings
+        )
+    )
+
+    ticket_service = (
+        ticketing
+        if ticketing is not None
+        else build_ticket_service(
             runtime_settings
         )
     )
@@ -384,6 +406,15 @@ def create_mcp_server(
         return ProcessExecResult(
             **run_workspace_git_changed_files()
         )
+
+    # ============================================================
+    # TICKETING
+    # ============================================================
+
+    register_ticketing_tools(
+        server,
+        ticket_service,
+    )
 
     # ============================================================
     # GOVERNED DEVELOPER CAPABILITIES

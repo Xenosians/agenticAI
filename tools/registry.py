@@ -26,6 +26,10 @@ from tools.presentation import (
     format_workspace_read_result,
 )
 
+from tools.ticketing_catalog import (
+    TICKETING_TOOLS,
+)
+
 from tools.workspace_presentation import (
     format_workspace_file_info_result,
     format_workspace_list_result,
@@ -395,6 +399,10 @@ TOOLS = {
 # every future tool definition into this module.
 TOOLS.update(
     DEVELOPER_TOOLS
+)
+
+TOOLS.update(
+    TICKETING_TOOLS
 )
 
 
