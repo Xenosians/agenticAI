@@ -41,23 +41,9 @@ class AgentRuntime:
     """
     Executes specialist tasks.
 
-    The runtime is intentionally generic.
-
-    The Hub chooses WHICH specialist should receive a task.
-
-    The specialist reasons about HOW to satisfy the original
-    user request using its available capabilities.
-
-    Hub-generated delegation instructions are retained as
-    orchestration metadata, but are deliberately not injected
-    into specialist reasoning.
-
-    This prevents one generative model from accidentally
-    introducing identifiers, interpretations, scopes, or other
-    concrete values that were not present in the original
-    user request.
-
-    Trusted execution policy remains inside ToolGateway.
+    Stable outcome codes are propagated into AgentResult so
+    learning/evaluation infrastructure can classify runtime
+    behavior without parsing human-readable errors.
     """
 
     def __init__(
@@ -66,6 +52,7 @@ class AgentRuntime:
         inference: InferenceEngine,
         tool_gateway: ToolGateway,
     ) -> None:
+
         self.agent_registry = (
             agent_registry
         )
@@ -82,6 +69,7 @@ class AgentRuntime:
         self,
         task: AgentTask,
     ) -> AgentResult:
+
         try:
             agent = (
                 self.agent_registry
@@ -95,30 +83,21 @@ class AgentRuntime:
                 task_id=(
                     task.task_id
                 ),
+
                 agent_name=(
                     task.agent_name
                 ),
+
                 status="error",
+
+                outcome_code=(
+                    "agent_definition_error"
+                ),
+
                 error=str(
                     exc
                 ),
             )
-
-        # ========================================================
-        # SPECIALIST CONTEXT
-        #
-        # IMPORTANT:
-        #
-        # The original user request is the specialist's semantic
-        # source of truth.
-        #
-        # Hub delegation instructions are NOT inserted into the
-        # model conversation because they are themselves generated
-        # text and may contain invented interpretations or values.
-        #
-        # The Hub owns routing.
-        # The specialist owns capability reasoning.
-        # ========================================================
 
         messages = [
             {
@@ -148,10 +127,13 @@ class AgentRuntime:
                     model_key=(
                         agent.model
                     ),
+
                     messages=(
                         messages
                     ),
+
                     max_new_tokens=256,
+
                     priority=(
                         InferencePriority
                         .SPECIALIST
@@ -170,10 +152,17 @@ class AgentRuntime:
                 task_id=(
                     task.task_id
                 ),
+
                 agent_name=(
                     task.agent_name
                 ),
+
                 status="error",
+
+                outcome_code=(
+                    "model_generation_error"
+                ),
+
                 error=(
                     "Worker model failed: "
                     f"{exc}"
@@ -207,10 +196,17 @@ class AgentRuntime:
                 task_id=(
                     task.task_id
                 ),
+
                 agent_name=(
                     task.agent_name
                 ),
+
                 status="error",
+
+                outcome_code=(
+                    "tool_parse_error"
+                ),
+
                 error=str(
                     exc
                 ),
@@ -232,10 +228,17 @@ class AgentRuntime:
                 task_id=(
                     task.task_id
                 ),
+
                 agent_name=(
                     task.agent_name
                 ),
+
                 status="error",
+
+                outcome_code=(
+                    "invalid_tool_call_count"
+                ),
+
                 error=(
                     "Worker must return exactly "
                     "one tool call for this "
@@ -318,17 +321,28 @@ class AgentRuntime:
                     arguments
                 ),
 
+                outcome_code=(
+                    "tool_gateway_exception"
+                ),
+
                 error=(
                     "Tool gateway failed: "
                     f"{exc}"
                 ),
             )
 
+        decision_code = (
+            gateway_result.get(
+                "decision_code"
+            )
+        )
+
         print(
             "[WORKER] Gateway result "
             f"agent='{agent.name}' "
             f"tool='{tool_name}' "
             f"status={gateway_result.get('status')} "
+            f"decision={decision_code} "
             f"ok={gateway_result.get('ok')}"
         )
 
@@ -373,6 +387,11 @@ class AgentRuntime:
                     approval_id
                 ),
 
+                outcome_code=(
+                    decision_code
+                    or "approval_required"
+                ),
+
                 answer=(
                     format_approval_required(
                         tool_name,
@@ -403,6 +422,7 @@ class AgentRuntime:
                 "[WORKER] Tool execution denied/failed "
                 f"agent='{agent.name}' "
                 f"tool='{tool_name}' "
+                f"decision={decision_code} "
                 f"error={error}"
             )
 
@@ -423,6 +443,11 @@ class AgentRuntime:
 
                 proposed_arguments=(
                     arguments
+                ),
+
+                outcome_code=(
+                    decision_code
+                    or "tool_execution_error"
                 ),
 
                 error=(
@@ -469,19 +494,15 @@ class AgentRuntime:
                     arguments
                 ),
 
+                outcome_code=(
+                    "invalid_structured_result"
+                ),
+
                 error=(
                     "Tool returned an invalid "
                     "structured result."
                 ),
             )
-
-        # ========================================================
-        # DERIVED PRESENTATION
-        #
-        # Authoritative machine data remains tool_result.
-        #
-        # Human prose and UI presentation are derived views.
-        # ========================================================
 
         presentation = (
             build_tool_presentation(
@@ -513,6 +534,11 @@ class AgentRuntime:
 
             proposed_arguments=(
                 arguments
+            ),
+
+            outcome_code=(
+                decision_code
+                or "success"
             ),
 
             answer=(

@@ -6,6 +6,7 @@ from typing import (
 
 from pydantic import (
     BaseModel,
+    ConfigDict,
     Field,
 )
 
@@ -17,6 +18,10 @@ class TrajectoryStep(
 
     agent: str
     status: str
+
+    outcome_code: (
+        str | None
+    ) = None
 
     proposed_tool: (
         str | None
@@ -70,22 +75,17 @@ class TrajectorySignals(
 class ExecutionReward(
     BaseModel
 ):
-    """
-    Deterministic runtime reward.
+    model_config = (
+        ConfigDict(
+            populate_by_name=True
+        )
+    )
 
-    IMPORTANT:
-
-    This is NOT yet a semantic-quality reward.
-
-    A tool may execute successfully while still being the wrong
-    tool for the user's intent.
-
-    Therefore raw execution rewards must not automatically become
-    reinforcement-learning labels.
-    """
-
-    schema: str = (
-        "execution-reward.v1"
+    schema_name: str = Field(
+        default=(
+            "execution-reward.v1"
+        ),
+        alias="schema",
     )
 
     components: dict[
@@ -100,11 +100,308 @@ class ExecutionReward(
     quality_eligible: bool = False
 
 
+class TrajectoryQuality(
+    BaseModel
+):
+    model_config = (
+        ConfigDict(
+            populate_by_name=True
+        )
+    )
+
+    schema_name: str = Field(
+        default=(
+            "trajectory-quality.v1"
+        ),
+        alias="schema",
+    )
+
+    review_state: str = (
+        "unreviewed"
+    )
+
+    route_correct: (
+        bool | None
+    ) = None
+
+    tool_correct: (
+        bool | None
+    ) = None
+
+    arguments_correct: (
+        bool | None
+    ) = None
+
+    answer_correct: (
+        bool | None
+    ) = None
+
+    answer_grounded: (
+        bool | None
+    ) = None
+
+    grounding_valid: (
+        bool | None
+    ) = None
+
+    gateway_policy_passed: (
+        bool | None
+    ) = None
+
+    tool_execution_valid: (
+        bool | None
+    ) = None
+
+    user_corrected: bool = False
+
+    correction_type: (
+        str | None
+    ) = None
+
+    failure_types: list[
+        str
+    ] = Field(
+        default_factory=list
+    )
+
+    quality_eligible: bool = False
+
+
+class CorrectionValue(
+    BaseModel
+):
+    field: str
+
+    rejected_value: (
+        Any | None
+    ) = None
+
+    chosen_value: (
+        Any | None
+    ) = None
+
+
+class CorrectionEvent(
+    BaseModel
+):
+    model_config = (
+        ConfigDict(
+            populate_by_name=True
+        )
+    )
+
+    schema_name: str = Field(
+        default=(
+            "correction-event.v1"
+        ),
+        alias="schema",
+    )
+
+    correction_id: str
+
+    observed_at: str
+
+    trajectory_id: str
+
+    task_id: (
+        str | None
+    ) = None
+
+    correction_type: str
+
+    source: str = (
+        "explicit_user"
+    )
+
+    values: list[
+        CorrectionValue
+    ] = Field(
+        default_factory=list
+    )
+
+    note: (
+        str | None
+    ) = None
+
+    dataset_eligible: bool = False
+
+
+class PreferenceOption(
+    BaseModel
+):
+    agent: (
+        str | None
+    ) = None
+
+    tool: (
+        str | None
+    ) = None
+
+    arguments: (
+        dict[
+            str,
+            Any,
+        ]
+        | None
+    ) = None
+
+    answer: (
+        str | None
+    ) = None
+
+
+class PreferenceExample(
+    BaseModel
+):
+    model_config = (
+        ConfigDict(
+            populate_by_name=True
+        )
+    )
+
+    schema_name: str = Field(
+        default=(
+            "preference-example.v1"
+        ),
+        alias="schema",
+    )
+
+    example_id: str
+
+    created_at: str
+
+    trajectory_id: str
+    correction_id: str
+
+    task_id: (
+        str | None
+    ) = None
+
+    source: str
+
+    correction_type: str
+
+    user_request: str
+
+    rejected: PreferenceOption
+    chosen: PreferenceOption
+
+    dataset_eligible: bool = False
+
+
+class DatasetPromotion(
+    BaseModel
+):
+    """
+    Provenance attached to a promoted dataset record.
+
+    Promotion is intentionally separate from the original
+    preference example.
+    """
+
+    promoted_at: str
+
+    promoted_by: str
+
+    reason: str
+
+
+class PreferenceDatasetRecord(
+    BaseModel
+):
+    model_config = (
+        ConfigDict(
+            populate_by_name=True
+        )
+    )
+
+    schema_name: str = Field(
+        default=(
+            "preference-dataset-record.v1"
+        ),
+        alias="schema",
+    )
+
+    record_id: str
+
+    source_example_id: str
+
+    trajectory_id: str
+    correction_id: str
+
+    task_id: (
+        str | None
+    ) = None
+
+    source: str
+
+    correction_type: str
+
+    user_request: str
+
+    rejected: PreferenceOption
+    chosen: PreferenceOption
+
+    promotion: DatasetPromotion
+
+    dataset_eligible: bool = True
+
+
+class DatasetManifest(
+    BaseModel
+):
+    model_config = (
+        ConfigDict(
+            populate_by_name=True
+        )
+    )
+
+    schema_name: str = Field(
+        default=(
+            "dataset-manifest.v1"
+        ),
+        alias="schema",
+    )
+
+    dataset_id: str
+
+    version: str
+
+    created_at: str
+
+    dataset_type: str
+
+    record_schema: str
+
+    record_count: int
+
+    content_sha256: str
+
+    promoted_by: str
+
+    promotion_reason: str
+
+    source_example_ids: list[
+        str
+    ] = Field(
+        default_factory=list
+    )
+
+
 class LearningTrajectory(
     BaseModel
 ):
-    schema: str = (
-        "trajectory.v1"
+    model_config = (
+        ConfigDict(
+            populate_by_name=True
+        )
+    )
+
+    schema_name: str = Field(
+        default=(
+            "trajectory.v1"
+        ),
+        alias="schema",
     )
 
     trajectory_id: str
@@ -142,6 +439,8 @@ class LearningTrajectory(
         ExecutionReward
     )
 
-    # Raw trajectories are evidence, not automatically approved
-    # training examples.
+    quality: (
+        TrajectoryQuality
+    )
+
     dataset_eligible: bool = False

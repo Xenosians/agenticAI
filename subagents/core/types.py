@@ -93,11 +93,16 @@ class AgentResult:
         str | None
     ) = None
 
-    # Authoritative structured result returned by the trusted tool.
+    # Stable machine-readable runtime outcome.
     #
-    # This is preserved independently from the human-readable
-    # specialist answer so later orchestration/backend/frontend
-    # layers do not need to reverse-parse prose.
+    # This is intentionally separate from human-readable error
+    # messages so learning/evaluation code never needs to parse
+    # prose to understand what happened.
+    outcome_code: (
+        str | None
+    ) = None
+
+    # Authoritative structured result returned by the trusted tool.
     tool_result: (
         dict[
             str,
@@ -107,9 +112,6 @@ class AgentResult:
     ) = None
 
     # Optional generic UI-oriented representation.
-    #
-    # Presentation is derived from tool_result and never replaces
-    # the authoritative structured result.
     presentation: (
         dict[
             str,

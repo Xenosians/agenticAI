@@ -22,6 +22,37 @@ VALID_RISKS = {
 }
 
 
+def gateway_result(
+    *,
+    ok: bool,
+    status: str,
+    decision_code: str,
+    **extra: Any,
+) -> dict[
+    str,
+    Any,
+]:
+    """
+    Build one stable ToolGateway result.
+
+    decision_code is machine-readable and must remain independent
+    from human-facing error prose.
+    """
+
+    return {
+        "ok":
+            ok,
+
+        "status":
+            status,
+
+        "decision_code":
+            decision_code,
+
+        **extra,
+    }
+
+
 def identifier_appears_in_request(
     identifier: str,
     user_input: str,
@@ -121,13 +152,9 @@ class ToolGateway:
     Deterministic security boundary between model proposals and
     executable capabilities.
 
-    Runtime dependencies are explicit:
-
-    - approval_creator
-    - MCP runtime
-    - trusted tool lookup
-
-    No mutable application runtime is imported globally here.
+    Stable machine-readable decision codes are emitted alongside
+    human-readable errors so learning infrastructure can classify
+    outcomes without parsing prose.
     """
 
     def __init__(
@@ -139,6 +166,7 @@ class ToolGateway:
             get_tool
         ),
     ) -> None:
+
         self.tool_lookup = (
             tool_lookup
         )
@@ -173,19 +201,18 @@ class ToolGateway:
             tool_name
             not in agent.tools
         ):
-            return {
-                "ok":
-                    False,
-
-                "status":
-                    "denied",
-
-                "error": (
+            return gateway_result(
+                ok=False,
+                status="denied",
+                decision_code=(
+                    "agent_tool_not_allowed"
+                ),
+                error=(
                     f"Agent '{agent.name}' "
                     "is not allowed to use "
                     f"tool '{tool_name}'."
                 ),
-            }
+            )
 
         # ========================================================
         # TOOL EXISTENCE
@@ -198,18 +225,17 @@ class ToolGateway:
         )
 
         if tool is None:
-            return {
-                "ok":
-                    False,
-
-                "status":
-                    "error",
-
-                "error": (
+            return gateway_result(
+                ok=False,
+                status="error",
+                decision_code=(
+                    "unknown_tool"
+                ),
+                error=(
                     "Unknown tool requested: "
                     f"{tool_name}"
                 ),
-            }
+            )
 
         # ========================================================
         # USER-REQUEST GROUNDING
@@ -226,18 +252,17 @@ class ToolGateway:
             grounded_arguments,
             list,
         ):
-            return {
-                "ok":
-                    False,
-
-                "status":
-                    "error",
-
-                "error": (
+            return gateway_result(
+                ok=False,
+                status="error",
+                decision_code=(
+                    "grounding_policy_invalid"
+                ),
+                error=(
                     "Tool grounding policy "
                     "is invalid."
                 ),
-            }
+            )
 
         if not all(
             isinstance(
@@ -248,18 +273,17 @@ class ToolGateway:
             for field_name
             in grounded_arguments
         ):
-            return {
-                "ok":
-                    False,
-
-                "status":
-                    "error",
-
-                "error": (
+            return gateway_result(
+                ok=False,
+                status="error",
+                decision_code=(
+                    "grounding_field_invalid"
+                ),
+                error=(
                     "Tool grounding fields "
                     "are invalid."
                 ),
-            }
+            )
 
         (
             valid,
@@ -269,9 +293,11 @@ class ToolGateway:
                 user_input=(
                     user_input
                 ),
+
                 arguments=(
                     arguments
                 ),
+
                 grounded_arguments=(
                     grounded_arguments
                 ),
@@ -279,16 +305,16 @@ class ToolGateway:
         )
 
         if not valid:
-            return {
-                "ok":
-                    False,
-
-                "status":
-                    "denied",
-
-                "error":
-                    validation_error,
-            }
+            return gateway_result(
+                ok=False,
+                status="denied",
+                decision_code=(
+                    "grounding_failed"
+                ),
+                error=(
+                    validation_error
+                ),
+            )
 
         # ========================================================
         # EFFECTIVE TRUSTED POLICY
@@ -324,70 +350,67 @@ class ToolGateway:
                 )
 
             except TypeError as exc:
-                return {
-                    "ok":
-                        False,
-
-                    "status":
-                        "denied",
-
-                    "error": (
+                return gateway_result(
+                    ok=False,
+                    status="denied",
+                    decision_code=(
+                        "policy_arguments_invalid"
+                    ),
+                    error=(
                         "Invalid arguments for "
                         f"'{tool_name}' policy: "
                         f"{exc}"
                     ),
-                }
+                )
 
             except Exception as exc:
-                return {
-                    "ok":
-                        False,
-
-                    "status":
-                        "error",
-
-                    "error": (
+                return gateway_result(
+                    ok=False,
+                    status="error",
+                    decision_code=(
+                        "policy_evaluation_error"
+                    ),
+                    error=(
                         "Tool policy evaluation "
                         f"failed: {exc}"
                     ),
-                }
+                )
 
             if not isinstance(
                 policy_result,
                 dict,
             ):
-                return {
-                    "ok":
-                        False,
-
-                    "status":
-                        "error",
-
-                    "error": (
+                return gateway_result(
+                    ok=False,
+                    status="error",
+                    decision_code=(
+                        "policy_result_invalid"
+                    ),
+                    error=(
                         "Tool policy returned an "
                         "invalid structured result."
                     ),
-                }
+                )
 
             if not policy_result.get(
                 "ok",
                 False,
             ):
-                return {
-                    "ok":
-                        False,
-
-                    "status": (
+                return gateway_result(
+                    ok=False,
+                    status=(
                         policy_result.get(
                             "status",
                             "denied",
                         )
                     ),
-
-                    "tool":
-                        tool_name,
-
-                    "error": (
+                    decision_code=(
+                        "policy_denied"
+                    ),
+                    tool=(
+                        tool_name
+                    ),
+                    error=(
                         policy_result.get(
                             "error",
                             (
@@ -396,7 +419,7 @@ class ToolGateway:
                             ),
                         )
                     ),
-                }
+                )
 
             effective_risk = (
                 policy_result.get(
@@ -414,35 +437,33 @@ class ToolGateway:
             effective_risk
             not in VALID_RISKS
         ):
-            return {
-                "ok":
-                    False,
-
-                "status":
-                    "error",
-
-                "error": (
+            return gateway_result(
+                ok=False,
+                status="error",
+                decision_code=(
+                    "risk_invalid"
+                ),
+                error=(
                     "Tool policy returned an "
                     "invalid risk classification."
                 ),
-            }
+            )
 
         if not isinstance(
             requires_approval,
             bool,
         ):
-            return {
-                "ok":
-                    False,
-
-                "status":
-                    "error",
-
-                "error": (
+            return gateway_result(
+                ok=False,
+                status="error",
+                decision_code=(
+                    "approval_decision_invalid"
+                ),
+                error=(
                     "Tool policy returned an "
                     "invalid approval decision."
                 ),
-            }
+            )
 
         # ========================================================
         # APPROVAL REQUIRED
@@ -459,24 +480,26 @@ class ToolGateway:
                 )
             )
 
-            return {
-                "ok":
-                    True,
-
-                "status":
-                    "approval_required",
-
-                "tool":
-                    tool_name,
-
-                "risk":
-                    effective_risk,
-
-                "approval_id":
+            return gateway_result(
+                ok=True,
+                status=(
+                    "approval_required"
+                ),
+                decision_code=(
+                    "approval_required"
+                ),
+                tool=(
+                    tool_name
+                ),
+                risk=(
+                    effective_risk
+                ),
+                approval_id=(
                     approval[
                         "id"
-                    ],
-            }
+                    ]
+                ),
+            )
 
         # ========================================================
         # AUTO-APPROVED EXECUTION
@@ -507,22 +530,31 @@ class ToolGateway:
                     "denied"
                 )
 
+                decision_code = (
+                    "tool_execution_denied"
+                )
+
             else:
                 failure_status = (
                     "error"
                 )
 
-            return {
-                "ok":
-                    False,
+                decision_code = (
+                    "tool_execution_error"
+                )
 
-                "status":
-                    failure_status,
-
-                "tool":
-                    tool_name,
-
-                "error": (
+            return gateway_result(
+                ok=False,
+                status=(
+                    failure_status
+                ),
+                decision_code=(
+                    decision_code
+                ),
+                tool=(
+                    tool_name
+                ),
+                error=(
                     result.get(
                         "error",
                         (
@@ -531,18 +563,16 @@ class ToolGateway:
                         ),
                     )
                 ),
-            }
+            )
 
-        return {
-            "ok":
-                True,
-
-            "status":
-                "success",
-
-            "tool":
-                tool_name,
-
-            "result":
-                result,
-        }
+        return gateway_result(
+            ok=True,
+            status="success",
+            decision_code="success",
+            tool=(
+                tool_name
+            ),
+            result=(
+                result
+            ),
+        )

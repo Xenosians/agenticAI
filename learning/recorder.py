@@ -18,6 +18,10 @@ from subagents.core.types import (
     HubResult,
 )
 
+from learning.quality import (
+    derive_trajectory_quality,
+)
+
 from learning.rewards import (
     derive_execution_reward,
 )
@@ -39,8 +43,8 @@ class TrajectoryRecorder:
 
     Raw trajectories are sanitized before disk persistence.
 
-    Recorder failures must never change the outcome of the
-    user's actual agent job.
+    Recorder failures must never change the authoritative outcome
+    of the user's actual job.
     """
 
     def __init__(
@@ -89,6 +93,10 @@ class TrajectoryRecorder:
 
                 status=(
                     item.status
+                ),
+
+                outcome_code=(
+                    item.outcome_code
                 ),
 
                 proposed_tool=(
@@ -243,6 +251,12 @@ class TrajectoryRecorder:
             )
         )
 
+        quality = (
+            derive_trajectory_quality(
+                steps
+            )
+        )
+
         return (
             LearningTrajectory(
                 trajectory_id=(
@@ -301,6 +315,14 @@ class TrajectoryRecorder:
                     )
                 ),
 
+                quality=(
+                    quality
+                ),
+
+                # Still false.
+                #
+                # Runtime success alone must never promote a
+                # trajectory into training data.
                 dataset_eligible=False,
             )
         )
@@ -337,7 +359,8 @@ class TrajectoryRecorder:
         raw_payload = (
             trajectory
             .model_dump(
-                mode="json"
+                mode="json",
+                by_alias=True,
             )
         )
 

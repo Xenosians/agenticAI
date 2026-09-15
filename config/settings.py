@@ -359,6 +359,14 @@ class Settings(
             "trajectories.jsonl"
         )
     )
+    
+    learning_correction_path: Path = (
+        Path(
+            ".runtime/"
+            "learning/"
+            "corrections.jsonl"
+        )
+    )
 
     # ============================================================
     # DEVELOPER WORKSPACE

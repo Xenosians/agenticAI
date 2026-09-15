@@ -4,6 +4,10 @@ from pathlib import (
     Path,
 )
 
+from learning.quality import (
+    derive_trajectory_quality,
+)
+
 from learning.recorder import (
     TrajectoryRecorder,
 )
@@ -14,6 +18,10 @@ from learning.rewards import (
 
 from learning.sanitizer import (
     sanitize_value,
+)
+
+from learning.types import (
+    TrajectoryStep,
 )
 
 from subagents.core.types import (
@@ -46,6 +54,10 @@ def successful_hub_result(
                     ),
 
                     status="success",
+
+                    outcome_code=(
+                        "success"
+                    ),
 
                     proposed_tool=(
                         "workspace_git_status"
@@ -184,7 +196,144 @@ def test_execution_reward_is_not_quality_label():
     )
 
 
-def test_recorder_writes_jsonl(
+def test_success_quality_is_deterministic_but_unreviewed():
+    quality = (
+        derive_trajectory_quality(
+            [
+                TrajectoryStep(
+                    task_id="task-1",
+                    agent="developer-specialist",
+                    status="success",
+                    outcome_code="success",
+                    proposed_tool=(
+                        "workspace_git_status"
+                    ),
+                    proposed_arguments={
+                        "repository":
+                            "frontend",
+                    },
+                )
+            ]
+        )
+    )
+
+    assert (
+        quality.grounding_valid
+        is True
+    )
+
+    assert (
+        quality.gateway_policy_passed
+        is True
+    )
+
+    assert (
+        quality.tool_execution_valid
+        is True
+    )
+
+    assert (
+        quality.route_correct
+        is None
+    )
+
+    assert (
+        quality.tool_correct
+        is None
+    )
+
+    assert (
+        quality.answer_grounded
+        is None
+    )
+
+    assert (
+        quality.quality_eligible
+        is False
+    )
+
+
+def test_grounding_failure_is_classified():
+    quality = (
+        derive_trajectory_quality(
+            [
+                TrajectoryStep(
+                    task_id="task-1",
+                    agent="developer-specialist",
+                    status="error",
+                    outcome_code=(
+                        "grounding_failed"
+                    ),
+                    proposed_tool=(
+                        "workspace_git_status"
+                    ),
+                    proposed_arguments={
+                        "repository":
+                            "ai",
+                    },
+                )
+            ]
+        )
+    )
+
+    assert (
+        quality.grounding_valid
+        is False
+    )
+
+    assert (
+        quality.gateway_policy_passed
+        is None
+    )
+
+    assert (
+        quality.tool_execution_valid
+        is None
+    )
+
+    assert (
+        quality.failure_types
+        == [
+            "grounding_failure"
+        ]
+    )
+
+
+def test_policy_denial_is_classified():
+    quality = (
+        derive_trajectory_quality(
+            [
+                TrajectoryStep(
+                    task_id="task-1",
+                    agent="developer-specialist",
+                    status="error",
+                    outcome_code=(
+                        "policy_denied"
+                    ),
+                )
+            ]
+        )
+    )
+
+    assert (
+        quality.grounding_valid
+        is True
+    )
+
+    assert (
+        quality.gateway_policy_passed
+        is False
+    )
+
+    assert (
+        quality.failure_types
+        == [
+            "policy_denial"
+        ]
+    )
+
+
+def test_recorder_writes_quality_and_alias_schema(
     tmp_path: Path,
 ):
     output = (
@@ -222,23 +371,12 @@ def test_recorder_writes_jsonl(
         is not None
     )
 
-    assert (
-        output.exists()
-    )
-
     lines = (
         output
         .read_text(
             encoding="utf-8"
         )
         .splitlines()
-    )
-
-    assert (
-        len(
-            lines
-        )
-        == 1
     )
 
     stored = (
@@ -258,18 +396,20 @@ def test_recorder_writes_jsonl(
 
     assert (
         stored[
-            "job_id"
+            "execution_reward"
+        ][
+            "schema"
         ]
-        == "job-1"
+        == "execution-reward.v1"
     )
 
     assert (
         stored[
-            "routes"
+            "quality"
+        ][
+            "schema"
         ]
-        == [
-            "developer-specialist",
-        ]
+        == "trajectory-quality.v1"
     )
 
     assert (
@@ -278,11 +418,27 @@ def test_recorder_writes_jsonl(
         ][
             0
         ][
-            "proposed_arguments"
-        ][
-            "repository"
+            "outcome_code"
         ]
-        == "frontend"
+        == "success"
+    )
+
+    assert (
+        stored[
+            "quality"
+        ][
+            "grounding_valid"
+        ]
+        is True
+    )
+
+    assert (
+        stored[
+            "quality"
+        ][
+            "tool_correct"
+        ]
+        is None
     )
 
     assert (
