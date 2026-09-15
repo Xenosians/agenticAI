@@ -127,6 +127,10 @@ def build_trajectory(
                         f"task-{index}"
                     ),
 
+                    task_instructions=(
+                        f"Handle synthetic task {index}."
+                    ),
+
                     agent=(
                         agent
                     ),
@@ -184,7 +188,6 @@ def build_trajectory(
 
             quality=None,
 
-            # Real raw runtime evidence never promotes itself.
             dataset_eligible=False,
         )
     )
@@ -290,11 +293,19 @@ def safe_trajectories(
     return [
         build_trajectory(
             index=1,
+
             request=(
                 "Synthetic pipeline frontend status."
             ),
-            agent="developer-specialist",
-            tool="workspace_git_status",
+
+            agent=(
+                "developer-specialist"
+            ),
+
+            tool=(
+                "workspace_git_status"
+            ),
+
             arguments={
                 "repository":
                     "frontend"
@@ -303,11 +314,19 @@ def safe_trajectories(
 
         build_trajectory(
             index=2,
+
             request=(
                 "Synthetic pipeline backend branches."
             ),
-            agent="developer-specialist",
-            tool="workspace_git_branches",
+
+            agent=(
+                "developer-specialist"
+            ),
+
+            tool=(
+                "workspace_git_branches"
+            ),
+
             arguments={
                 "repository":
                     "backend"
@@ -316,11 +335,19 @@ def safe_trajectories(
 
         build_trajectory(
             index=3,
+
             request=(
                 "Synthetic pipeline ticket state."
             ),
-            agent="ticket-specialist",
-            tool="ticket_get",
+
+            agent=(
+                "ticket-specialist"
+            ),
+
+            tool=(
+                "ticket_get"
+            ),
+
             arguments={
                 "ticket_key":
                     "SYN-103"
@@ -329,14 +356,23 @@ def safe_trajectories(
 
         build_trajectory(
             index=4,
+
             request=(
                 "Synthetic pipeline ticket comments."
             ),
-            agent="ticket-specialist",
-            tool="ticket_comments",
+
+            agent=(
+                "ticket-specialist"
+            ),
+
+            tool=(
+                "ticket_comments"
+            ),
+
             arguments={
                 "ticket_key":
                     "SYN-104",
+
                 "limit":
                     4,
             },
@@ -351,7 +387,9 @@ def safe_corrections(
 
     return [
         build_correction(
-            index=index
+            index=(
+                index
+            )
         )
 
         for index
@@ -368,12 +406,19 @@ def relaxed_policy(
     return (
         DiversityGatePolicy(
             min_eligible_trajectories=4,
+
             min_unique_requests=4,
+
             min_unique_behavior_patterns=4,
+
             min_unique_domains=2,
+
             min_unique_capabilities=4,
+
             max_duplicate_request_rate=0.25,
+
             max_dominant_domain_share=0.75,
+
             max_dominant_capability_share=0.75,
         )
     )
@@ -520,18 +565,13 @@ def build_examples(
     ]
 
 
-def build_dataset(
+def build_dataset_at_root(
     *,
-    tmp_path: Path,
+    dataset_root: Path,
     examples: list[
         PreferenceExample
     ],
 ) -> Path:
-
-    dataset_root = (
-        tmp_path
-        / "datasets"
-    )
 
     builder = (
         PreferenceDatasetBuilder(
@@ -559,6 +599,28 @@ def build_dataset(
 
     return (
         dataset_root
+    )
+
+
+def build_dataset(
+    *,
+    tmp_path: Path,
+    examples: list[
+        PreferenceExample
+    ],
+) -> Path:
+
+    return (
+        build_dataset_at_root(
+            dataset_root=(
+                tmp_path
+                / "datasets"
+            ),
+
+            examples=(
+                examples
+            ),
+        )
     )
 
 
@@ -711,6 +773,16 @@ def test_trusted_pipeline_exports_verified_split(
         is True
     )
 
+    # The diversity report now represents the exact source set of
+    # the promoted dataset.
+    assert (
+        result
+        .diversity
+        .metrics
+        .eligible_trajectory_count
+        == 4
+    )
+
     assert (
         result.curated_eligible_count
         == 4
@@ -758,6 +830,98 @@ def test_pipeline_refuses_failed_diversity_gate(
 
             diversity_policy=(
                 DiversityGatePolicy()
+            ),
+
+            eval_paths=[],
+        )
+
+
+def test_pipeline_applies_diversity_to_exact_dataset_source_set(
+    tmp_path: Path,
+):
+    """
+    The complete curated corpus contains four diverse trusted
+    trajectories and satisfies relaxed_policy().
+
+    This dataset intentionally contains only two of them.
+
+    The old pipeline incorrectly evaluated all four curated
+    trajectories and therefore allowed the narrower dataset to
+    inherit diversity it did not possess.
+
+    The trusted pipeline must now fail the dataset itself.
+    """
+
+    (
+        _,
+        trajectory_path,
+        correction_path,
+        review_path,
+        _,
+        _,
+        _,
+        examples,
+    ) = prepare(
+        tmp_path
+    )
+
+    narrow_dataset_root = (
+        tmp_path
+        / "narrow-datasets"
+    )
+
+    build_dataset_at_root(
+        dataset_root=(
+            narrow_dataset_root
+        ),
+
+        examples=(
+            examples[
+                :2
+            ]
+        ),
+    )
+
+    pipeline = (
+        build_pipeline(
+            trajectory_path=(
+                trajectory_path
+            ),
+
+            correction_path=(
+                correction_path
+            ),
+
+            review_path=(
+                review_path
+            ),
+
+            dataset_root=(
+                narrow_dataset_root
+            ),
+
+            tmp_path=(
+                tmp_path
+            ),
+        )
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "minimum_eligible_trajectories"
+        ),
+    ):
+
+        pipeline.run(
+            dataset_version=(
+                "v000001"
+            ),
+
+            validation_fraction=0.50,
+
+            diversity_policy=(
+                relaxed_policy()
             ),
 
             eval_paths=[],
@@ -837,7 +1001,10 @@ def test_historical_contamination_is_quarantined_not_global_poison(
                     "synthetic",
 
                 "user_request":
-                    " SYNTHETIC HISTORICAL HELD-OUT REQUEST. ",
+                    (
+                        " SYNTHETIC HISTORICAL "
+                        "HELD-OUT REQUEST. "
+                    ),
             }
         )
         + "\n",
@@ -871,6 +1038,14 @@ def test_historical_contamination_is_quarantined_not_global_poison(
 
     assert (
         result.curated_eligible_count
+        == 4
+    )
+
+    assert (
+        result
+        .diversity
+        .metrics
+        .eligible_trajectory_count
         == 4
     )
 
@@ -1006,19 +1181,7 @@ def test_pipeline_refuses_unapproved_correction_lineage(
         tmp_path
     )
 
-    # --------------------------------------------------------
-    # Create a correction that genuinely exists in immutable raw
-    # evidence but does NOT have a trusted review approval.
-    #
-    # This distinguishes:
-    #
-    #   nonexistent correction
-    #
-    # from:
-    #
-    #   existing but unapproved correction
-    # --------------------------------------------------------
-
+    # Exists in immutable raw evidence but has no trusted approval.
     unapproved_correction = (
         corrections[
             0
@@ -1047,14 +1210,6 @@ def test_pipeline_refuses_unapproved_correction_lineage(
         handle.write(
             "\n"
         )
-
-    # --------------------------------------------------------
-    # Point one promoted dataset example at that real raw
-    # correction.
-    #
-    # It now passes raw existence and trajectory lineage, but it
-    # must fail because curation did not approve this correction.
-    # --------------------------------------------------------
 
     examples[
         0
@@ -1174,7 +1329,10 @@ def test_pipeline_refuses_dataset_request_mismatch(
 
             update={
                 "user_request":
-                    "Completely unrelated synthetic request.",
+                    (
+                        "Completely unrelated "
+                        "synthetic request."
+                    ),
             },
         )
     )

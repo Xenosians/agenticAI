@@ -78,6 +78,11 @@ class TrustedTrainingPipelineResult(
 
     curation: CurationReport
 
+    # IMPORTANT:
+    #
+    # This report describes the exact unique trajectory source set
+    # represented by the promoted dataset, not the entire curated
+    # eligible corpus.
     diversity: DiversityGateReport
 
     split: TrainingSplitManifest
@@ -101,17 +106,21 @@ class TrustedTrainingPipeline:
             ->
         deterministic curation / quarantine
             ->
-        diversity / balance gate
-            ->
         verified promoted dataset
             ->
         provenance validation
             ->
+        diversity / balance gate on EXACT dataset source set
+            ->
         deterministic training export
 
     Historical quarantined evidence does not poison future clean
-    evidence. Only eligible curated trajectories may contribute to
-    the promoted dataset.
+    evidence.
+
+    A large diverse curated corpus also cannot be used to make a
+    narrow promoted dataset appear diverse. The diversity gate is
+    evaluated against the unique source trajectories represented by
+    the requested dataset version.
     """
 
     def __init__(
@@ -224,8 +233,8 @@ class TrustedTrainingPipeline:
         Historical contamination is allowed to remain in the raw
         corpus.
 
-        What must never happen is a contaminated trajectory also
-        appearing in the curated eligible set.
+        A contaminated trajectory must never simultaneously appear
+        in the curated eligible set.
         """
 
         contaminated_ids = {
@@ -285,10 +294,15 @@ class TrustedTrainingPipeline:
         )
 
         raise ValueError(
-            "Diversity/balance gate failed: "
+            "Diversity/balance gate failed "
+            "for the exact promoted dataset source set: "
             f"{failed}"
         )
-        
+
+    # ========================================================
+    # CORRECTION TARGET RESOLUTION
+    # ========================================================
+
     def _resolve_correction_step(
         self,
         *,
@@ -437,7 +451,7 @@ class TrustedTrainingPipeline:
         }
 
         # ----------------------------------------------------
-        # Trajectory lineage
+        # Trajectory existence + curation eligibility
         # ----------------------------------------------------
 
         invalid_trajectory_ids: list[
@@ -585,7 +599,7 @@ class TrustedTrainingPipeline:
             )
 
         # ----------------------------------------------------
-        # Correction-targeted task + prompt-context lineage
+        # Correction-targeted task + prompt context
         # ----------------------------------------------------
 
         task_mismatches: list[
@@ -689,7 +703,7 @@ class TrustedTrainingPipeline:
             )
 
         # ----------------------------------------------------
-        # Curation approval lineage
+        # Trusted correction approval lineage
         # ----------------------------------------------------
 
         invalid_corrections: list[
@@ -728,123 +742,123 @@ class TrustedTrainingPipeline:
                 )
             )
 
-        # ----------------------------------------------------
-        # Trajectory lineage
-        # ----------------------------------------------------
+    # ========================================================
+    # EXACT DATASET SOURCE CURATION VIEW
+    # ========================================================
 
-        invalid_trajectory_ids: list[
-            str
-        ] = []
+    def _dataset_source_curation_report(
+        self,
+        *,
+        records: list[
+            PreferenceDatasetRecord
+        ],
+        curation_report: CurationReport,
+    ) -> CurationReport:
+        """
+        Build an internal curation view containing only the unique
+        trajectories actually represented by the promoted dataset.
 
-        for record in records:
+        This prevents a large diverse approved corpus from allowing
+        a narrow dataset subset to bypass Phase 3C.
 
-            if (
-                record.trajectory_id
-                not in raw_by_id
-                or record.trajectory_id
-                not in eligible_by_id
-            ):
+        Example:
 
-                invalid_trajectory_ids.append(
-                    record.trajectory_id
-                )
+            curated eligible:
+                20 diverse trajectories
 
-        if invalid_trajectory_ids:
+            dataset:
+                only 2 trajectories
+
+        The diversity gate must see 2, not 20.
+
+        This helper does not mutate the original curation report.
+        """
+
+        dataset_source_ids = {
+            record.trajectory_id
+
+            for record
+            in records
+        }
+
+        if not dataset_source_ids:
 
             raise ValueError(
-                "Dataset contains trajectory_id "
-                "not present in "
-                "curation_report.eligible: "
+                "Promoted dataset contains no "
+                "source trajectories."
+            )
+
+        eligible_by_id = {
+            item.trajectory_id:
+                item
+
+            for item
+            in curation_report.eligible
+        }
+
+        missing = (
+            dataset_source_ids
+            - set(
+                eligible_by_id
+            )
+        )
+
+        if missing:
+
+            raise ValueError(
+                "Dataset source trajectory is not "
+                "eligible in the curation report: "
                 + ", ".join(
                     sorted(
-                        set(
-                            invalid_trajectory_ids
-                        )
+                        missing
                     )
                 )
             )
 
-        # ----------------------------------------------------
-        # Request lineage
-        # ----------------------------------------------------
-
-        mismatched_requests: list[
-            str
-        ] = []
-
-        for record in records:
-
-            trajectory = (
-                raw_by_id[
-                    record.trajectory_id
-                ]
+        # Preserve original deterministic curation ordering.
+        selected = [
+            item.model_copy(
+                deep=True
             )
+
+            for item
+            in curation_report.eligible
 
             if (
-                normalize_request(
-                    record.user_request
-                )
-                != normalize_request(
-                    trajectory.user_request
-                )
-            ):
+                item.trajectory_id
+                in dataset_source_ids
+            )
+        ]
 
-                mismatched_requests.append(
-                    record.record_id
-                )
-
-        if mismatched_requests:
+        if (
+            len(
+                selected
+            )
+            != len(
+                dataset_source_ids
+            )
+        ):
 
             raise ValueError(
-                "Dataset user_request does not "
-                "match its source trajectory for "
-                "record_id: "
-                + ", ".join(
-                    sorted(
-                        mismatched_requests
-                    )
-                )
+                "Dataset source trajectory selection "
+                "is internally inconsistent."
             )
 
-        # ----------------------------------------------------
-        # Correction lineage
-        # ----------------------------------------------------
+        return (
+            curation_report.model_copy(
+                deep=True,
 
-        invalid_corrections: list[
-            str
-        ] = []
+                update={
+                    "eligible":
+                        selected,
 
-        for record in records:
-
-            curated = (
-                eligible_by_id[
-                    record.trajectory_id
-                ]
+                    "eligible_trajectory_count":
+                        len(
+                            selected
+                        ),
+                },
             )
-
-            if (
-                record.correction_id
-                not in curated
-                .usable_correction_ids
-            ):
-
-                invalid_corrections.append(
-                    record.correction_id
-                )
-
-        if invalid_corrections:
-
-            raise ValueError(
-                "Dataset contains correction_id "
-                "not approved by curation: "
-                + ", ".join(
-                    sorted(
-                        set(
-                            invalid_corrections
-                        )
-                    )
-                )
-            )
+        )
 
     # ========================================================
     # RUN
@@ -878,6 +892,8 @@ class TrustedTrainingPipeline:
 
         # ====================================================
         # PHASE 3B
+        #
+        # Curate the immutable raw corpus first.
         # ====================================================
 
         curation_report = (
@@ -905,31 +921,10 @@ class TrustedTrainingPipeline:
         )
 
         # ====================================================
-        # PHASE 3C
-        # ====================================================
-
-        diversity_report = (
-            evaluate_diversity_gate(
-                trajectory_path=(
-                    self.trajectory_path
-                ),
-
-                curation_report=(
-                    curation_report
-                ),
-
-                policy=(
-                    diversity_policy
-                ),
-            )
-        )
-
-        self._assert_diversity_safe(
-            diversity_report
-        )
-
-        # ====================================================
         # VERIFIED PROMOTED DATASET
+        #
+        # The dataset must exist and pass immutable dataset
+        # verification before it can influence Phase 3C.
         # ====================================================
 
         (
@@ -944,6 +939,9 @@ class TrustedTrainingPipeline:
 
         # ====================================================
         # PROVENANCE
+        #
+        # Every record must trace back through raw evidence and
+        # the trusted curation boundary.
         # ====================================================
 
         self._assert_dataset_lineage(
@@ -957,10 +955,53 @@ class TrustedTrainingPipeline:
         )
 
         # ====================================================
+        # PHASE 3C
+        #
+        # CRITICAL:
+        #
+        # Run diversity against the EXACT unique trajectory
+        # source set represented by this dataset version.
+        #
+        # Do not use all curated eligible trajectories here.
+        # ====================================================
+
+        dataset_curation_report = (
+            self._dataset_source_curation_report(
+                records=(
+                    records
+                ),
+
+                curation_report=(
+                    curation_report
+                ),
+            )
+        )
+
+        diversity_report = (
+            evaluate_diversity_gate(
+                trajectory_path=(
+                    self.trajectory_path
+                ),
+
+                curation_report=(
+                    dataset_curation_report
+                ),
+
+                policy=(
+                    diversity_policy
+                ),
+            )
+        )
+
+        self._assert_diversity_safe(
+            diversity_report
+        )
+
+        # ====================================================
         # PHASE 3D
         #
         # Export independently checks held-out request
-        # intersection again before writing files.
+        # intersection again before writing anything.
         # ====================================================
 
         split_manifest = (
