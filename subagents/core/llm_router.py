@@ -1,4 +1,10 @@
+from __future__ import annotations
+
 import json
+
+from subagents.core.capabilities import (
+    build_router_agent_spec,
+)
 
 from subagents.core.registry import (
     AgentRegistry,
@@ -23,15 +29,20 @@ from subagents.prompts.prompt_loader import (
 
 class LLMRouter:
     """
-    Uses the configured Hub model profile to create structured
-    specialist delegations.
+    Hub routing stage.
 
-    The router does not own model weights or backend objects.
+    The router reasons over specialists together with their trusted
+    runtime capability catalogs.
 
-    Delegation instructions are advisory task context only.
-    They are never treated as authorization.
+    Agent descriptions provide high-level domain context.
 
-    Tool authorization remains inside trusted ToolGateway code.
+    Capability metadata comes from the trusted registry and is the
+    authoritative description of what each specialist can actually
+    do.
+
+    Routing instructions remain advisory task context only.
+
+    Authorization remains inside ToolGateway.
     """
 
     def __init__(
@@ -40,6 +51,7 @@ class LLMRouter:
         inference: InferenceEngine,
         model_key: str,
     ) -> None:
+
         self.registry = (
             registry
         )
@@ -55,21 +67,18 @@ class LLMRouter:
     def _build_system_prompt(
         self,
     ) -> str:
-        specialists = []
 
-        for agent in (
-            self.registry
-            .list_agents()
-        ):
-            specialists.append(
-                {
-                    "name":
-                        agent.name,
-
-                    "description":
-                        agent.description,
-                }
+        specialists = [
+            build_router_agent_spec(
+                agent
             )
+
+            for agent
+            in (
+                self.registry
+                .list_agents()
+            )
+        ]
 
         specialists_json = (
             json.dumps(
@@ -84,9 +93,12 @@ class LLMRouter:
             )
         )
 
-        return template.replace(
-            "{{SPECIALISTS_JSON}}",
-            specialists_json,
+        return (
+            template
+            .replace(
+                "{{SPECIALISTS_JSON}}",
+                specialists_json,
+            )
         )
 
     async def route(
@@ -95,6 +107,7 @@ class LLMRouter:
     ) -> list[
         SpecialistRequest
     ]:
+
         messages = [
             {
                 "role":
@@ -118,10 +131,13 @@ class LLMRouter:
                 model_key=(
                     self.model_key
                 ),
+
                 messages=(
                     messages
                 ),
+
                 max_new_tokens=256,
+
                 priority=(
                     InferencePriority
                     .HUB_ROUTING
@@ -137,6 +153,7 @@ class LLMRouter:
         )
 
         try:
+
             parsed = (
                 json.loads(
                     response
@@ -144,12 +161,14 @@ class LLMRouter:
             )
 
         except json.JSONDecodeError:
+
             return []
 
         if not isinstance(
             parsed,
             dict,
         ):
+
             return []
 
         delegations = (
@@ -162,21 +181,26 @@ class LLMRouter:
             delegations,
             list,
         ):
+
             return []
 
         validated: list[
             SpecialistRequest
         ] = []
 
-        seen_agents: set[str] = (
-            set()
-        )
+        seen_agents: set[
+            str
+        ] = set()
 
-        for delegation in delegations:
+        for delegation in (
+            delegations
+        ):
+
             if not isinstance(
                 delegation,
                 dict,
             ):
+
                 continue
 
             agent_name = (
@@ -195,37 +219,57 @@ class LLMRouter:
                 agent_name,
                 str,
             ):
+
                 continue
 
             if not isinstance(
                 instructions,
                 str,
             ):
+
                 continue
 
             agent_name = (
-                agent_name.strip()
+                agent_name
+                .strip()
             )
 
             instructions = (
-                instructions.strip()
+                instructions
+                .strip()
             )
 
             if not agent_name:
+
                 continue
 
             if not instructions:
+
                 continue
 
-            # Hub cannot invent specialist names.
-            if not self.registry.exists(
-                agent_name
+            # ----------------------------------------------------
+            # TRUSTED AGENT RESOLUTION
+            #
+            # Hub output cannot create a new specialist simply by
+            # naming one.
+            # ----------------------------------------------------
+
+            if not (
+                self.registry
+                .exists(
+                    agent_name
+                )
             ):
+
                 continue
 
-            # One delegation per specialist for this runtime
-            # version.
+            # ----------------------------------------------------
+            # CURRENT RUNTIME:
+            # one delegation per specialist.
+            # ----------------------------------------------------
+
             if agent_name in seen_agents:
+
                 continue
 
             seen_agents.add(
@@ -237,6 +281,7 @@ class LLMRouter:
                     agent_name=(
                         agent_name
                     ),
+
                     instructions=(
                         instructions
                     ),

@@ -4,13 +4,13 @@ from subagents.core.llm_router import (
     LLMRouter,
 )
 
+from subagents.core.registry import (
+    AgentRegistry,
+)
+
 from subagents.core.types import (
     AgentDefinition,
     SpecialistRequest,
-)
-
-from subagents.core.registry import (
-    AgentRegistry,
 )
 
 
@@ -19,6 +19,7 @@ class FakeInference:
         self,
         response: str,
     ) -> None:
+
         self.response = (
             response
         )
@@ -33,6 +34,7 @@ class FakeInference:
         max_new_tokens,
         priority,
     ):
+
         self.calls.append(
             {
                 "model_key":
@@ -56,6 +58,7 @@ class FakeInference:
 
 def build_registry(
 ) -> AgentRegistry:
+
     registry = (
         AgentRegistry()
     )
@@ -65,12 +68,20 @@ def build_registry(
             name=(
                 "account-specialist"
             ),
+
             description=(
                 "Handles user accounts."
             ),
+
             model=(
                 "account-test-model"
             ),
+
+            tools=[
+                "account_status",
+                "unlock_user",
+                "reset_password",
+            ],
         )
     )
 
@@ -79,12 +90,18 @@ def build_registry(
             name=(
                 "access-specialist"
             ),
+
             description=(
                 "Handles access and permissions."
             ),
+
             model=(
                 "access-test-model"
             ),
+
+            tools=[
+                "check_access",
+            ],
         )
     )
 
@@ -94,6 +111,7 @@ def build_registry(
 def build_router(
     response: str,
 ):
+
     inference = (
         FakeInference(
             response
@@ -105,9 +123,11 @@ def build_router(
             registry=(
                 build_registry()
             ),
+
             inference=(
                 inference
             ),
+
             model_key=(
                 "hub-main"
             ),
@@ -121,6 +141,7 @@ def build_router(
 
 
 def test_llm_router_creates_structured_account_delegation():
+
     (
         router,
         inference,
@@ -151,6 +172,7 @@ def test_llm_router_creates_structured_account_delegation():
             agent_name=(
                 "account-specialist"
             ),
+
             instructions=(
                 "Determine whether account "
                 "jdoe is locked."
@@ -168,7 +190,70 @@ def test_llm_router_creates_structured_account_delegation():
     )
 
 
+def test_router_prompt_contains_trusted_capability_catalog():
+
+    (
+        router,
+        inference,
+    ) = build_router(
+        """
+        {
+          "delegations": []
+        }
+        """
+    )
+
+    asyncio.run(
+        router.route(
+            "Hello."
+        )
+    )
+
+    system_prompt = (
+        inference.calls[
+            0
+        ][
+            "messages"
+        ][
+            0
+        ][
+            "content"
+        ]
+    )
+
+    assert (
+        "account-specialist"
+        in system_prompt
+    )
+
+    assert (
+        "account_status"
+        in system_prompt
+    )
+
+    assert (
+        "unlock_user"
+        in system_prompt
+    )
+
+    assert (
+        "reset_password"
+        in system_prompt
+    )
+
+    assert (
+        "check_access"
+        in system_prompt
+    )
+
+    assert (
+        "argument_schema"
+        not in system_prompt
+    )
+
+
 def test_llm_router_supports_multiple_delegations():
+
     (
         router,
         _inference,
@@ -202,7 +287,9 @@ def test_llm_router_supports_multiple_delegations():
 
     assert [
         item.agent_name
-        for item in delegations
+
+        for item
+        in delegations
     ] == [
         "account-specialist",
         "access-specialist",
@@ -217,6 +304,7 @@ def test_llm_router_supports_multiple_delegations():
 
 
 def test_llm_router_rejects_unknown_agent():
+
     (
         router,
         _inference,
@@ -247,13 +335,16 @@ def test_llm_router_rejects_unknown_agent():
 
     assert [
         item.agent_name
-        for item in delegations
+
+        for item
+        in delegations
     ] == [
         "account-specialist"
     ]
 
 
 def test_llm_router_rejects_empty_instructions():
+
     (
         router,
         _inference,
@@ -278,10 +369,14 @@ def test_llm_router_rejects_empty_instructions():
         )
     )
 
-    assert delegations == []
+    assert (
+        delegations
+        == []
+    )
 
 
 def test_llm_router_rejects_invalid_json():
+
     (
         router,
         _inference,
@@ -308,6 +403,7 @@ def test_llm_router_rejects_invalid_json():
 
 
 def test_llm_router_handles_no_match():
+
     (
         router,
         _inference,

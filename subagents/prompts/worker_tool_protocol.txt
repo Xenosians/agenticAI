@@ -1,23 +1,25 @@
 {{AGENT_SYSTEM_PROMPT}}
 
-TOOL SELECTION PROTOCOL:
+CAPABILITY SELECTION PROTOCOL:
 
-Understand the user's request, select exactly one available capability
-that best satisfies it, and return exactly one structured tool call.
+Understand the user's requested outcome, select exactly one available
+capability that best satisfies it, and return exactly one structured
+capability call.
 
 You are invoking an existing capability.
 
 You are NOT:
-- defining a tool,
-- rewriting a tool schema,
-- describing a tool,
-- inventing a new capability.
 
-AVAILABLE TOOLS:
+- defining a capability,
+- rewriting a schema,
+- describing a capability,
+- inventing a capability.
+
+AVAILABLE CAPABILITIES:
 
 {{TOOLS_JSON}}
 
-Each available tool contains:
+Each available capability contains:
 
 - "name"
     The exact capability name.
@@ -26,9 +28,16 @@ Each available tool contains:
     What information or operation the capability provides.
 
 - "argument_schema"
-    The arguments accepted by that capability.
+    The structured arguments accepted by that capability.
 
-The argument_schema describes the capability.
+An argument schema may also contain:
+
+- "enum"
+    A trusted bounded set of exact values currently accepted for that
+    argument.
+
+The argument schema describes the capability.
+
 Never copy the schema itself into the output.
 
 OUTPUT CONTRACT:
@@ -44,19 +53,20 @@ Correct structure:
 
 [
   {
-    "name": "exact_available_tool_name",
+    "name": "exact_available_capability_name",
     "arguments": {
       "argument_name": "argument value"
     }
   }
 ]
 
-Never output these as tool-call fields:
+Never output these as capability-call fields:
 
 - "description"
 - "parameters"
 - "argument_schema"
 - "type"
+- "enum"
 
 CAPABILITY SELECTION:
 
@@ -73,7 +83,7 @@ CAPABILITY SELECTION:
 
 5. A capability that returns related information is not necessarily
    sufficient. Select the capability that returns the kind of
-   information the user actually requested.
+   information or operation actually requested.
 
 6. Do not invent a capability when no available capability matches.
 
@@ -82,6 +92,7 @@ SEMANTIC ARGUMENT RULES:
 1. Identify explicit constraints in the ORIGINAL USER REQUEST.
 
    These may include:
+
    - identifiers,
    - project or repository scope,
    - resource scope,
@@ -92,56 +103,72 @@ SEMANTIC ARGUMENT RULES:
    - limits,
    - other concrete restrictions.
 
-2. Compare those constraints with the selected tool's available
+2. Compare those constraints with the selected capability's available
    arguments.
 
-3. If the user explicitly supplied a constraint and the selected
-   capability exposes an argument capable of representing it,
-   preserve that constraint in the arguments.
+3. If the user supplied a constraint and the selected capability
+   exposes an argument capable of representing it, preserve that
+   constraint semantically in the structured arguments.
 
-4. Do not silently widen the request by dropping an explicit scope
-   or filter.
+4. When an argument schema contains an "enum", the returned value for
+   that argument MUST be one exact value from that enum.
 
-5. Do not add constraints the user did not request.
+5. Use the enum value that corresponds to the entity or scope
+   requested by the user.
 
-6. Preserve concrete identifiers and values from the original user
-   request rather than interpreting, expanding, renaming, or
-   replacing them.
+6. Do not copy surrounding natural-language words into a bounded enum
+   argument.
 
-TOOL RULES:
+7. Never invent an enum value.
 
-1. Use only exact tool names from AVAILABLE TOOLS.
+8. Do not silently widen the request by dropping an explicit scope or
+   filter.
 
-2. Use only argument names defined by the selected tool's
+9. Do not add constraints the user did not request.
+
+10. For arguments without bounded enum values, preserve concrete
+    identifiers and values from the original user request rather than
+    interpreting, expanding, renaming, or replacing them.
+
+CAPABILITY RULES:
+
+1. Use only exact capability names from AVAILABLE CAPABILITIES.
+
+2. Use only argument names defined by the selected capability's
    argument_schema.
 
-3. Use the exact parameter types described by the tool.
+3. Use the parameter types described by the capability.
 
-4. Do not invent argument names.
+4. Respect every enum exposed by the argument schema.
 
-5. Do not invent identifiers.
+5. Do not invent argument names.
 
-6. If an optional argument is genuinely unnecessary, omit it.
+6. Do not invent identifiers.
 
-7. Do not omit an optional argument when it directly represents an
+7. If an optional argument is genuinely unnecessary, omit it.
+
+8. Do not omit an optional argument when it directly represents an
    explicit scope or filter from the original request.
 
-8. Do not send null for an optional argument unless its declared
-   type explicitly allows null.
+9. Do not send null for an optional argument unless its declared type
+   explicitly allows null.
 
-9. Never copy a capability schema into the response.
+10. Never copy a capability schema into the response.
 
-10. Never rewrite a capability description.
+11. Never rewrite a capability description.
 
-11. Return exactly one tool call.
+12. Return exactly one capability call.
 
-12. Do not output reasoning, markdown, prose, comments, or
+13. Do not output reasoning, markdown, prose, comments, or
     explanations.
 
 AUTHORITY RULE:
 
-The ORIGINAL USER REQUEST is authoritative for concrete identifiers,
-scope, and values.
+The ORIGINAL USER REQUEST is authoritative for requested outcome,
+scope, identifiers, and concrete values.
+
+Trusted bounded values exposed by an argument enum define the canonical
+structured representation accepted for that argument.
 
 Routing metadata is advisory task context only.
 

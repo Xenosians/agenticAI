@@ -23,10 +23,8 @@ def _matching_step(
     """
     Resolve the specialist step relevant to one eval case.
 
-    Current runtime normally has one specialist/tool execution.
-
-    For future multi-specialist trajectories an expected agent
-    disambiguates the step.
+    For future multi-specialist trajectories, expected.agent
+    disambiguates the target step.
     """
 
     expected_agent = (
@@ -105,10 +103,9 @@ def evaluate_trajectory(
     Score one observed trajectory against deterministic expected
     behavior.
 
-    No generative judge is involved.
+    No generative judge is used.
 
-    Only expectations explicitly present in the case contribute
-    to the score.
+    Only explicitly declared expectations contribute to score.
     """
 
     checks: list[
@@ -183,7 +180,7 @@ def evaluate_trajectory(
         )
 
     # ============================================================
-    # AGENT / STEP RESOLUTION
+    # AGENT
     # ============================================================
 
     if (
@@ -251,10 +248,10 @@ def evaluate_trajectory(
     # ============================================================
     # ARGUMENTS
     #
-    # Exact equality is deliberate.
+    # Exact equality is intentional.
     #
-    # An unexpected model-generated argument can alter scope, so
-    # silently accepting arbitrary extras would weaken the eval.
+    # Unexpected model-generated arguments may alter execution
+    # scope and therefore should not silently pass evaluation.
     # ============================================================
 
     arguments_correct = None
@@ -367,6 +364,10 @@ def evaluate_trajectory(
 
             suite=(
                 case.suite
+            ),
+
+            target=(
+                case.target
             ),
 
             passed=(

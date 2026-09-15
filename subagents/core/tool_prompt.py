@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import json
 
-from tools.registry import (
-    get_tool,
+from subagents.core.capabilities import (
+    build_agent_capability_catalog,
 )
 
 from subagents.core.types import (
@@ -17,80 +19,28 @@ def build_worker_system_prompt(
     agent: AgentDefinition,
 ) -> str:
     """
-    Build the worker system prompt containing only the
-    capabilities explicitly allowed for the specialist.
+    Build the worker prompt from the specialist definition and
+    trusted runtime capability catalog.
 
-    Registry metadata remains the trusted source of tool
-    descriptions and argument schemas.
+    The specialist definition describes behavioral role/context.
 
-    The model receives a simplified capability representation
-    rather than the internal registry structure.
+    Capability truth comes from the trusted tool registry.
+
+    The worker therefore reasons over what capabilities actually
+    exist instead of relying on capability descriptions manually
+    copied into prompts.
     """
 
-    tool_specs = []
-
-    for tool_name in (
-        agent.tools
-    ):
-        tool = (
-            get_tool(
-                tool_name
-            )
+    capabilities = (
+        build_agent_capability_catalog(
+            agent,
+            include_arguments=True,
         )
+    )
 
-        if tool is None:
-            raise ValueError(
-                f"Agent '{agent.name}' references "
-                f"unknown tool '{tool_name}'."
-            )
-
-        description = (
-            tool.get(
-                "description"
-            )
-        )
-
-        if not isinstance(
-            description,
-            str,
-        ):
-            raise ValueError(
-                f"Tool '{tool_name}' has "
-                "an invalid description."
-            )
-
-        argument_schema = (
-            tool.get(
-                "parameters",
-                {},
-            )
-        )
-
-        if not isinstance(
-            argument_schema,
-            dict,
-        ):
-            raise ValueError(
-                f"Tool '{tool_name}' has "
-                "an invalid argument schema."
-            )
-
-        tool_specs.append(
-            {
-                "name":
-                    tool_name,
-
-                "description":
-                    description,
-
-                "argument_schema":
-                    argument_schema,
-            }
-        )
-
-    tool_json = (
+    capability_json = (
         json.dumps(
-            tool_specs,
+            capabilities,
             indent=2,
         )
     )
@@ -109,6 +59,6 @@ def build_worker_system_prompt(
         )
         .replace(
             "{{TOOLS_JSON}}",
-            tool_json,
+            capability_json,
         )
     )
