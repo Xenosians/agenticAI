@@ -73,6 +73,8 @@ class TrustedTrainingPipelineResult(
 
     curated_eligible_count: int
 
+    quarantined_contamination_count: int
+
     curation: CurationReport
 
     diversity: DiversityGateReport
@@ -87,16 +89,16 @@ class TrustedTrainingPipelineResult(
 
 class TrustedTrainingPipeline:
     """
-    Trusted path from raw learning evidence to an exported
-    train/validation split.
+    Trusted path from immutable raw learning evidence to an
+    exported train/validation split.
 
-    The pipeline deliberately reuses every previous safety layer:
+    Authority chain:
 
-        raw evidence
+        raw trajectories / corrections
             ->
-        deterministic curation
+        append-only trusted review ledger
             ->
-        contamination rejection
+        deterministic curation / quarantine
             ->
         diversity / balance gate
             ->
@@ -106,7 +108,9 @@ class TrustedTrainingPipeline:
             ->
         deterministic training export
 
-    No step makes earlier safety checks redundant.
+    Historical quarantined evidence does not poison future clean
+    evidence. Only eligible curated trajectories may contribute to
+    the promoted dataset.
     """
 
     def __init__(
@@ -114,6 +118,7 @@ class TrustedTrainingPipeline:
         *,
         trajectory_path: Path,
         correction_path: Path,
+        review_path: Path,
         dataset_root: Path,
         output_root: Path,
     ) -> None:
@@ -126,6 +131,12 @@ class TrustedTrainingPipeline:
 
         self.correction_path = (
             correction_path
+            .expanduser()
+            .resolve()
+        )
+
+        self.review_path = (
+            review_path
             .expanduser()
             .resolve()
         )
@@ -201,55 +212,53 @@ class TrustedTrainingPipeline:
         ]
 
     # ========================================================
-    # CURATION SAFETY
+    # QUARANTINE INTEGRITY
     # ========================================================
 
-    def _assert_curation_safe(
+    def _assert_quarantine_integrity(
         self,
         report: CurationReport,
     ) -> None:
+        """
+        Historical contamination is allowed to remain in the raw
+        corpus.
 
-        if (
-            report
-            .held_out_contamination_count
-            <= 0
-        ):
+        What must never happen is a contaminated trajectory also
+        appearing in the curated eligible set.
+        """
+
+        contaminated_ids = {
+            item.trajectory_id
+
+            for item
+            in report.contamination_matches
+        }
+
+        eligible_ids = {
+            item.trajectory_id
+
+            for item
+            in report.eligible
+        }
+
+        intersection = (
+            contaminated_ids
+            & eligible_ids
+        )
+
+        if not intersection:
 
             return
 
-        details: list[
-            str
-        ] = []
-
-        for match in (
-            report
-            .contamination_matches
-        ):
-
-            details.append(
-                (
-                    f"{match.trajectory_id}:"
-                    f"{','.join(match.eval_cases)}"
+        raise ValueError(
+            "Curation integrity failure: held-out "
+            "contaminated trajectory also appears "
+            "in eligible evidence: "
+            + ", ".join(
+                sorted(
+                    intersection
                 )
             )
-
-        suffix = (
-            "; ".join(
-                details
-            )
-        )
-
-        if suffix:
-
-            suffix = (
-                " "
-                + suffix
-            )
-
-        raise ValueError(
-            "Curation report contains held-out "
-            "evaluation contamination."
-            f"{suffix}"
         )
 
     # ========================================================
@@ -292,18 +301,12 @@ class TrustedTrainingPipeline:
         curation_report: CurationReport,
     ) -> None:
         """
-        Verify that every training record comes from evidence that
-        Phase 3B explicitly allowed.
+        Every promoted dataset record must trace back to:
 
-        We verify:
-
-        - trajectory exists in raw corpus
-        - trajectory is in curation_report.eligible
-        - record request matches original trajectory request
-        - correction_id was approved as usable by curation
-
-        A trusted dataset promotion operation alone is not enough
-        to bypass the raw-evidence provenance boundary.
+        - an existing immutable raw trajectory
+        - a Phase 3B eligible trajectory
+        - the same normalized user request
+        - a correction approved by curation
         """
 
         raw_trajectories = (
@@ -351,20 +354,16 @@ class TrustedTrainingPipeline:
 
         if invalid_trajectory_ids:
 
-            unique_ids = (
-                sorted(
-                    set(
-                        invalid_trajectory_ids
-                    )
-                )
-            )
-
             raise ValueError(
                 "Dataset contains trajectory_id "
                 "not present in "
                 "curation_report.eligible: "
                 + ", ".join(
-                    unique_ids
+                    sorted(
+                        set(
+                            invalid_trajectory_ids
+                        )
+                    )
                 )
             )
 
@@ -384,21 +383,13 @@ class TrustedTrainingPipeline:
                 ]
             )
 
-            record_request = (
+            if (
                 normalize_request(
                     record.user_request
                 )
-            )
-
-            trajectory_request = (
-                normalize_request(
+                != normalize_request(
                     trajectory.user_request
                 )
-            )
-
-            if (
-                record_request
-                != trajectory_request
             ):
 
                 mismatched_requests.append(
@@ -502,13 +493,17 @@ class TrustedTrainingPipeline:
                     self.correction_path
                 ),
 
+                review_path=(
+                    self.review_path
+                ),
+
                 eval_paths=(
                     resolved_eval_paths
                 ),
             )
         )
 
-        self._assert_curation_safe(
+        self._assert_quarantine_integrity(
             curation_report
         )
 
@@ -538,9 +533,6 @@ class TrustedTrainingPipeline:
 
         # ====================================================
         # VERIFIED PROMOTED DATASET
-        #
-        # PreferenceDatasetLoader performs the existing immutable
-        # manifest / hash / schema verification.
         # ====================================================
 
         (
@@ -570,8 +562,8 @@ class TrustedTrainingPipeline:
         # ====================================================
         # PHASE 3D
         #
-        # Exporter independently performs held-out intersection
-        # checks again before writing anything.
+        # Export independently checks held-out request
+        # intersection again before writing files.
         # ====================================================
 
         split_manifest = (
@@ -598,8 +590,7 @@ class TrustedTrainingPipeline:
         return (
             TrustedTrainingPipelineResult(
                 source_dataset_version=(
-                    source_manifest
-                    .version
+                    source_manifest.version
                 ),
 
                 dataset_record_count=(
@@ -611,6 +602,11 @@ class TrustedTrainingPipeline:
                 curated_eligible_count=(
                     curation_report
                     .eligible_trajectory_count
+                ),
+
+                quarantined_contamination_count=(
+                    curation_report
+                    .held_out_contamination_count
                 ),
 
                 curation=(

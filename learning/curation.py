@@ -36,6 +36,13 @@ from learning.corpus_analysis import (
     normalize_request,
 )
 
+from learning.reviews import (
+    ReviewDecision,
+    latest_review_index,
+    load_reviews,
+    subject_is_approved,
+)
+
 from learning.types import (
     CorrectionEvent,
     LearningTrajectory,
@@ -43,14 +50,8 @@ from learning.types import (
 
 
 # ============================================================
-# TRUSTED CURATION CONSTANTS
+# KNOWN RUNTIME OUTCOMES
 # ============================================================
-
-
-TRUSTED_CORRECTION_SOURCES = {
-    "trusted_review",
-    "evaluation",
-}
 
 
 KNOWN_OUTCOME_CODES = {
@@ -97,6 +98,10 @@ TRAJECTORY_DATASET_INELIGIBLE = (
     "trajectory_dataset_ineligible"
 )
 
+TRAJECTORY_REVIEW_NOT_APPROVED = (
+    "trajectory_review_not_approved"
+)
+
 MISSING_TRUSTED_OUTCOME = (
     "missing_trusted_outcome"
 )
@@ -115,6 +120,10 @@ UNTRUSTED_CORRECTION_PROVENANCE = (
 
 CORRECTION_DATASET_INELIGIBLE = (
     "correction_dataset_ineligible"
+)
+
+CORRECTION_REVIEW_NOT_APPROVED = (
+    "correction_review_not_approved"
 )
 
 
@@ -200,6 +209,8 @@ class CurationReport(
     deduplicated_trajectory_count: int
 
     held_out_contamination_count: int
+
+    review_count: int = 0
 
     exclusion_reason_counts: dict[
         str,
@@ -337,13 +348,11 @@ def evidence_fingerprint(
     trajectory: LearningTrajectory,
 ) -> str:
     """
-    Produce a deterministic hash for behavioral evidence.
+    Deterministic hash for one observed behavior.
 
-    Raw values are not exposed by the curation artifact.
-
-    Unlike the Phase 3A diversity fingerprint, argument values are
-    included here because two otherwise identical executions with
-    different concrete behavior must not be silently deduplicated.
+    Concrete argument values are included because this fingerprint
+    is used for evidence deduplication rather than diversity
+    analysis.
     """
 
     payload = {
@@ -458,13 +467,159 @@ def _outcome_exclusion_reasons(
 
 
 # ============================================================
+# REVIEW AUTHORITY
+# ============================================================
+
+
+def _load_review_state(
+    review_path: (
+        Path
+        | None
+    ),
+) -> tuple[
+    list[
+        ReviewDecision
+    ],
+    dict[
+        tuple[
+            str,
+            str,
+        ],
+        ReviewDecision,
+    ],
+]:
+
+    if review_path is None:
+
+        return (
+            [],
+            {},
+        )
+
+    reviews = (
+        load_reviews(
+            review_path
+        )
+    )
+
+    return (
+        reviews,
+        latest_review_index(
+            reviews
+        ),
+    )
+
+
+def _trajectory_is_approved(
+    *,
+    trajectory: LearningTrajectory,
+    review_path: (
+        Path
+        | None
+    ),
+    review_index: dict[
+        tuple[
+            str,
+            str,
+        ],
+        ReviewDecision,
+    ],
+) -> bool:
+    """
+    When a review ledger is configured, it is authoritative.
+
+    dataset_eligible remains only as a compatibility fallback for
+    older callers/tests that do not yet provide review_path.
+    """
+
+    if review_path is not None:
+
+        return (
+            subject_is_approved(
+                review_index=(
+                    review_index
+                ),
+
+                subject_type=(
+                    "trajectory"
+                ),
+
+                subject_id=(
+                    trajectory.trajectory_id
+                ),
+            )
+        )
+
+    return (
+        trajectory.dataset_eligible
+    )
+
+
+def _correction_is_approved(
+    *,
+    correction: CorrectionEvent,
+    review_path: (
+        Path
+        | None
+    ),
+    review_index: dict[
+        tuple[
+            str,
+            str,
+        ],
+        ReviewDecision,
+    ],
+) -> bool:
+
+    if review_path is not None:
+
+        return (
+            subject_is_approved(
+                review_index=(
+                    review_index
+                ),
+
+                subject_type=(
+                    "correction"
+                ),
+
+                subject_id=(
+                    correction.correction_id
+                ),
+            )
+        )
+
+    # Compatibility fallback only.
+    return (
+        correction.dataset_eligible
+        and correction.source
+        in {
+            "trusted_review",
+            "evaluation",
+        }
+    )
+
+
+# ============================================================
 # CORRECTION VALIDATION
 # ============================================================
 
 
 def _usable_corrections(
+    *,
     corrections: list[
         CorrectionEvent
+    ],
+    review_path: (
+        Path
+        | None
+    ),
+    review_index: dict[
+        tuple[
+            str,
+            str,
+        ],
+        ReviewDecision,
     ],
 ) -> list[
     CorrectionEvent
@@ -477,28 +632,50 @@ def _usable_corrections(
         in corrections
 
         if (
-            correction.dataset_eligible
-            and correction.source
-            in TRUSTED_CORRECTION_SOURCES
+            _correction_is_approved(
+                correction=(
+                    correction
+                ),
+
+                review_path=(
+                    review_path
+                ),
+
+                review_index=(
+                    review_index
+                ),
+            )
         )
     ]
 
 
 def _correction_exclusion_reasons(
+    *,
     corrections: list[
         CorrectionEvent
+    ],
+    review_path: (
+        Path
+        | None
+    ),
+    review_index: dict[
+        tuple[
+            str,
+            str,
+        ],
+        ReviewDecision,
     ],
 ) -> list[
     str
 ]:
     """
-    A trajectory with correction evidence must not be treated as
-    clean evidence when none of its corrections has crossed the
-    trusted-review boundary.
+    Corrections are not automatically trusted evidence.
 
-    Once at least one trusted eligible correction exists, unusable
-    raw correction evidence remains in the audit corpus but is not
-    used for dataset promotion.
+    If a trajectory has correction evidence, at least one linked
+    correction must cross the trusted review boundary before the
+    trajectory can be used as correction-derived learning evidence.
+
+    This is deliberately conservative.
     """
 
     if not corrections:
@@ -507,7 +684,17 @@ def _correction_exclusion_reasons(
 
     usable = (
         _usable_corrections(
-            corrections
+            corrections=(
+                corrections
+            ),
+
+            review_path=(
+                review_path
+            ),
+
+            review_index=(
+                review_index
+            ),
         )
     )
 
@@ -515,13 +702,22 @@ def _correction_exclusion_reasons(
 
         return []
 
+    if review_path is not None:
+
+        return [
+            CORRECTION_REVIEW_NOT_APPROVED
+        ]
+
     reasons: list[
         str
     ] = []
 
     if any(
         correction.source
-        not in TRUSTED_CORRECTION_SOURCES
+        not in {
+            "trusted_review",
+            "evaluation",
+        }
 
         for correction
         in corrections
@@ -557,14 +753,19 @@ def curate_corpus(
     eval_paths: Iterable[
         Path
     ] = (),
+    review_path: (
+        Path
+        | None
+    ) = None,
 ) -> CurationReport:
     """
     Deterministically curate raw runtime evidence.
 
-    Raw trajectories and corrections are never modified.
+    Raw trajectories, corrections, and review decisions are never
+    mutated.
 
-    Curation only emits references to source IDs plus deterministic
-    exclusion metadata.
+    If review_path is configured, trusted review decisions become
+    authoritative for trajectory/correction promotion.
     """
 
     trajectories = (
@@ -576,6 +777,15 @@ def curate_corpus(
     corrections = (
         load_corrections(
             correction_path
+        )
+    )
+
+    (
+        reviews,
+        review_index,
+    ) = (
+        _load_review_state(
+            review_path
         )
     )
 
@@ -713,15 +923,36 @@ def curate_corpus(
             )
 
         # ----------------------------------------------------
-        # Raw runtime evidence must be explicitly approved by
-        # a trusted process before it can cross this gate.
+        # Trusted promotion boundary
         # ----------------------------------------------------
 
-        if not trajectory.dataset_eligible:
+        if not (
+            _trajectory_is_approved(
+                trajectory=(
+                    trajectory
+                ),
 
-            reasons.append(
-                TRAJECTORY_DATASET_INELIGIBLE
+                review_path=(
+                    review_path
+                ),
+
+                review_index=(
+                    review_index
+                ),
             )
+        ):
+
+            if review_path is not None:
+
+                reasons.append(
+                    TRAJECTORY_REVIEW_NOT_APPROVED
+                )
+
+            else:
+
+                reasons.append(
+                    TRAJECTORY_DATASET_INELIGIBLE
+                )
 
         # ----------------------------------------------------
         # Stable machine-readable runtime outcome required.
@@ -734,12 +965,22 @@ def curate_corpus(
         )
 
         # ----------------------------------------------------
-        # Corrections are evidence, not automatic truth.
+        # Correction promotion boundary
         # ----------------------------------------------------
 
         reasons.extend(
             _correction_exclusion_reasons(
-                linked_corrections
+                corrections=(
+                    linked_corrections
+                ),
+
+                review_path=(
+                    review_path
+                ),
+
+                review_index=(
+                    review_index
+                ),
             )
         )
 
@@ -756,15 +997,6 @@ def curate_corpus(
         )
 
         duplicate_of = None
-
-        # ----------------------------------------------------
-        # Only otherwise-eligible records participate in the
-        # accepted fingerprint set.
-        #
-        # A contaminated or otherwise-invalid first observation
-        # must not prevent a later independently reviewed record
-        # from becoming eligible.
-        # ----------------------------------------------------
 
         if not reasons:
 
@@ -805,8 +1037,7 @@ def curate_corpus(
             excluded.append(
                 ExcludedTrajectoryReference(
                     trajectory_id=(
-                        trajectory
-                        .trajectory_id
+                        trajectory.trajectory_id
                     ),
 
                     reasons=(
@@ -839,7 +1070,17 @@ def curate_corpus(
 
         usable = (
             _usable_corrections(
-                linked_corrections
+                corrections=(
+                    linked_corrections
+                ),
+
+                review_path=(
+                    review_path
+                ),
+
+                review_index=(
+                    review_index
+                ),
             )
         )
 
@@ -930,6 +1171,12 @@ def curate_corpus(
             held_out_contamination_count=(
                 len(
                     contamination_matches
+                )
+            ),
+
+            review_count=(
+                len(
+                    reviews
                 )
             ),
 

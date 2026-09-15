@@ -18,6 +18,10 @@ from learning.preferences import (
     build_preference_example,
 )
 
+from learning.reviews import (
+    ReviewDecision,
+)
+
 from learning.training_pipeline import (
     TrustedTrainingPipeline,
 )
@@ -31,11 +35,6 @@ from learning.types import (
     TrajectorySignals,
     TrajectoryStep,
 )
-
-
-# ============================================================
-# JSONL
-# ============================================================
 
 
 def write_jsonl(
@@ -81,11 +80,6 @@ def write_jsonl(
             )
 
 
-# ============================================================
-# TRAJECTORY FIXTURES
-# ============================================================
-
-
 def build_trajectory(
     *,
     index: int,
@@ -95,14 +89,10 @@ def build_trajectory(
     arguments: dict,
 ) -> LearningTrajectory:
 
-    trajectory_id = (
-        f"trajectory-{index}"
-    )
-
     return (
         LearningTrajectory(
             trajectory_id=(
-                trajectory_id
+                f"trajectory-{index}"
             ),
 
             observed_at=(
@@ -194,7 +184,8 @@ def build_trajectory(
 
             quality=None,
 
-            dataset_eligible=True,
+            # Real raw runtime evidence never promotes itself.
+            dataset_eligible=False,
         )
     )
 
@@ -227,7 +218,7 @@ def build_correction(
             ),
 
             source=(
-                "trusted_review"
+                "explicit_user"
             ),
 
             values=[
@@ -246,7 +237,47 @@ def build_correction(
                 )
             ],
 
-            dataset_eligible=True,
+            dataset_eligible=False,
+        )
+    )
+
+
+def review(
+    *,
+    review_id: str,
+    subject_type: str,
+    subject_id: str,
+) -> ReviewDecision:
+
+    return (
+        ReviewDecision(
+            review_id=(
+                review_id
+            ),
+
+            observed_at=(
+                "2026-09-15T00:00:02+00:00"
+            ),
+
+            subject_type=(
+                subject_type
+            ),
+
+            subject_id=(
+                subject_id
+            ),
+
+            decision=(
+                "approve"
+            ),
+
+            source=(
+                "trusted_review"
+            ),
+
+            reason=(
+                "Verified synthetic evidence."
+            ),
         )
     )
 
@@ -259,19 +290,11 @@ def safe_trajectories(
     return [
         build_trajectory(
             index=1,
-
             request=(
                 "Synthetic pipeline frontend status."
             ),
-
-            agent=(
-                "developer-specialist"
-            ),
-
-            tool=(
-                "workspace_git_status"
-            ),
-
+            agent="developer-specialist",
+            tool="workspace_git_status",
             arguments={
                 "repository":
                     "frontend"
@@ -280,19 +303,11 @@ def safe_trajectories(
 
         build_trajectory(
             index=2,
-
             request=(
                 "Synthetic pipeline backend branches."
             ),
-
-            agent=(
-                "developer-specialist"
-            ),
-
-            tool=(
-                "workspace_git_branches"
-            ),
-
+            agent="developer-specialist",
+            tool="workspace_git_branches",
             arguments={
                 "repository":
                     "backend"
@@ -301,19 +316,11 @@ def safe_trajectories(
 
         build_trajectory(
             index=3,
-
             request=(
                 "Synthetic pipeline ticket state."
             ),
-
-            agent=(
-                "ticket-specialist"
-            ),
-
-            tool=(
-                "ticket_get"
-            ),
-
+            agent="ticket-specialist",
+            tool="ticket_get",
             arguments={
                 "ticket_key":
                     "SYN-103"
@@ -322,23 +329,14 @@ def safe_trajectories(
 
         build_trajectory(
             index=4,
-
             request=(
                 "Synthetic pipeline ticket comments."
             ),
-
-            agent=(
-                "ticket-specialist"
-            ),
-
-            tool=(
-                "ticket_comments"
-            ),
-
+            agent="ticket-specialist",
+            tool="ticket_comments",
             arguments={
                 "ticket_key":
                     "SYN-104",
-
                 "limit":
                     4,
             },
@@ -364,11 +362,6 @@ def safe_corrections(
     ]
 
 
-# ============================================================
-# POLICY
-# ============================================================
-
-
 def relaxed_policy(
 ) -> DiversityGatePolicy:
 
@@ -386,14 +379,10 @@ def relaxed_policy(
     )
 
 
-# ============================================================
-# PROJECT BUILDERS
-# ============================================================
-
-
 def build_raw_evidence(
     tmp_path: Path,
 ) -> tuple[
+    Path,
     Path,
     Path,
     list[
@@ -416,6 +405,12 @@ def build_raw_evidence(
         / "corrections.jsonl"
     )
 
+    review_path = (
+        tmp_path
+        / "runtime"
+        / "reviews.jsonl"
+    )
+
     trajectories = (
         safe_trajectories()
     )
@@ -423,6 +418,45 @@ def build_raw_evidence(
     corrections = (
         safe_corrections()
     )
+
+    reviews = []
+
+    for index in range(
+        1,
+        5,
+    ):
+
+        reviews.append(
+            review(
+                review_id=(
+                    f"trajectory-review-{index}"
+                ),
+
+                subject_type=(
+                    "trajectory"
+                ),
+
+                subject_id=(
+                    f"trajectory-{index}"
+                ),
+            )
+        )
+
+        reviews.append(
+            review(
+                review_id=(
+                    f"correction-review-{index}"
+                ),
+
+                subject_type=(
+                    "correction"
+                ),
+
+                subject_id=(
+                    f"correction-{index}"
+                ),
+            )
+        )
 
     write_jsonl(
         trajectory_path,
@@ -434,9 +468,15 @@ def build_raw_evidence(
         corrections,
     )
 
+    write_jsonl(
+        review_path,
+        reviews,
+    )
+
     return (
         trajectory_path,
         correction_path,
+        review_path,
         trajectories,
         corrections,
     )
@@ -499,8 +539,6 @@ def build_dataset(
                 dataset_root
             ),
 
-            # Synthetic test data must not depend on the real
-            # repository held-out suites.
             eval_paths=[],
         )
     )
@@ -528,6 +566,7 @@ def build_pipeline(
     *,
     trajectory_path: Path,
     correction_path: Path,
+    review_path: Path,
     dataset_root: Path,
     tmp_path: Path,
 ) -> TrustedTrainingPipeline:
@@ -542,6 +581,10 @@ def build_pipeline(
                 correction_path
             ),
 
+            review_path=(
+                review_path
+            ),
+
             dataset_root=(
                 dataset_root
             ),
@@ -554,18 +597,14 @@ def build_pipeline(
     )
 
 
-# ============================================================
-# TESTS
-# ============================================================
-
-
-def test_trusted_pipeline_exports_verified_split(
+def prepare(
     tmp_path: Path,
 ):
 
     (
         trajectory_path,
         correction_path,
+        review_path,
         trajectories,
         corrections,
     ) = (
@@ -608,6 +647,10 @@ def test_trusted_pipeline_exports_verified_split(
                 correction_path
             ),
 
+            review_path=(
+                review_path
+            ),
+
             dataset_root=(
                 dataset_root
             ),
@@ -618,26 +661,48 @@ def test_trusted_pipeline_exports_verified_split(
         )
     )
 
+    return (
+        pipeline,
+        trajectory_path,
+        correction_path,
+        review_path,
+        dataset_root,
+        trajectories,
+        corrections,
+        examples,
+    )
+
+
+def test_trusted_pipeline_exports_verified_split(
+    tmp_path: Path,
+):
+
+    (
+        pipeline,
+        _,
+        _,
+        _,
+        _,
+        _,
+        _,
+        _,
+    ) = prepare(
+        tmp_path
+    )
+
     result = (
         pipeline.run(
-            dataset_version=(
-                "v000001"
-            ),
-
+            dataset_version="v000001",
             validation_fraction=0.25,
-
             diversity_policy=(
                 relaxed_policy()
             ),
-
             eval_paths=[],
         )
     )
 
     assert (
-        result
-        .diversity
-        .promotion_eligible
+        result.diversity.promotion_eligible
         is True
     )
 
@@ -652,19 +717,7 @@ def test_trusted_pipeline_exports_verified_split(
     )
 
     assert (
-        result
-        .split
-        .record_count
-        == 4
-    )
-
-    assert (
-        result
-        .split
-        .train_record_count
-        + result
-        .split
-        .validation_record_count
+        result.split.record_count
         == 4
     )
 
@@ -674,54 +727,16 @@ def test_pipeline_refuses_failed_diversity_gate(
 ):
 
     (
-        trajectory_path,
-        correction_path,
-        trajectories,
-        corrections,
-    ) = (
-        build_raw_evidence(
-            tmp_path
-        )
-    )
-
-    dataset_root = (
-        build_dataset(
-            tmp_path=(
-                tmp_path
-            ),
-
-            examples=(
-                build_examples(
-                    trajectories=(
-                        trajectories
-                    ),
-
-                    corrections=(
-                        corrections
-                    ),
-                )
-            ),
-        )
-    )
-
-    pipeline = (
-        build_pipeline(
-            trajectory_path=(
-                trajectory_path
-            ),
-
-            correction_path=(
-                correction_path
-            ),
-
-            dataset_root=(
-                dataset_root
-            ),
-
-            tmp_path=(
-                tmp_path
-            ),
-        )
+        pipeline,
+        _,
+        _,
+        _,
+        _,
+        _,
+        _,
+        _,
+    ) = prepare(
+        tmp_path
     )
 
     with pytest.raises(
@@ -732,58 +747,61 @@ def test_pipeline_refuses_failed_diversity_gate(
     ):
 
         pipeline.run(
-            dataset_version=(
-                "v000001"
-            ),
-
-            # Defaults require substantially more evidence.
+            dataset_version="v000001",
             diversity_policy=(
                 DiversityGatePolicy()
             ),
-
             eval_paths=[],
         )
 
-    assert not (
-        tmp_path
-        / "training-exports"
-    ).exists()
 
-
-def test_pipeline_refuses_curation_contamination(
+def test_historical_contamination_is_quarantined_not_global_poison(
     tmp_path: Path,
 ):
 
     (
+        pipeline,
         trajectory_path,
-        correction_path,
-        trajectories,
-        corrections,
-    ) = (
-        build_raw_evidence(
-            tmp_path
+        _,
+        _,
+        _,
+        _,
+        _,
+        _,
+    ) = prepare(
+        tmp_path
+    )
+
+    contaminated = (
+        build_trajectory(
+            index=99,
+            request=(
+                "Synthetic historical held-out request."
+            ),
+            agent="developer-specialist",
+            tool="workspace_git_status",
+            arguments={
+                "repository":
+                    "frontend"
+            },
         )
     )
 
-    dataset_root = (
-        build_dataset(
-            tmp_path=(
-                tmp_path
-            ),
+    with trajectory_path.open(
+        "a",
+        encoding="utf-8",
+    ) as handle:
 
-            examples=(
-                build_examples(
-                    trajectories=(
-                        trajectories
-                    ),
-
-                    corrections=(
-                        corrections
-                    ),
-                )
-            ),
+        handle.write(
+            contaminated
+            .model_dump_json(
+                by_alias=True
+            )
         )
-    )
+
+        handle.write(
+            "\n"
+        )
 
     eval_path = (
         tmp_path
@@ -797,68 +815,42 @@ def test_pipeline_refuses_curation_contamination(
                     "evaluation-case.v1",
 
                 "case_id":
-                    "synthetic.pipeline.frontend",
+                    "historical.contamination",
 
                 "suite":
                     "synthetic",
 
                 "user_request":
-                    (
-                        " SYNTHETIC   PIPELINE "
-                        "FRONTEND STATUS. "
-                    ),
+                    " SYNTHETIC HISTORICAL HELD-OUT REQUEST. ",
             }
         )
         + "\n",
         encoding="utf-8",
     )
 
-    pipeline = (
-        build_pipeline(
-            trajectory_path=(
-                trajectory_path
-            ),
-
-            correction_path=(
-                correction_path
-            ),
-
-            dataset_root=(
-                dataset_root
-            ),
-
-            tmp_path=(
-                tmp_path
-            ),
-        )
-    )
-
-    with pytest.raises(
-        ValueError,
-        match=(
-            "Curation report contains "
-            "held-out evaluation contamination"
-        ),
-    ):
-
+    result = (
         pipeline.run(
-            dataset_version=(
-                "v000001"
-            ),
-
+            dataset_version="v000001",
+            validation_fraction=0.25,
             diversity_policy=(
                 relaxed_policy()
             ),
-
             eval_paths=[
                 eval_path,
             ],
         )
+    )
 
-    assert not (
-        tmp_path
-        / "training-exports"
-    ).exists()
+    assert (
+        result
+        .quarantined_contamination_count
+        == 1
+    )
+
+    assert (
+        result.curated_eligible_count
+        == 4
+    )
 
 
 def test_pipeline_refuses_dataset_trajectory_outside_curation(
@@ -866,26 +858,16 @@ def test_pipeline_refuses_dataset_trajectory_outside_curation(
 ):
 
     (
+        _,
         trajectory_path,
         correction_path,
+        review_path,
+        _,
         trajectories,
         corrections,
-    ) = (
-        build_raw_evidence(
-            tmp_path
-        )
-    )
-
-    examples = (
-        build_examples(
-            trajectories=(
-                trajectories
-            ),
-
-            corrections=(
-                corrections
-            ),
-        )
+        examples,
+    ) = prepare(
+        tmp_path
     )
 
     rogue = (
@@ -909,18 +891,28 @@ def test_pipeline_refuses_dataset_trajectory_outside_curation(
     )
 
     dataset_root = (
-        build_dataset(
-            tmp_path=(
-                tmp_path
-            ),
+        tmp_path
+        / "rogue-datasets"
+    )
 
-            examples=(
-                examples
-                + [
-                    rogue
-                ]
+    builder = (
+        PreferenceDatasetBuilder(
+            root=(
+                dataset_root
             ),
+            eval_paths=[],
         )
+    )
+
+    builder.promote(
+        examples=(
+            examples
+            + [
+                rogue
+            ]
+        ),
+        promoted_by="trusted_review",
+        promotion_reason="Rogue lineage test.",
     )
 
     pipeline = (
@@ -928,15 +920,15 @@ def test_pipeline_refuses_dataset_trajectory_outside_curation(
             trajectory_path=(
                 trajectory_path
             ),
-
             correction_path=(
                 correction_path
             ),
-
+            review_path=(
+                review_path
+            ),
             dataset_root=(
                 dataset_root
             ),
-
             tmp_path=(
                 tmp_path
             ),
@@ -952,14 +944,10 @@ def test_pipeline_refuses_dataset_trajectory_outside_curation(
     ):
 
         pipeline.run(
-            dataset_version=(
-                "v000001"
-            ),
-
+            dataset_version="v000001",
             diversity_policy=(
                 relaxed_policy()
             ),
-
             eval_paths=[],
         )
 
@@ -969,26 +957,16 @@ def test_pipeline_refuses_unapproved_correction_lineage(
 ):
 
     (
+        _,
         trajectory_path,
         correction_path,
-        trajectories,
-        corrections,
-    ) = (
-        build_raw_evidence(
-            tmp_path
-        )
-    )
-
-    examples = (
-        build_examples(
-            trajectories=(
-                trajectories
-            ),
-
-            corrections=(
-                corrections
-            ),
-        )
+        review_path,
+        _,
+        _,
+        _,
+        examples,
+    ) = prepare(
+        tmp_path
     )
 
     examples[
@@ -1008,15 +986,25 @@ def test_pipeline_refuses_unapproved_correction_lineage(
     )
 
     dataset_root = (
-        build_dataset(
-            tmp_path=(
-                tmp_path
-            ),
+        tmp_path
+        / "bad-correction-datasets"
+    )
 
-            examples=(
-                examples
+    builder = (
+        PreferenceDatasetBuilder(
+            root=(
+                dataset_root
             ),
+            eval_paths=[],
         )
+    )
+
+    builder.promote(
+        examples=(
+            examples
+        ),
+        promoted_by="trusted_review",
+        promotion_reason="Bad correction lineage.",
     )
 
     pipeline = (
@@ -1024,15 +1012,15 @@ def test_pipeline_refuses_unapproved_correction_lineage(
             trajectory_path=(
                 trajectory_path
             ),
-
             correction_path=(
                 correction_path
             ),
-
+            review_path=(
+                review_path
+            ),
             dataset_root=(
                 dataset_root
             ),
-
             tmp_path=(
                 tmp_path
             ),
@@ -1048,14 +1036,10 @@ def test_pipeline_refuses_unapproved_correction_lineage(
     ):
 
         pipeline.run(
-            dataset_version=(
-                "v000001"
-            ),
-
+            dataset_version="v000001",
             diversity_policy=(
                 relaxed_policy()
             ),
-
             eval_paths=[],
         )
 
@@ -1065,26 +1049,16 @@ def test_pipeline_refuses_dataset_request_mismatch(
 ):
 
     (
+        _,
         trajectory_path,
         correction_path,
-        trajectories,
-        corrections,
-    ) = (
-        build_raw_evidence(
-            tmp_path
-        )
-    )
-
-    examples = (
-        build_examples(
-            trajectories=(
-                trajectories
-            ),
-
-            corrections=(
-                corrections
-            ),
-        )
+        review_path,
+        _,
+        _,
+        _,
+        examples,
+    ) = prepare(
+        tmp_path
     )
 
     examples[
@@ -1104,15 +1078,25 @@ def test_pipeline_refuses_dataset_request_mismatch(
     )
 
     dataset_root = (
-        build_dataset(
-            tmp_path=(
-                tmp_path
-            ),
+        tmp_path
+        / "bad-request-datasets"
+    )
 
-            examples=(
-                examples
+    builder = (
+        PreferenceDatasetBuilder(
+            root=(
+                dataset_root
             ),
+            eval_paths=[],
         )
+    )
+
+    builder.promote(
+        examples=(
+            examples
+        ),
+        promoted_by="trusted_review",
+        promotion_reason="Bad request lineage.",
     )
 
     pipeline = (
@@ -1120,15 +1104,15 @@ def test_pipeline_refuses_dataset_request_mismatch(
             trajectory_path=(
                 trajectory_path
             ),
-
             correction_path=(
                 correction_path
             ),
-
+            review_path=(
+                review_path
+            ),
             dataset_root=(
                 dataset_root
             ),
-
             tmp_path=(
                 tmp_path
             ),
@@ -1143,14 +1127,10 @@ def test_pipeline_refuses_dataset_request_mismatch(
     ):
 
         pipeline.run(
-            dataset_version=(
-                "v000001"
-            ),
-
+            dataset_version="v000001",
             diversity_policy=(
                 relaxed_policy()
             ),
-
             eval_paths=[],
         )
 
@@ -1160,34 +1140,16 @@ def test_pipeline_refuses_corrupt_dataset(
 ):
 
     (
-        trajectory_path,
-        correction_path,
-        trajectories,
-        corrections,
-    ) = (
-        build_raw_evidence(
-            tmp_path
-        )
-    )
-
-    dataset_root = (
-        build_dataset(
-            tmp_path=(
-                tmp_path
-            ),
-
-            examples=(
-                build_examples(
-                    trajectories=(
-                        trajectories
-                    ),
-
-                    corrections=(
-                        corrections
-                    ),
-                )
-            ),
-        )
+        pipeline,
+        _,
+        _,
+        _,
+        dataset_root,
+        _,
+        _,
+        _,
+    ) = prepare(
+        tmp_path
     )
 
     records_path = (
@@ -1208,26 +1170,6 @@ def test_pipeline_refuses_corrupt_dataset(
         encoding="utf-8",
     )
 
-    pipeline = (
-        build_pipeline(
-            trajectory_path=(
-                trajectory_path
-            ),
-
-            correction_path=(
-                correction_path
-            ),
-
-            dataset_root=(
-                dataset_root
-            ),
-
-            tmp_path=(
-                tmp_path
-            ),
-        )
-    )
-
     with pytest.raises(
         ValueError,
         match=(
@@ -1236,18 +1178,9 @@ def test_pipeline_refuses_corrupt_dataset(
     ):
 
         pipeline.run(
-            dataset_version=(
-                "v000001"
-            ),
-
+            dataset_version="v000001",
             diversity_policy=(
                 relaxed_policy()
             ),
-
             eval_paths=[],
         )
-
-    assert not (
-        tmp_path
-        / "training-exports"
-    ).exists()

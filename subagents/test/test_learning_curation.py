@@ -23,6 +23,10 @@ from learning.types import (
     TrajectoryStep,
 )
 
+from learning.reviews import (
+    ReviewDecision,
+)
+
 
 def write_jsonl(
     path: Path,
@@ -696,4 +700,303 @@ def test_orphan_correction_is_quarantined(
     assert (
         report.usable_correction_count
         == 0
+    )
+    
+def write_reviews(
+    path: Path,
+    reviews,
+) -> None:
+
+    write_jsonl(
+        path,
+        reviews,
+    )
+
+
+def review(
+    *,
+    review_id: str,
+    subject_type: str,
+    subject_id: str,
+    decision: str = "approve",
+) -> ReviewDecision:
+
+    return (
+        ReviewDecision(
+            review_id=(
+                review_id
+            ),
+
+            observed_at=(
+                "2026-09-15T00:00:02+00:00"
+            ),
+
+            subject_type=(
+                subject_type
+            ),
+
+            subject_id=(
+                subject_id
+            ),
+
+            decision=(
+                decision
+            ),
+
+            source=(
+                "trusted_review"
+            ),
+
+            reason=(
+                "Verified test evidence."
+            ),
+        )
+    )
+
+
+def test_review_ledger_can_approve_raw_trajectory(
+    tmp_path: Path,
+):
+
+    trajectory_path = (
+        tmp_path
+        / "trajectories.jsonl"
+    )
+
+    correction_path = (
+        tmp_path
+        / "corrections.jsonl"
+    )
+
+    review_path = (
+        tmp_path
+        / "reviews.jsonl"
+    )
+
+    write_jsonl(
+        trajectory_path,
+        [
+            build_trajectory(
+                trajectory_id="t1",
+                user_request=(
+                    "Synthetic reviewed request."
+                ),
+                dataset_eligible=False,
+            )
+        ],
+    )
+
+    write_jsonl(
+        correction_path,
+        [],
+    )
+
+    write_reviews(
+        review_path,
+        [
+            review(
+                review_id="r1",
+                subject_type="trajectory",
+                subject_id="t1",
+            )
+        ],
+    )
+
+    report = (
+        curate_corpus(
+            trajectory_path=(
+                trajectory_path
+            ),
+
+            correction_path=(
+                correction_path
+            ),
+
+            review_path=(
+                review_path
+            ),
+        )
+    )
+
+    assert (
+        report.eligible_trajectory_count
+        == 1
+    )
+
+    assert (
+        report.review_count
+        == 1
+    )
+
+
+def test_review_ledger_rejection_overrides_dataset_flag(
+    tmp_path: Path,
+):
+
+    trajectory_path = (
+        tmp_path
+        / "trajectories.jsonl"
+    )
+
+    correction_path = (
+        tmp_path
+        / "corrections.jsonl"
+    )
+
+    review_path = (
+        tmp_path
+        / "reviews.jsonl"
+    )
+
+    write_jsonl(
+        trajectory_path,
+        [
+            build_trajectory(
+                trajectory_id="t1",
+                user_request=(
+                    "Synthetic rejected request."
+                ),
+                dataset_eligible=True,
+            )
+        ],
+    )
+
+    write_jsonl(
+        correction_path,
+        [],
+    )
+
+    write_reviews(
+        review_path,
+        [
+            review(
+                review_id="r1",
+                subject_type="trajectory",
+                subject_id="t1",
+                decision="reject",
+            )
+        ],
+    )
+
+    report = (
+        curate_corpus(
+            trajectory_path=(
+                trajectory_path
+            ),
+
+            correction_path=(
+                correction_path
+            ),
+
+            review_path=(
+                review_path
+            ),
+        )
+    )
+
+    assert (
+        report.eligible_trajectory_count
+        == 0
+    )
+
+    assert (
+        "trajectory_review_not_approved"
+        in report.excluded[
+            0
+        ].reasons
+    )
+
+
+def test_reviewed_explicit_user_correction_becomes_usable(
+    tmp_path: Path,
+):
+
+    trajectory_path = (
+        tmp_path
+        / "trajectories.jsonl"
+    )
+
+    correction_path = (
+        tmp_path
+        / "corrections.jsonl"
+    )
+
+    review_path = (
+        tmp_path
+        / "reviews.jsonl"
+    )
+
+    write_jsonl(
+        trajectory_path,
+        [
+            build_trajectory(
+                trajectory_id="t1",
+                user_request=(
+                    "Synthetic corrected request."
+                ),
+                dataset_eligible=False,
+            )
+        ],
+    )
+
+    write_jsonl(
+        correction_path,
+        [
+            build_correction(
+                correction_id="c1",
+                trajectory_id="t1",
+            )
+        ],
+    )
+
+    write_reviews(
+        review_path,
+        [
+            review(
+                review_id="r1",
+                subject_type="trajectory",
+                subject_id="t1",
+            ),
+
+            review(
+                review_id="r2",
+                subject_type="correction",
+                subject_id="c1",
+            ),
+        ],
+    )
+
+    report = (
+        curate_corpus(
+            trajectory_path=(
+                trajectory_path
+            ),
+
+            correction_path=(
+                correction_path
+            ),
+
+            review_path=(
+                review_path
+            ),
+        )
+    )
+
+    assert (
+        report.eligible_trajectory_count
+        == 1
+    )
+
+    assert (
+        report.usable_correction_count
+        == 1
+    )
+
+    assert (
+        report.eligible[
+            0
+        ].usable_correction_ids
+        == [
+            "c1"
+        ]
     )

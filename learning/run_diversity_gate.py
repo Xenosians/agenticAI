@@ -43,6 +43,14 @@ DEFAULT_CORRECTIONS = (
 )
 
 
+DEFAULT_REVIEWS = (
+    PROJECT_ROOT
+    / ".runtime"
+    / "learning"
+    / "reviews.jsonl"
+)
+
+
 DEFAULT_EVAL_DIRECTORY = (
     PROJECT_ROOT
     / "learning"
@@ -56,9 +64,9 @@ def build_parser(
     parser = (
         argparse.ArgumentParser(
             description=(
-                "Evaluate curated runtime learning evidence "
-                "for minimum diversity and balance before "
-                "dataset export."
+                "Evaluate trusted curated runtime learning "
+                "evidence for minimum diversity and balance "
+                "before dataset export."
             )
         )
     )
@@ -80,16 +88,24 @@ def build_parser(
     )
 
     parser.add_argument(
+        "--reviews",
+        type=Path,
+        default=(
+            DEFAULT_REVIEWS
+        ),
+        help=(
+            "Append-only trusted review ledger. "
+            "Defaults to "
+            ".runtime/learning/reviews.jsonl."
+        ),
+    )
+
+    parser.add_argument(
         "--eval",
         dest="eval_paths",
         type=Path,
         action="append",
         default=None,
-        help=(
-            "Held-out evaluation JSONL. "
-            "May be supplied multiple times. "
-            "Defaults to all learning/evals/*.jsonl."
-        ),
     )
 
     parser.add_argument(
@@ -148,10 +164,6 @@ def build_parser(
     parser.add_argument(
         "--fail-on-gate",
         action="store_true",
-        help=(
-            "Exit non-zero when the diversity/balance "
-            "gate does not pass."
-        ),
     )
 
     return parser
@@ -192,75 +204,43 @@ def _build_policy(
 ) -> DiversityGatePolicy:
 
     _validate_non_negative(
-        name=(
-            "min_eligible_trajectories"
-        ),
-        value=(
-            args.min_eligible_trajectories
-        ),
+        name="min_eligible_trajectories",
+        value=args.min_eligible_trajectories,
     )
 
     _validate_non_negative(
-        name=(
-            "min_unique_requests"
-        ),
-        value=(
-            args.min_unique_requests
-        ),
+        name="min_unique_requests",
+        value=args.min_unique_requests,
     )
 
     _validate_non_negative(
-        name=(
-            "min_unique_behavior_patterns"
-        ),
-        value=(
-            args.min_unique_behavior_patterns
-        ),
+        name="min_unique_behavior_patterns",
+        value=args.min_unique_behavior_patterns,
     )
 
     _validate_non_negative(
-        name=(
-            "min_unique_domains"
-        ),
-        value=(
-            args.min_unique_domains
-        ),
+        name="min_unique_domains",
+        value=args.min_unique_domains,
     )
 
     _validate_non_negative(
-        name=(
-            "min_unique_capabilities"
-        ),
-        value=(
-            args.min_unique_capabilities
-        ),
+        name="min_unique_capabilities",
+        value=args.min_unique_capabilities,
     )
 
     _validate_rate(
-        name=(
-            "max_duplicate_request_rate"
-        ),
-        value=(
-            args.max_duplicate_request_rate
-        ),
+        name="max_duplicate_request_rate",
+        value=args.max_duplicate_request_rate,
     )
 
     _validate_rate(
-        name=(
-            "max_dominant_domain_share"
-        ),
-        value=(
-            args.max_dominant_domain_share
-        ),
+        name="max_dominant_domain_share",
+        value=args.max_dominant_domain_share,
     )
 
     _validate_rate(
-        name=(
-            "max_dominant_capability_share"
-        ),
-        value=(
-            args.max_dominant_capability_share
-        ),
+        name="max_dominant_capability_share",
+        value=args.max_dominant_capability_share,
     )
 
     return (
@@ -346,6 +326,10 @@ def main(
                     args.corrections
                 ),
 
+                review_path=(
+                    args.reviews
+                ),
+
                 eval_paths=(
                     eval_paths
                 ),
@@ -399,6 +383,11 @@ def main(
 
         print(
             "==================================="
+        )
+
+        print(
+            f"Trusted reviews:         "
+            f"{curation_report.review_count}"
         )
 
         print(

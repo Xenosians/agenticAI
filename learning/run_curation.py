@@ -38,6 +38,14 @@ DEFAULT_CORRECTIONS = (
 )
 
 
+DEFAULT_REVIEWS = (
+    PROJECT_ROOT
+    / ".runtime"
+    / "learning"
+    / "reviews.jsonl"
+)
+
+
 DEFAULT_EVAL_DIRECTORY = (
     PROJECT_ROOT
     / "learning"
@@ -52,16 +60,15 @@ def build_parser(
         argparse.ArgumentParser(
             description=(
                 "Curate captured runtime learning evidence "
-                "through deterministic quarantine rules."
+                "through deterministic quarantine rules and "
+                "trusted review decisions."
             )
         )
     )
 
     parser.add_argument(
         "--trajectories",
-
         type=Path,
-
         default=(
             DEFAULT_TRAJECTORIES
         ),
@@ -69,11 +76,22 @@ def build_parser(
 
     parser.add_argument(
         "--corrections",
-
         type=Path,
-
         default=(
             DEFAULT_CORRECTIONS
+        ),
+    )
+
+    parser.add_argument(
+        "--reviews",
+        type=Path,
+        default=(
+            DEFAULT_REVIEWS
+        ),
+        help=(
+            "Append-only trusted review ledger. "
+            "Defaults to "
+            ".runtime/learning/reviews.jsonl."
         ),
     )
 
@@ -99,18 +117,15 @@ def build_parser(
 
     parser.add_argument(
         "--json",
-
         action="store_true",
     )
 
     parser.add_argument(
         "--fail-on-contamination",
-
         action="store_true",
-
         help=(
             "Exit non-zero when held-out "
-            "evaluation contamination is found."
+            "evaluation contamination is detected."
         ),
     )
 
@@ -196,6 +211,10 @@ def main(
                     args.corrections
                 ),
 
+                review_path=(
+                    args.reviews
+                ),
+
                 eval_paths=(
                     eval_paths
                 ),
@@ -249,6 +268,11 @@ def main(
         print(
             f"Corrections:             "
             f"{report.correction_count}"
+        )
+
+        print(
+            f"Reviews:                 "
+            f"{report.review_count}"
         )
 
         print(
