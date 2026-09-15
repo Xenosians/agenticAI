@@ -15,6 +15,22 @@ from .datasets import (
     PreferenceDatasetBuilder,
 )
 
+from .eval_suite import (
+    load_evaluation_cases,
+)
+
+from .eval_types import (
+    EvaluationCase,
+    EvaluationCheck,
+    EvaluationExpectation,
+    EvaluationResult,
+    EvaluationSemanticLabels,
+)
+
+from .evaluation import (
+    evaluate_trajectory,
+)
+
 from .preferences import (
     build_preference_example,
 )
@@ -59,6 +75,11 @@ __all__ = [
     "DatasetManifest",
     "DatasetPromotion",
     "DatasetVerificationResult",
+    "EvaluationCase",
+    "EvaluationCheck",
+    "EvaluationExpectation",
+    "EvaluationResult",
+    "EvaluationSemanticLabels",
     "ExecutionReward",
     "LearningTrajectory",
     "PreferenceDatasetBuilder",
@@ -75,5 +96,7 @@ __all__ = [
     "build_preference_example",
     "derive_execution_reward",
     "derive_trajectory_quality",
+    "evaluate_trajectory",
+    "load_evaluation_cases",
     "sanitize_value",
 ]
