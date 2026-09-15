@@ -1,0 +1,13 @@
+-r requirements.txt
+
+# Parameter-efficient training
+peft
+
+# Preference optimization / DPO
+trl
+
+# QLoRA 4-bit loading
+bitsandbytes
+
+# Dataset integration used by TRL
+datasets
