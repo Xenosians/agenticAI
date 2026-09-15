@@ -55,7 +55,7 @@ def preference_example(
             ),
 
             user_request=(
-                "Show me the frontend git status."
+                "Check the working tree status for my frontend workspace."
             ),
 
             rejected=(
@@ -437,3 +437,136 @@ def test_duplicate_examples_are_rejected(
                 "Review."
             ),
         )
+        
+def test_promotion_rejects_held_out_contamination(
+    tmp_path: Path,
+):
+
+    eval_path = (
+        tmp_path
+        / "core.v2.jsonl"
+    )
+
+    eval_path.write_text(
+        json.dumps(
+            {
+                "schema":
+                    "evaluation-case.v1",
+
+                "case_id":
+                    "git.frontend.status",
+
+                "suite":
+                    "core.v2",
+
+                "user_request":
+                    " Check the working tree status for my frontend workspace. ",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    builder = (
+        PreferenceDatasetBuilder(
+            root=(
+                tmp_path
+                / "datasets"
+            ),
+
+            eval_paths=[
+                eval_path,
+            ],
+        )
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "Held-out evaluation contamination"
+        ),
+    ):
+
+        builder.promote(
+            examples=[
+                preference_example()
+            ],
+
+            promoted_by=(
+                "trusted_review"
+            ),
+
+            promotion_reason=(
+                "Reviewed correction."
+            ),
+        )
+
+    assert not (
+        tmp_path
+        / "datasets"
+        / "preference"
+    ).exists()
+
+
+def test_promotion_allows_non_contaminated_example(
+    tmp_path: Path,
+):
+
+    eval_path = (
+        tmp_path
+        / "core.v2.jsonl"
+    )
+
+    eval_path.write_text(
+        json.dumps(
+            {
+                "schema":
+                    "evaluation-case.v1",
+
+                "case_id":
+                    "unrelated.case",
+
+                "suite":
+                    "core.v2",
+
+                "user_request":
+                    "Show ticket KAN-100.",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    builder = (
+        PreferenceDatasetBuilder(
+            root=(
+                tmp_path
+                / "datasets"
+            ),
+
+            eval_paths=[
+                eval_path,
+            ],
+        )
+    )
+
+    manifest = (
+        builder.promote(
+            examples=[
+                preference_example()
+            ],
+
+            promoted_by=(
+                "trusted_review"
+            ),
+
+            promotion_reason=(
+                "Reviewed correction."
+            ),
+        )
+    )
+
+    assert (
+        manifest.version
+        == "v000001"
+    )

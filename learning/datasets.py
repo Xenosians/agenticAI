@@ -15,6 +15,15 @@ from pathlib import (
     Path,
 )
 
+from typing import (
+    Iterable,
+)
+
+from learning.corpus_analysis import (
+    load_eval_request_index,
+    normalize_request,
+)
+
 from learning.sanitizer import (
     sanitize_value,
 )
@@ -24,6 +33,24 @@ from learning.types import (
     DatasetPromotion,
     PreferenceDatasetRecord,
     PreferenceExample,
+)
+
+
+PROJECT_ROOT = (
+    Path(
+        __file__
+    )
+    .resolve()
+    .parents[
+        1
+    ]
+)
+
+
+DEFAULT_EVAL_DIRECTORY = (
+    PROJECT_ROOT
+    / "learning"
+    / "evals"
 )
 
 
@@ -50,12 +77,21 @@ class PreferenceDatasetBuilder:
         records.jsonl
 
     Existing versions are never overwritten.
+
+    Held-out evaluation contamination is checked again immediately
+    before promotion as defense in depth.
     """
 
     def __init__(
         self,
         *,
         root: Path,
+        eval_paths: (
+            Iterable[
+                Path
+            ]
+            | None
+        ) = None,
     ) -> None:
 
         self.root = (
@@ -63,6 +99,30 @@ class PreferenceDatasetBuilder:
             .expanduser()
             .resolve()
         )
+
+        if eval_paths is None:
+
+            self.eval_paths = (
+                sorted(
+                    DEFAULT_EVAL_DIRECTORY
+                    .glob(
+                        "*.jsonl"
+                    )
+                )
+            )
+
+        else:
+
+            self.eval_paths = [
+                Path(
+                    path
+                )
+                .expanduser()
+                .resolve()
+
+                for path
+                in eval_paths
+            ]
 
     def _dataset_root(
         self,
@@ -82,7 +142,10 @@ class PreferenceDatasetBuilder:
         )
 
         if not dataset_root.exists():
-            return "v000001"
+
+            return (
+                "v000001"
+            )
 
         highest = 0
 
@@ -90,27 +153,35 @@ class PreferenceDatasetBuilder:
             dataset_root
             .iterdir()
         ):
+
             if not child.is_dir():
+
                 continue
 
             match = (
-                VERSION_PATTERN.match(
+                VERSION_PATTERN
+                .match(
                     child.name
                 )
             )
 
             if match is None:
+
                 continue
 
-            value = int(
-                match.group(
-                    1
+            value = (
+                int(
+                    match.group(
+                        1
+                    )
                 )
             )
 
-            highest = max(
-                highest,
-                value,
+            highest = (
+                max(
+                    highest,
+                    value,
+                )
             )
 
         return (
@@ -134,6 +205,96 @@ class PreferenceDatasetBuilder:
             )
         )
 
+    # ========================================================
+    # HELD-OUT PROMOTION GUARD
+    # ========================================================
+
+    def _assert_no_held_out_contamination(
+        self,
+        examples: list[
+            PreferenceExample
+        ],
+    ) -> None:
+
+        if not self.eval_paths:
+
+            return
+
+        eval_index = (
+            load_eval_request_index(
+                self.eval_paths
+            )
+        )
+
+        matches: list[
+            tuple[
+                str,
+                str,
+                list[
+                    str
+                ],
+            ]
+        ] = []
+
+        for example in examples:
+
+            normalized_request = (
+                normalize_request(
+                    example.user_request
+                )
+            )
+
+            eval_cases = (
+                eval_index.get(
+                    normalized_request
+                )
+            )
+
+            if not eval_cases:
+
+                continue
+
+            matches.append(
+                (
+                    example.example_id,
+                    example.trajectory_id,
+                    list(
+                        eval_cases
+                    ),
+                )
+            )
+
+        if not matches:
+
+            return
+
+        details = (
+            "; ".join(
+                (
+                    f"example={example_id} "
+                    f"trajectory={trajectory_id} "
+                    f"eval_cases={','.join(eval_cases)}"
+                )
+
+                for (
+                    example_id,
+                    trajectory_id,
+                    eval_cases,
+                )
+                in matches
+            )
+        )
+
+        raise ValueError(
+            "Held-out evaluation contamination "
+            "detected during dataset promotion: "
+            f"{details}"
+        )
+
+    # ========================================================
+    # RECORD BUILDING
+    # ========================================================
+
     def _build_record(
         self,
         *,
@@ -147,6 +308,7 @@ class PreferenceDatasetBuilder:
             example.rejected.model_dump()
             == example.chosen.model_dump()
         ):
+
             raise ValueError(
                 "Preference example contains "
                 "identical chosen and rejected "
@@ -190,14 +352,16 @@ class PreferenceDatasetBuilder:
                 ),
 
                 rejected=(
-                    example.rejected
+                    example
+                    .rejected
                     .model_copy(
                         deep=True
                     )
                 ),
 
                 chosen=(
-                    example.chosen
+                    example
+                    .chosen
                     .model_copy(
                         deep=True
                     )
@@ -223,6 +387,10 @@ class PreferenceDatasetBuilder:
             )
         )
 
+    # ========================================================
+    # PROMOTION
+    # ========================================================
+
     def promote(
         self,
         *,
@@ -234,6 +402,7 @@ class PreferenceDatasetBuilder:
     ) -> DatasetManifest:
 
         if not examples:
+
             raise ValueError(
                 "At least one preference example "
                 "is required."
@@ -249,6 +418,7 @@ class PreferenceDatasetBuilder:
             normalized_promoted_by
             not in VALID_PROMOTION_SOURCES
         ):
+
             raise ValueError(
                 "Dataset promotion must come from "
                 "trusted_review or evaluation."
@@ -260,6 +430,7 @@ class PreferenceDatasetBuilder:
         )
 
         if not normalized_reason:
+
             raise ValueError(
                 "promotion_reason must not be empty."
             )
@@ -281,10 +452,23 @@ class PreferenceDatasetBuilder:
                 )
             )
         ):
+
             raise ValueError(
                 "Duplicate preference examples "
                 "cannot appear in one dataset version."
             )
+
+        # ----------------------------------------------------
+        # Defense in depth.
+        #
+        # Curation should already have removed held-out
+        # contamination, but promotion independently checks the
+        # exact normalized user requests again.
+        # ----------------------------------------------------
+
+        self._assert_no_held_out_contamination(
+            examples
+        )
 
         created_at = (
             datetime
@@ -364,14 +548,12 @@ class PreferenceDatasetBuilder:
             exist_ok=True,
         )
 
-        # --------------------------------------------------------
-        # Reserve a version directory.
-        #
-        # If another process wins the same version concurrently,
-        # retry with the next available version.
-        # --------------------------------------------------------
+        # ----------------------------------------------------
+        # Reserve an immutable version directory.
+        # ----------------------------------------------------
 
         while True:
+
             version = (
                 self._next_version()
             )
@@ -382,6 +564,7 @@ class PreferenceDatasetBuilder:
             )
 
             try:
+
                 target.mkdir(
                     parents=False,
                     exist_ok=False,
@@ -390,6 +573,7 @@ class PreferenceDatasetBuilder:
                 break
 
             except FileExistsError:
+
                 continue
 
         manifest = (
@@ -439,6 +623,7 @@ class PreferenceDatasetBuilder:
         )
 
         try:
+
             records_path = (
                 target
                 / "records.jsonl"
@@ -475,6 +660,7 @@ class PreferenceDatasetBuilder:
             )
 
         except Exception:
+
             shutil.rmtree(
                 target,
                 ignore_errors=True,
@@ -482,4 +668,6 @@ class PreferenceDatasetBuilder:
 
             raise
 
-        return manifest
+        return (
+            manifest
+        )

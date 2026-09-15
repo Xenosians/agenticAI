@@ -2,6 +2,32 @@ from .corrections import (
     CorrectionRecorder,
 )
 
+from .corpus_analysis import (
+    ContaminationMatch,
+    CorpusAnalysisReport,
+    CorpusWarning,
+    analyze_corpus,
+    load_corrections,
+    load_eval_request_index,
+    load_trajectories,
+    normalize_request,
+)
+
+from .curation import (
+    CORRECTION_DATASET_INELIGIBLE,
+    DUPLICATE_EVIDENCE,
+    HELD_OUT_CONTAMINATION,
+    MISSING_TRUSTED_OUTCOME,
+    TRAJECTORY_DATASET_INELIGIBLE,
+    UNKNOWN_TRUSTED_OUTCOME,
+    UNTRUSTED_CORRECTION_PROVENANCE,
+    CuratedTrajectoryReference,
+    CurationReport,
+    ExcludedTrajectoryReference,
+    curate_corpus,
+    evidence_fingerprint,
+)
+
 from .dataset_loader import (
     PreferenceDatasetLoader,
 )
@@ -13,6 +39,15 @@ from .dataset_verifier import (
 
 from .datasets import (
     PreferenceDatasetBuilder,
+)
+
+from .diversity_gate import (
+    DiversityGateCheck,
+    DiversityGateMetrics,
+    DiversityGatePolicy,
+    DiversityGateReport,
+    build_diversity_metrics,
+    evaluate_diversity_gate,
 )
 
 from .eval_reports import (
@@ -80,6 +115,17 @@ from .sanitizer import (
     sanitize_value,
 )
 
+from .training_export import (
+    DEFAULT_SPLIT_SEED,
+    PreferenceTrainingSplitExporter,
+    TrainingSplitManifest,
+)
+
+from .training_pipeline import (
+    TrustedTrainingPipeline,
+    TrustedTrainingPipelineResult,
+)
+
 from .types import (
     CorrectionEvent,
     CorrectionValue,
@@ -97,12 +143,24 @@ from .types import (
 
 
 __all__ = [
+    "CORRECTION_DATASET_INELIGIBLE",
     "CorrectionEvent",
     "CorrectionRecorder",
     "CorrectionValue",
+    "ContaminationMatch",
+    "CorpusAnalysisReport",
+    "CorpusWarning",
+    "CuratedTrajectoryReference",
+    "CurationReport",
+    "DEFAULT_SPLIT_SEED",
+    "DUPLICATE_EVIDENCE",
     "DatasetManifest",
     "DatasetPromotion",
     "DatasetVerificationResult",
+    "DiversityGateCheck",
+    "DiversityGateMetrics",
+    "DiversityGatePolicy",
+    "DiversityGateReport",
     "EvaluationCase",
     "EvaluationCheck",
     "EvaluationComparison",
@@ -116,10 +174,13 @@ __all__ = [
     "EvaluationSuiteReport",
     "EvaluationTarget",
     "ExecutionReward",
+    "ExcludedTrajectoryReference",
     "GatewayEvaluationInput",
     "GatewayEvaluationRunner",
+    "HELD_OUT_CONTAMINATION",
     "LearningTrajectory",
     "LiveOrchestratorEvaluationRunner",
+    "MISSING_TRUSTED_OUTCOME",
     "ModelPromotionDecision",
     "PreferenceDatasetBuilder",
     "PreferenceDatasetLoader",
@@ -127,20 +188,36 @@ __all__ = [
     "PreferenceDatasetVerifier",
     "PreferenceExample",
     "PreferenceOption",
+    "PreferenceTrainingSplitExporter",
     "PromotionGateArtifact",
     "PromotionGateCheck",
     "PromotionGateStore",
+    "TRAJECTORY_DATASET_INELIGIBLE",
+    "TrainingSplitManifest",
     "TrajectoryQuality",
     "TrajectoryRecorder",
     "TrajectorySignals",
     "TrajectoryStep",
+    "TrustedTrainingPipeline",
+    "TrustedTrainingPipelineResult",
+    "UNKNOWN_TRUSTED_OUTCOME",
+    "UNTRUSTED_CORRECTION_PROVENANCE",
+    "analyze_corpus",
     "apply_correction_to_quality",
+    "build_diversity_metrics",
     "build_model_promotion_decision",
     "build_preference_example",
     "compare_evaluation_reports",
+    "curate_corpus",
     "derive_execution_reward",
     "derive_trajectory_quality",
+    "evaluate_diversity_gate",
     "evaluate_trajectory",
+    "evidence_fingerprint",
+    "load_corrections",
+    "load_eval_request_index",
     "load_evaluation_cases",
+    "load_trajectories",
+    "normalize_request",
     "sanitize_value",
 ]

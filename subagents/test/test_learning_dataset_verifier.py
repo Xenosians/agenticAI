@@ -56,7 +56,7 @@ def example(
             ),
 
             user_request=(
-                "Show me the frontend git status."
+                "Check the working tree status for my frontend workspace."
             ),
 
             rejected=(
