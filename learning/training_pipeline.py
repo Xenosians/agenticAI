@@ -15,6 +15,7 @@ from pydantic import (
 )
 
 from learning.corpus_analysis import (
+    load_corrections,
     load_trajectories,
     normalize_request,
 )
@@ -287,6 +288,88 @@ class TrustedTrainingPipeline:
             "Diversity/balance gate failed: "
             f"{failed}"
         )
+        
+    def _resolve_correction_step(
+        self,
+        *,
+        trajectory,
+        correction,
+    ):
+        """
+        Reconstruct the exact immutable trajectory step targeted by
+        a correction.
+
+        This mirrors the ambiguity rules used when preference
+        examples are created.
+
+        The training boundary must not trust task_id copied from a
+        promoted dataset record without independently resolving the
+        source correction against raw evidence.
+        """
+
+        if (
+            correction.task_id
+            is not None
+        ):
+
+            for step in (
+                trajectory.steps
+            ):
+
+                if (
+                    step.task_id
+                    == correction.task_id
+                ):
+
+                    return step
+
+            raise ValueError(
+                "Raw correction task_id does not exist "
+                "in its source trajectory: "
+                f"{correction.correction_id}"
+            )
+
+        tool_steps = [
+            step
+
+            for step
+            in trajectory.steps
+
+            if (
+                step.proposed_tool
+                is not None
+            )
+        ]
+
+        if len(
+            tool_steps
+        ) == 1:
+
+            return (
+                tool_steps[
+                    0
+                ]
+            )
+
+        if len(
+            trajectory.steps
+        ) == 1:
+
+            return (
+                trajectory.steps[
+                    0
+                ]
+            )
+
+        if not trajectory.steps:
+
+            return None
+
+        raise ValueError(
+            "Raw correction has ambiguous specialist "
+            "step lineage: "
+            f"{correction.correction_id}"
+        )
 
     # ========================================================
     # DATASET LINEAGE
@@ -301,17 +384,31 @@ class TrustedTrainingPipeline:
         curation_report: CurationReport,
     ) -> None:
         """
-        Every promoted dataset record must trace back to:
+        Every promoted dataset record must independently trace back
+        to immutable evidence:
 
-        - an existing immutable raw trajectory
+        - an existing raw trajectory
         - a Phase 3B eligible trajectory
         - the same normalized user request
+        - an existing raw correction
+        - the same trajectory referenced by that correction
+        - the exact correction-targeted task
+        - the exact specialist task context
         - a correction approved by curation
+
+        The promoted dataset is never trusted as its own provenance
+        authority.
         """
 
         raw_trajectories = (
             load_trajectories(
                 self.trajectory_path
+            )
+        )
+
+        raw_corrections = (
+            load_corrections(
+                self.correction_path
             )
         )
 
@@ -323,6 +420,14 @@ class TrustedTrainingPipeline:
             in raw_trajectories
         }
 
+        correction_by_id = {
+            correction.correction_id:
+                correction
+
+            for correction
+            in raw_corrections
+        }
+
         eligible_by_id = {
             item.trajectory_id:
                 item
@@ -330,6 +435,298 @@ class TrustedTrainingPipeline:
             for item
             in curation_report.eligible
         }
+
+        # ----------------------------------------------------
+        # Trajectory lineage
+        # ----------------------------------------------------
+
+        invalid_trajectory_ids: list[
+            str
+        ] = []
+
+        for record in records:
+
+            if (
+                record.trajectory_id
+                not in raw_by_id
+                or record.trajectory_id
+                not in eligible_by_id
+            ):
+
+                invalid_trajectory_ids.append(
+                    record.trajectory_id
+                )
+
+        if invalid_trajectory_ids:
+
+            raise ValueError(
+                "Dataset contains trajectory_id "
+                "not present in "
+                "curation_report.eligible: "
+                + ", ".join(
+                    sorted(
+                        set(
+                            invalid_trajectory_ids
+                        )
+                    )
+                )
+            )
+
+        # ----------------------------------------------------
+        # Original user request lineage
+        # ----------------------------------------------------
+
+        mismatched_requests: list[
+            str
+        ] = []
+
+        for record in records:
+
+            trajectory = (
+                raw_by_id[
+                    record.trajectory_id
+                ]
+            )
+
+            if (
+                normalize_request(
+                    record.user_request
+                )
+                != normalize_request(
+                    trajectory.user_request
+                )
+            ):
+
+                mismatched_requests.append(
+                    record.record_id
+                )
+
+        if mismatched_requests:
+
+            raise ValueError(
+                "Dataset user_request does not "
+                "match its source trajectory for "
+                "record_id: "
+                + ", ".join(
+                    sorted(
+                        mismatched_requests
+                    )
+                )
+            )
+
+        # ----------------------------------------------------
+        # Raw correction existence
+        # ----------------------------------------------------
+
+        missing_correction_ids: list[
+            str
+        ] = []
+
+        for record in records:
+
+            if (
+                record.correction_id
+                not in correction_by_id
+            ):
+
+                missing_correction_ids.append(
+                    record.correction_id
+                )
+
+        if missing_correction_ids:
+
+            raise ValueError(
+                "Dataset references correction_id "
+                "missing from raw correction corpus: "
+                + ", ".join(
+                    sorted(
+                        set(
+                            missing_correction_ids
+                        )
+                    )
+                )
+            )
+
+        # ----------------------------------------------------
+        # Correction -> trajectory lineage
+        # ----------------------------------------------------
+
+        correction_trajectory_mismatches: list[
+            str
+        ] = []
+
+        for record in records:
+
+            correction = (
+                correction_by_id[
+                    record.correction_id
+                ]
+            )
+
+            if (
+                correction.trajectory_id
+                != record.trajectory_id
+            ):
+
+                correction_trajectory_mismatches.append(
+                    record.record_id
+                )
+
+        if correction_trajectory_mismatches:
+
+            raise ValueError(
+                "Dataset correction trajectory lineage "
+                "mismatch for record_id: "
+                + ", ".join(
+                    sorted(
+                        correction_trajectory_mismatches
+                    )
+                )
+            )
+
+        # ----------------------------------------------------
+        # Correction-targeted task + prompt-context lineage
+        # ----------------------------------------------------
+
+        task_mismatches: list[
+            str
+        ] = []
+
+        context_mismatches: list[
+            str
+        ] = []
+
+        for record in records:
+
+            trajectory = (
+                raw_by_id[
+                    record.trajectory_id
+                ]
+            )
+
+            correction = (
+                correction_by_id[
+                    record.correction_id
+                ]
+            )
+
+            source_step = (
+                self._resolve_correction_step(
+                    trajectory=(
+                        trajectory
+                    ),
+
+                    correction=(
+                        correction
+                    ),
+                )
+            )
+
+            if source_step is None:
+
+                if (
+                    record.task_id
+                    is not None
+                ):
+
+                    task_mismatches.append(
+                        record.record_id
+                    )
+
+                if (
+                    record.task_instructions
+                    is not None
+                ):
+
+                    context_mismatches.append(
+                        record.record_id
+                    )
+
+                continue
+
+            if (
+                record.task_id
+                != source_step.task_id
+            ):
+
+                task_mismatches.append(
+                    record.record_id
+                )
+
+            if (
+                record.task_instructions
+                != source_step.task_instructions
+            ):
+
+                context_mismatches.append(
+                    record.record_id
+                )
+
+        if task_mismatches:
+
+            raise ValueError(
+                "Dataset task_id does not match "
+                "the correction-targeted raw trajectory "
+                "step for record_id: "
+                + ", ".join(
+                    sorted(
+                        task_mismatches
+                    )
+                )
+            )
+
+        if context_mismatches:
+
+            raise ValueError(
+                "Dataset task_instructions does not match "
+                "the correction-targeted raw trajectory "
+                "step for record_id: "
+                + ", ".join(
+                    sorted(
+                        context_mismatches
+                    )
+                )
+            )
+
+        # ----------------------------------------------------
+        # Curation approval lineage
+        # ----------------------------------------------------
+
+        invalid_corrections: list[
+            str
+        ] = []
+
+        for record in records:
+
+            curated = (
+                eligible_by_id[
+                    record.trajectory_id
+                ]
+            )
+
+            if (
+                record.correction_id
+                not in curated
+                .usable_correction_ids
+            ):
+
+                invalid_corrections.append(
+                    record.correction_id
+                )
+
+        if invalid_corrections:
+
+            raise ValueError(
+                "Dataset contains correction_id "
+                "not approved by curation: "
+                + ", ".join(
+                    sorted(
+                        set(
+                            invalid_corrections
+                        )
+                    )
+                )
+            )
 
         # ----------------------------------------------------
         # Trajectory lineage

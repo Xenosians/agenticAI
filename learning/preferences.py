@@ -49,19 +49,21 @@ def _find_step(
     """
     Resolve the specialist step targeted by a correction.
 
-    For the current single-tool runtime a one-step trajectory is
-    unambiguous.
+    task_id is authoritative when supplied.
 
-    Once multiple specialist results exist, task_id is required
-    to avoid creating incorrect labels.
+    For older/simpler single-step trajectories, the only
+    specialist/tool step remains unambiguous.
     """
 
     if correction.task_id is not None:
+
         for step in trajectory.steps:
+
             if (
                 step.task_id
                 == correction.task_id
             ):
+
                 return step
 
         raise ValueError(
@@ -84,6 +86,7 @@ def _find_step(
     if len(
         tool_steps
     ) == 1:
+
         return (
             tool_steps[
                 0
@@ -93,6 +96,7 @@ def _find_step(
     if len(
         trajectory.steps
     ) == 1:
+
         return (
             trajectory.steps[
                 0
@@ -100,6 +104,7 @@ def _find_step(
         )
 
     if not trajectory.steps:
+
         return None
 
     raise ValueError(
@@ -116,20 +121,23 @@ def _assert_original_value(
     expected_rejected: Any,
 ) -> None:
     """
-    Refuse to generate preference data when a correction does not
-    match what the original trajectory actually recorded.
+    Refuse to create preference evidence when the correction does
+    not describe what was actually observed in the immutable raw
+    trajectory.
     """
 
     if (
         expected_rejected
         is None
     ):
+
         return
 
     if (
         observed
         != expected_rejected
     ):
+
         raise ValueError(
             "Correction rejected_value does not match "
             "the original trajectory for field "
@@ -145,18 +153,21 @@ def build_preference_example(
     correction: CorrectionEvent,
 ) -> PreferenceExample:
     """
-    Convert one trajectory + one correction into a canonical
-    structured chosen/rejected preference example.
+    Convert one immutable trajectory + correction into a canonical
+    chosen/rejected preference example.
 
-    This does NOT make the example training-eligible.
+    The original specialist task context is preserved from the
+    exact trajectory step targeted by the correction.
 
-    Dataset promotion remains a later explicit step.
+    Creating this derived example does not make it
+    training-eligible. Promotion remains a separate trusted step.
     """
 
     if (
         trajectory.trajectory_id
         != correction.trajectory_id
     ):
+
         raise ValueError(
             "Correction trajectory_id does not match "
             "the trajectory."
@@ -216,12 +227,18 @@ def build_preference_example(
     )
 
     for value in correction.values:
+
         field = (
             value.field
             .strip()
         )
 
+        # ====================================================
+        # AGENT / ROUTE CORRECTION
+        # ====================================================
+
         if field in AGENT_FIELDS:
+
             _assert_original_value(
                 field=(
                     field
@@ -242,7 +259,12 @@ def build_preference_example(
 
             continue
 
+        # ====================================================
+        # TOOL CORRECTION
+        # ====================================================
+
         if field in TOOL_FIELDS:
+
             _assert_original_value(
                 field=(
                     field
@@ -263,7 +285,12 @@ def build_preference_example(
 
             continue
 
+        # ====================================================
+        # ANSWER CORRECTION
+        # ====================================================
+
         if field in ANSWER_FIELDS:
+
             _assert_original_value(
                 field=(
                     field
@@ -284,19 +311,24 @@ def build_preference_example(
 
             continue
 
+        # ====================================================
+        # ARGUMENT CORRECTION
+        # ====================================================
+
         if step is None:
+
             raise ValueError(
                 "Argument correction requires "
                 "a specialist trajectory step."
             )
 
-        arguments = (
+        rejected_arguments = (
             rejected.arguments
             or {}
         )
 
         observed = (
-            arguments.get(
+            rejected_arguments.get(
                 field
             )
         )
@@ -336,17 +368,38 @@ def build_preference_example(
         rejected.model_dump()
         == chosen.model_dump()
     ):
+
         raise ValueError(
             "Correction does not change the "
             "preference example."
         )
 
+    # ========================================================
+    # CRITICAL MODEL-INPUT LINEAGE
+    #
+    # task_instructions comes from the resolved immutable step,
+    # not from the correction and not from regenerated context.
+    # ========================================================
+
+    task_instructions = (
+        step.task_instructions
+        if step is not None
+        else None
+    )
+
+    task_id = (
+        correction.task_id
+        or (
+            step.task_id
+            if step is not None
+            else None
+        )
+    )
+
     return (
         PreferenceExample(
             example_id=(
-                uuid
-                .uuid4()
-                .hex
+                uuid.uuid4().hex
             ),
 
             created_at=(
@@ -358,23 +411,19 @@ def build_preference_example(
             ),
 
             trajectory_id=(
-                trajectory
-                .trajectory_id
+                trajectory.trajectory_id
             ),
 
             correction_id=(
-                correction
-                .correction_id
+                correction.correction_id
             ),
 
             task_id=(
-                correction
-                .task_id
-                or (
-                    step.task_id
-                    if step is not None
-                    else None
-                )
+                task_id
+            ),
+
+            task_instructions=(
+                task_instructions
             ),
 
             source=(
@@ -382,13 +431,11 @@ def build_preference_example(
             ),
 
             correction_type=(
-                correction
-                .correction_type
+                correction.correction_type
             ),
 
             user_request=(
-                trajectory
-                .user_request
+                trajectory.user_request
             ),
 
             rejected=(

@@ -69,6 +69,17 @@ class AgentResult:
 
     status: str
 
+    # Exact Hub routing/task context supplied to this specialist.
+    #
+    # This is evidence about the model input, NOT authorization.
+    #
+    # It is preserved so future learning artifacts can reproduce
+    # the actual specialist prompt shape instead of training only
+    # against the original user request.
+    task_instructions: (
+        str | None
+    ) = None
+
     answer: (
         str | None
     ) = None
@@ -96,8 +107,8 @@ class AgentResult:
     # Stable machine-readable runtime outcome.
     #
     # This is intentionally separate from human-readable error
-    # messages so learning/evaluation code never needs to parse
-    # prose to understand what happened.
+    # messages so learning/evaluation infrastructure never needs
+    # to parse prose to understand what happened.
     outcome_code: (
         str | None
     ) = None

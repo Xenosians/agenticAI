@@ -87,6 +87,10 @@ class TrajectoryRecorder:
                     item.task_id
                 ),
 
+                task_instructions=(
+                    item.task_instructions
+                ),
+
                 agent=(
                     item.agent_name
                 ),
@@ -260,9 +264,7 @@ class TrajectoryRecorder:
         return (
             LearningTrajectory(
                 trajectory_id=(
-                    uuid
-                    .uuid4()
-                    .hex
+                    uuid.uuid4().hex
                 ),
 
                 observed_at=(
@@ -319,10 +321,6 @@ class TrajectoryRecorder:
                     quality
                 ),
 
-                # Still false.
-                #
-                # Runtime success alone must never promote a
-                # trajectory into training data.
                 dataset_eligible=False,
             )
         )
@@ -335,9 +333,8 @@ class TrajectoryRecorder:
         result: HubResult,
     ) -> dict | None:
 
-        if not (
-            self.enabled
-        ):
+        if not self.enabled:
+
             return None
 
         trajectory = (
@@ -357,8 +354,7 @@ class TrajectoryRecorder:
         )
 
         raw_payload = (
-            trajectory
-            .model_dump(
+            trajectory.model_dump(
                 mode="json",
                 by_alias=True,
             )
@@ -404,6 +400,4 @@ class TrajectoryRecorder:
                     handle.fileno()
                 )
 
-        return (
-            payload
-        )
+        return payload

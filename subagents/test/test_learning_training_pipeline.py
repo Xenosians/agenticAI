@@ -692,11 +692,16 @@ def test_trusted_pipeline_exports_verified_split(
 
     result = (
         pipeline.run(
-            dataset_version="v000001",
+            dataset_version=(
+                "v000001"
+            ),
+
             validation_fraction=0.25,
+
             diversity_policy=(
                 relaxed_policy()
             ),
+
             eval_paths=[],
         )
     )
@@ -747,10 +752,14 @@ def test_pipeline_refuses_failed_diversity_gate(
     ):
 
         pipeline.run(
-            dataset_version="v000001",
+            dataset_version=(
+                "v000001"
+            ),
+
             diversity_policy=(
                 DiversityGatePolicy()
             ),
+
             eval_paths=[],
         )
 
@@ -775,11 +784,19 @@ def test_historical_contamination_is_quarantined_not_global_poison(
     contaminated = (
         build_trajectory(
             index=99,
+
             request=(
                 "Synthetic historical held-out request."
             ),
-            agent="developer-specialist",
-            tool="workspace_git_status",
+
+            agent=(
+                "developer-specialist"
+            ),
+
+            tool=(
+                "workspace_git_status"
+            ),
+
             arguments={
                 "repository":
                     "frontend"
@@ -793,8 +810,7 @@ def test_historical_contamination_is_quarantined_not_global_poison(
     ) as handle:
 
         handle.write(
-            contaminated
-            .model_dump_json(
+            contaminated.model_dump_json(
                 by_alias=True
             )
         )
@@ -825,16 +841,22 @@ def test_historical_contamination_is_quarantined_not_global_poison(
             }
         )
         + "\n",
+
         encoding="utf-8",
     )
 
     result = (
         pipeline.run(
-            dataset_version="v000001",
+            dataset_version=(
+                "v000001"
+            ),
+
             validation_fraction=0.25,
+
             diversity_policy=(
                 relaxed_policy()
             ),
+
             eval_paths=[
                 eval_path,
             ],
@@ -863,8 +885,8 @@ def test_pipeline_refuses_dataset_trajectory_outside_curation(
         correction_path,
         review_path,
         _,
-        trajectories,
-        corrections,
+        _,
+        _,
         examples,
     ) = prepare(
         tmp_path
@@ -900,6 +922,7 @@ def test_pipeline_refuses_dataset_trajectory_outside_curation(
             root=(
                 dataset_root
             ),
+
             eval_paths=[],
         )
     )
@@ -911,8 +934,14 @@ def test_pipeline_refuses_dataset_trajectory_outside_curation(
                 rogue
             ]
         ),
-        promoted_by="trusted_review",
-        promotion_reason="Rogue lineage test.",
+
+        promoted_by=(
+            "trusted_review"
+        ),
+
+        promotion_reason=(
+            "Rogue lineage test."
+        ),
     )
 
     pipeline = (
@@ -920,15 +949,19 @@ def test_pipeline_refuses_dataset_trajectory_outside_curation(
             trajectory_path=(
                 trajectory_path
             ),
+
             correction_path=(
                 correction_path
             ),
+
             review_path=(
                 review_path
             ),
+
             dataset_root=(
                 dataset_root
             ),
+
             tmp_path=(
                 tmp_path
             ),
@@ -944,10 +977,14 @@ def test_pipeline_refuses_dataset_trajectory_outside_curation(
     ):
 
         pipeline.run(
-            dataset_version="v000001",
+            dataset_version=(
+                "v000001"
+            ),
+
             diversity_policy=(
                 relaxed_policy()
             ),
+
             eval_paths=[],
         )
 
@@ -963,11 +1000,61 @@ def test_pipeline_refuses_unapproved_correction_lineage(
         review_path,
         _,
         _,
-        _,
+        corrections,
         examples,
     ) = prepare(
         tmp_path
     )
+
+    # --------------------------------------------------------
+    # Create a correction that genuinely exists in immutable raw
+    # evidence but does NOT have a trusted review approval.
+    #
+    # This distinguishes:
+    #
+    #   nonexistent correction
+    #
+    # from:
+    #
+    #   existing but unapproved correction
+    # --------------------------------------------------------
+
+    unapproved_correction = (
+        corrections[
+            0
+        ]
+        .model_copy(
+            deep=True,
+
+            update={
+                "correction_id":
+                    "not-approved-correction",
+            },
+        )
+    )
+
+    with correction_path.open(
+        "a",
+        encoding="utf-8",
+    ) as handle:
+
+        handle.write(
+            unapproved_correction.model_dump_json(
+                by_alias=True
+            )
+        )
+
+        handle.write(
+            "\n"
+        )
+
+    # --------------------------------------------------------
+    # Point one promoted dataset example at that real raw
+    # correction.
+    #
+    # It now passes raw existence and trajectory lineage, but it
+    # must fail because curation did not approve this correction.
+    # --------------------------------------------------------
 
     examples[
         0
@@ -995,6 +1082,7 @@ def test_pipeline_refuses_unapproved_correction_lineage(
             root=(
                 dataset_root
             ),
+
             eval_paths=[],
         )
     )
@@ -1003,8 +1091,14 @@ def test_pipeline_refuses_unapproved_correction_lineage(
         examples=(
             examples
         ),
-        promoted_by="trusted_review",
-        promotion_reason="Bad correction lineage.",
+
+        promoted_by=(
+            "trusted_review"
+        ),
+
+        promotion_reason=(
+            "Bad correction lineage."
+        ),
     )
 
     pipeline = (
@@ -1012,15 +1106,19 @@ def test_pipeline_refuses_unapproved_correction_lineage(
             trajectory_path=(
                 trajectory_path
             ),
+
             correction_path=(
                 correction_path
             ),
+
             review_path=(
                 review_path
             ),
+
             dataset_root=(
                 dataset_root
             ),
+
             tmp_path=(
                 tmp_path
             ),
@@ -1036,10 +1134,14 @@ def test_pipeline_refuses_unapproved_correction_lineage(
     ):
 
         pipeline.run(
-            dataset_version="v000001",
+            dataset_version=(
+                "v000001"
+            ),
+
             diversity_policy=(
                 relaxed_policy()
             ),
+
             eval_paths=[],
         )
 
@@ -1087,6 +1189,7 @@ def test_pipeline_refuses_dataset_request_mismatch(
             root=(
                 dataset_root
             ),
+
             eval_paths=[],
         )
     )
@@ -1095,8 +1198,14 @@ def test_pipeline_refuses_dataset_request_mismatch(
         examples=(
             examples
         ),
-        promoted_by="trusted_review",
-        promotion_reason="Bad request lineage.",
+
+        promoted_by=(
+            "trusted_review"
+        ),
+
+        promotion_reason=(
+            "Bad request lineage."
+        ),
     )
 
     pipeline = (
@@ -1104,15 +1213,19 @@ def test_pipeline_refuses_dataset_request_mismatch(
             trajectory_path=(
                 trajectory_path
             ),
+
             correction_path=(
                 correction_path
             ),
+
             review_path=(
                 review_path
             ),
+
             dataset_root=(
                 dataset_root
             ),
+
             tmp_path=(
                 tmp_path
             ),
@@ -1127,10 +1240,14 @@ def test_pipeline_refuses_dataset_request_mismatch(
     ):
 
         pipeline.run(
-            dataset_version="v000001",
+            dataset_version=(
+                "v000001"
+            ),
+
             diversity_policy=(
                 relaxed_policy()
             ),
+
             eval_paths=[],
         )
 
@@ -1161,12 +1278,12 @@ def test_pipeline_refuses_corrupt_dataset(
 
     records_path.write_text(
         (
-            records_path
-            .read_text(
+            records_path.read_text(
                 encoding="utf-8"
             )
             + "\n"
         ),
+
         encoding="utf-8",
     )
 
@@ -1178,9 +1295,13 @@ def test_pipeline_refuses_corrupt_dataset(
     ):
 
         pipeline.run(
-            dataset_version="v000001",
+            dataset_version=(
+                "v000001"
+            ),
+
             diversity_policy=(
                 relaxed_policy()
             ),
+
             eval_paths=[],
         )

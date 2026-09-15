@@ -71,11 +71,6 @@ class PreferenceDatasetBuilder:
 
     Source preference examples are never mutated.
 
-    Every dataset version contains:
-
-        manifest.json
-        records.jsonl
-
     Existing versions are never overwritten.
 
     Held-out evaluation contamination is checked again immediately
@@ -143,15 +138,12 @@ class PreferenceDatasetBuilder:
 
         if not dataset_root.exists():
 
-            return (
-                "v000001"
-            )
+            return "v000001"
 
         highest = 0
 
         for child in (
-            dataset_root
-            .iterdir()
+            dataset_root.iterdir()
         ):
 
             if not child.is_dir():
@@ -159,8 +151,7 @@ class PreferenceDatasetBuilder:
                 continue
 
             match = (
-                VERSION_PATTERN
-                .match(
+                VERSION_PATTERN.match(
                     child.name
                 )
             )
@@ -177,11 +168,9 @@ class PreferenceDatasetBuilder:
                 )
             )
 
-            highest = (
-                max(
-                    highest,
-                    value,
-                )
+            highest = max(
+                highest,
+                value,
             )
 
         return (
@@ -204,10 +193,6 @@ class PreferenceDatasetBuilder:
                 ),
             )
         )
-
-    # ========================================================
-    # HELD-OUT PROMOTION GUARD
-    # ========================================================
 
     def _assert_no_held_out_contamination(
         self,
@@ -291,10 +276,6 @@ class PreferenceDatasetBuilder:
             f"{details}"
         )
 
-    # ========================================================
-    # RECORD BUILDING
-    # ========================================================
-
     def _build_record(
         self,
         *,
@@ -318,9 +299,7 @@ class PreferenceDatasetBuilder:
         return (
             PreferenceDatasetRecord(
                 record_id=(
-                    uuid
-                    .uuid4()
-                    .hex
+                    uuid.uuid4().hex
                 ),
 
                 source_example_id=(
@@ -337,6 +316,10 @@ class PreferenceDatasetBuilder:
 
                 task_id=(
                     example.task_id
+                ),
+
+                task_instructions=(
+                    example.task_instructions
                 ),
 
                 source=(
@@ -387,10 +370,6 @@ class PreferenceDatasetBuilder:
             )
         )
 
-    # ========================================================
-    # PROMOTION
-    # ========================================================
-
     def promote(
         self,
         *,
@@ -425,8 +404,7 @@ class PreferenceDatasetBuilder:
             )
 
         normalized_reason = (
-            promotion_reason
-            .strip()
+            promotion_reason.strip()
         )
 
         if not normalized_reason:
@@ -457,14 +435,6 @@ class PreferenceDatasetBuilder:
                 "Duplicate preference examples "
                 "cannot appear in one dataset version."
             )
-
-        # ----------------------------------------------------
-        # Defense in depth.
-        #
-        # Curation should already have removed held-out
-        # contamination, but promotion independently checks the
-        # exact normalized user requests again.
-        # ----------------------------------------------------
 
         self._assert_no_held_out_contamination(
             examples
@@ -547,10 +517,6 @@ class PreferenceDatasetBuilder:
             parents=True,
             exist_ok=True,
         )
-
-        # ----------------------------------------------------
-        # Reserve an immutable version directory.
-        # ----------------------------------------------------
 
         while True:
 
@@ -668,6 +634,4 @@ class PreferenceDatasetBuilder:
 
             raise
 
-        return (
-            manifest
-        )
+        return manifest

@@ -21,18 +21,19 @@ class TrajectoryStep(
 ):
     task_id: str
 
+    # Exact advisory Hub -> specialist task context that was
+    # supplied alongside the original user request.
+    #
+    # This is model-input evidence only.
+    # It is never authorization.
+    task_instructions: (
+        str | None
+    ) = None
+
     agent: str
+
     status: str
 
-    # Stable machine-readable runtime outcome.
-    #
-    # Examples:
-    #
-    # success
-    # grounding_failed
-    # policy_denied
-    # tool_execution_error
-    # approval_required
     outcome_code: (
         str | None
     ) = None
@@ -132,8 +133,6 @@ class ExecutionReward(
 
     total: float = 0.0
 
-    # Execution success does not automatically make an example
-    # trustworthy training data.
     quality_eligible: bool = False
 
 
@@ -151,12 +150,6 @@ class TrajectoryQuality(
 
     Semantic fields remain None until trusted evidence establishes
     whether they are correct.
-
-    This distinction is intentional:
-
-        runtime success
-            !=
-        semantic correctness
     """
 
     model_config = (
@@ -176,16 +169,6 @@ class TrajectoryQuality(
     review_state: str = (
         "unreviewed"
     )
-
-    # ========================================================
-    # SEMANTIC CORRECTNESS
-    #
-    # None means:
-    #
-    #     "we do not yet have trustworthy evidence"
-    #
-    # rather than assuming True or False.
-    # ========================================================
 
     route_correct: (
         bool | None
@@ -207,10 +190,6 @@ class TrajectoryQuality(
         bool | None
     ) = None
 
-    # ========================================================
-    # DETERMINISTIC RUNTIME EVIDENCE
-    # ========================================================
-
     grounding_valid: (
         bool | None
     ) = None
@@ -222,10 +201,6 @@ class TrajectoryQuality(
     tool_execution_valid: (
         bool | None
     ) = None
-
-    # ========================================================
-    # CORRECTION EVIDENCE
-    # ========================================================
 
     user_corrected: bool = False
 
@@ -239,13 +214,6 @@ class TrajectoryQuality(
         default_factory=list
     )
 
-    # ========================================================
-    # DATASET ELIGIBILITY
-    #
-    # Quality evidence alone does not automatically promote an
-    # example into a training dataset.
-    # ========================================================
-
     quality_eligible: bool = False
 
 
@@ -257,16 +225,6 @@ class TrajectoryQuality(
 class CorrectionValue(
     BaseModel
 ):
-    """
-    One explicitly corrected field/value pair.
-
-    rejected_value:
-        What the original runtime proposed.
-
-    chosen_value:
-        What later trusted evidence says should have been used.
-    """
-
     field: str
 
     rejected_value: (
@@ -281,14 +239,6 @@ class CorrectionValue(
 class CorrectionEvent(
     BaseModel
 ):
-    """
-    Immutable correction evidence associated with an existing
-    trajectory.
-
-    Corrections are stored separately instead of rewriting the
-    original raw trajectory.
-    """
-
     model_config = (
         ConfigDict(
             populate_by_name=True
@@ -309,10 +259,6 @@ class CorrectionEvent(
 
     trajectory_id: str
 
-    # Optional specialist task target.
-    #
-    # This becomes necessary once one trajectory contains multiple
-    # specialist executions.
     task_id: (
         str | None
     ) = None
@@ -333,10 +279,6 @@ class CorrectionEvent(
         str | None
     ) = None
 
-    # A correction is evidence.
-    #
-    # Promotion into a training dataset remains a separate trusted
-    # operation.
     dataset_eligible: bool = False
 
 
@@ -348,13 +290,6 @@ class CorrectionEvent(
 class PreferenceOption(
     BaseModel
 ):
-    """
-    One side of a chosen/rejected preference pair.
-
-    Structured behavior is preserved instead of prematurely
-    flattening everything into training text.
-    """
-
     agent: (
         str | None
     ) = None
@@ -379,14 +314,6 @@ class PreferenceOption(
 class PreferenceExample(
     BaseModel
 ):
-    """
-    Canonical chosen/rejected learning artifact derived from:
-
-        trajectory
-            +
-        correction
-    """
-
     model_config = (
         ConfigDict(
             populate_by_name=True
@@ -413,6 +340,12 @@ class PreferenceExample(
         str | None
     ) = None
 
+    # Original advisory routing/task context supplied to the
+    # specialist whose behavior is represented by this example.
+    task_instructions: (
+        str | None
+    ) = None
+
     source: str
 
     correction_type: str
@@ -423,8 +356,6 @@ class PreferenceExample(
 
     chosen: PreferenceOption
 
-    # Derived examples remain unapproved until an explicit dataset
-    # promotion step succeeds.
     dataset_eligible: bool = False
 
 
@@ -436,10 +367,6 @@ class PreferenceExample(
 class DatasetPromotion(
     BaseModel
 ):
-    """
-    Trusted provenance attached to one promoted dataset record.
-    """
-
     promoted_at: str
 
     promoted_by: str
@@ -450,13 +377,6 @@ class DatasetPromotion(
 class PreferenceDatasetRecord(
     BaseModel
 ):
-    """
-    Training-eligible preference record produced by the trusted
-    dataset promotion pipeline.
-
-    Source PreferenceExample objects remain unchanged.
-    """
-
     model_config = (
         ConfigDict(
             populate_by_name=True
@@ -483,6 +403,11 @@ class PreferenceDatasetRecord(
         str | None
     ) = None
 
+    # Preserved model-input context.
+    task_instructions: (
+        str | None
+    ) = None
+
     source: str
 
     correction_type: str
@@ -495,18 +420,12 @@ class PreferenceDatasetRecord(
 
     promotion: DatasetPromotion
 
-    # Only records created by trusted dataset promotion become
-    # eligible.
     dataset_eligible: bool = True
 
 
 class DatasetManifest(
     BaseModel
 ):
-    """
-    Immutable metadata describing one versioned dataset snapshot.
-    """
-
     model_config = (
         ConfigDict(
             populate_by_name=True
@@ -557,25 +476,8 @@ class LearningTrajectory(
     """
     Durable sanitized runtime observation.
 
-    IMPORTANT:
-
-    Older Phase 1A trajectory.v1 records were written before the
-    quality field existed.
-
-    Therefore:
-
-        quality=None
-
-    means:
-
-        "legacy / not evaluated yet"
-
-    rather than:
-
-        "invalid trajectory"
-
-    This preserves backward compatibility with previously captured
-    runtime evidence.
+    Older trajectory.v1 records may omit optional fields introduced
+    later. Optional defaults preserve backward compatibility.
     """
 
     model_config = (
@@ -624,27 +526,11 @@ class LearningTrajectory(
 
     signals: TrajectorySignals
 
-    execution_reward: (
-        ExecutionReward
-    )
-
-    # ========================================================
-    # BACKWARD-COMPATIBLE QUALITY FIELD
-    #
-    # Phase 1A trajectories do not contain this property.
-    #
-    # "= None" is important.
-    #
-    # Without the default, Pydantic would allow None as a value
-    # while still requiring the field to exist.
-    # ========================================================
+    execution_reward: ExecutionReward
 
     quality: (
         TrajectoryQuality
         | None
     ) = None
 
-    # Raw trajectories are evidence only.
-    #
-    # They are never automatically training-eligible.
     dataset_eligible: bool = False

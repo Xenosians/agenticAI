@@ -1,5 +1,9 @@
 import uuid
 
+from dataclasses import (
+    replace,
+)
+
 from subagents.core.llm_router import (
     LLMRouter,
 )
@@ -53,6 +57,7 @@ class Orchestrator:
         runtime: AgentRuntime,
         primary_assistant: PrimaryAssistant,
     ) -> None:
+
         self.router = (
             router
         )
@@ -69,6 +74,7 @@ class Orchestrator:
         self,
         user_request: str,
     ) -> HubResult:
+
         # -------------------------------------------------
         # Main routing / structured delegation
         # -------------------------------------------------
@@ -84,6 +90,7 @@ class Orchestrator:
         # -------------------------------------------------
 
         if not delegations:
+
             answer = (
                 await
                 self.primary_assistant
@@ -92,14 +99,22 @@ class Orchestrator:
                 )
             )
 
-            return HubResult(
-                status="success",
-                user_request=(
-                    user_request
-                ),
-                routes=[],
-                results=[],
-                answer=answer,
+            return (
+                HubResult(
+                    status="success",
+
+                    user_request=(
+                        user_request
+                    ),
+
+                    routes=[],
+
+                    results=[],
+
+                    answer=(
+                        answer
+                    ),
+                )
             )
 
         # -------------------------------------------------
@@ -110,35 +125,59 @@ class Orchestrator:
             AgentResult
         ] = []
 
-        routes: list[str] = []
+        routes: list[
+            str
+        ] = []
 
         for delegation in delegations:
+
             routes.append(
                 delegation.agent_name
             )
 
-            task = AgentTask(
-                task_id=(
-                    str(
-                        uuid.uuid4()
-                    )
-                ),
-                agent_name=(
-                    delegation
-                    .agent_name
-                ),
-                user_request=(
-                    user_request
-                ),
-                instructions=(
-                    delegation
-                    .instructions
-                ),
+            task = (
+                AgentTask(
+                    task_id=(
+                        str(
+                            uuid.uuid4()
+                        )
+                    ),
+
+                    agent_name=(
+                        delegation.agent_name
+                    ),
+
+                    user_request=(
+                        user_request
+                    ),
+
+                    instructions=(
+                        delegation.instructions
+                    ),
+                )
             )
 
-            result = (
+            runtime_result = (
                 await self.runtime.run(
                     task
+                )
+            )
+
+            # ---------------------------------------------
+            # Preserve the exact advisory routing context
+            # that was supplied to the specialist.
+            #
+            # Do this here rather than requiring every
+            # AgentRuntime return branch to repeat it.
+            # ---------------------------------------------
+
+            result = (
+                replace(
+                    runtime_result,
+
+                    task_instructions=(
+                        task.instructions
+                    ),
                 )
             )
 
@@ -161,6 +200,7 @@ class Orchestrator:
         # -------------------------------------------------
 
         if "error" in statuses:
+
             overall_status = (
                 "partial_error"
             )
@@ -176,6 +216,7 @@ class Orchestrator:
             "approval_required"
             in statuses
         ):
+
             overall_status = (
                 "approval_required"
             )
@@ -188,6 +229,7 @@ class Orchestrator:
             )
 
         else:
+
             overall_status = (
                 "success"
             )
@@ -197,6 +239,7 @@ class Orchestrator:
             # ---------------------------------------------
 
             try:
+
                 answer = (
                     await
                     self.primary_assistant
@@ -207,6 +250,7 @@ class Orchestrator:
                 )
 
             except Exception as exc:
+
                 print(
                     "[HUB] Main synthesis failed "
                     f"error={exc!r}"
@@ -220,6 +264,7 @@ class Orchestrator:
                 )
 
             if not answer:
+
                 answer = (
                     self
                     ._compose_deterministic_answer(
@@ -227,22 +272,28 @@ class Orchestrator:
                     )
                 )
 
-        return HubResult(
-            status=(
-                overall_status
-            ),
-            user_request=(
-                user_request
-            ),
-            routes=(
-                routes
-            ),
-            results=(
-                results
-            ),
-            answer=(
-                answer
-            ),
+        return (
+            HubResult(
+                status=(
+                    overall_status
+                ),
+
+                user_request=(
+                    user_request
+                ),
+
+                routes=(
+                    routes
+                ),
+
+                results=(
+                    results
+                ),
+
+                answer=(
+                    answer
+                ),
+            )
         )
 
     def _compose_deterministic_answer(
@@ -251,9 +302,13 @@ class Orchestrator:
             AgentResult
         ],
     ) -> str:
-        parts: list[str] = []
+
+        parts: list[
+            str
+        ] = []
 
         for result in results:
+
             if (
                 result.status
                 in {
@@ -262,21 +317,26 @@ class Orchestrator:
                 }
                 and result.answer
             ):
+
                 parts.append(
                     result.answer
                 )
 
             elif result.error:
+
                 parts.append(
                     result.error
                 )
 
             else:
+
                 parts.append(
                     "The requested operation "
                     "could not be completed."
                 )
 
-        return "\n".join(
-            parts
+        return (
+            "\n".join(
+                parts
+            )
         )

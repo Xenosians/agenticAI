@@ -353,6 +353,12 @@ def evidence_fingerprint(
     Concrete argument values are included because this fingerprint
     is used for evidence deduplication rather than diversity
     analysis.
+
+    Specialist task context is also part of the observed model
+    input and therefore participates in evidence identity.
+
+    Trivial case / whitespace differences in task context are
+    normalized so formatting noise does not defeat deduplication.
     """
 
     payload = {
@@ -371,6 +377,20 @@ def evidence_fingerprint(
 
         "steps": [
             {
+                "task_instructions":
+                    (
+                        None
+                        if (
+                            step.task_instructions
+                            is None
+                        )
+                        else (
+                            normalize_request(
+                                step.task_instructions
+                            )
+                        )
+                    ),
+
                 "agent":
                     step.agent,
 
