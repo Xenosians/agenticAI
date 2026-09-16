@@ -23,7 +23,7 @@ from learning.cli.run_dpo_qlora_train_smoke import (
     TrainingArtifactFile,
 )
 
-from subagents.core.types import (
+from subagents.core.definitions.types import (
     AgentDefinition,
 )
 

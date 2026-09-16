@@ -17,15 +17,15 @@ from learning.evidence.execution_provenance import (
     fingerprint_runtime_model_artifact,
 )
 
-from subagents.core.capabilities import (
+from subagents.core.tooling.capabilities import (
     build_agent_capability_catalog,
 )
 
-from subagents.core.types import (
+from subagents.core.definitions.types import (
     AgentDefinition,
 )
 
-from subagents.core.tool_prompt import (
+from subagents.core.tooling.prompt import (
     build_worker_system_prompt,
 )
 

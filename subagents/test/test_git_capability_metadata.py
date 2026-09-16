@@ -1,4 +1,4 @@
-from subagents.core.capabilities import (
+from subagents.core.tooling.capabilities import (
     build_capability_spec,
 )
 

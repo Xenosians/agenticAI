@@ -11,7 +11,7 @@ from learning.evaluation.live_evaluation import (
     LiveOrchestratorEvaluationRunner,
 )
 
-from subagents.core.types import (
+from subagents.core.definitions.types import (
     AgentResult,
     HubResult,
 )

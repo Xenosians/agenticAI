@@ -741,19 +741,19 @@ agent/mcp_client.py
 
 subagents/hub.py
 
-subagents/core/llm_router.py
-subagents/core/orchestrator.py
-subagents/core/primary_assistant.py
-subagents/core/runtime.py
-subagents/core/tool_gateway.py
-subagents/core/tool_parser.py
-subagents/core/tool_prompt.py
+subagents/core/orchestration/router.py
+subagents/core/orchestration/orchestrator.py
+subagents/core/orchestration/primary_assistant.py
+subagents/core/orchestration/runtime.py
+subagents/core/tooling/gateway.py
+subagents/core/tooling/parser.py
+subagents/core/tooling/prompt.py
 
-subagents/llm/model_manager.py
-subagents/llm/registry.py
-subagents/llm/inference.py
-subagents/llm/scheduler.py
-subagents/llm/factory.py
+subagents/llm/runtime/model_manager.py
+subagents/llm/runtime/registry.py
+subagents/llm/runtime/inference.py
+subagents/llm/runtime/scheduler.py
+subagents/llm/runtime/factory.py
 
 subagents/agents/
 subagents/prompts/

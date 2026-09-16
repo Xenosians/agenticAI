@@ -6,27 +6,27 @@ from config import (
     get_settings,
 )
 
-from subagents.core.loader import (
+from subagents.core.definitions.loader import (
     load_agent_directory,
 )
 
-from subagents.core.llm_router import (
+from subagents.core.orchestration.router import (
     LLMRouter,
 )
 
-from subagents.core.registry import (
+from subagents.core.definitions.registry import (
     AgentRegistry,
 )
 
-from subagents.llm.inference import (
+from subagents.llm.runtime.inference import (
     InferenceCoordinator,
 )
 
-from subagents.llm.model_manager import (
+from subagents.llm.runtime.model_manager import (
     ModelManager,
 )
 
-from subagents.llm.scheduler import (
+from subagents.llm.runtime.scheduler import (
     GpuScheduler,
 )
 

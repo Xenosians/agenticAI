@@ -20,11 +20,11 @@ from learning.evaluation.eval_types import (
     EvaluationSuiteReport,
 )
 
-from subagents.core.tool_gateway import (
+from subagents.core.tooling.gateway import (
     ToolGateway,
 )
 
-from subagents.core.types import (
+from subagents.core.definitions.types import (
     AgentDefinition,
 )
 

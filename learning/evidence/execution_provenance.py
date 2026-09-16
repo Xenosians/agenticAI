@@ -22,7 +22,7 @@ from config import (
     ModelProfileSettings,
 )
 
-from subagents.core.types import (
+from subagents.core.definitions.types import (
     AgentDefinition,
 )
 

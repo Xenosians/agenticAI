@@ -14,7 +14,7 @@ from pathlib import (
     Path,
 )
 
-from subagents.core.types import (
+from subagents.core.definitions.types import (
     HubResult,
 )
 

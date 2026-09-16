@@ -23,7 +23,7 @@ from learning.evidence.types import (
     CorrectionValue,
 )
 
-from subagents.core.types import (
+from subagents.core.definitions.types import (
     AgentResult,
     HubResult,
 )

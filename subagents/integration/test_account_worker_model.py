@@ -6,11 +6,11 @@ from config import (
     get_settings,
 )
 
-from subagents.core.loader import (
+from subagents.core.definitions.loader import (
     load_agent_definition,
 )
 
-from subagents.llm.factory import (
+from subagents.llm.runtime.factory import (
     build_model_backend,
 )
 

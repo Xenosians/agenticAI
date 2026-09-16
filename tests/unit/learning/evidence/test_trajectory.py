@@ -24,7 +24,7 @@ from learning.evidence.types import (
     TrajectoryStep,
 )
 
-from subagents.core.types import (
+from subagents.core.definitions.types import (
     AgentResult,
     HubResult,
 )

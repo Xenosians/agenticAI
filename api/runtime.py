@@ -29,23 +29,23 @@ from learning.evidence.recorder import (
     TrajectoryRecorder,
 )
 
-from subagents.core.orchestrator import (
+from subagents.core.orchestration.orchestrator import (
     Orchestrator,
 )
 
-from subagents.core.tool_gateway import (
+from subagents.core.tooling.gateway import (
     ToolGateway,
 )
 
-from subagents.llm.inference import (
+from subagents.llm.runtime.inference import (
     InferenceCoordinator,
 )
 
-from subagents.llm.model_manager import (
+from subagents.llm.runtime.model_manager import (
     ModelManager,
 )
 
-from subagents.llm.scheduler import (
+from subagents.llm.runtime.scheduler import (
     GpuScheduler,
 )
 

@@ -39,15 +39,15 @@ from learning.cli.run_dpo_qlora_train_smoke import (
     fingerprint_adapter_directory,
 )
 
-from subagents.core.loader import (
+from subagents.core.definitions.loader import (
     load_agent_definition,
 )
 
-from subagents.core.tool_parser import (
+from subagents.core.tooling.parser import (
     parse_tool_calls,
 )
 
-from subagents.core.tool_prompt import (
+from subagents.core.tooling.prompt import (
     build_worker_system_prompt,
 )
 

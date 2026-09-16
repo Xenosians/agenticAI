@@ -23,11 +23,11 @@ from learning.evidence.types import (
     PreferenceDatasetRecord,
 )
 
-from subagents.core.loader import (
+from subagents.core.definitions.loader import (
     load_agent_definition,
 )
 
-from subagents.core.tool_prompt import (
+from subagents.core.tooling.prompt import (
     build_worker_system_prompt,
 )
 

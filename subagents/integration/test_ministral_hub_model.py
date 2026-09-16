@@ -1,4 +1,4 @@
-from subagents.llm.ministral_hub import (
+from subagents.llm.backends.ministral_hub import (
     MinistralHubBackend,
 )
 

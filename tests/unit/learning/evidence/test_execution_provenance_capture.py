@@ -5,7 +5,7 @@ from pathlib import (
     Path,
 )
 
-import subagents.core.runtime as runtime_module
+import subagents.core.orchestration.runtime as runtime_module
 
 from config import (
     ModelProfileSettings,
@@ -25,16 +25,16 @@ from learning.evidence.types import (
     TrajectoryStep,
 )
 
-from subagents.core.orchestrator import (
+from subagents.core.orchestration.orchestrator import (
     Orchestrator,
 )
 
-from subagents.core.runtime import (
+from subagents.core.orchestration.runtime import (
     AgentRuntime,
     SPECIALIST_MAX_NEW_TOKENS,
 )
 
-from subagents.core.types import (
+from subagents.core.definitions.types import (
     AgentDefinition,
     AgentResult,
     AgentTask,

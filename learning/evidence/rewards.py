@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from subagents.core.types import (
+from subagents.core.definitions.types import (
     HubResult,
 )
 
