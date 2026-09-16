@@ -1,8 +1,8 @@
-from .corrections import (
+from learning.curation.corrections import (
     CorrectionRecorder,
 )
 
-from .corpus_analysis import (
+from learning.curation.corpus_analysis import (
     ContaminationMatch,
     CorpusAnalysisReport,
     CorpusWarning,
@@ -13,7 +13,7 @@ from .corpus_analysis import (
     normalize_request,
 )
 
-from .curation import (
+from learning.curation.engine import (
     CORRECTION_DATASET_INELIGIBLE,
     DUPLICATE_EVIDENCE,
     HELD_OUT_CONTAMINATION,
@@ -28,20 +28,20 @@ from .curation import (
     evidence_fingerprint,
 )
 
-from .dataset_loader import (
+from learning.datasets.dataset_loader import (
     PreferenceDatasetLoader,
 )
 
-from .dataset_verifier import (
+from learning.datasets.dataset_verifier import (
     DatasetVerificationResult,
     PreferenceDatasetVerifier,
 )
 
-from .datasets import (
+from learning.datasets.records import (
     PreferenceDatasetBuilder,
 )
 
-from .diversity_gate import (
+from learning.curation.diversity_gate import (
     DiversityGateCheck,
     DiversityGateMetrics,
     DiversityGatePolicy,
@@ -50,7 +50,7 @@ from .diversity_gate import (
     evaluate_diversity_gate,
 )
 
-from .eval_reports import (
+from learning.evaluation.eval_reports import (
     EvaluationComparison,
     EvaluationMetricComparison,
     EvaluationReportArtifact,
@@ -58,11 +58,11 @@ from .eval_reports import (
     compare_evaluation_reports,
 )
 
-from .eval_suite import (
+from learning.evaluation.eval_suite import (
     load_evaluation_cases,
 )
 
-from .eval_types import (
+from learning.evaluation.eval_types import (
     EvaluationCase,
     EvaluationCheck,
     EvaluationExpectation,
@@ -74,23 +74,23 @@ from .eval_types import (
     GatewayEvaluationInput,
 )
 
-from .evaluation import (
+from learning.evaluation.evaluator import (
     evaluate_trajectory,
 )
 
-from .gateway_evaluation import (
+from learning.evaluation.gateway_evaluation import (
     GatewayEvaluationRunner,
 )
 
-from .live_evaluation import (
+from learning.evaluation.live_evaluation import (
     LiveOrchestratorEvaluationRunner,
 )
 
-from .preferences import (
+from learning.curation.preferences import (
     build_preference_example,
 )
 
-from .promotion_gate import (
+from learning.curation.promotion_gate import (
     ModelPromotionDecision,
     PromotionGateArtifact,
     PromotionGateCheck,
@@ -98,35 +98,35 @@ from .promotion_gate import (
     build_model_promotion_decision,
 )
 
-from .quality import (
+from learning.evidence.quality import (
     apply_correction_to_quality,
     derive_trajectory_quality,
 )
 
-from .recorder import (
+from learning.evidence.recorder import (
     TrajectoryRecorder,
 )
 
-from .rewards import (
+from learning.evidence.rewards import (
     derive_execution_reward,
 )
 
-from .sanitizer import (
+from learning.evidence.sanitizer import (
     sanitize_value,
 )
 
-from .training_export import (
+from learning.datasets.training_export import (
     DEFAULT_SPLIT_SEED,
     PreferenceTrainingSplitExporter,
     TrainingSplitManifest,
 )
 
-from .training_pipeline import (
+from learning.datasets.training_pipeline import (
     TrustedTrainingPipeline,
     TrustedTrainingPipelineResult,
 )
 
-from .types import (
+from learning.evidence.types import (
     CorrectionEvent,
     CorrectionValue,
     DatasetManifest,

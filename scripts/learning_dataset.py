@@ -33,19 +33,19 @@ if (
     )
 
 
-from learning.dataset_loader import (  # noqa: E402
+from learning.datasets.dataset_loader import (  # noqa: E402
     PreferenceDatasetLoader,
 )
 
-from learning.dataset_verifier import (  # noqa: E402
+from learning.datasets.dataset_verifier import (  # noqa: E402
     PreferenceDatasetVerifier,
 )
 
-from learning.datasets import (  # noqa: E402
+from learning.datasets.records import (  # noqa: E402
     PreferenceDatasetBuilder,
 )
 
-from learning.types import (  # noqa: E402
+from learning.evidence.types import (  # noqa: E402
     PreferenceExample,
 )
 

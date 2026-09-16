@@ -25,7 +25,7 @@ from config import (
     Settings,
 )
 
-from learning.recorder import (
+from learning.evidence.recorder import (
     TrajectoryRecorder,
 )
 

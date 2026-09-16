@@ -8,7 +8,7 @@ from config import (
     ModelProfileSettings,
 )
 
-from learning.execution_provenance import (
+from learning.evidence.execution_provenance import (
     build_specialist_execution_provenance,
 )
 
