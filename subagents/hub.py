@@ -158,6 +158,12 @@ def build_hub(
 
     # ============================================================
     # SPECIALIST RUNTIME
+    #
+    # ModelManager remains the trusted owner of deployment model
+    # profiles.
+    #
+    # AgentRuntime receives only the narrow profile resolver it
+    # needs to produce immutable execution provenance.
     # ============================================================
 
     runtime = (
@@ -165,11 +171,17 @@ def build_hub(
             agent_registry=(
                 agent_registry
             ),
+
             inference=(
                 inference
             ),
+
             tool_gateway=(
                 tool_gateway
+            ),
+
+            model_profile_resolver=(
+                model_manager.model_profile
             ),
         )
     )
@@ -183,9 +195,11 @@ def build_hub(
             registry=(
                 agent_registry
             ),
+
             inference=(
                 inference
             ),
+
             model_key=(
                 settings
                 .hub_model_key
@@ -202,6 +216,7 @@ def build_hub(
             inference=(
                 inference
             ),
+
             model_key=(
                 settings
                 .hub_model_key
@@ -209,14 +224,18 @@ def build_hub(
         )
     )
 
-    return Orchestrator(
-        router=(
-            router
-        ),
-        runtime=(
-            runtime
-        ),
-        primary_assistant=(
-            primary_assistant
-        ),
+    return (
+        Orchestrator(
+            router=(
+                router
+            ),
+
+            runtime=(
+                runtime
+            ),
+
+            primary_assistant=(
+                primary_assistant
+            ),
+        )
     )

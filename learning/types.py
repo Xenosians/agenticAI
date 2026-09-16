@@ -10,6 +10,10 @@ from pydantic import (
     Field,
 )
 
+from learning.execution_provenance import (
+    SpecialistExecutionProvenance,
+)
+
 
 # ============================================================
 # RAW TRAJECTORY TYPES
@@ -28,6 +32,16 @@ class TrajectoryStep(
     # It is never authorization.
     task_instructions: (
         str | None
+    ) = None
+
+    # Exact immutable runtime identity evidence captured before
+    # specialist generation.
+    #
+    # Optional preserves compatibility with historical trajectory
+    # records created before provenance capture existed.
+    execution_provenance: (
+        SpecialistExecutionProvenance
+        | None
     ) = None
 
     agent: str

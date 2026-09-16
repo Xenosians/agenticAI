@@ -164,11 +164,15 @@ class Orchestrator:
             )
 
             # ---------------------------------------------
-            # Preserve the exact advisory routing context
-            # that was supplied to the specialist.
+            # Preserve exact specialist input evidence.
             #
-            # Do this here rather than requiring every
-            # AgentRuntime return branch to repeat it.
+            # AgentRuntime owns provenance construction.
+            #
+            # Orchestrator only transfers it from the task
+            # execution context into the durable result.
+            #
+            # This avoids duplicating provenance fields in
+            # every AgentRuntime return branch.
             # ---------------------------------------------
 
             result = (
@@ -177,6 +181,10 @@ class Orchestrator:
 
                     task_instructions=(
                         task.instructions
+                    ),
+
+                    execution_provenance=(
+                        task.execution_provenance
                     ),
                 )
             )

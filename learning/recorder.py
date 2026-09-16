@@ -45,6 +45,12 @@ class TrajectoryRecorder:
 
     Recorder failures must never change the authoritative outcome
     of the user's actual job.
+
+    Specialist execution provenance is captured as immutable
+    evidence when supplied by the runtime.
+
+    Historical results without provenance remain readable, but
+    later production-training gates must fail closed on them.
     """
 
     def __init__(
@@ -89,6 +95,10 @@ class TrajectoryRecorder:
 
                 task_instructions=(
                     item.task_instructions
+                ),
+
+                execution_provenance=(
+                    item.execution_provenance
                 ),
 
                 agent=(

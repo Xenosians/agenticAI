@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import json
 
+from typing import (
+    Any,
+)
+
 from subagents.core.capabilities import (
     build_agent_capability_catalog,
 )
@@ -17,24 +21,47 @@ from subagents.prompts.prompt_loader import (
 
 def build_worker_system_prompt(
     agent: AgentDefinition,
+    *,
+    capability_catalog: (
+        list[
+            dict[
+                str,
+                Any,
+            ]
+        ]
+        | None
+    ) = None,
 ) -> str:
     """
     Build the worker prompt from the specialist definition and
     trusted runtime capability catalog.
 
-    The specialist definition describes behavioral role/context.
+    Callers may provide a prebuilt capability catalog.
 
-    Capability truth comes from the trusted tool registry.
+    AgentRuntime does this deliberately so the exact SAME catalog
+    object is used for:
 
-    The worker therefore reasons over what capabilities actually
-    exist instead of relying on capability descriptions manually
-    copied into prompts.
+        prompt construction
+        provenance hashing
+
+    This prevents dynamic capability metadata from being resolved
+    independently at two different moments.
+
+    Other callers remain backward compatible: when no catalog is
+    supplied, it is built normally.
     """
 
     capabilities = (
-        build_agent_capability_catalog(
-            agent,
-            include_arguments=True,
+        capability_catalog
+
+        if capability_catalog
+        is not None
+
+        else (
+            build_agent_capability_catalog(
+                agent,
+                include_arguments=True,
+            )
         )
     )
 

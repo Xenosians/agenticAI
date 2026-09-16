@@ -60,6 +60,22 @@ class AgentTask:
         default_factory=dict
     )
 
+    # Runtime-produced immutable identity evidence describing the
+    # exact specialist model-input environment.
+    #
+    # This begins as None and is populated by AgentRuntime before
+    # model generation.
+    #
+    # The core layer stores a plain dictionary so it does not
+    # depend on learning-layer Pydantic types.
+    execution_provenance: (
+        dict[
+            str,
+            Any,
+        ]
+        | None
+    ) = None
+
 
 @dataclass
 class AgentResult:
@@ -78,6 +94,19 @@ class AgentResult:
     # against the original user request.
     task_instructions: (
         str | None
+    ) = None
+
+    # Immutable model/prompt identity evidence captured by the
+    # specialist runtime.
+    #
+    # Optional for backward compatibility with historical results
+    # and isolated tests.
+    execution_provenance: (
+        dict[
+            str,
+            Any,
+        ]
+        | None
     ) = None
 
     answer: (

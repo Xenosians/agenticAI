@@ -1,5 +1,21 @@
 from __future__ import annotations
 
+from typing import (
+    Callable,
+)
+
+from config import (
+    ModelProfileSettings,
+)
+
+from learning.execution_provenance import (
+    build_specialist_execution_provenance,
+)
+
+from subagents.core.capabilities import (
+    build_agent_capability_catalog,
+)
+
 from subagents.core.registry import (
     AgentRegistry,
 )
@@ -39,6 +55,19 @@ from tools.result_presentation_registry import (
 )
 
 
+SPECIALIST_MAX_NEW_TOKENS = (
+    256
+)
+
+
+ModelProfileResolver = Callable[
+    [
+        str,
+    ],
+    ModelProfileSettings,
+]
+
+
 class AgentRuntime:
     """
     Executes specialist tasks.
@@ -54,9 +83,19 @@ class AgentRuntime:
     They never grant authorization and never override ToolGateway
     policy.
 
-    Stable outcome codes are propagated into AgentResult so
-    learning/evaluation infrastructure can classify runtime
-    behavior without parsing human-readable errors.
+    Runtime provenance is captured before generation whenever a
+    model-profile resolver is available.
+
+    Provenance capture is deliberately non-fatal:
+
+        user execution
+            remains authoritative
+
+        missing provenance
+            later causes learning/training evidence to fail closed
+
+    A telemetry/provenance failure must never convert a valid user
+    operation into a runtime failure.
     """
 
     def __init__(
@@ -64,6 +103,10 @@ class AgentRuntime:
         agent_registry: AgentRegistry,
         inference: InferenceEngine,
         tool_gateway: ToolGateway,
+        model_profile_resolver: (
+            ModelProfileResolver
+            | None
+        ) = None,
     ) -> None:
 
         self.agent_registry = (
@@ -78,10 +121,20 @@ class AgentRuntime:
             tool_gateway
         )
 
+        self.model_profile_resolver = (
+            model_profile_resolver
+        )
+
     async def run(
         self,
         task: AgentTask,
     ) -> AgentResult:
+
+        # A task object should never accidentally carry provenance
+        # from a previous execution attempt.
+        task.execution_provenance = (
+            None
+        )
 
         # ========================================================
         # AGENT RESOLUTION
@@ -123,6 +176,36 @@ class AgentRuntime:
             )
 
         # ========================================================
+        # CAPABILITY CATALOG
+        #
+        # Resolve this ONCE.
+        #
+        # The exact same object is used for:
+        #
+        #     worker prompt construction
+        #     execution provenance
+        #
+        # This matters because capability metadata may eventually
+        # contain dynamically resolved bounded values.
+        # ========================================================
+
+        capability_catalog = (
+            build_agent_capability_catalog(
+                agent,
+                include_arguments=True,
+            )
+        )
+
+        system_prompt = (
+            build_worker_system_prompt(
+                agent,
+                capability_catalog=(
+                    capability_catalog
+                ),
+            )
+        )
+
+        # ========================================================
         # MODEL MESSAGE CONSTRUCTION
         # ========================================================
 
@@ -132,9 +215,7 @@ class AgentRuntime:
                     "system",
 
                 "content":
-                    build_worker_system_prompt(
-                        agent
-                    ),
+                    system_prompt,
             },
 
             {
@@ -157,17 +238,26 @@ class AgentRuntime:
         # against the original user request.
         # --------------------------------------------------------
 
+        normalized_instructions: (
+            str
+            | None
+        ) = None
+
         if (
             task.instructions
             is not None
         ):
 
-            normalized_instructions = (
+            candidate = (
                 task.instructions
                 .strip()
             )
 
-            if normalized_instructions:
+            if candidate:
+
+                normalized_instructions = (
+                    candidate
+                )
 
                 messages.append(
                     {
@@ -181,6 +271,85 @@ class AgentRuntime:
                                 f"{normalized_instructions}"
                             ),
                     }
+                )
+
+        # ========================================================
+        # EXECUTION PROVENANCE
+        #
+        # This happens immediately before model generation so the
+        # captured hashes describe the exact runtime model-input
+        # environment for this invocation.
+        #
+        # Failure is intentionally NON-FATAL.
+        #
+        # Missing/incomplete provenance will later make the
+        # trajectory ineligible for production training.
+        # ========================================================
+
+        if (
+            self.model_profile_resolver
+            is not None
+        ):
+
+            try:
+
+                model_profile = (
+                    self.model_profile_resolver(
+                        agent.model
+                    )
+                )
+
+                provenance = (
+                    build_specialist_execution_provenance(
+                        agent=(
+                            agent
+                        ),
+
+                        model_profile=(
+                            model_profile
+                        ),
+
+                        capability_catalog=(
+                            capability_catalog
+                        ),
+
+                        messages=(
+                            messages
+                        ),
+
+                        user_request=(
+                            task.user_request
+                        ),
+
+                        task_instructions=(
+                            normalized_instructions
+                        ),
+
+                        max_new_tokens=(
+                            SPECIALIST_MAX_NEW_TOKENS
+                        ),
+                    )
+                )
+
+                task.execution_provenance = (
+                    provenance.model_dump(
+                        mode="json",
+                        by_alias=True,
+                    )
+                )
+
+            except Exception as exc:
+
+                print(
+                    "[LEARNING] Specialist provenance "
+                    "capture failed "
+                    f"agent='{agent.name}' "
+                    f"model='{agent.model}' "
+                    f"error={exc!r}"
+                )
+
+                task.execution_provenance = (
+                    None
                 )
 
         # ========================================================
@@ -201,7 +370,9 @@ class AgentRuntime:
                         messages
                     ),
 
-                    max_new_tokens=256,
+                    max_new_tokens=(
+                        SPECIALIST_MAX_NEW_TOKENS
+                    ),
 
                     priority=(
                         InferencePriority
