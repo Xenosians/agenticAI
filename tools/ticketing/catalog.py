@@ -1,3 +1,7 @@
+from typing import (
+    Any,
+)
+
 from tools.ticketing.presentation import (
     build_ticket_comments_card,
     build_ticket_get_card,
@@ -8,6 +12,38 @@ from tools.ticketing.presentation import (
     format_ticket_history_result,
     format_ticket_search_result,
 )
+
+
+def format_ticket_add_comment_approval(
+    arguments: dict[
+        str,
+        Any,
+    ],
+) -> str:
+
+    ticket_key = (
+        arguments.get(
+            "ticket_key"
+        )
+    )
+
+    if (
+        isinstance(
+            ticket_key,
+            str,
+        )
+        and ticket_key.strip()
+    ):
+
+        return (
+            "Adding a comment to "
+            f"{ticket_key} requires approval."
+        )
+
+    return (
+        "Adding the ticket comment "
+        "requires approval."
+    )
 
 
 TICKETING_TOOLS = {
@@ -192,16 +228,15 @@ TICKETING_TOOLS = {
     },
 
     # ============================================================
-    # COMMENTS
+    # READ COMMENTS
     # ============================================================
 
     "ticket_comments": {
         "description": (
             "Retrieve the comments or discussion entries attached "
             "to exactly one ticket, including comment text, author, "
-            "and timestamps. Use this capability when the requested "
-            "information concerns ticket discussion or comments "
-            "rather than ordinary ticket metadata."
+            "and timestamps. Use this capability only for reading "
+            "existing comments."
         ),
 
         "risk":
@@ -242,6 +277,62 @@ TICKETING_TOOLS = {
 
         "presentation_builder": (
             build_ticket_comments_card
+        ),
+    },
+
+    # ============================================================
+    # ADD COMMENT
+    #
+    # This capability changes external provider state.
+    # ToolGateway approval remains mandatory.
+    # ============================================================
+
+    "ticket_add_comment": {
+        "description": (
+            "Add exactly one user-supplied comment or note to "
+            "exactly one existing ticket. This changes ticket "
+            "provider state. Use only when the user explicitly "
+            "asks to add, post, append, or record a comment or "
+            "note. Do not use this capability merely to read "
+            "existing comments."
+        ),
+
+        "risk":
+            "low",
+
+        "requires_approval":
+            True,
+
+        "grounded_arguments": [
+            "ticket_key",
+            "comment",
+        ],
+
+        "parameters": {
+            "ticket_key": {
+                "type":
+                    "str",
+
+                "description": (
+                    "Exact ticket identifier supplied "
+                    "by the user."
+                ),
+            },
+
+            "comment": {
+                "type":
+                    "str",
+
+                "description": (
+                    "Exact comment text requested by the user. "
+                    "Do not summarize, rewrite, embellish, or "
+                    "invent ticket comment content."
+                ),
+            },
+        },
+
+        "approval_formatter": (
+            format_ticket_add_comment_approval
         ),
     },
 }

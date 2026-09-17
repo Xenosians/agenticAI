@@ -24,7 +24,9 @@ from services.process_runner import (
 )
 
 from services.ticketing import (
+    TicketMutationService,
     TicketService,
+    build_ticket_mutation_service,
     build_ticket_service,
 )
 
@@ -188,7 +190,12 @@ def create_mcp_server(
     ticketing: (
         TicketService | None
     ) = None,
+
+    ticket_mutations: (
+        TicketMutationService | None
+    ) = None,
 ) -> MCPServer:
+
     runtime_settings = (
         settings
         if settings is not None
@@ -211,6 +218,15 @@ def create_mcp_server(
         )
     )
 
+    ticket_mutation_service = (
+        ticket_mutations
+        if ticket_mutations
+        is not None
+        else build_ticket_mutation_service(
+            ticket_service
+        )
+    )
+
     server = (
         MCPServer(
             "ITSM Tools"
@@ -225,6 +241,7 @@ def create_mcp_server(
     def account_status(
         user_id: str,
     ) -> AccountStatusResult:
+
         return (
             AccountStatusResult(
                 **directory_service
@@ -239,6 +256,7 @@ def create_mcp_server(
         user_id: str,
         resource: str,
     ) -> AccessCheckResult:
+
         return (
             AccessCheckResult(
                 **directory_service
@@ -253,6 +271,7 @@ def create_mcp_server(
     def unlock_user(
         user_id: str,
     ) -> MutationResult:
+
         return (
             MutationResult(
                 **directory_service
@@ -266,6 +285,7 @@ def create_mcp_server(
     def reset_password(
         user_id: str,
     ) -> MutationResult:
+
         return (
             MutationResult(
                 **directory_service
@@ -286,12 +306,22 @@ def create_mcp_server(
         cwd: str | None = None,
         timeout_seconds: int = 10,
     ) -> ProcessExecResult:
+
         return (
             ProcessExecResult(
                 **run_process(
-                    executable=executable,
-                    args=args,
-                    cwd=cwd,
+                    executable=(
+                        executable
+                    ),
+
+                    args=(
+                        args
+                    ),
+
+                    cwd=(
+                        cwd
+                    ),
+
                     timeout_seconds=(
                         timeout_seconds
                     ),
@@ -309,6 +339,7 @@ def create_mcp_server(
         cwd: str | None = None,
         timeout_seconds: int = 10,
     ) -> ProcessExecResult:
+
         return (
             ProcessExecResult(
                 **run_workspace_mkdir(
@@ -316,7 +347,9 @@ def create_mcp_server(
                         directory_name
                     ),
 
-                    cwd=cwd,
+                    cwd=(
+                        cwd
+                    ),
 
                     timeout_seconds=(
                         timeout_seconds
@@ -329,6 +362,7 @@ def create_mcp_server(
     def workspace_read_text(
         relative_path: str,
     ) -> WorkspaceReadTextResult:
+
         return (
             WorkspaceReadTextResult(
                 **run_workspace_read_text(
@@ -343,6 +377,7 @@ def create_mcp_server(
     def workspace_list(
         relative_path: str = ".",
     ) -> WorkspaceListResult:
+
         return (
             WorkspaceListResult(
                 **run_workspace_list(
@@ -358,10 +393,13 @@ def create_mcp_server(
         query: str,
         relative_path: str = ".",
     ) -> WorkspaceSearchResult:
+
         return (
             WorkspaceSearchResult(
                 **run_workspace_search(
-                    query=query,
+                    query=(
+                        query
+                    ),
 
                     relative_path=(
                         relative_path
@@ -374,6 +412,7 @@ def create_mcp_server(
     def workspace_file_info(
         relative_path: str,
     ) -> WorkspaceFileInfoResult:
+
         return (
             WorkspaceFileInfoResult(
                 **run_workspace_file_info(
@@ -394,11 +433,14 @@ def create_mcp_server(
 
     # ============================================================
     # TICKETING
+    #
+    # Query and command services share the same selected provider.
     # ============================================================
 
     register_ticketing_tools(
         server,
         ticket_service,
+        ticket_mutation_service,
     )
 
     # ============================================================

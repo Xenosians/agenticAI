@@ -14,6 +14,14 @@ from .mock import (
     MockTicketService,
 )
 
+from .mutations import (
+    JiraTicketMutationService,
+    MockTicketMutationService,
+    TicketMutationResult,
+    TicketMutationService,
+    build_ticket_mutation_service,
+)
+
 from .types import (
     TicketComment,
     TicketCommentsResult,
@@ -28,7 +36,9 @@ from .types import (
 
 
 __all__ = [
+    "JiraTicketMutationService",
     "JiraTicketService",
+    "MockTicketMutationService",
     "MockTicketService",
     "TicketComment",
     "TicketCommentsResult",
@@ -36,9 +46,12 @@ __all__ = [
     "TicketHistoryEntry",
     "TicketHistoryResult",
     "TicketLookupResult",
+    "TicketMutationResult",
+    "TicketMutationService",
     "TicketRecord",
     "TicketSearchQuery",
     "TicketSearchResult",
     "TicketService",
+    "build_ticket_mutation_service",
     "build_ticket_service",
 ]

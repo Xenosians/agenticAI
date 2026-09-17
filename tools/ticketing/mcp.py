@@ -9,6 +9,7 @@ from mcp.server import (
 )
 
 from services.ticketing import (
+    TicketMutationService,
     TicketSearchQuery,
     TicketService,
 )
@@ -228,6 +229,44 @@ class TicketCommentsMCPResult(
 
 
 # ============================================================
+# TICKET MUTATION
+# ============================================================
+
+
+class TicketMutationMCPResult(
+    BaseModel
+):
+    ok: bool
+    status: str
+
+    provider: (
+        str | None
+    ) = None
+
+    ticket_key: (
+        str | None
+    ) = None
+
+    operation: (
+        str | None
+    ) = None
+
+    changed: bool = False
+
+    comment_id: (
+        str | None
+    ) = None
+
+    message: (
+        str | None
+    ) = None
+
+    error: (
+        str | None
+    ) = None
+
+
+# ============================================================
 # REGISTRATION
 # ============================================================
 
@@ -235,16 +274,27 @@ class TicketCommentsMCPResult(
 def register_ticketing_tools(
     server: MCPServer,
     ticket_service: TicketService,
+    ticket_mutations: (
+        TicketMutationService
+        | None
+    ) = None,
 ) -> None:
     """
     Register provider-neutral ticketing capabilities.
 
-    Model-facing MCP tools expose only structured ticketing
-    operations.
+    Query capabilities use TicketService.
+
+    Command capabilities use TicketMutationService.
 
     Jira URLs, credentials, HTTP methods, authentication,
-    provider-native query languages, and provider internals
-    remain behind TicketService.
+    provider-native query languages, and provider internals remain
+    behind the trusted service boundary.
+
+    Mutation authorization is NOT decided here.
+
+    Model-facing execution reaches mutation MCP tools only after
+    ToolGateway and approval handling have accepted the exact tool
+    invocation.
     """
 
     # --------------------------------------------------------
@@ -283,17 +333,24 @@ def register_ticketing_tools(
     ) -> TicketSearchMCPResult:
 
         try:
+
             query = (
                 TicketSearchQuery(
-                    text=text,
+                    text=(
+                        text
+                    ),
 
                     project_key=(
                         project_key
                     ),
 
-                    status=status,
+                    status=(
+                        status
+                    ),
 
-                    priority=priority,
+                    priority=(
+                        priority
+                    ),
 
                     limit=(
                         10
@@ -304,6 +361,7 @@ def register_ticketing_tools(
             )
 
         except ValidationError:
+
             return (
                 TicketSearchMCPResult(
                     ok=False,
@@ -360,7 +418,7 @@ def register_ticketing_tools(
         )
 
     # --------------------------------------------------------
-    # TICKET COMMENTS
+    # READ TICKET COMMENTS
     # --------------------------------------------------------
 
     @server.tool()
@@ -387,3 +445,37 @@ def register_ticketing_tools(
                 **result.model_dump()
             )
         )
+
+    # --------------------------------------------------------
+    # MUTATION CAPABILITIES
+    #
+    # Kept optional for isolated legacy registration tests.
+    #
+    # Production MCP construction always supplies the mutation
+    # service.
+    # --------------------------------------------------------
+
+    if (
+        ticket_mutations
+        is not None
+    ):
+
+        @server.tool()
+        def ticket_add_comment(
+            ticket_key: str,
+            comment: str,
+        ) -> TicketMutationMCPResult:
+
+            result = (
+                ticket_mutations
+                .add_comment(
+                    ticket_key,
+                    comment,
+                )
+            )
+
+            return (
+                TicketMutationMCPResult(
+                    **result.model_dump()
+                )
+            )
