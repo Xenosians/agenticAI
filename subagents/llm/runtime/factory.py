@@ -8,6 +8,10 @@ from subagents.llm.runtime.base import (
     LLMBackend,
 )
 
+from subagents.llm.runtime.memory import (
+    release_unused_accelerator_memory,
+)
+
 from subagents.llm.backends.ministral_hub import (
     MinistralHubBackend,
 )
@@ -53,6 +57,16 @@ def build_model_backend(
 
     Router/PrimaryAssistant/AgentRuntime continue to depend only
     on logical model keys.
+
+    Before Transformers performs automatic device placement,
+    reclaim accelerator allocations that are no longer owned by
+    live model objects.
+
+    This does NOT evict live models.
+
+    It only prevents stale PyTorch allocator cache from making
+    `device_map="auto"` reason from artificially reduced free
+    VRAM.
     """
 
     backend_type = (
@@ -66,6 +80,16 @@ def build_model_backend(
             profile
         )
     )
+
+    # ========================================================
+    # ACCELERATOR LIFECYCLE BOUNDARY
+    # ========================================================
+
+    release_unused_accelerator_memory()
+
+    # ========================================================
+    # MINISTRAL HUB
+    # ========================================================
 
     if (
         backend_type
@@ -114,6 +138,10 @@ def build_model_backend(
             )
         )
 
+    # ========================================================
+    # QWEN FUNCTION CALLING
+    # ========================================================
+
     if (
         backend_type
         == "qwen-funccall"
@@ -126,6 +154,10 @@ def build_model_backend(
             )
         )
 
+    # ========================================================
+    # QWEN3 WORKER
+    # ========================================================
+
     if (
         backend_type
         == "qwen3"
@@ -137,6 +169,10 @@ def build_model_backend(
                 ),
             )
         )
+
+    # ========================================================
+    # QWEN CODER WORKER
+    # ========================================================
 
     if (
         backend_type

@@ -1,4 +1,4 @@
-import tools.workspace_discovery as discovery
+import tools.workspace.discovery as discovery
 
 
 def configure_workspace(

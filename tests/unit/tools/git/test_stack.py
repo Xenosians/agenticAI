@@ -2,13 +2,13 @@ from pathlib import (
     Path,
 )
 
-import tools.git_mcp as git_mcp
+import tools.git.mcp as git_mcp
 
-from tools.git_catalog import (
+from tools.git.catalog import (
     GIT_TOOLS,
 )
 
-from tools.git_presentation import (
+from tools.git.presentation import (
     build_git_branches_card,
     build_git_changed_files_card,
     build_git_diff_card,

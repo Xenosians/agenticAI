@@ -4,7 +4,7 @@ from services.git_repositories import (
     build_git_repository_registry,
 )
 
-from tools.git_presentation import (
+from tools.git.presentation import (
     build_git_branches_card,
     build_git_changed_files_card,
     build_git_diff_card,

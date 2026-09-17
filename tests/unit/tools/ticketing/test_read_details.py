@@ -9,11 +9,11 @@ from tools.registry import (
     get_tool,
 )
 
-from tools.ticketing_mcp import (
+from tools.ticketing.mcp import (
     register_ticketing_tools,
 )
 
-from tools.ticketing_presentation import (
+from tools.ticketing.presentation import (
     build_ticket_comments_card,
     build_ticket_history_card,
 )

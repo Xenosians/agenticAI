@@ -13,12 +13,12 @@ from subagents.core.definitions.types import (
     AgentTask,
 )
 
-from tools.result_cards import (
+from tools.presentation.result_cards import (
     RESULT_CARD_SCHEMA,
     validate_result_card,
 )
 
-from tools.result_presentation_registry import (
+from tools.presentation.registry import (
     build_tool_presentation,
 )
 

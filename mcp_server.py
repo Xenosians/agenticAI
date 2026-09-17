@@ -28,15 +28,15 @@ from services.ticketing import (
     build_ticket_service,
 )
 
-from tools.developer_mcp import (
+from tools.developer.mcp import (
     register_developer_tools,
 )
 
-from tools.git_mcp import (
+from tools.git.mcp import (
     register_git_tools,
 )
 
-from tools.ticketing_mcp import (
+from tools.ticketing.mcp import (
     register_ticketing_tools,
 )
 
@@ -48,7 +48,7 @@ from tools.workspace import (
     as run_workspace_read_text,
 )
 
-from tools.workspace_discovery import (
+from tools.workspace.discovery import (
     workspace_file_info
     as run_workspace_file_info,
 

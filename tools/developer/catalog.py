@@ -1,4 +1,4 @@
-from tools.developer_presentation import (
+from tools.developer.presentation import (
     build_developer_execution_card,
     build_project_info_card,
     format_developer_execution_approval,
@@ -6,7 +6,7 @@ from tools.developer_presentation import (
     format_project_info_result,
 )
 
-from tools.developer_runtime_presentation import (
+from tools.developer.runtime_presentation import (
     build_process_snapshot_card,
     build_service_logs_card,
     build_service_status_card,

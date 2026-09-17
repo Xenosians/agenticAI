@@ -7,7 +7,7 @@ from services.process_runner import (
     workspace_root,
 )
 
-from tools.workspace_policy import (
+from tools.workspace.policy import (
     DENIED_DIRECTORY_NAMES,
     validate_discoverable_path,
     validate_readable_text_path,

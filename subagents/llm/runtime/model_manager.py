@@ -53,6 +53,10 @@ class ModelManager:
 
         self._register_profiles()
 
+    # ========================================================
+    # REGISTRATION
+    # ========================================================
+
     def _register_profiles(
         self,
     ) -> None:
@@ -64,7 +68,9 @@ class ModelManager:
             .model_profiles
             .items()
         ):
-            if not profile.enabled:
+            if not (
+                profile.enabled
+            ):
                 continue
 
             def loader(
@@ -80,6 +86,10 @@ class ModelManager:
                 model_key,
                 loader,
             )
+
+    # ========================================================
+    # BACKEND CONSTRUCTION
+    # ========================================================
 
     def _build_backend(
         self,
@@ -104,6 +114,10 @@ class ModelManager:
             )
         )
 
+    # ========================================================
+    # PROFILE RESOLUTION
+    # ========================================================
+
     def model_profile(
         self,
         model_key: str,
@@ -115,14 +129,23 @@ class ModelManager:
             )
         )
 
-        if profile is None:
+        if (
+            profile
+            is None
+        ):
             raise KeyError(
                 "Model profile "
                 f"'{model_key}' "
                 "is not configured."
             )
 
-        return profile
+        return (
+            profile
+        )
+
+    # ========================================================
+    # DISCOVERY
+    # ========================================================
 
     def exists(
         self,
@@ -134,6 +157,37 @@ class ModelManager:
                 model_key
             )
         )
+
+    def is_loaded(
+        self,
+        model_key: str,
+    ) -> bool:
+        return (
+            self.registry
+            .is_loaded(
+                model_key
+            )
+        )
+
+    def list_models(
+        self,
+    ) -> list[str]:
+        return (
+            self.registry
+            .list_models()
+        )
+
+    def list_loaded_models(
+        self,
+    ) -> list[str]:
+        return (
+            self.registry
+            .list_loaded_models()
+        )
+
+    # ========================================================
+    # LIFECYCLE
+    # ========================================================
 
     def load(
         self,
@@ -156,6 +210,23 @@ class ModelManager:
                 model_key
             )
         )
+
+    def unload_all(
+        self,
+    ) -> list[str]:
+        """
+        Release every backend currently cached by this model
+        manager while preserving all lazy model registrations.
+        """
+
+        return (
+            self.registry
+            .unload_all()
+        )
+
+    # ========================================================
+    # GENERATION
+    # ========================================================
 
     def generate(
         self,
@@ -214,31 +285,4 @@ class ModelManager:
                     max_new_tokens
                 ),
             )
-        )
-
-    def is_loaded(
-        self,
-        model_key: str,
-    ) -> bool:
-        return (
-            self.registry
-            .is_loaded(
-                model_key
-            )
-        )
-
-    def list_models(
-        self,
-    ) -> list[str]:
-        return (
-            self.registry
-            .list_models()
-        )
-
-    def list_loaded_models(
-        self,
-    ) -> list[str]:
-        return (
-            self.registry
-            .list_loaded_models()
         )

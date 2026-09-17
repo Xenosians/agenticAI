@@ -2,13 +2,13 @@ import json
 
 from pathlib import Path
 
-import tools.developer_runtime as runtime
+import tools.developer.runtime as runtime
 
 from services.process_runner import (
     evaluate_process_policy,
 )
 
-from tools.developer_mcp import (
+from tools.developer.mcp import (
     register_developer_tools,
 )
 

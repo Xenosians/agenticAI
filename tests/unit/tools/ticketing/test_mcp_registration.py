@@ -2,7 +2,7 @@ from services.ticketing import (
     MockTicketService,
 )
 
-from tools.ticketing_mcp import (
+from tools.ticketing.mcp import (
     register_ticketing_tools,
 )
 

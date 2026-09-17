@@ -50,7 +50,7 @@ from tools.registry import (
     format_tool_result,
 )
 
-from tools.result_presentation_registry import (
+from tools.presentation.registry import (
     build_tool_presentation,
 )
 

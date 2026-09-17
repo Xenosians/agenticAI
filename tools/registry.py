@@ -7,11 +7,11 @@ from services.process_runner import (
     evaluate_process_policy,
 )
 
-from tools.developer_catalog import (
+from tools.developer.catalog import (
     DEVELOPER_TOOLS,
 )
 
-from tools.git_catalog import (
+from tools.git.catalog import (
     GIT_TOOLS,
 )
 
@@ -25,11 +25,11 @@ from tools.presentation import (
     format_workspace_read_result,
 )
 
-from tools.ticketing_catalog import (
+from tools.ticketing.catalog import (
     TICKETING_TOOLS,
 )
 
-from tools.workspace_presentation import (
+from tools.workspace.presentation import (
     format_workspace_file_info_result,
     format_workspace_list_result,
     format_workspace_search_result,

@@ -759,8 +759,8 @@ subagents/agents/
 subagents/prompts/
 
 tools/registry.py
-tools/presentation.py
-tools/workspace.py
+tools/presentation/__init__.py
+tools/workspace/__init__.py
 
 services/process_runner.py
 services/directory/

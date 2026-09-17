@@ -6,7 +6,7 @@ from tools.registry import (
     get_tool,
 )
 
-from tools.result_cards import (
+from tools.presentation.result_cards import (
     validate_result_card,
 )
 

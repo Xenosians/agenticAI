@@ -8,7 +8,7 @@ from mcp.server import (
     MCPServer,
 )
 
-from tools.developer_execution import (
+from tools.developer.execution import (
     workspace_project_info
     as run_workspace_project_info,
 
@@ -19,7 +19,7 @@ from tools.developer_execution import (
     as run_workspace_run_tests,
 )
 
-from tools.developer_runtime import (
+from tools.developer.runtime import (
     workspace_process_snapshot
     as run_workspace_process_snapshot,
 
