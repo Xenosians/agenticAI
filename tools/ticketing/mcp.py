@@ -15,51 +15,22 @@ from services.ticketing import (
 )
 
 
-# ============================================================
-# TICKET RECORD
-# ============================================================
-
-
 class TicketRecordResult(
     BaseModel
 ):
     provider: str
-
     key: str
     summary: str
     status: str
 
-    ticket_type: (
-        str | None
-    ) = None
-
-    priority: (
-        str | None
-    ) = None
-
-    assignee: (
-        str | None
-    ) = None
-
-    reporter: (
-        str | None
-    ) = None
-
-    project_key: (
-        str | None
-    ) = None
-
-    project_name: (
-        str | None
-    ) = None
-
-    created_at: (
-        str | None
-    ) = None
-
-    updated_at: (
-        str | None
-    ) = None
+    ticket_type: str | None = None
+    priority: str | None = None
+    assignee: str | None = None
+    reporter: str | None = None
+    project_key: str | None = None
+    project_name: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
 
 
 class TicketLookupMCPResult(
@@ -67,20 +38,8 @@ class TicketLookupMCPResult(
 ):
     ok: bool
     status: str
-
-    ticket: (
-        TicketRecordResult
-        | None
-    ) = None
-
-    error: (
-        str | None
-    ) = None
-
-
-# ============================================================
-# TICKET SEARCH
-# ============================================================
+    ticket: TicketRecordResult | None = None
+    error: str | None = None
 
 
 class TicketSearchMCPResult(
@@ -96,47 +55,24 @@ class TicketSearchMCPResult(
     )
 
     count: int = 0
-
     truncated: bool = False
-
-    error: (
-        str | None
-    ) = None
-
-
-# ============================================================
-# TICKET HISTORY
-# ============================================================
+    error: str | None = None
 
 
 class TicketFieldChangeResult(
     BaseModel
 ):
     field: str
-
-    from_value: (
-        str | None
-    ) = None
-
-    to_value: (
-        str | None
-    ) = None
+    from_value: str | None = None
+    to_value: str | None = None
 
 
 class TicketHistoryEntryResult(
     BaseModel
 ):
-    id: (
-        str | None
-    ) = None
-
-    author: (
-        str | None
-    ) = None
-
-    created_at: (
-        str | None
-    ) = None
+    id: str | None = None
+    author: str | None = None
+    created_at: str | None = None
 
     changes: list[
         TicketFieldChangeResult
@@ -150,14 +86,8 @@ class TicketHistoryMCPResult(
 ):
     ok: bool
     status: str
-
-    provider: (
-        str | None
-    ) = None
-
-    ticket_key: (
-        str | None
-    ) = None
+    provider: str | None = None
+    ticket_key: str | None = None
 
     history: list[
         TicketHistoryEntryResult
@@ -166,37 +96,18 @@ class TicketHistoryMCPResult(
     )
 
     count: int = 0
-
     truncated: bool = False
-
-    error: (
-        str | None
-    ) = None
-
-
-# ============================================================
-# TICKET COMMENTS
-# ============================================================
+    error: str | None = None
 
 
 class TicketCommentResult(
     BaseModel
 ):
     id: str
-
-    author: (
-        str | None
-    ) = None
-
+    author: str | None = None
     body: str
-
-    created_at: (
-        str | None
-    ) = None
-
-    updated_at: (
-        str | None
-    ) = None
+    created_at: str | None = None
+    updated_at: str | None = None
 
 
 class TicketCommentsMCPResult(
@@ -204,14 +115,8 @@ class TicketCommentsMCPResult(
 ):
     ok: bool
     status: str
-
-    provider: (
-        str | None
-    ) = None
-
-    ticket_key: (
-        str | None
-    ) = None
+    provider: str | None = None
+    ticket_key: str | None = None
 
     comments: list[
         TicketCommentResult
@@ -220,17 +125,8 @@ class TicketCommentsMCPResult(
     )
 
     count: int = 0
-
     truncated: bool = False
-
-    error: (
-        str | None
-    ) = None
-
-
-# ============================================================
-# TICKET MUTATION
-# ============================================================
+    error: str | None = None
 
 
 class TicketMutationMCPResult(
@@ -238,37 +134,15 @@ class TicketMutationMCPResult(
 ):
     ok: bool
     status: str
-
-    provider: (
-        str | None
-    ) = None
-
-    ticket_key: (
-        str | None
-    ) = None
-
-    operation: (
-        str | None
-    ) = None
-
+    provider: str | None = None
+    ticket_key: str | None = None
+    operation: str | None = None
     changed: bool = False
-
-    comment_id: (
-        str | None
-    ) = None
-
-    message: (
-        str | None
-    ) = None
-
-    error: (
-        str | None
-    ) = None
-
-
-# ============================================================
-# REGISTRATION
-# ============================================================
+    comment_id: str | None = None
+    previous_value: str | None = None
+    new_value: str | None = None
+    message: str | None = None
+    error: str | None = None
 
 
 def register_ticketing_tools(
@@ -279,27 +153,6 @@ def register_ticketing_tools(
         | None
     ) = None,
 ) -> None:
-    """
-    Register provider-neutral ticketing capabilities.
-
-    Query capabilities use TicketService.
-
-    Command capabilities use TicketMutationService.
-
-    Jira URLs, credentials, HTTP methods, authentication,
-    provider-native query languages, and provider internals remain
-    behind the trusted service boundary.
-
-    Mutation authorization is NOT decided here.
-
-    Model-facing execution reaches mutation MCP tools only after
-    ToolGateway and approval handling have accepted the exact tool
-    invocation.
-    """
-
-    # --------------------------------------------------------
-    # GET ONE TICKET
-    # --------------------------------------------------------
 
     @server.tool()
     def ticket_get(
@@ -319,10 +172,6 @@ def register_ticketing_tools(
             )
         )
 
-    # --------------------------------------------------------
-    # SEARCH TICKETS
-    # --------------------------------------------------------
-
     @server.tool()
     def ticket_search(
         text: str | None = None,
@@ -339,19 +188,15 @@ def register_ticketing_tools(
                     text=(
                         text
                     ),
-
                     project_key=(
                         project_key
                     ),
-
                     status=(
                         status
                     ),
-
                     priority=(
                         priority
                     ),
-
                     limit=(
                         10
                         if limit is None
@@ -365,9 +210,7 @@ def register_ticketing_tools(
             return (
                 TicketSearchMCPResult(
                     ok=False,
-
                     status="denied",
-
                     error=(
                         "Invalid ticket "
                         "search filters."
@@ -388,10 +231,6 @@ def register_ticketing_tools(
             )
         )
 
-    # --------------------------------------------------------
-    # TICKET HISTORY
-    # --------------------------------------------------------
-
     @server.tool()
     def ticket_history(
         ticket_key: str,
@@ -402,7 +241,6 @@ def register_ticketing_tools(
             ticket_service
             .get_ticket_history(
                 ticket_key,
-
                 limit=(
                     20
                     if limit is None
@@ -417,10 +255,6 @@ def register_ticketing_tools(
             )
         )
 
-    # --------------------------------------------------------
-    # READ TICKET COMMENTS
-    # --------------------------------------------------------
-
     @server.tool()
     def ticket_comments(
         ticket_key: str,
@@ -431,7 +265,6 @@ def register_ticketing_tools(
             ticket_service
             .get_ticket_comments(
                 ticket_key,
-
                 limit=(
                     20
                     if limit is None
@@ -446,36 +279,93 @@ def register_ticketing_tools(
             )
         )
 
-    # --------------------------------------------------------
-    # MUTATION CAPABILITIES
-    #
-    # Kept optional for isolated legacy registration tests.
-    #
-    # Production MCP construction always supplies the mutation
-    # service.
-    # --------------------------------------------------------
-
     if (
         ticket_mutations
-        is not None
+        is None
     ):
 
-        @server.tool()
-        def ticket_add_comment(
-            ticket_key: str,
-            comment: str,
-        ) -> TicketMutationMCPResult:
+        return
 
-            result = (
-                ticket_mutations
-                .add_comment(
-                    ticket_key,
-                    comment,
-                )
-            )
+    @server.tool()
+    def ticket_add_comment(
+        ticket_key: str,
+        comment: str,
+    ) -> TicketMutationMCPResult:
 
-            return (
-                TicketMutationMCPResult(
-                    **result.model_dump()
-                )
+        result = (
+            ticket_mutations
+            .add_comment(
+                ticket_key,
+                comment,
             )
+        )
+
+        return (
+            TicketMutationMCPResult(
+                **result.model_dump()
+            )
+        )
+
+    @server.tool()
+    def ticket_create(
+        project_key: str,
+        summary: str,
+        ticket_type: str | None = None,
+    ) -> TicketMutationMCPResult:
+
+        result = (
+            ticket_mutations
+            .create_ticket(
+                project_key,
+                summary,
+                ticket_type=(
+                    ticket_type
+                ),
+            )
+        )
+
+        return (
+            TicketMutationMCPResult(
+                **result.model_dump()
+            )
+        )
+
+    @server.tool()
+    def ticket_assign(
+        ticket_key: str,
+        assignee: str,
+    ) -> TicketMutationMCPResult:
+
+        result = (
+            ticket_mutations
+            .assign_ticket(
+                ticket_key,
+                assignee,
+            )
+        )
+
+        return (
+            TicketMutationMCPResult(
+                **result.model_dump()
+            )
+        )
+
+    @server.tool()
+    def ticket_transition(
+        ticket_key: str,
+        status: str,
+    ) -> TicketMutationMCPResult:
+
+        result = (
+            ticket_mutations
+            .transition_ticket(
+                ticket_key,
+                status,
+            )
+        )
+
+        return (
+            TicketMutationMCPResult(
+                **result.model_dump()
+            )
+        )

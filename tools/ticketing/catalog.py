@@ -14,11 +14,13 @@ from tools.ticketing.presentation import (
 )
 
 
-def format_ticket_add_comment_approval(
+def _ticket_key_approval(
     arguments: dict[
         str,
         Any,
     ],
+    *,
+    action: str,
 ) -> str:
 
     ticket_key = (
@@ -36,21 +38,99 @@ def format_ticket_add_comment_approval(
     ):
 
         return (
-            "Adding a comment to "
-            f"{ticket_key} requires approval."
+            f"{action} {ticket_key} "
+            "requires approval."
         )
 
     return (
-        "Adding the ticket comment "
+        f"{action} the ticket "
         "requires approval."
     )
 
 
-TICKETING_TOOLS = {
-    # ============================================================
-    # CURRENT TICKET STATE
-    # ============================================================
+def format_ticket_add_comment_approval(
+    arguments: dict[
+        str,
+        Any,
+    ],
+) -> str:
 
+    return (
+        _ticket_key_approval(
+            arguments,
+            action=(
+                "Adding a comment to"
+            ),
+        )
+    )
+
+
+def format_ticket_assign_approval(
+    arguments: dict[
+        str,
+        Any,
+    ],
+) -> str:
+
+    return (
+        _ticket_key_approval(
+            arguments,
+            action=(
+                "Assigning"
+            ),
+        )
+    )
+
+
+def format_ticket_transition_approval(
+    arguments: dict[
+        str,
+        Any,
+    ],
+) -> str:
+
+    return (
+        _ticket_key_approval(
+            arguments,
+            action=(
+                "Changing the status of"
+            ),
+        )
+    )
+
+
+def format_ticket_create_approval(
+    arguments: dict[
+        str,
+        Any,
+    ],
+) -> str:
+
+    project_key = (
+        arguments.get(
+            "project_key"
+        )
+    )
+
+    if (
+        isinstance(
+            project_key,
+            str,
+        )
+        and project_key.strip()
+    ):
+
+        return (
+            "Creating a ticket in project "
+            f"{project_key} requires approval."
+        )
+
+    return (
+        "Creating the ticket requires approval."
+    )
+
+
+TICKETING_TOOLS = {
     "ticket_get": {
         "description": (
             "Retrieve the current metadata and state of exactly "
@@ -91,16 +171,12 @@ TICKETING_TOOLS = {
         ),
     },
 
-    # ============================================================
-    # SEARCH
-    # ============================================================
-
     "ticket_search": {
         "description": (
             "Search for a bounded collection of tickets using "
             "structured filters such as project, status, priority, "
-            "or text. Use this capability when the user wants a "
-            "set of matching tickets rather than one exact ticket."
+            "or text. Use this when the user wants multiple "
+            "matching tickets rather than one exact ticket."
         ),
 
         "risk":
@@ -119,8 +195,7 @@ TICKETING_TOOLS = {
                     "str",
 
                 "description": (
-                    "Optional text to search for "
-                    "inside ticket content."
+                    "Optional text to search inside ticket content."
                 ),
             },
 
@@ -129,8 +204,8 @@ TICKETING_TOOLS = {
                     "str",
 
                 "description": (
-                    "Optional exact project key "
-                    "supplied by the user."
+                    "Optional exact project key supplied "
+                    "by the user."
                 ),
             },
 
@@ -138,18 +213,16 @@ TICKETING_TOOLS = {
                 "type":
                     "str",
 
-                "description": (
-                    "Optional ticket status filter."
-                ),
+                "description":
+                    "Optional ticket status filter.",
             },
 
             "priority": {
                 "type":
                     "str",
 
-                "description": (
-                    "Optional ticket priority filter."
-                ),
+                "description":
+                    "Optional ticket priority filter.",
             },
 
             "limit": {
@@ -172,18 +245,11 @@ TICKETING_TOOLS = {
         ),
     },
 
-    # ============================================================
-    # CHANGE HISTORY
-    # ============================================================
-
     "ticket_history": {
         "description": (
             "Retrieve the recorded change history for exactly "
             "one ticket, including changed fields, previous values, "
-            "new values, authors, and timestamps. "
-            "Use this capability when the requested information "
-            "concerns how a ticket changed over time rather than "
-            "only its current state."
+            "new values, authors, and timestamps."
         ),
 
         "risk":
@@ -227,16 +293,11 @@ TICKETING_TOOLS = {
         ),
     },
 
-    # ============================================================
-    # READ COMMENTS
-    # ============================================================
-
     "ticket_comments": {
         "description": (
-            "Retrieve the comments or discussion entries attached "
-            "to exactly one ticket, including comment text, author, "
-            "and timestamps. Use this capability only for reading "
-            "existing comments."
+            "Retrieve comments or discussion entries attached "
+            "to exactly one ticket. Use only for reading existing "
+            "comments."
         ),
 
         "risk":
@@ -280,21 +341,11 @@ TICKETING_TOOLS = {
         ),
     },
 
-    # ============================================================
-    # ADD COMMENT
-    #
-    # This capability changes external provider state.
-    # ToolGateway approval remains mandatory.
-    # ============================================================
-
     "ticket_add_comment": {
         "description": (
             "Add exactly one user-supplied comment or note to "
-            "exactly one existing ticket. This changes ticket "
-            "provider state. Use only when the user explicitly "
-            "asks to add, post, append, or record a comment or "
-            "note. Do not use this capability merely to read "
-            "existing comments."
+            "exactly one existing ticket. This changes provider "
+            "state. Do not use merely to read comments."
         ),
 
         "risk":
@@ -324,15 +375,160 @@ TICKETING_TOOLS = {
                     "str",
 
                 "description": (
-                    "Exact comment text requested by the user. "
-                    "Do not summarize, rewrite, embellish, or "
-                    "invent ticket comment content."
+                    "Exact comment text supplied by the user. "
+                    "Do not summarize, rewrite, or invent it."
                 ),
             },
         },
 
         "approval_formatter": (
             format_ticket_add_comment_approval
+        ),
+    },
+
+    "ticket_create": {
+        "description": (
+            "Create exactly one new ticket in an explicitly "
+            "specified project using the exact user-supplied "
+            "summary. An optional ticket type may be supplied "
+            "only when the user explicitly specifies it."
+        ),
+
+        "risk":
+            "low",
+
+        "requires_approval":
+            True,
+
+        "grounded_arguments": [
+            "project_key",
+            "summary",
+            "ticket_type",
+        ],
+
+        "parameters": {
+            "project_key": {
+                "type":
+                    "str",
+
+                "description": (
+                    "Exact project key supplied by the user."
+                ),
+            },
+
+            "summary": {
+                "type":
+                    "str",
+
+                "description": (
+                    "Exact requested ticket summary/title. "
+                    "Do not rewrite or invent it."
+                ),
+            },
+
+            "ticket_type": {
+                "type":
+                    "str",
+
+                "description": (
+                    "Optional ticket type explicitly supplied "
+                    "by the user."
+                ),
+            },
+        },
+
+        "approval_formatter": (
+            format_ticket_create_approval
+        ),
+    },
+
+    "ticket_assign": {
+        "description": (
+            "Assign exactly one existing ticket to exactly one "
+            "explicitly supplied assignee identifier."
+        ),
+
+        "risk":
+            "low",
+
+        "requires_approval":
+            True,
+
+        "grounded_arguments": [
+            "ticket_key",
+            "assignee",
+        ],
+
+        "parameters": {
+            "ticket_key": {
+                "type":
+                    "str",
+
+                "description": (
+                    "Exact ticket identifier supplied "
+                    "by the user."
+                ),
+            },
+
+            "assignee": {
+                "type":
+                    "str",
+
+                "description": (
+                    "Exact assignee identifier supplied by "
+                    "the user. For Jira deployments this must "
+                    "resolve as a Jira account identifier."
+                ),
+            },
+        },
+
+        "approval_formatter": (
+            format_ticket_assign_approval
+        ),
+    },
+
+    "ticket_transition": {
+        "description": (
+            "Change exactly one existing ticket to an explicitly "
+            "requested workflow status. The trusted provider "
+            "adapter resolves the provider-native transition."
+        ),
+
+        "risk":
+            "low",
+
+        "requires_approval":
+            True,
+
+        "grounded_arguments": [
+            "ticket_key",
+            "status",
+        ],
+
+        "parameters": {
+            "ticket_key": {
+                "type":
+                    "str",
+
+                "description": (
+                    "Exact ticket identifier supplied "
+                    "by the user."
+                ),
+            },
+
+            "status": {
+                "type":
+                    "str",
+
+                "description": (
+                    "Exact requested destination status supplied "
+                    "by the user."
+                ),
+            },
+        },
+
+        "approval_formatter": (
+            format_ticket_transition_approval
         ),
     },
 }

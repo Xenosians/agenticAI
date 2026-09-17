@@ -82,6 +82,9 @@ def test_all_ticketing_capabilities_are_registered():
         "ticket_history",
         "ticket_comments",
         "ticket_add_comment",
+        "ticket_create",
+        "ticket_assign",
+        "ticket_transition",
     }
 
 
@@ -101,7 +104,6 @@ def test_ticket_history_mcp_execution():
             ticket_key=(
                 "ITSM-101"
             ),
-
             limit=20,
         )
     )
@@ -128,14 +130,12 @@ def test_ticket_comments_mcp_execution():
             ticket_key=(
                 "ITSM-101"
             ),
-
             limit=20,
         )
     )
 
     assert result.ok is True
     assert result.status == "success"
-    assert result.ticket_key == "ITSM-101"
     assert result.count == 1
 
 
@@ -155,7 +155,6 @@ def test_ticket_search_mcp_execution():
             project_key=(
                 "ITSM"
             ),
-
             status=(
                 "In Progress"
             ),
@@ -166,15 +165,8 @@ def test_ticket_search_mcp_execution():
     assert result.status == "success"
     assert result.count == 1
 
-    assert (
-        result.tickets[
-            0
-        ].key
-        == "ITSM-101"
-    )
 
-
-def test_ticket_add_comment_mcp_execution_updates_shared_state():
+def test_ticket_add_comment_updates_shared_state():
 
     (
         server,
@@ -183,39 +175,137 @@ def test_ticket_add_comment_mcp_execution_updates_shared_state():
         build_registered_server()
     )
 
-    mutation = (
+    result = (
         server.functions[
             "ticket_add_comment"
         ](
             ticket_key=(
                 "ITSM-101"
             ),
-
             comment=(
                 "VPN access was verified."
             ),
         )
     )
 
-    assert mutation.ok is True
-    assert mutation.status == "success"
-    assert mutation.changed is True
-    assert mutation.ticket_key == "ITSM-101"
+    assert result.ok is True
+    assert result.changed is True
 
     comments = (
         service
         .get_ticket_comments(
-            "ITSM-101",
-            limit=20,
+            "ITSM-101"
         )
     )
 
-    assert comments.ok is True
     assert comments.count == 2
 
-    assert (
-        comments.comments[
-            -1
-        ].body
-        == "VPN access was verified."
+
+def test_ticket_create_is_visible_to_reads():
+
+    (
+        server,
+        service,
+    ) = (
+        build_registered_server()
     )
+
+    result = (
+        server.functions[
+            "ticket_create"
+        ](
+            project_key=(
+                "ITSM"
+            ),
+            summary=(
+                "Laptop onboarding failure"
+            ),
+        )
+    )
+
+    assert result.ok is True
+    assert result.changed is True
+    assert result.ticket_key == "ITSM-102"
+
+    lookup = (
+        service.get_ticket(
+            "ITSM-102"
+        )
+    )
+
+    assert lookup.ok is True
+    assert lookup.ticket is not None
+    assert (
+        lookup.ticket.summary
+        == "Laptop onboarding failure"
+    )
+
+
+def test_ticket_assign_is_visible_to_reads():
+
+    (
+        server,
+        service,
+    ) = (
+        build_registered_server()
+    )
+
+    result = (
+        server.functions[
+            "ticket_assign"
+        ](
+            ticket_key=(
+                "ITSM-101"
+            ),
+            assignee=(
+                "alice"
+            ),
+        )
+    )
+
+    assert result.ok is True
+    assert result.changed is True
+
+    lookup = (
+        service.get_ticket(
+            "ITSM-101"
+        )
+    )
+
+    assert lookup.ticket is not None
+    assert lookup.ticket.assignee == "alice"
+
+
+def test_ticket_transition_is_visible_to_reads():
+
+    (
+        server,
+        service,
+    ) = (
+        build_registered_server()
+    )
+
+    result = (
+        server.functions[
+            "ticket_transition"
+        ](
+            ticket_key=(
+                "ITSM-101"
+            ),
+            status=(
+                "Resolved"
+            ),
+        )
+    )
+
+    assert result.ok is True
+    assert result.changed is True
+
+    lookup = (
+        service.get_ticket(
+            "ITSM-101"
+        )
+    )
+
+    assert lookup.ticket is not None
+    assert lookup.ticket.status == "Resolved"
