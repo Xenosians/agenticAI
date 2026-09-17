@@ -26,6 +26,10 @@ from subagents.core.orchestration.runtime import (
     AgentRuntime,
 )
 
+from subagents.core.orchestration.semantic_guard import (
+    SemanticGuard,
+)
+
 from subagents.core.tooling.gateway import (
     ToolGateway,
 )
@@ -49,27 +53,20 @@ def build_hub(
     """
     Build the Hub reasoning and specialist orchestration graph.
 
-    This function owns no process-wide runtime resources.
+    Runtime ownership belongs to the composition root.
 
-    Runtime ownership belongs to the composition root:
+    Security boundaries:
 
-        FastAPI lifespan
-            |
-            +-- Settings
-            +-- ModelManager
-            +-- GpuScheduler
-            +-- InferenceCoordinator
-            +-- MCPRuntime
-            +-- ApprovalManager
-            +-- ToolGateway
-            |
-            +-- build_hub(...)
+        Hub model
+            interprets user intent
 
-    Tests may construct the same graph with isolated runtime
-    dependencies.
+        SemanticGuard
+            deterministically checks specialist behavior against
+            the structured semantic contract and trusted metadata
 
-    Security policy remains inside trusted ToolGateway/tool
-    registry code rather than model configuration.
+        ToolGateway
+            remains authoritative for authorization, grounding,
+            approval, policy, and execution
     """
 
     # ============================================================
@@ -79,6 +76,7 @@ def build_hub(
     if not model_manager.exists(
         settings.hub_model_key
     ):
+
         raise RuntimeError(
             "HUB_MODEL_KEY references "
             "an unknown or disabled "
@@ -108,6 +106,7 @@ def build_hub(
     for agent in (
         configured_agents
     ):
+
         profile = (
             settings.model_profile(
                 agent.model
@@ -115,6 +114,7 @@ def build_hub(
         )
 
         if profile is None:
+
             raise RuntimeError(
                 f"Agent '{agent.name}' "
                 "references model profile "
@@ -123,6 +123,7 @@ def build_hub(
             )
 
         if not profile.enabled:
+
             print(
                 "[HUB] Specialist disabled "
                 f"agent='{agent.name}' "
@@ -134,6 +135,7 @@ def build_hub(
         if not model_manager.exists(
             agent.model
         ):
+
             raise RuntimeError(
                 f"Agent '{agent.name}' "
                 "references unavailable "
@@ -157,13 +159,15 @@ def build_hub(
     )
 
     # ============================================================
+    # SEMANTIC GUARD
+    # ============================================================
+
+    semantic_guard = (
+        SemanticGuard()
+    )
+
+    # ============================================================
     # SPECIALIST RUNTIME
-    #
-    # ModelManager remains the trusted owner of deployment model
-    # profiles.
-    #
-    # AgentRuntime receives only the narrow profile resolver it
-    # needs to produce immutable execution provenance.
     # ============================================================
 
     runtime = (
@@ -182,6 +186,10 @@ def build_hub(
 
             model_profile_resolver=(
                 model_manager.model_profile
+            ),
+
+            semantic_guard=(
+                semantic_guard
             ),
         )
     )
@@ -237,5 +245,9 @@ def build_hub(
             primary_assistant=(
                 primary_assistant
             ),
+
+            # Production specialist execution must always originate
+            # from a validated structured Hub intent.
+            require_semantic_intent=True,
         )
     )

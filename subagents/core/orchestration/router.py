@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import json
 
-from subagents.core.tooling.capabilities import (
-    build_router_agent_spec,
-)
-
 from subagents.core.definitions.registry import (
     AgentRegistry,
 )
 
 from subagents.core.definitions.types import (
     SpecialistRequest,
+)
+
+from subagents.core.orchestration.intent_contract import (
+    build_router_semantic_agent_spec,
+    parse_semantic_intent,
 )
 
 from subagents.llm.runtime.inference import (
@@ -29,20 +30,28 @@ from subagents.prompts.prompt_loader import (
 
 class LLMRouter:
     """
-    Hub routing stage.
+    Hub routing and semantic-intent stage.
 
     The router reasons over specialists together with their trusted
     runtime capability catalogs.
 
-    Agent descriptions provide high-level domain context.
+    Trusted capability metadata is used to describe generic
+    semantics such as:
 
-    Capability metadata comes from the trusted registry and is the
-    authoritative description of what each specialist can actually
-    do.
+        read vs mutation
+        grounded argument names
 
-    Routing instructions remain advisory task context only.
+    The Hub produces:
 
-    Authorization remains inside ToolGateway.
+        specialist identity
+        task instructions
+        structured semantic intent
+
+    The semantic intent is descriptive only.
+
+    It is NOT authorization.
+
+    Authorization remains inside trusted deterministic layers.
     """
 
     def __init__(
@@ -69,7 +78,7 @@ class LLMRouter:
     ) -> str:
 
         specialists = [
-            build_router_agent_spec(
+            build_router_semantic_agent_spec(
                 agent
             )
 
@@ -136,7 +145,7 @@ class LLMRouter:
                     messages
                 ),
 
-                max_new_tokens=256,
+                max_new_tokens=512,
 
                 priority=(
                     InferencePriority
@@ -247,12 +256,12 @@ class LLMRouter:
 
                 continue
 
-            # ----------------------------------------------------
+            # ------------------------------------------------
             # TRUSTED AGENT RESOLUTION
             #
-            # Hub output cannot create a new specialist simply by
-            # naming one.
-            # ----------------------------------------------------
+            # Hub output cannot create a new specialist simply
+            # by naming one.
+            # ------------------------------------------------
 
             if not (
                 self.registry
@@ -263,12 +272,53 @@ class LLMRouter:
 
                 continue
 
-            # ----------------------------------------------------
+            # ------------------------------------------------
             # CURRENT RUNTIME:
             # one delegation per specialist.
-            # ----------------------------------------------------
+            # ------------------------------------------------
 
             if agent_name in seen_agents:
+
+                continue
+
+            agent = (
+                self.registry
+                .get(
+                    agent_name
+                )
+            )
+
+            # ------------------------------------------------
+            # SEMANTIC INTENT VALIDATION
+            #
+            # Missing intent remains temporarily readable for
+            # legacy callers.
+            #
+            # A supplied intent is validated against trusted
+            # agent/tool metadata. Malformed intent fails closed.
+            # ------------------------------------------------
+
+            try:
+
+                semantic_intent = (
+                    parse_semantic_intent(
+                        delegation.get(
+                            "intent"
+                        ),
+
+                        agent=(
+                            agent
+                        ),
+                    )
+                )
+
+            except ValueError as exc:
+
+                print(
+                    "[ROUTER] Rejected semantic intent "
+                    f"agent={agent_name!r} "
+                    f"error={exc}"
+                )
 
                 continue
 
@@ -284,6 +334,10 @@ class LLMRouter:
 
                     instructions=(
                         instructions
+                    ),
+
+                    semantic_intent=(
+                        semantic_intent
                     ),
                 )
             )

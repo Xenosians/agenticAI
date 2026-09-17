@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import uuid
 
 from dataclasses import (
@@ -37,18 +39,22 @@ class Orchestrator:
 
     Specialist path:
 
-        Main routing
+        Main routing + semantic intent
             ↓
         structured specialist request
             ↓
+        deterministic semantic preconditions
+            ↓
         Specialist runtime
             ↓
-        trusted structured result
+        semantic guard
+            ↓
+        trusted ToolGateway
             ↓
         Main synthesis
 
-    Approval and error states remain deterministic and are not
-    rewritten by the Main model.
+    Approval, semantic-denial, and error states remain
+    deterministic and are not rewritten by the Main model.
     """
 
     def __init__(
@@ -56,6 +62,7 @@ class Orchestrator:
         router: LLMRouter,
         runtime: AgentRuntime,
         primary_assistant: PrimaryAssistant,
+        require_semantic_intent: bool = False,
     ) -> None:
 
         self.router = (
@@ -68,6 +75,10 @@ class Orchestrator:
 
         self.primary_assistant = (
             primary_assistant
+        )
+
+        self.require_semantic_intent = (
+            require_semantic_intent
         )
 
     async def run(
@@ -135,12 +146,102 @@ class Orchestrator:
                 delegation.agent_name
             )
 
+            task_id = (
+                str(
+                    uuid.uuid4()
+                )
+            )
+
+            # ---------------------------------------------
+            # PRODUCTION SEMANTIC CONTRACT REQUIREMENT
+            #
+            # build_hub enables this.
+            #
+            # Legacy isolated tests can leave it disabled.
+            # ---------------------------------------------
+
+            if (
+                self.require_semantic_intent
+                and delegation.semantic_intent
+                is None
+            ):
+
+                results.append(
+                    AgentResult(
+                        task_id=(
+                            task_id
+                        ),
+
+                        agent_name=(
+                            delegation.agent_name
+                        ),
+
+                        status="error",
+
+                        outcome_code=(
+                            "semantic_intent_missing"
+                        ),
+
+                        error=(
+                            "A validated semantic intent contract "
+                            "is required before specialist "
+                            "execution."
+                        ),
+                    )
+                )
+
+                continue
+
+            # ---------------------------------------------
+            # CLARIFICATION FAIL-CLOSED
+            #
+            # Do not ask a specialist to guess and do not invoke
+            # ToolGateway when the Hub itself says the target or
+            # operation is ambiguous.
+            # ---------------------------------------------
+
+            if (
+                delegation.semantic_intent
+                is not None
+                and delegation
+                .semantic_intent
+                .clarification_required
+            ):
+
+                results.append(
+                    AgentResult(
+                        task_id=(
+                            task_id
+                        ),
+
+                        agent_name=(
+                            delegation.agent_name
+                        ),
+
+                        status="error",
+
+                        task_instructions=(
+                            delegation.instructions
+                        ),
+
+                        outcome_code=(
+                            "semantic_clarification_required"
+                        ),
+
+                        error=(
+                            "The request requires clarification "
+                            "before a governed capability can be "
+                            "executed."
+                        ),
+                    )
+                )
+
+                continue
+
             task = (
                 AgentTask(
                     task_id=(
-                        str(
-                            uuid.uuid4()
-                        )
+                        task_id
                     ),
 
                     agent_name=(
@@ -153,6 +254,10 @@ class Orchestrator:
 
                     instructions=(
                         delegation.instructions
+                    ),
+
+                    semantic_intent=(
+                        delegation.semantic_intent
                     ),
                 )
             )
@@ -170,9 +275,6 @@ class Orchestrator:
             #
             # Orchestrator only transfers it from the task
             # execution context into the durable result.
-            #
-            # This avoids duplicating provenance fields in
-            # every AgentRuntime return branch.
             # ---------------------------------------------
 
             result = (
@@ -204,7 +306,8 @@ class Orchestrator:
         # Fail / approval states remain deterministic.
         #
         # Do not let a generative synthesis step obscure an
-        # approval requirement or runtime failure.
+        # approval requirement, semantic denial, or runtime
+        # failure.
         # -------------------------------------------------
 
         if "error" in statuses:

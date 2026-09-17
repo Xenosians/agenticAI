@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import (
     dataclass,
     field,
@@ -26,19 +28,80 @@ class AgentDefinition:
 
 
 @dataclass
+class SemanticIntent:
+    """
+    Hub-produced semantic interpretation of one specialist task.
+
+    This describes what the Hub believes the user requested.
+
+    It is NOT authorization.
+
+    Trusted application code independently validates this contract
+    against:
+        - trusted capability metadata
+        - specialist output
+        - ToolGateway policy
+        - grounding
+        - approvals
+    """
+
+    summary: str
+
+    effect: str
+
+    allowed_tools: list[str] = field(
+        default_factory=list
+    )
+
+    forbidden_tools: list[str] = field(
+        default_factory=list
+    )
+
+    allowed_arguments: dict[
+        str,
+        list[str],
+    ] = field(
+        default_factory=dict
+    )
+
+    forbidden_arguments: dict[
+        str,
+        list[str],
+    ] = field(
+        default_factory=dict
+    )
+
+    max_tool_calls: int = 1
+
+    clarification_required: bool = False
+
+
+@dataclass
 class SpecialistRequest:
     """
     Structured Hub -> specialist delegation.
 
-    The Hub may describe what it wants the specialist to inspect,
-    but this object is NOT authorization.
+    instructions:
+        advisory specialist task context
 
-    Trusted tool authorization still belongs to ToolGateway.
+    semantic_intent:
+        machine-checkable description of what the Hub believes the
+        user requested
+
+    Neither field grants authorization.
+
+    Trusted execution remains owned by deterministic application
+    code.
     """
 
     agent_name: str
 
     instructions: str
+
+    semantic_intent: (
+        SemanticIntent
+        | None
+    ) = None
 
 
 @dataclass
@@ -51,6 +114,11 @@ class AgentTask:
 
     instructions: (
         str | None
+    ) = None
+
+    semantic_intent: (
+        SemanticIntent
+        | None
     ) = None
 
     context: dict[
