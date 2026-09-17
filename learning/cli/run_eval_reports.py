@@ -13,23 +13,13 @@ from learning.evaluation.eval_reports import (
     compare_evaluation_reports,
 )
 
-
-PROJECT_ROOT = (
-    Path(
-        __file__
-    )
-    .resolve()
-    .parents[
-        1
-    ]
+from learning.paths import (
+    EVALUATIONS_ROOT,
 )
 
 
 DEFAULT_ROOT = (
-    PROJECT_ROOT
-    / ".runtime"
-    / "learning"
-    / "evaluations"
+    EVALUATIONS_ROOT
 )
 
 
@@ -170,6 +160,7 @@ def command_list(
     )
 
     if not reports:
+
         print(
             "No evaluation reports."
         )
@@ -329,6 +320,7 @@ def main(
             args.command
             == "list"
         ):
+
             return (
                 command_list(
                     store,
@@ -347,6 +339,7 @@ def main(
             args.command
             == "show"
         ):
+
             return (
                 command_show(
                     store,
@@ -369,6 +362,7 @@ def main(
             args.command
             == "compare"
         ):
+
             return (
                 command_compare(
                     store,

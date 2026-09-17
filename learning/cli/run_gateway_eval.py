@@ -20,31 +20,20 @@ from learning.evaluation.gateway_evaluation import (
     GatewayEvaluationRunner,
 )
 
-
-PROJECT_ROOT = (
-    Path(
-        __file__
-    )
-    .resolve()
-    .parents[
-        1
-    ]
+from learning.paths import (
+    EVALUATIONS_ROOT,
+    EVALUATION_SUITE_ROOT,
 )
 
 
 DEFAULT_SUITE = (
-    PROJECT_ROOT
-    / "learning"
-    / "evals"
+    EVALUATION_SUITE_ROOT
     / "core.v1.jsonl"
 )
 
 
 DEFAULT_REPORT_ROOT = (
-    PROJECT_ROOT
-    / ".runtime"
-    / "learning"
-    / "evaluations"
+    EVALUATIONS_ROOT
 )
 
 
@@ -151,6 +140,7 @@ async def run(
         )
 
         if unknown_ids:
+
             raise ValueError(
                 "Unknown evaluation case(s): "
                 + ", ".join(
@@ -175,6 +165,7 @@ async def run(
         ]
 
         if wrong_target:
+
             raise ValueError(
                 "This runner only supports "
                 "target='tool_gateway'."
@@ -193,6 +184,7 @@ async def run(
         ]
 
     if not gateway_cases:
+
         raise ValueError(
             "No ToolGateway evaluation "
             "cases were selected."
@@ -302,11 +294,13 @@ async def run(
         metric.accuracy
         is None
     ):
+
         rendered = (
             "n/a"
         )
 
     else:
+
         rendered = (
             f"{metric.passed}/"
             f"{metric.checked} "

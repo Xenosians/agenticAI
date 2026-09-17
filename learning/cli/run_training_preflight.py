@@ -7,28 +7,18 @@ from pathlib import (
     Path,
 )
 
+from learning.paths import (
+    TRAINING_ROOT,
+)
+
 from learning.training.training_preflight import (
     DpoQloraPreflight,
     DpoQloraRecipe,
 )
 
 
-PROJECT_ROOT = (
-    Path(
-        __file__
-    )
-    .resolve()
-    .parents[
-        1
-    ]
-)
-
-
 DEFAULT_OUTPUT_ROOT = (
-    PROJECT_ROOT
-    / ".runtime"
-    / "learning"
-    / "training"
+    TRAINING_ROOT
 )
 
 

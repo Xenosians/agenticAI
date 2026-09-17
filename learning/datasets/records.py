@@ -35,22 +35,13 @@ from learning.evidence.types import (
     PreferenceExample,
 )
 
-
-PROJECT_ROOT = (
-    Path(
-        __file__
-    )
-    .resolve()
-    .parents[
-        1
-    ]
+from learning.paths import (
+    EVALUATION_SUITE_ROOT,
 )
 
 
 DEFAULT_EVAL_DIRECTORY = (
-    PROJECT_ROOT
-    / "learning"
-    / "evals"
+    EVALUATION_SUITE_ROOT
 )
 
 

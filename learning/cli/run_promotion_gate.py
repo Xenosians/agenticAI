@@ -16,31 +16,19 @@ from learning.curation.promotion_gate import (
     build_model_promotion_decision,
 )
 
-
-PROJECT_ROOT = (
-    Path(
-        __file__
-    )
-    .resolve()
-    .parents[
-        1
-    ]
+from learning.paths import (
+    EVALUATIONS_ROOT,
+    PROMOTIONS_ROOT,
 )
 
 
 DEFAULT_REPORT_ROOT = (
-    PROJECT_ROOT
-    / ".runtime"
-    / "learning"
-    / "evaluations"
+    EVALUATIONS_ROOT
 )
 
 
 DEFAULT_PROMOTION_ROOT = (
-    PROJECT_ROOT
-    / ".runtime"
-    / "learning"
-    / "promotions"
+    PROMOTIONS_ROOT
 )
 
 

@@ -10,27 +10,41 @@ from pathlib import (
 )
 
 
-PROJECT_ROOT = (
+# ============================================================
+# DIRECT-SCRIPT BOOTSTRAP
+#
+# This file lives at:
+#
+#     <repository>/learning/cli/run_learning_eval.py
+#
+# Direct execution may begin before the repository root is present
+# on sys.path, so bootstrap that one location before importing
+# project packages.
+# ============================================================
+
+
+BOOTSTRAP_REPOSITORY_ROOT = (
     Path(
         __file__
     )
     .resolve()
     .parents[
-        1
+        2
     ]
 )
 
 
 if (
     str(
-        PROJECT_ROOT
+        BOOTSTRAP_REPOSITORY_ROOT
     )
     not in sys.path
 ):
+
     sys.path.insert(
         0,
         str(
-            PROJECT_ROOT
+            BOOTSTRAP_REPOSITORY_ROOT
         ),
     )
 
@@ -53,6 +67,12 @@ from learning.evaluation.eval_suite import (
 
 from learning.evaluation.live_evaluation import (
     LiveOrchestratorEvaluationRunner,
+)
+
+from learning.paths import (
+    EVALUATIONS_ROOT,
+    EVALUATION_SUITE_ROOT,
+    REPOSITORY_ROOT,
 )
 
 from subagents.core.tooling.gateway import (
@@ -82,18 +102,13 @@ from subagents.llm.runtime.scheduler import (
 
 
 DEFAULT_SUITE = (
-    PROJECT_ROOT
-    / "learning"
-    / "evals"
+    EVALUATION_SUITE_ROOT
     / "core.v1.jsonl"
 )
 
 
 DEFAULT_REPORT_ROOT = (
-    PROJECT_ROOT
-    / ".runtime"
-    / "learning"
-    / "evaluations"
+    EVALUATIONS_ROOT
 )
 
 
@@ -232,6 +247,7 @@ def select_orchestrator_cases(
         str
     ] | None,
 ):
+
     orchestrator_cases = [
         case
 
@@ -257,6 +273,7 @@ def select_orchestrator_cases(
     ]
 
     if not case_ids:
+
         return (
             orchestrator_cases,
             skipped_cases,
@@ -281,6 +298,7 @@ def select_orchestrator_cases(
     )
 
     if missing:
+
         raise ValueError(
             "Unknown evaluation case(s): "
             + ", ".join(
@@ -305,6 +323,7 @@ def select_orchestrator_cases(
     ]
 
     if wrong_target:
+
         raise ValueError(
             "This runner only supports "
             "target='orchestrator'. "
@@ -367,6 +386,7 @@ async def run(
     )
 
     if not orchestrator_cases:
+
         raise ValueError(
             "No orchestrator evaluation "
             "cases were selected."
@@ -403,6 +423,7 @@ async def run(
         skipped_cases
         and not args.case_ids
     ):
+
         print(
             "Skipped non-orchestrator cases: "
             f"{len(skipped_cases)}"
@@ -411,6 +432,7 @@ async def run(
         for case in (
             skipped_cases
         ):
+
             print(
                 "  - "
                 f"{case.case_id} "
@@ -564,6 +586,7 @@ async def run(
                 )
 
     if report is None:
+
         raise RuntimeError(
             "Evaluation completed without "
             "producing a report."
@@ -671,11 +694,13 @@ async def run(
             metric.accuracy
             is None
         ):
+
             rendered = (
                 "n/a"
             )
 
         else:
+
             rendered = (
                 f"{metric.passed}/"
                 f"{metric.checked} "
