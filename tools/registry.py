@@ -7,6 +7,10 @@ from services.process_runner import (
     evaluate_process_policy,
 )
 
+from tools.access.catalog import (
+    ACCESS_TOOLS,
+)
+
 from tools.developer.catalog import (
     DEVELOPER_TOOLS,
 )
@@ -427,6 +431,10 @@ TOOLS = {
 
 
 TOOLS.update(
+    ACCESS_TOOLS
+)
+
+TOOLS.update(
     DEVELOPER_TOOLS
 )
 
@@ -441,6 +449,7 @@ TOOLS.update(
 
 def list_tools(
 ) -> list[str]:
+
     return (
         list(
             TOOLS.keys()
@@ -451,6 +460,7 @@ def list_tools(
 def get_tool(
     name: str,
 ) -> dict | None:
+
     return (
         TOOLS.get(
             name
@@ -465,6 +475,7 @@ def format_tool_result(
         Any,
     ],
 ) -> str:
+
     tool = (
         get_tool(
             name
@@ -472,6 +483,7 @@ def format_tool_result(
     )
 
     if tool is None:
+
         return (
             f"The {name} operation "
             "completed successfully."
@@ -486,6 +498,7 @@ def format_tool_result(
     )
 
     if formatter is None:
+
         return (
             f"The {name} operation "
             "completed successfully."
@@ -506,6 +519,7 @@ def format_approval_required(
     ],
     approval_id: str | None,
 ) -> str:
+
     tool = (
         get_tool(
             name
@@ -523,11 +537,13 @@ def format_approval_required(
     )
 
     if formatter is None:
+
         message = (
             "This action requires approval."
         )
 
     else:
+
         message = (
             formatter(
                 arguments
@@ -535,6 +551,7 @@ def format_approval_required(
         )
 
     if approval_id:
+
         return (
             f"{message} "
             f"Approval ID: {approval_id}."

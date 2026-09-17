@@ -15,7 +15,9 @@ from config import (
 )
 
 from services.directory import (
+    AccessMutationService,
     DirectoryService,
+    build_access_mutation_service,
     build_directory_service,
 )
 
@@ -28,6 +30,10 @@ from services.ticketing import (
     TicketService,
     build_ticket_mutation_service,
     build_ticket_service,
+)
+
+from tools.access.mcp import (
+    register_access_mutation_tools,
 )
 
 from tools.developer.mcp import (
@@ -187,6 +193,10 @@ def create_mcp_server(
         DirectoryService | None
     ) = None,
 
+    access_mutations: (
+        AccessMutationService | None
+    ) = None,
+
     ticketing: (
         TicketService | None
     ) = None,
@@ -207,6 +217,15 @@ def create_mcp_server(
         if directory is not None
         else build_directory_service(
             runtime_settings
+        )
+    )
+
+    access_mutation_service = (
+        access_mutations
+        if access_mutations
+        is not None
+        else build_access_mutation_service(
+            directory_service
         )
     )
 
@@ -266,6 +285,11 @@ def create_mcp_server(
                 )
             )
         )
+
+    register_access_mutation_tools(
+        server,
+        access_mutation_service,
+    )
 
     @server.tool()
     def unlock_user(
@@ -433,8 +457,6 @@ def create_mcp_server(
 
     # ============================================================
     # TICKETING
-    #
-    # Query and command services share the same selected provider.
     # ============================================================
 
     register_ticketing_tools(
