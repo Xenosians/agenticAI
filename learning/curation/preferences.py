@@ -33,6 +33,12 @@ TOOL_FIELDS = {
 }
 
 
+TOOL_CALL_FIELDS = {
+    "tool_calls",
+    "proposed_tool_calls",
+}
+
+
 ANSWER_FIELDS = {
     "answer",
     "final_answer",
@@ -78,6 +84,8 @@ def _find_step(
 
         if (
             step.proposed_tool
+            is not None
+            or step.proposed_tool_calls
             is not None
         )
     ]
@@ -146,6 +154,148 @@ def _assert_original_value(
         )
 
 
+def _normalize_tool_calls(
+    value: Any,
+    *,
+    field: str,
+) -> list[
+    dict[
+        str,
+        Any,
+    ]
+]:
+    """
+    Validate and copy a complete structured worker tool-call set.
+
+    The accepted structure intentionally matches parse_tool_calls:
+
+        [
+            {
+                "name": "...",
+                "arguments": {...},
+            }
+        ]
+
+    A preference call set is evidence only. Validation here does
+    not authorize any capability or execute anything.
+    """
+
+    if not isinstance(
+        value,
+        list,
+    ):
+
+        raise ValueError(
+            f"{field} must be a list of tool calls."
+        )
+
+    if not value:
+
+        raise ValueError(
+            f"{field} must contain at least one tool call."
+        )
+
+    normalized: list[
+        dict[
+            str,
+            Any,
+        ]
+    ] = []
+
+    for index, call in enumerate(
+        value
+    ):
+
+        if not isinstance(
+            call,
+            dict,
+        ):
+
+            raise ValueError(
+                f"{field}[{index}] must be an object."
+            )
+
+        name = (
+            call.get(
+                "name"
+            )
+        )
+
+        arguments = (
+            call.get(
+                "arguments"
+            )
+        )
+
+        if (
+            not isinstance(
+                name,
+                str,
+            )
+            or not name.strip()
+        ):
+
+            raise ValueError(
+                f"{field}[{index}] has an invalid tool name."
+            )
+
+        if not isinstance(
+            arguments,
+            dict,
+        ):
+
+            raise ValueError(
+                f"{field}[{index}] has invalid arguments."
+            )
+
+        normalized.append(
+            {
+                "name":
+                    name,
+
+                "arguments":
+                    dict(
+                        arguments
+                    ),
+            }
+        )
+
+    return normalized
+
+
+def _copy_observed_tool_calls(
+    step: (
+        TrajectoryStep
+        | None
+    ),
+) -> (
+    list[
+        dict[
+            str,
+            Any,
+        ]
+    ]
+    | None
+):
+
+    if (
+        step is None
+        or step.proposed_tool_calls
+        is None
+    ):
+
+        return None
+
+    return (
+        _normalize_tool_calls(
+            step.proposed_tool_calls,
+            field=(
+                "proposed_tool_calls"
+            ),
+        )
+    )
+
+
 def build_preference_example(
     *,
     trajectory: LearningTrajectory,
@@ -158,6 +308,11 @@ def build_preference_example(
     The original specialist task context and execution provenance
     are preserved from the exact trajectory step targeted by the
     correction.
+
+    Singular tool behavior continues to use tool / arguments.
+
+    Abnormal complete worker call sets use tool_calls so rejected
+    behavior is never silently flattened into tool=None.
 
     Creating this derived example does not make it
     training-eligible. Promotion remains a separate trusted step.
@@ -193,6 +348,12 @@ def build_preference_example(
                         trajectory.routes
                     ) == 1
                     else None
+                )
+            ),
+
+            tool_calls=(
+                _copy_observed_tool_calls(
+                    step
                 )
             ),
 
@@ -260,7 +421,80 @@ def build_preference_example(
             continue
 
         # ====================================================
-        # TOOL CORRECTION
+        # COMPLETE TOOL-CALL-SET CORRECTION
+        #
+        # This is deliberately distinct from singular tool and
+        # argument corrections.
+        #
+        # The rejected value MUST be supplied and MUST exactly
+        # match the immutable observed call set.
+        # ====================================================
+
+        if field in TOOL_CALL_FIELDS:
+
+            if step is None:
+
+                raise ValueError(
+                    "Tool-call-set correction requires "
+                    "a specialist trajectory step."
+                )
+
+            if (
+                rejected.tool_calls
+                is None
+            ):
+
+                raise ValueError(
+                    "Tool-call-set correction requires "
+                    "captured proposed_tool_calls evidence."
+                )
+
+            if (
+                value.rejected_value
+                is None
+            ):
+
+                raise ValueError(
+                    "Tool-call-set correction must include "
+                    "the exact rejected_value."
+                )
+
+            normalized_rejected = (
+                _normalize_tool_calls(
+                    value.rejected_value,
+                    field=(
+                        "rejected_value"
+                    ),
+                )
+            )
+
+            _assert_original_value(
+                field=(
+                    field
+                ),
+
+                observed=(
+                    rejected.tool_calls
+                ),
+
+                expected_rejected=(
+                    normalized_rejected
+                ),
+            )
+
+            chosen.tool_calls = (
+                _normalize_tool_calls(
+                    value.chosen_value,
+                    field=(
+                        "chosen_value"
+                    ),
+                )
+            )
+
+            continue
+
+        # ====================================================
+        # SINGULAR TOOL CORRECTION
         # ====================================================
 
         if field in TOOL_FIELDS:
@@ -312,7 +546,7 @@ def build_preference_example(
             continue
 
         # ====================================================
-        # ARGUMENT CORRECTION
+        # SINGULAR ARGUMENT CORRECTION
         # ====================================================
 
         if step is None:

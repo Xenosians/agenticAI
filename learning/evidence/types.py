@@ -52,6 +52,29 @@ class TrajectoryStep(
         str | None
     ) = None
 
+    # Supplemental worker-output evidence.
+    #
+    # Historical trajectory.v1 records do not contain these fields
+    # and remain readable because both are optional.
+    raw_model_output: (
+        str | None
+    ) = None
+
+    # Complete validated tool-call list when the worker violates
+    # the exactly-one-call runtime contract.
+    #
+    # These calls are observed model behavior only.
+    # Their presence does not imply authorization or execution.
+    proposed_tool_calls: (
+        list[
+            dict[
+                str,
+                Any,
+            ]
+        ]
+        | None
+    ) = None
+
     proposed_tool: (
         str | None
     ) = None
@@ -308,6 +331,22 @@ class PreferenceOption(
         str | None
     ) = None
 
+    # Complete structured worker output when one preference option
+    # represents a tool-call SET rather than the normal singular
+    # runtime proposal.
+    #
+    # This is additive and optional so all historical preference
+    # examples remain readable.
+    tool_calls: (
+        list[
+            dict[
+                str,
+                Any,
+            ]
+        ]
+        | None
+    ) = None
+
     tool: (
         str | None
     ) = None
@@ -354,20 +393,10 @@ class PreferenceExample(
         str | None
     ) = None
 
-    # Original advisory routing/task context supplied to the
-    # specialist whose behavior is represented by this example.
     task_instructions: (
         str | None
     ) = None
 
-    # Immutable identity of the exact specialist execution whose
-    # rejected behavior is represented by this preference example.
-    #
-    # Optional preserves compatibility with historical preference
-    # examples created before execution provenance capture existed.
-    #
-    # Presence here does NOT itself make an example trainable.
-    # The training materializer must validate it fail-closed.
     execution_provenance: (
         SpecialistExecutionProvenance
         | None
@@ -430,21 +459,10 @@ class PreferenceDatasetRecord(
         str | None
     ) = None
 
-    # Preserved model-input context.
     task_instructions: (
         str | None
     ) = None
 
-    # Preserved immutable specialist execution identity.
-    #
-    # This describes the historical execution that produced the
-    # rejected behavior. It is copied from the raw trajectory
-    # through the preference-example lineage and is never
-    # reconstructed during dataset promotion.
-    #
-    # Optional keeps legacy dataset records readable. Legacy
-    # records without this field must later fail closed for
-    # production training.
     execution_provenance: (
         SpecialistExecutionProvenance
         | None

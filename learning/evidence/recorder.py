@@ -49,8 +49,14 @@ class TrajectoryRecorder:
     Specialist execution provenance is captured as immutable
     evidence when supplied by the runtime.
 
-    Historical results without provenance remain readable, but
-    later production-training gates must fail closed on them.
+    Supplemental abnormal worker-output evidence is also preserved
+    when supplied by the runtime so invalid multi-call or malformed
+    generations are not flattened into an incomplete single-call
+    representation.
+
+    Historical results without provenance or supplemental worker
+    output remain readable, but later production-training gates
+    must fail closed whenever required evidence is absent.
     """
 
     def __init__(
@@ -111,6 +117,14 @@ class TrajectoryRecorder:
 
                 outcome_code=(
                     item.outcome_code
+                ),
+
+                raw_model_output=(
+                    item.raw_model_output
+                ),
+
+                proposed_tool_calls=(
+                    item.proposed_tool_calls
                 ),
 
                 proposed_tool=(

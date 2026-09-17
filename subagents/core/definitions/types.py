@@ -109,6 +109,39 @@ class AgentResult:
         | None
     ) = None
 
+    # Supplemental worker-output evidence.
+    #
+    # These fields are intentionally populated only when the
+    # canonical exactly-one-tool representation would otherwise
+    # lose information:
+    #
+    #     tool_parse_error
+    #         raw_model_output is preserved
+    #
+    #     invalid_tool_call_count
+    #         raw_model_output and the complete validated call set
+    #         are preserved
+    #
+    # Normal exactly-one-tool executions continue to use
+    # proposed_tool / proposed_arguments as the canonical
+    # representation and leave these supplemental fields empty.
+    #
+    # These values are evidence only. They are never authorization
+    # and are never sent to ToolGateway for execution as a batch.
+    raw_model_output: (
+        str | None
+    ) = None
+
+    proposed_tool_calls: (
+        list[
+            dict[
+                str,
+                Any,
+            ]
+        ]
+        | None
+    ) = None
+
     answer: (
         str | None
     ) = None

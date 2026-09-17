@@ -423,6 +423,12 @@ class AgentRuntime:
 
         # ========================================================
         # TOOL-CALL PARSING
+        #
+        # If parsing fails, the singular canonical tool fields
+        # cannot describe what the model produced.
+        #
+        # Preserve the raw generation as supplemental evidence.
+        # It remains evidence only and is never executed.
         # ========================================================
 
         try:
@@ -453,6 +459,10 @@ class AgentRuntime:
 
                     status="error",
 
+                    raw_model_output=(
+                        response
+                    ),
+
                     outcome_code=(
                         "tool_parse_error"
                     ),
@@ -469,6 +479,12 @@ class AgentRuntime:
         # CURRENT RUNTIME CONTRACT
         #
         # Exactly one tool call per specialist execution.
+        #
+        # Multiple validated calls are NEVER executed.
+        #
+        # They are, however, retained as immutable supplemental
+        # evidence so learning does not flatten the observed model
+        # behavior into proposed_tool=None / arguments=None.
         # ========================================================
 
         if (
@@ -495,6 +511,14 @@ class AgentRuntime:
                     ),
 
                     status="error",
+
+                    raw_model_output=(
+                        response
+                    ),
+
+                    proposed_tool_calls=(
+                        tool_calls
+                    ),
 
                     outcome_code=(
                         "invalid_tool_call_count"

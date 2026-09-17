@@ -46,6 +46,7 @@ from learning.curation.reviews import (
 from learning.evidence.types import (
     CorrectionEvent,
     LearningTrajectory,
+    TrajectoryStep,
 )
 
 
@@ -344,6 +345,87 @@ def _sorted_counts(
 # ============================================================
 
 
+def _step_fingerprint_payload(
+    step: TrajectoryStep,
+) -> dict:
+    """
+    Build the deterministic behavior identity for one specialist
+    step.
+
+    Compatibility rule:
+
+        historical and normal singular-tool steps retain the exact
+        previous fingerprint payload shape.
+
+    Supplemental abnormal-output evidence participates only when it
+    actually exists.
+
+    For invalid multi-call generations, the validated structured
+    call set is authoritative for deduplication. Raw formatting is
+    deliberately ignored in that case so whitespace differences in
+    otherwise identical JSON do not create distinct evidence.
+
+    For parse failures there is no validated structured call set,
+    so the raw generation is the only faithful representation of
+    the observed worker behavior.
+    """
+
+    payload = {
+        "task_instructions":
+            (
+                None
+                if (
+                    step.task_instructions
+                    is None
+                )
+                else (
+                    normalize_request(
+                        step.task_instructions
+                    )
+                )
+            ),
+
+        "agent":
+            step.agent,
+
+        "status":
+            step.status,
+
+        "outcome_code":
+            step.outcome_code,
+
+        "proposed_tool":
+            step.proposed_tool,
+
+        "proposed_arguments":
+            step.proposed_arguments,
+    }
+
+    if (
+        step.proposed_tool_calls
+        is not None
+    ):
+
+        payload[
+            "proposed_tool_calls"
+        ] = (
+            step.proposed_tool_calls
+        )
+
+    elif (
+        step.raw_model_output
+        is not None
+    ):
+
+        payload[
+            "raw_model_output"
+        ] = (
+            step.raw_model_output
+        )
+
+    return payload
+
+
 def evidence_fingerprint(
     trajectory: LearningTrajectory,
 ) -> str:
@@ -359,6 +441,18 @@ def evidence_fingerprint(
 
     Trivial case / whitespace differences in task context are
     normalized so formatting noise does not defeat deduplication.
+
+    Abnormal specialist output is represented losslessly enough for
+    deduplication:
+
+        validated multi-call output
+            hashes the complete structured call set
+
+        unparsable output
+            hashes the raw worker generation
+
+    Normal singular-tool trajectory fingerprints remain compatible
+    with the historical payload shape.
     """
 
     payload = {
@@ -376,36 +470,9 @@ def evidence_fingerprint(
             ),
 
         "steps": [
-            {
-                "task_instructions":
-                    (
-                        None
-                        if (
-                            step.task_instructions
-                            is None
-                        )
-                        else (
-                            normalize_request(
-                                step.task_instructions
-                            )
-                        )
-                    ),
-
-                "agent":
-                    step.agent,
-
-                "status":
-                    step.status,
-
-                "outcome_code":
-                    step.outcome_code,
-
-                "proposed_tool":
-                    step.proposed_tool,
-
-                "proposed_arguments":
-                    step.proposed_arguments,
-            }
+            _step_fingerprint_payload(
+                step
+            )
 
             for step
             in trajectory.steps
