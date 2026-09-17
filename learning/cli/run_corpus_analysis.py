@@ -10,38 +10,25 @@ from learning.curation.corpus_analysis import (
     analyze_corpus,
 )
 
-
-PROJECT_ROOT = (
-    Path(
-        __file__
-    )
-    .resolve()
-    .parents[
-        1
-    ]
+from learning.paths import (
+    CORRECTIONS_PATH,
+    EVALUATION_SUITE_ROOT,
+    TRAJECTORIES_PATH,
 )
 
 
 DEFAULT_TRAJECTORIES = (
-    PROJECT_ROOT
-    / ".runtime"
-    / "learning"
-    / "trajectories.jsonl"
+    TRAJECTORIES_PATH
 )
 
 
 DEFAULT_CORRECTIONS = (
-    PROJECT_ROOT
-    / ".runtime"
-    / "learning"
-    / "corrections.jsonl"
+    CORRECTIONS_PATH
 )
 
 
 DEFAULT_EVAL_DIRECTORY = (
-    PROJECT_ROOT
-    / "learning"
-    / "evals"
+    EVALUATION_SUITE_ROOT
 )
 
 
@@ -95,7 +82,8 @@ def build_parser(
         help=(
             "Held-out evaluation JSONL. "
             "May be supplied multiple times. "
-            "Defaults to all learning/evaluation/evals/*.jsonl."
+            "Defaults to all "
+            "learning/evaluation/evals/*.jsonl."
         ),
     )
 

@@ -16,39 +16,25 @@ from learning.curation.reviews import (
     ReviewDecisionRecorder,
 )
 
-
-PROJECT_ROOT = (
-    Path(
-        __file__
-    )
-    .resolve()
-    .parents[
-        1
-    ]
+from learning.paths import (
+    CORRECTIONS_PATH,
+    REVIEWS_PATH,
+    TRAJECTORIES_PATH,
 )
 
 
 DEFAULT_TRAJECTORIES = (
-    PROJECT_ROOT
-    / ".runtime"
-    / "learning"
-    / "trajectories.jsonl"
+    TRAJECTORIES_PATH
 )
 
 
 DEFAULT_CORRECTIONS = (
-    PROJECT_ROOT
-    / ".runtime"
-    / "learning"
-    / "corrections.jsonl"
+    CORRECTIONS_PATH
 )
 
 
 DEFAULT_REVIEWS = (
-    PROJECT_ROOT
-    / ".runtime"
-    / "learning"
-    / "reviews.jsonl"
+    REVIEWS_PATH
 )
 
 
