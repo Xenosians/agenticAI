@@ -8,6 +8,7 @@ from dataclasses import (
 
 from subagents.core.orchestration.router import (
     LLMRouter,
+    RoutingContractError,
 )
 
 from subagents.core.orchestration.primary_assistant import (
@@ -29,17 +30,17 @@ class Orchestrator:
     """
     Main -> Specialist -> Main orchestration.
 
-    Direct path:
+    Direct conversational path:
 
-        Main routing
+        valid Hub routing
             ↓
-        no delegation
+        valid empty delegation list
             ↓
-        Main direct response
+        Primary Assistant
 
-    Specialist path:
+    Governed specialist path:
 
-        Main routing + semantic intent
+        Hub routing + semantic intent
             ↓
         structured specialist request
             ↓
@@ -47,14 +48,16 @@ class Orchestrator:
             ↓
         Specialist runtime
             ↓
-        semantic guard
+        SemanticGuard
             ↓
-        trusted ToolGateway
+        ToolGateway
             ↓
         Main synthesis
 
-    Approval, semantic-denial, and error states remain
-    deterministic and are not rewritten by the Main model.
+    Invalid routing contracts fail closed.
+
+    A malformed governed-routing response must never silently fall
+    through into ordinary Primary Assistant conversation.
     """
 
     def __init__(
@@ -86,19 +89,69 @@ class Orchestrator:
         user_request: str,
     ) -> HubResult:
 
-        # -------------------------------------------------
-        # Main routing / structured delegation
-        # -------------------------------------------------
+        # ========================================================
+        # HUB ROUTING
+        #
+        # Important distinction:
+        #
+        #   valid []
+        #       ordinary conversational request
+        #
+        #   RoutingContractError
+        #       malformed / unsafe governed-routing plan
+        #
+        # The second case must NOT become conversational fallback.
+        # ========================================================
 
-        delegations = (
-            await self.router.route(
-                user_request
+        try:
+
+            delegations = (
+                await self.router.route(
+                    user_request
+                )
             )
-        )
 
-        # -------------------------------------------------
-        # Primary conversational path
-        # -------------------------------------------------
+        except RoutingContractError as exc:
+
+            print(
+                "[HUB] Routing contract rejected "
+                f"error={exc}"
+            )
+
+            message = (
+                "The request could not be safely interpreted "
+                "into a valid governed execution plan."
+            )
+
+            return (
+                HubResult(
+                    status=(
+                        "error"
+                    ),
+
+                    user_request=(
+                        user_request
+                    ),
+
+                    routes=[],
+
+                    results=[],
+
+                    answer=(
+                        message
+                    ),
+
+                    error=(
+                        message
+                    ),
+                )
+            )
+
+        # ========================================================
+        # PRIMARY CONVERSATIONAL PATH
+        #
+        # Only a VALID empty delegation list reaches this branch.
+        # ========================================================
 
         if not delegations:
 
@@ -112,7 +165,9 @@ class Orchestrator:
 
             return (
                 HubResult(
-                    status="success",
+                    status=(
+                        "success"
+                    ),
 
                     user_request=(
                         user_request
@@ -128,9 +183,9 @@ class Orchestrator:
                 )
             )
 
-        # -------------------------------------------------
-        # Specialist execution
-        # -------------------------------------------------
+        # ========================================================
+        # SPECIALIST EXECUTION
+        # ========================================================
 
         results: list[
             AgentResult
@@ -152,13 +207,15 @@ class Orchestrator:
                 )
             )
 
-            # ---------------------------------------------
+            # ----------------------------------------------------
             # PRODUCTION SEMANTIC CONTRACT REQUIREMENT
             #
-            # build_hub enables this.
+            # Production build_hub enables this.
             #
-            # Legacy isolated tests can leave it disabled.
-            # ---------------------------------------------
+            # This remains defense-in-depth because strict Router
+            # already rejects a missing contract before reaching
+            # this point.
+            # ----------------------------------------------------
 
             if (
                 self.require_semantic_intent
@@ -176,7 +233,13 @@ class Orchestrator:
                             delegation.agent_name
                         ),
 
-                        status="error",
+                        status=(
+                            "error"
+                        ),
+
+                        task_instructions=(
+                            delegation.instructions
+                        ),
 
                         outcome_code=(
                             "semantic_intent_missing"
@@ -192,13 +255,16 @@ class Orchestrator:
 
                 continue
 
-            # ---------------------------------------------
+            # ----------------------------------------------------
             # CLARIFICATION FAIL-CLOSED
             #
-            # Do not ask a specialist to guess and do not invoke
-            # ToolGateway when the Hub itself says the target or
-            # operation is ambiguous.
-            # ---------------------------------------------
+            # If the Hub itself says the operation/target/scope is
+            # ambiguous:
+            #
+            #   - do not ask the specialist to guess
+            #   - do not call ToolGateway
+            #   - do not mutate anything
+            # ----------------------------------------------------
 
             if (
                 delegation.semantic_intent
@@ -218,7 +284,9 @@ class Orchestrator:
                             delegation.agent_name
                         ),
 
-                        status="error",
+                        status=(
+                            "error"
+                        ),
 
                         task_instructions=(
                             delegation.instructions
@@ -268,14 +336,13 @@ class Orchestrator:
                 )
             )
 
-            # ---------------------------------------------
+            # ----------------------------------------------------
             # Preserve exact specialist input evidence.
             #
             # AgentRuntime owns provenance construction.
             #
-            # Orchestrator only transfers it from the task
-            # execution context into the durable result.
-            # ---------------------------------------------
+            # Orchestrator transfers it into the durable result.
+            # ----------------------------------------------------
 
             result = (
                 replace(
@@ -302,15 +369,20 @@ class Orchestrator:
             in results
         }
 
-        # -------------------------------------------------
-        # Fail / approval states remain deterministic.
+        # ========================================================
+        # DETERMINISTIC FAILURE / APPROVAL STATES
         #
-        # Do not let a generative synthesis step obscure an
-        # approval requirement, semantic denial, or runtime
-        # failure.
-        # -------------------------------------------------
+        # Never let generative synthesis obscure:
+        #
+        #   semantic denial
+        #   approval requirement
+        #   runtime failure
+        # ========================================================
 
-        if "error" in statuses:
+        if (
+            "error"
+            in statuses
+        ):
 
             overall_status = (
                 "partial_error"
@@ -345,9 +417,9 @@ class Orchestrator:
                 "success"
             )
 
-            # ---------------------------------------------
-            # Main synthesis pass
-            # ---------------------------------------------
+            # ====================================================
+            # MAIN SYNTHESIS
+            # ====================================================
 
             try:
 

@@ -60,9 +60,12 @@ def build_hub(
         Hub model
             interprets user intent
 
+        strict routing contract
+            rejects malformed semantic execution plans
+
         SemanticGuard
             deterministically checks specialist behavior against
-            the structured semantic contract and trusted metadata
+            structured intent + trusted capability metadata
 
         ToolGateway
             remains authoritative for authorization, grounding,
@@ -196,6 +199,11 @@ def build_hub(
 
     # ============================================================
     # HUB ROUTER
+    #
+    # Production routing is strict:
+    #
+    # malformed semantic output cannot silently become ordinary
+    # PrimaryAssistant conversation.
     # ============================================================
 
     router = (
@@ -212,6 +220,8 @@ def build_hub(
                 settings
                 .hub_model_key
             ),
+
+            strict_contract=True,
         )
     )
 
@@ -246,8 +256,6 @@ def build_hub(
                 primary_assistant
             ),
 
-            # Production specialist execution must always originate
-            # from a validated structured Hub intent.
             require_semantic_intent=True,
         )
     )

@@ -28,18 +28,30 @@ from subagents.prompts.prompt_loader import (
 )
 
 
+class RoutingContractError(
+    RuntimeError
+):
+    """
+    Raised when production Hub output cannot be trusted as a valid
+    structured routing / semantic-intent contract.
+
+    This is deliberately distinct from:
+
+        no delegation
+
+    A valid empty delegation list means the Primary Assistant may
+    handle the request conversationally.
+
+    An invalid routing contract must fail closed instead.
+    """
+
+
 class LLMRouter:
     """
     Hub routing and semantic-intent stage.
 
-    The router reasons over specialists together with their trusted
-    runtime capability catalogs.
-
-    Trusted capability metadata is used to describe generic
-    semantics such as:
-
-        read vs mutation
-        grounded argument names
+    The router reasons over specialists together with trusted
+    runtime capability metadata.
 
     The Hub produces:
 
@@ -47,11 +59,23 @@ class LLMRouter:
         task instructions
         structured semantic intent
 
-    The semantic intent is descriptive only.
+    Semantic intent is descriptive only.
 
     It is NOT authorization.
 
-    Authorization remains inside trusted deterministic layers.
+    In strict production mode:
+
+        malformed JSON
+        malformed delegation
+        unknown specialist
+        missing semantic intent
+        invalid semantic intent
+        duplicate same-specialist delegation
+
+    fail closed with RoutingContractError.
+
+    A VALID empty delegation list remains a normal conversational
+    path.
     """
 
     def __init__(
@@ -59,6 +83,7 @@ class LLMRouter:
         registry: AgentRegistry,
         inference: InferenceEngine,
         model_key: str,
+        strict_contract: bool = False,
     ) -> None:
 
         self.registry = (
@@ -71,6 +96,10 @@ class LLMRouter:
 
         self.model_key = (
             model_key
+        )
+
+        self.strict_contract = (
+            strict_contract
         )
 
     def _build_system_prompt(
@@ -109,6 +138,21 @@ class LLMRouter:
                 specialists_json,
             )
         )
+
+    def _contract_error(
+        self,
+        message: str,
+    ) -> None:
+
+        if (
+            self.strict_contract
+        ):
+
+            raise (
+                RoutingContractError(
+                    message
+                )
+            )
 
     async def route(
         self,
@@ -169,7 +213,16 @@ class LLMRouter:
                 )
             )
 
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
+
+            print(
+                "[ROUTER] Invalid JSON "
+                f"error={exc}"
+            )
+
+            self._contract_error(
+                "Hub router returned invalid JSON."
+            )
 
             return []
 
@@ -177,6 +230,10 @@ class LLMRouter:
             parsed,
             dict,
         ):
+
+            self._contract_error(
+                "Hub router output must be a JSON object."
+            )
 
             return []
 
@@ -190,6 +247,21 @@ class LLMRouter:
             delegations,
             list,
         ):
+
+            self._contract_error(
+                "Hub router output is missing a valid "
+                "delegations list."
+            )
+
+            return []
+
+        # --------------------------------------------------------
+        # VALID EMPTY ROUTING RESULT
+        #
+        # This is deliberately different from malformed routing.
+        # --------------------------------------------------------
+
+        if not delegations:
 
             return []
 
@@ -210,6 +282,10 @@ class LLMRouter:
                 dict,
             ):
 
+                self._contract_error(
+                    "Hub router produced a malformed delegation."
+                )
+
                 continue
 
             agent_name = (
@@ -229,12 +305,22 @@ class LLMRouter:
                 str,
             ):
 
+                self._contract_error(
+                    "Hub router delegation is missing a valid "
+                    "agent name."
+                )
+
                 continue
 
             if not isinstance(
                 instructions,
                 str,
             ):
+
+                self._contract_error(
+                    "Hub router delegation is missing valid "
+                    "instructions."
+                )
 
                 continue
 
@@ -250,18 +336,25 @@ class LLMRouter:
 
             if not agent_name:
 
+                self._contract_error(
+                    "Hub router delegation contains an empty "
+                    "agent name."
+                )
+
                 continue
 
             if not instructions:
 
+                self._contract_error(
+                    "Hub router delegation contains empty "
+                    "instructions."
+                )
+
                 continue
 
-            # ------------------------------------------------
+            # ----------------------------------------------------
             # TRUSTED AGENT RESOLUTION
-            #
-            # Hub output cannot create a new specialist simply
-            # by naming one.
-            # ------------------------------------------------
+            # ----------------------------------------------------
 
             if not (
                 self.registry
@@ -270,14 +363,33 @@ class LLMRouter:
                 )
             ):
 
+                self._contract_error(
+                    "Hub router referenced an unknown "
+                    f"specialist: {agent_name}"
+                )
+
                 continue
 
-            # ------------------------------------------------
+            # ----------------------------------------------------
             # CURRENT RUNTIME:
-            # one delegation per specialist.
-            # ------------------------------------------------
+            #
+            # One delegation per specialist.
+            #
+            # Silently dropping a second task would lose user
+            # intent, so strict production mode rejects it.
+            # ----------------------------------------------------
 
-            if agent_name in seen_agents:
+            if (
+                agent_name
+                in seen_agents
+            ):
+
+                self._contract_error(
+                    "Hub router produced multiple delegations "
+                    "for the same specialist while the current "
+                    "runtime supports one delegation per "
+                    f"specialist: {agent_name}"
+                )
 
                 continue
 
@@ -288,15 +400,9 @@ class LLMRouter:
                 )
             )
 
-            # ------------------------------------------------
+            # ----------------------------------------------------
             # SEMANTIC INTENT VALIDATION
-            #
-            # Missing intent remains temporarily readable for
-            # legacy callers.
-            #
-            # A supplied intent is validated against trusted
-            # agent/tool metadata. Malformed intent fails closed.
-            # ------------------------------------------------
+            # ----------------------------------------------------
 
             try:
 
@@ -320,7 +426,26 @@ class LLMRouter:
                     f"error={exc}"
                 )
 
+                self._contract_error(
+                    "Hub router produced an invalid semantic "
+                    f"intent for specialist '{agent_name}': "
+                    f"{exc}"
+                )
+
                 continue
+
+            if (
+                semantic_intent
+                is None
+            ):
+
+                self._contract_error(
+                    "Hub router omitted the semantic intent "
+                    f"contract for specialist '{agent_name}'."
+                )
+
+                # Legacy / isolated non-strict callers remain
+                # readable during the transition.
 
             seen_agents.add(
                 agent_name
@@ -339,6 +464,27 @@ class LLMRouter:
                     semantic_intent=(
                         semantic_intent
                     ),
+                )
+            )
+
+        # --------------------------------------------------------
+        # STRICT MODE:
+        #
+        # A non-empty model delegation list must not collapse into
+        # conversational fallback because every delegation was
+        # malformed.
+        # --------------------------------------------------------
+
+        if (
+            self.strict_contract
+            and delegations
+            and not validated
+        ):
+
+            raise (
+                RoutingContractError(
+                    "Hub router produced no executable valid "
+                    "delegation from a non-empty routing result."
                 )
             )
 
