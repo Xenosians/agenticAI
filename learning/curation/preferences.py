@@ -74,8 +74,7 @@ def _find_step(
     tool_steps = [
         step
 
-        for step
-        in trajectory.steps
+        for step in trajectory.steps
 
         if (
             step.proposed_tool
@@ -156,8 +155,9 @@ def build_preference_example(
     Convert one immutable trajectory + correction into a canonical
     chosen/rejected preference example.
 
-    The original specialist task context is preserved from the
-    exact trajectory step targeted by the correction.
+    The original specialist task context and execution provenance
+    are preserved from the exact trajectory step targeted by the
+    correction.
 
     Creating this derived example does not make it
     training-eligible. Promotion remains a separate trusted step.
@@ -377,13 +377,32 @@ def build_preference_example(
     # ========================================================
     # CRITICAL MODEL-INPUT LINEAGE
     #
-    # task_instructions comes from the resolved immutable step,
-    # not from the correction and not from regenerated context.
+    # Both task context and execution provenance come from the
+    # resolved immutable trajectory step.
+    #
+    # Neither value comes from the correction and neither value is
+    # regenerated from current runtime configuration.
     # ========================================================
 
     task_instructions = (
         step.task_instructions
         if step is not None
+        else None
+    )
+
+    execution_provenance = (
+        step
+        .execution_provenance
+        .model_copy(
+            deep=True
+        )
+
+        if (
+            step is not None
+            and step.execution_provenance
+            is not None
+        )
+
         else None
     )
 
@@ -424,6 +443,10 @@ def build_preference_example(
 
             task_instructions=(
                 task_instructions
+            ),
+
+            execution_provenance=(
+                execution_provenance
             ),
 
             source=(

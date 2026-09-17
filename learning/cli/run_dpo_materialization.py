@@ -8,12 +8,20 @@ from pathlib import (
     Path,
 )
 
+from config import (
+    get_settings,
+)
+
 from learning.training.dpo_materializer import (
     SpecialistDpoMaterializer,
 )
 
 from learning.evidence.types import (
     PreferenceDatasetRecord,
+)
+
+from subagents.core.definitions.loader import (
+    load_agent_definition,
 )
 
 
@@ -23,7 +31,7 @@ PROJECT_ROOT = (
     )
     .resolve()
     .parents[
-        1
+        2
     ]
 )
 
@@ -90,7 +98,10 @@ def load_records(
         encoding="utf-8",
     ) as handle:
 
-        for line_number, line in enumerate(
+        for (
+            line_number,
+            line,
+        ) in enumerate(
             handle,
             start=1,
         ):
@@ -134,8 +145,8 @@ def build_parser(
     parser = (
         argparse.ArgumentParser(
             description=(
-                "Materialize one target-specific "
-                "specialist DPO partition."
+                "Materialize one provenance-verified "
+                "target-specific specialist DPO partition."
             )
         )
     )
@@ -236,10 +247,31 @@ def main(
             )
         )
 
+        agent = (
+            load_agent_definition(
+                agent_path
+            )
+        )
+
+        settings = (
+            get_settings()
+        )
+
+        model_profile = (
+            settings
+            .require_model_profile(
+                agent.model
+            )
+        )
+
         materializer = (
             SpecialistDpoMaterializer(
                 agent_definition_path=(
                     agent_path
+                ),
+
+                model_profile=(
+                    model_profile
                 ),
 
                 output_root=(
@@ -335,6 +367,10 @@ def main(
         print(
             f"Excluded:    "
             f"{manifest.excluded_record_count}"
+        )
+
+        print(
+            "Provenance:   enforced"
         )
 
         print(

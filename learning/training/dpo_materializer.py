@@ -19,16 +19,27 @@ from pydantic import (
     Field,
 )
 
+from config import (
+    ModelProfileSettings,
+)
+
+from learning.evidence.execution_provenance import (
+    SpecialistExecutionProvenance,
+)
+
 from learning.evidence.types import (
     PreferenceDatasetRecord,
 )
 
-from subagents.core.definitions.loader import (
-    load_agent_definition,
+from learning.training.provenance_gate import (
+    SPECIALIST_TRAINING_MAX_NEW_TOKENS,
+    SpecialistTrainingEnvironment,
+    build_specialist_training_environment,
+    validate_specialist_training_provenance,
 )
 
-from subagents.core.tooling.prompt import (
-    build_worker_system_prompt,
+from subagents.core.definitions.loader import (
+    load_agent_definition,
 )
 
 
@@ -98,17 +109,8 @@ def _tool_call_response(
     arguments: dict,
 ) -> str:
     """
-    Serialize one specialist response using the exact runtime
-    worker contract:
-
-        [
-          {
-            "name": "...",
-            "arguments": {...}
-          }
-        ]
-
-    Stable canonical JSON is used for training artifacts.
+    Serialize exactly one specialist tool call using the runtime
+    worker contract.
     """
 
     return (
@@ -123,6 +125,25 @@ def _tool_call_response(
                 }
             ]
         )
+    )
+
+
+def _increment_exclusion(
+    counts: dict[
+        str,
+        int,
+    ],
+    reason: str,
+) -> None:
+
+    counts[
+        reason
+    ] = (
+        counts.get(
+            reason,
+            0,
+        )
+        + 1
     )
 
 
@@ -172,6 +193,16 @@ class SpecialistDpoRecord(
 
     rejected: str
 
+    # Additive compatibility field.
+    #
+    # New Phase-4C.2 materializations always populate it.
+    # Historical synthetic DPO artifacts remain readable until the
+    # downstream training gate is hardened in Phase-4C.2-C.
+    source_execution_provenance: (
+        SpecialistExecutionProvenance
+        | None
+    ) = None
+
 
 class SpecialistDpoManifest(
     BaseModel
@@ -220,6 +251,57 @@ class SpecialistDpoManifest(
         default_factory=list
     )
 
+    # ========================================================
+    # PHASE-4C.2 PROVENANCE ENFORCEMENT
+    #
+    # Defaults preserve readability of historical synthetic
+    # materializations.
+    #
+    # New materializations set these fields explicitly.
+    # ========================================================
+
+    execution_provenance_enforced: bool = False
+
+    target_model_artifact_sha256: (
+        str
+        | None
+    ) = None
+
+    target_model_weights_sha256: (
+        str
+        | None
+    ) = None
+
+    target_tokenizer_artifact_sha256: (
+        str
+        | None
+    ) = None
+
+    target_model_profile_sha256: (
+        str
+        | None
+    ) = None
+
+    target_agent_definition_sha256: (
+        str
+        | None
+    ) = None
+
+    target_capability_catalog_sha256: (
+        str
+        | None
+    ) = None
+
+    target_system_prompt_sha256: (
+        str
+        | None
+    ) = None
+
+    specialist_max_new_tokens: (
+        int
+        | None
+    ) = None
+
 
 class SpecialistDpoBuildResult(
     BaseModel
@@ -249,32 +331,35 @@ class SpecialistDpoBuildResult(
 
 class SpecialistDpoMaterializer:
     """
-    Convert verified Phase-3 preference records into a
-    target-specific specialist DPO artifact.
+    Convert verified preference records into target-specific
+    specialist DPO artifacts.
 
-    Only specialist behavior is accepted here.
+    Phase-4C.2 policy:
 
-    Supported learning dimensions:
+        only exact provenance-verified specialist evidence may
+        enter a newly materialized training artifact.
 
-        tool selection
-        tool arguments
+    Historical evidence is never silently rebound to current:
 
-    Deliberately excluded:
+        model bytes
+        tokenizer
+        model profile
+        agent definition
+        capability catalog
+        worker prompt
+        user request
+        routing context
+        message shape
+        generation contract
 
-        route / agent corrections
-            -> belong to Hub/router training
-
-        final-answer corrections
-            -> belong to Hub response training
-
-    Mixed corrections are rejected from this target dataset rather
-    than being silently interpreted.
+    Legacy evidence remains readable upstream but fails closed here.
     """
 
     def __init__(
         self,
         *,
         agent_definition_path: Path,
+        model_profile: ModelProfileSettings,
         output_root: Path,
     ) -> None:
 
@@ -282,6 +367,10 @@ class SpecialistDpoMaterializer:
             agent_definition_path
             .expanduser()
             .resolve()
+        )
+
+        self.model_profile = (
+            model_profile
         )
 
         self.output_root = (
@@ -295,69 +384,6 @@ class SpecialistDpoMaterializer:
                 self.agent_definition_path
             )
         )
-
-    # ========================================================
-    # PROMPT
-    # ========================================================
-
-    def _build_prompt_messages(
-        self,
-        record: PreferenceDatasetRecord,
-    ) -> list[
-        dict[
-            str,
-            str,
-        ]
-    ]:
-
-        messages = [
-            {
-                "role":
-                    "system",
-
-                "content":
-                    build_worker_system_prompt(
-                        self.agent
-                    ),
-            },
-
-            {
-                "role":
-                    "user",
-
-                "content":
-                    record.user_request,
-            },
-        ]
-
-        if (
-            record.task_instructions
-            is not None
-        ):
-
-            normalized = (
-                record
-                .task_instructions
-                .strip()
-            )
-
-            if normalized:
-
-                messages.append(
-                    {
-                        "role":
-                            "user",
-
-                        "content":
-                            (
-                                "Additional task context "
-                                "from the routing stage:\n"
-                                f"{normalized}"
-                            ),
-                    }
-                )
-
-        return messages
 
     # ========================================================
     # TARGET CLASSIFICATION
@@ -419,13 +445,6 @@ class SpecialistDpoMaterializer:
         str | None,
         str | None,
     ]:
-        """
-        Return:
-
-            (change_type, exclusion_reason)
-
-        Exactly one specialist learning dimension is permitted.
-        """
 
         dimensions = (
             self._change_dimensions(
@@ -477,16 +496,12 @@ class SpecialistDpoMaterializer:
                 "mixed_specialist_change",
             )
 
-        change_type = (
+        return (
             next(
                 iter(
                     specialist_dimensions
                 )
-            )
-        )
-
-        return (
-            change_type,
+            ),
             None,
         )
 
@@ -497,11 +512,10 @@ class SpecialistDpoMaterializer:
     def _validate_specialist_target(
         self,
         record: PreferenceDatasetRecord,
-    ) -> str | None:
-        """
-        Return an exclusion reason when this record does not belong
-        to the selected specialist.
-        """
+    ) -> (
+        str
+        | None
+    ):
 
         rejected_agent = (
             record.rejected.agent
@@ -573,13 +587,23 @@ class SpecialistDpoMaterializer:
         *,
         source: PreferenceDatasetRecord,
         change_type: str,
+        prompt_messages: list[
+            dict[
+                str,
+                str,
+            ]
+        ],
     ) -> SpecialistDpoRecord:
 
-        prompt_messages = (
-            self._build_prompt_messages(
-                source
+        if (
+            source.execution_provenance
+            is None
+        ):
+
+            raise ValueError(
+                "Internal provenance gate error: "
+                "accepted source has no execution provenance."
             )
-        )
 
         chosen = (
             _tool_call_response(
@@ -607,6 +631,15 @@ class SpecialistDpoMaterializer:
             )
         )
 
+        provenance_payload = (
+            source
+            .execution_provenance
+            .model_dump(
+                mode="json",
+                by_alias=True,
+            )
+        )
+
         identity_payload = {
             "source_record_id":
                 source.record_id,
@@ -628,6 +661,9 @@ class SpecialistDpoMaterializer:
 
             "rejected":
                 rejected,
+
+            "source_execution_provenance":
+                provenance_payload,
         }
 
         dpo_record_id = (
@@ -682,6 +718,14 @@ class SpecialistDpoMaterializer:
                 rejected=(
                     rejected
                 ),
+
+                source_execution_provenance=(
+                    source
+                    .execution_provenance
+                    .model_copy(
+                        deep=True
+                    )
+                ),
             )
         )
 
@@ -725,6 +769,11 @@ class SpecialistDpoMaterializer:
             int,
         ] = {}
 
+        environment: (
+            SpecialistTrainingEnvironment
+            | None
+        ) = None
+
         for record in records:
 
             target_error = (
@@ -733,16 +782,14 @@ class SpecialistDpoMaterializer:
                 )
             )
 
-            if target_error is not None:
+            if (
+                target_error
+                is not None
+            ):
 
-                exclusion_counts[
-                    target_error
-                ] = (
-                    exclusion_counts.get(
-                        target_error,
-                        0,
-                    )
-                    + 1
+                _increment_exclusion(
+                    exclusion_counts,
+                    target_error,
                 )
 
                 continue
@@ -756,25 +803,76 @@ class SpecialistDpoMaterializer:
                 )
             )
 
-            if exclusion_reason is not None:
+            if (
+                exclusion_reason
+                is not None
+            ):
 
-                exclusion_counts[
-                    exclusion_reason
-                ] = (
-                    exclusion_counts.get(
-                        exclusion_reason,
-                        0,
-                    )
-                    + 1
+                _increment_exclusion(
+                    exclusion_counts,
+                    exclusion_reason,
                 )
 
                 continue
 
-            if change_type is None:
+            if (
+                change_type
+                is None
+            ):
 
                 raise ValueError(
                     "Internal DPO classification error."
                 )
+
+            # Build the CURRENT environment only when at least one
+            # record is actually a specialist-training candidate.
+            #
+            # This hashes the current checkpoint once for the
+            # entire materialization build.
+            if (
+                environment
+                is None
+            ):
+
+                environment = (
+                    build_specialist_training_environment(
+                        agent=(
+                            self.agent
+                        ),
+
+                        model_profile=(
+                            self.model_profile
+                        ),
+                    )
+                )
+
+            provenance_check = (
+                validate_specialist_training_provenance(
+                    environment=(
+                        environment
+                    ),
+
+                    record=(
+                        record
+                    ),
+                )
+            )
+
+            if not (
+                provenance_check.accepted
+            ):
+
+                reason = (
+                    provenance_check.exclusion_reason
+                    or "execution_provenance_rejected"
+                )
+
+                _increment_exclusion(
+                    exclusion_counts,
+                    reason,
+                )
+
+                continue
 
             materialized.append(
                 self._build_record(
@@ -785,14 +883,52 @@ class SpecialistDpoMaterializer:
                     change_type=(
                         change_type
                     ),
+
+                    prompt_messages=(
+                        provenance_check
+                        .prompt_messages
+                    ),
                 )
             )
 
         if not materialized:
 
+            details = (
+                ", ".join(
+                    (
+                        f"{reason}={count}"
+                    )
+
+                    for (
+                        reason,
+                        count,
+                    )
+                    in sorted(
+                        exclusion_counts.items()
+                    )
+                )
+            )
+
+            suffix = (
+                f" Exclusions: {details}"
+                if details
+                else ""
+            )
+
             raise ValueError(
-                "No target-compatible specialist DPO "
+                "No provenance-verified "
+                "target-compatible specialist DPO "
                 "records are available."
+                f"{suffix}"
+            )
+
+        if (
+            environment
+            is None
+        ):
+
+            raise ValueError(
+                "Internal provenance environment error."
             )
 
         seen_ids: set[
@@ -847,16 +983,23 @@ class SpecialistDpoMaterializer:
             / normalized_partition
         )
 
-        if target_directory.exists():
+        if (
+            target_directory.exists()
+        ):
 
             raise ValueError(
-                "Target-specific DPO artifact already exists: "
+                "Target-specific DPO artifact "
+                "already exists: "
                 f"{target_directory}"
             )
 
         target_directory.mkdir(
             parents=True,
             exist_ok=False,
+        )
+
+        fingerprint = (
+            environment.model_fingerprint
         )
 
         manifest = (
@@ -918,6 +1061,47 @@ class SpecialistDpoMaterializer:
                     for record
                     in materialized
                 ],
+
+                execution_provenance_enforced=True,
+
+                target_model_artifact_sha256=(
+                    fingerprint
+                    .content_sha256
+                ),
+
+                target_model_weights_sha256=(
+                    fingerprint
+                    .weights_sha256
+                ),
+
+                target_tokenizer_artifact_sha256=(
+                    fingerprint
+                    .tokenizer_sha256
+                ),
+
+                target_model_profile_sha256=(
+                    environment
+                    .model_profile_sha256
+                ),
+
+                target_agent_definition_sha256=(
+                    environment
+                    .agent_definition_sha256
+                ),
+
+                target_capability_catalog_sha256=(
+                    environment
+                    .capability_catalog_sha256
+                ),
+
+                target_system_prompt_sha256=(
+                    environment
+                    .system_prompt_sha256
+                ),
+
+                specialist_max_new_tokens=(
+                    SPECIALIST_TRAINING_MAX_NEW_TOKENS
+                ),
             )
         )
 

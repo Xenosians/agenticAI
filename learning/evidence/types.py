@@ -360,6 +360,19 @@ class PreferenceExample(
         str | None
     ) = None
 
+    # Immutable identity of the exact specialist execution whose
+    # rejected behavior is represented by this preference example.
+    #
+    # Optional preserves compatibility with historical preference
+    # examples created before execution provenance capture existed.
+    #
+    # Presence here does NOT itself make an example trainable.
+    # The training materializer must validate it fail-closed.
+    execution_provenance: (
+        SpecialistExecutionProvenance
+        | None
+    ) = None
+
     source: str
 
     correction_type: str
@@ -420,6 +433,21 @@ class PreferenceDatasetRecord(
     # Preserved model-input context.
     task_instructions: (
         str | None
+    ) = None
+
+    # Preserved immutable specialist execution identity.
+    #
+    # This describes the historical execution that produced the
+    # rejected behavior. It is copied from the raw trajectory
+    # through the preference-example lineage and is never
+    # reconstructed during dataset promotion.
+    #
+    # Optional keeps legacy dataset records readable. Legacy
+    # records without this field must later fail closed for
+    # production training.
+    execution_provenance: (
+        SpecialistExecutionProvenance
+        | None
     ) = None
 
     source: str

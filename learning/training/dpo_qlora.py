@@ -24,6 +24,12 @@ from pydantic import (
     field_validator,
 )
 
+from learning.evidence.execution_provenance import (
+    PROVENANCE_SCHEMA,
+    RuntimeModelArtifactFingerprint,
+    fingerprint_runtime_model_artifact,
+)
+
 from learning.training.dpo_materializer import (
     SpecialistDpoManifest,
     SpecialistDpoRecord,
@@ -54,6 +60,12 @@ EXPECTED_TRAINING_VERSIONS = {
     "datasets":
         "5.0.1",
 }
+
+
+TASK_CONTEXT_PREFIX = (
+    "Additional task context "
+    "from the routing stage:\n"
+)
 
 
 # ============================================================
@@ -192,16 +204,13 @@ class SpecialistDpoQloraSettings(
     BaseModel
 ):
     """
-    Phase-4 specialist DPO + QLoRA configuration.
+    Specialist DPO + QLoRA configuration.
 
-    warmup_ratio remains our stable recipe-level name.
+    warmup_ratio remains the stable recipe-level name.
 
-    Transformers 5.16.1 removed the warmup_ratio constructor
-    argument and now accepts a float in [0, 1) through
-    warmup_steps to represent a ratio.
-
-    The compatibility conversion therefore happens only when the
-    DPOConfig object is constructed.
+    Transformers 5.16.1 accepts a float in [0, 1) through
+    warmup_steps to represent a ratio, so translation happens only
+    at the dependency boundary.
     """
 
     model_config = (
@@ -523,6 +532,18 @@ def load_specialist_dpo_partition(
     directory: Path,
     expected_partition: str,
 ) -> VerifiedDpoPartition:
+    """
+    Parse and structurally verify a materialized DPO artifact.
+
+    Important:
+
+        this function intentionally remains backward compatible.
+
+    Historical artifacts remain readable here.
+
+    Production training eligibility is enforced separately by
+    validate_specialist_dpo_training_contract().
+    """
 
     resolved = (
         directory
@@ -954,6 +975,785 @@ def validate_specialist_dpo_pair(
 
 
 # ============================================================
+# PHASE 4C.2 TRAINING PROVENANCE CONTRACT
+# ============================================================
+
+
+def _manifest_training_identity(
+    manifest: SpecialistDpoManifest,
+) -> tuple:
+
+    return (
+        manifest.target_agent,
+        manifest.target_model_key,
+        manifest.target_model_artifact_sha256,
+        manifest.target_model_weights_sha256,
+        manifest.target_tokenizer_artifact_sha256,
+        manifest.target_model_profile_sha256,
+        manifest.target_agent_definition_sha256,
+        manifest.target_capability_catalog_sha256,
+        manifest.target_system_prompt_sha256,
+        manifest.specialist_max_new_tokens,
+    )
+
+
+def _execution_environment_identity(
+    provenance,
+) -> tuple:
+
+    return (
+        provenance.agent_name,
+        provenance.model_key,
+
+        provenance.backend,
+        provenance.quantization,
+        provenance.compute_dtype,
+        provenance.device_map,
+        provenance.bnb_4bit_quant_type,
+        provenance.bnb_4bit_use_double_quant,
+        provenance.model_profile_sha256,
+
+        provenance.model_artifact_sha256,
+        provenance.model_weights_sha256,
+        provenance.model_config_sha256,
+        provenance.generation_config_sha256,
+
+        provenance.tokenizer_artifact_sha256,
+        provenance.tokenizer_config_sha256,
+        provenance.tokenizer_json_sha256,
+        provenance.chat_template_sha256,
+
+        provenance.agent_definition_sha256,
+        provenance.capability_catalog_sha256,
+        provenance.system_prompt_sha256,
+
+        provenance.max_new_tokens,
+    )
+
+
+def _validate_record_prompt_provenance(
+    record: SpecialistDpoRecord,
+) -> None:
+
+    provenance = (
+        record.source_execution_provenance
+    )
+
+    if provenance is None:
+
+        raise ValueError(
+            "Training record is missing source "
+            "execution provenance."
+        )
+
+    messages = (
+        record.prompt_messages
+    )
+
+    if (
+        len(
+            messages
+        )
+        not in {
+            2,
+            3,
+        }
+    ):
+
+        raise ValueError(
+            "Training record prompt does not match "
+            "the specialist runtime message shape."
+        )
+
+    if (
+        messages[
+            0
+        ].get(
+            "role"
+        )
+        != "system"
+    ):
+
+        raise ValueError(
+            "Training record prompt does not begin "
+            "with the specialist system message."
+        )
+
+    if (
+        messages[
+            1
+        ].get(
+            "role"
+        )
+        != "user"
+    ):
+
+        raise ValueError(
+            "Training record prompt does not contain "
+            "the original request in message position 2."
+        )
+
+    system_content = (
+        messages[
+            0
+        ].get(
+            "content"
+        )
+    )
+
+    user_content = (
+        messages[
+            1
+        ].get(
+            "content"
+        )
+    )
+
+    if not isinstance(
+        system_content,
+        str,
+    ):
+
+        raise ValueError(
+            "Training record system prompt is invalid."
+        )
+
+    if not isinstance(
+        user_content,
+        str,
+    ):
+
+        raise ValueError(
+            "Training record user request is invalid."
+        )
+
+    if (
+        _sha256_text(
+            system_content
+        )
+        != provenance.system_prompt_sha256
+    ):
+
+        raise ValueError(
+            "Training record system prompt does not "
+            "match source execution provenance."
+        )
+
+    if (
+        _sha256_text(
+            user_content
+        )
+        != provenance.user_request_sha256
+    ):
+
+        raise ValueError(
+            "Training record user request does not "
+            "match source execution provenance."
+        )
+
+    if (
+        _sha256_text(
+            _canonical_json(
+                messages
+            )
+        )
+        != provenance.messages_sha256
+    ):
+
+        raise ValueError(
+            "Training record messages do not match "
+            "source execution provenance."
+        )
+
+    if (
+        provenance.task_instructions_sha256
+        is None
+    ):
+
+        if (
+            len(
+                messages
+            )
+            != 2
+        ):
+
+            raise ValueError(
+                "Training record contains routing context "
+                "that was not present in source provenance."
+            )
+
+        return
+
+    if (
+        len(
+            messages
+        )
+        != 3
+    ):
+
+        raise ValueError(
+            "Training record is missing routing context "
+            "recorded by source provenance."
+        )
+
+    context_message = (
+        messages[
+            2
+        ]
+    )
+
+    if (
+        context_message.get(
+            "role"
+        )
+        != "user"
+    ):
+
+        raise ValueError(
+            "Training record routing context message "
+            "has an invalid role."
+        )
+
+    context_content = (
+        context_message.get(
+            "content"
+        )
+    )
+
+    if (
+        not isinstance(
+            context_content,
+            str,
+        )
+        or not context_content.startswith(
+            TASK_CONTEXT_PREFIX
+        )
+    ):
+
+        raise ValueError(
+            "Training record routing context does not "
+            "match the specialist runtime contract."
+        )
+
+    task_instructions = (
+        context_content[
+            len(
+                TASK_CONTEXT_PREFIX
+            ):
+        ]
+    )
+
+    if (
+        _sha256_text(
+            task_instructions
+        )
+        != provenance.task_instructions_sha256
+    ):
+
+        raise ValueError(
+            "Training record routing context does not "
+            "match source execution provenance."
+        )
+
+
+def _validate_partition_training_provenance(
+    partition: VerifiedDpoPartition,
+) -> None:
+
+    manifest = (
+        partition.manifest
+    )
+
+    if (
+        manifest.execution_provenance_enforced
+        is not True
+    ):
+
+        raise ValueError(
+            "DPO partition is not provenance-enforced "
+            "and is not eligible for training."
+        )
+
+    required_manifest_values = {
+        "target_model_artifact_sha256":
+            manifest.target_model_artifact_sha256,
+
+        "target_model_weights_sha256":
+            manifest.target_model_weights_sha256,
+
+        "target_tokenizer_artifact_sha256":
+            manifest.target_tokenizer_artifact_sha256,
+
+        "target_model_profile_sha256":
+            manifest.target_model_profile_sha256,
+
+        "target_agent_definition_sha256":
+            manifest.target_agent_definition_sha256,
+
+        "target_capability_catalog_sha256":
+            manifest.target_capability_catalog_sha256,
+
+        "target_system_prompt_sha256":
+            manifest.target_system_prompt_sha256,
+
+        "specialist_max_new_tokens":
+            manifest.specialist_max_new_tokens,
+    }
+
+    missing = [
+        name
+
+        for (
+            name,
+            value,
+        ) in required_manifest_values.items()
+
+        if value is None
+    ]
+
+    if missing:
+
+        raise ValueError(
+            "Provenance-enforced DPO manifest is "
+            "missing required training identity: "
+            + ", ".join(
+                sorted(
+                    missing
+                )
+            )
+        )
+
+    if not partition.records:
+
+        raise ValueError(
+            "Provenance-enforced DPO partition is empty."
+        )
+
+    reference_environment = None
+
+    for record in partition.records:
+
+        provenance = (
+            record.source_execution_provenance
+        )
+
+        if provenance is None:
+
+            raise ValueError(
+                "Training record is missing source "
+                "execution provenance."
+            )
+
+        if (
+            provenance.schema_name
+            != PROVENANCE_SCHEMA
+        ):
+
+            raise ValueError(
+                "Training record uses unsupported "
+                "execution provenance schema: "
+                f"{provenance.schema_name}"
+            )
+
+        if (
+            provenance.provenance_complete
+            is not True
+        ):
+
+            raise ValueError(
+                "Training record contains incomplete "
+                "execution provenance."
+            )
+
+        if (
+            provenance.agent_name
+            != manifest.target_agent
+        ):
+
+            raise ValueError(
+                "Training record provenance agent does "
+                "not match DPO manifest."
+            )
+
+        if (
+            provenance.model_key
+            != manifest.target_model_key
+        ):
+
+            raise ValueError(
+                "Training record provenance model key "
+                "does not match DPO manifest."
+            )
+
+        if (
+            provenance.model_artifact_sha256
+            != manifest.target_model_artifact_sha256
+        ):
+
+            raise ValueError(
+                "Training record model artifact identity "
+                "does not match DPO manifest."
+            )
+
+        if (
+            provenance.model_weights_sha256
+            != manifest.target_model_weights_sha256
+        ):
+
+            raise ValueError(
+                "Training record model weights identity "
+                "does not match DPO manifest."
+            )
+
+        if (
+            provenance.tokenizer_artifact_sha256
+            != manifest.target_tokenizer_artifact_sha256
+        ):
+
+            raise ValueError(
+                "Training record tokenizer identity "
+                "does not match DPO manifest."
+            )
+
+        if (
+            provenance.model_profile_sha256
+            != manifest.target_model_profile_sha256
+        ):
+
+            raise ValueError(
+                "Training record model profile identity "
+                "does not match DPO manifest."
+            )
+
+        if (
+            provenance.agent_definition_sha256
+            != manifest.target_agent_definition_sha256
+        ):
+
+            raise ValueError(
+                "Training record agent definition identity "
+                "does not match DPO manifest."
+            )
+
+        if (
+            provenance.capability_catalog_sha256
+            != manifest.target_capability_catalog_sha256
+        ):
+
+            raise ValueError(
+                "Training record capability catalog identity "
+                "does not match DPO manifest."
+            )
+
+        if (
+            provenance.system_prompt_sha256
+            != manifest.target_system_prompt_sha256
+        ):
+
+            raise ValueError(
+                "Training record system prompt identity "
+                "does not match DPO manifest."
+            )
+
+        if (
+            provenance.max_new_tokens
+            != manifest.specialist_max_new_tokens
+        ):
+
+            raise ValueError(
+                "Training record generation contract "
+                "does not match DPO manifest."
+            )
+
+        _validate_record_prompt_provenance(
+            record
+        )
+
+        environment = (
+            _execution_environment_identity(
+                provenance
+            )
+        )
+
+        if (
+            reference_environment
+            is None
+        ):
+
+            reference_environment = (
+                environment
+            )
+
+        elif (
+            environment
+            != reference_environment
+        ):
+
+            raise ValueError(
+                "DPO partition mixes records from "
+                "different specialist execution environments."
+            )
+
+
+def validate_specialist_dpo_training_contract(
+    *,
+    train: VerifiedDpoPartition,
+    validation: VerifiedDpoPartition,
+    expected_model_key: str,
+) -> None:
+    """
+    Fail-closed training eligibility gate.
+
+    The normal partition loader remains backward compatible, but
+    actual training requires both partitions to prove that Phase
+    4C.2 materialization provenance enforcement occurred.
+    """
+
+    validate_specialist_dpo_pair(
+        train=(
+            train
+        ),
+
+        validation=(
+            validation
+        ),
+
+        expected_model_key=(
+            expected_model_key
+        ),
+    )
+
+    _validate_partition_training_provenance(
+        train
+    )
+
+    _validate_partition_training_provenance(
+        validation
+    )
+
+    train_identity = (
+        _manifest_training_identity(
+            train.manifest
+        )
+    )
+
+    validation_identity = (
+        _manifest_training_identity(
+            validation.manifest
+        )
+    )
+
+    if (
+        train_identity
+        != validation_identity
+    ):
+
+        raise ValueError(
+            "Train and validation DPO artifacts were "
+            "materialized against different provenance "
+            "environments."
+        )
+
+    train_environment = (
+        _execution_environment_identity(
+            train
+            .records[
+                0
+            ]
+            .source_execution_provenance
+        )
+    )
+
+    validation_environment = (
+        _execution_environment_identity(
+            validation
+            .records[
+                0
+            ]
+            .source_execution_provenance
+        )
+    )
+
+    if (
+        train_environment
+        != validation_environment
+    ):
+
+        raise ValueError(
+            "Train and validation DPO records come from "
+            "different specialist execution environments."
+        )
+
+
+# ============================================================
+# TRAINING BASE MODEL IDENTITY
+# ============================================================
+
+
+def _assert_runtime_fingerprint_matches_provenance(
+    *,
+    fingerprint: RuntimeModelArtifactFingerprint,
+    record: SpecialistDpoRecord,
+) -> None:
+
+    provenance = (
+        record.source_execution_provenance
+    )
+
+    if provenance is None:
+
+        raise ValueError(
+            "Cannot validate training base model because "
+            "source execution provenance is missing."
+        )
+
+    comparisons = (
+        (
+            "model artifact",
+            fingerprint.content_sha256,
+            provenance.model_artifact_sha256,
+        ),
+
+        (
+            "model weights",
+            fingerprint.weights_sha256,
+            provenance.model_weights_sha256,
+        ),
+
+        (
+            "model config",
+            fingerprint.config_sha256,
+            provenance.model_config_sha256,
+        ),
+
+        (
+            "generation config",
+            fingerprint.generation_config_sha256,
+            provenance.generation_config_sha256,
+        ),
+
+        (
+            "tokenizer artifact",
+            fingerprint.tokenizer_sha256,
+            provenance.tokenizer_artifact_sha256,
+        ),
+
+        (
+            "tokenizer config",
+            fingerprint.tokenizer_config_sha256,
+            provenance.tokenizer_config_sha256,
+        ),
+
+        (
+            "tokenizer JSON",
+            fingerprint.tokenizer_json_sha256,
+            provenance.tokenizer_json_sha256,
+        ),
+
+        (
+            "chat template",
+            fingerprint.chat_template_sha256,
+            provenance.chat_template_sha256,
+        ),
+    )
+
+    for (
+        label,
+        observed,
+        expected,
+    ) in comparisons:
+
+        if (
+            observed
+            != expected
+        ):
+
+            raise ValueError(
+                "Current training base model "
+                f"{label} identity does not match "
+                "the provenance-verified DPO artifact."
+            )
+
+
+def validate_training_base_model_identity(
+    *,
+    train: VerifiedDpoPartition,
+    validation: VerifiedDpoPartition,
+    base_model_path: Path,
+) -> RuntimeModelArtifactFingerprint:
+    """
+    Inspect CURRENT checkpoint bytes from disk immediately before
+    trainer construction.
+
+    use_cache=False is deliberate.
+
+    Runtime provenance caching represents the already-loaded model
+    process snapshot, while training must verify the checkpoint it
+    is about to load right now.
+    """
+
+    fingerprint = (
+        fingerprint_runtime_model_artifact(
+            base_model_path,
+            use_cache=False,
+        )
+    )
+
+    for partition in (
+        train,
+        validation,
+    ):
+
+        manifest = (
+            partition.manifest
+        )
+
+        if (
+            fingerprint.content_sha256
+            != manifest.target_model_artifact_sha256
+        ):
+
+            raise ValueError(
+                "Current training base model artifact "
+                "does not match DPO materialization provenance."
+            )
+
+        if (
+            fingerprint.weights_sha256
+            != manifest.target_model_weights_sha256
+        ):
+
+            raise ValueError(
+                "Current training base model weights "
+                "do not match DPO materialization provenance."
+            )
+
+        if (
+            fingerprint.tokenizer_sha256
+            != manifest.target_tokenizer_artifact_sha256
+        ):
+
+            raise ValueError(
+                "Current training tokenizer does not match "
+                "DPO materialization provenance."
+            )
+
+        for record in partition.records:
+
+            _assert_runtime_fingerprint_matches_provenance(
+                fingerprint=(
+                    fingerprint
+                ),
+
+                record=(
+                    record
+                ),
+            )
+
+    return fingerprint
+
+
+# ============================================================
 # TRL DATASET FORMAT
 # ============================================================
 
@@ -1004,7 +1804,7 @@ def build_dpo_dataset_rows(
 
 
 # ============================================================
-# MODEL FINGERPRINT
+# LEGACY TRAINING MODEL FINGERPRINT
 # ============================================================
 
 
@@ -1046,6 +1846,15 @@ class ModelArtifactFingerprint(
 def fingerprint_base_model(
     model_path: Path,
 ) -> ModelArtifactFingerprint:
+    """
+    Existing Phase-4 training artifact fingerprint.
+
+    This deliberately retains its historical hashing semantics so
+    prior Phase-4B synthetic manifests remain verifiable.
+
+    Phase 4C.2 training authorization additionally uses the richer
+    execution-provenance fingerprint above.
+    """
 
     resolved = (
         model_path
@@ -1347,6 +2156,9 @@ class SpecialistDpoQloraDryRun:
         optimizer + scheduler
 
     trainer.train() is never called.
+
+    Phase 4C.2 adds a mandatory fail-closed provenance contract
+    before model construction.
     """
 
     def __init__(
@@ -1477,7 +2289,7 @@ class SpecialistDpoQloraDryRun:
             )
         )
 
-        validate_specialist_dpo_pair(
+        validate_specialist_dpo_training_contract(
             train=(
                 train
             ),
@@ -1597,8 +2409,6 @@ class SpecialistDpoQloraDryRun:
 
                 local_files_only=True,
 
-                # Same compatibility option currently used by
-                # QwenFuncCallBackend.
                 fix_mistral_regex=True,
             )
         )
@@ -1679,22 +2489,6 @@ class SpecialistDpoQloraDryRun:
             / train.manifest.source_split_id
             / train.manifest.target_agent
         )
-
-        # ====================================================
-        # TRANSFORMERS 5.16 COMPATIBILITY
-        #
-        # Transformers no longer accepts:
-        #
-        #     warmup_ratio=0.03
-        #
-        # warmup_steps now accepts either:
-        #
-        #     integer >= 0      -> literal number of steps
-        #     float in [0, 1)   -> ratio of total steps
-        #
-        # We retain warmup_ratio as our own stable recipe field
-        # and translate it here at the dependency boundary.
-        # ====================================================
 
         training_args = (
             DPOConfig(
@@ -1889,6 +2683,33 @@ class SpecialistDpoQloraDryRun:
             self._load_inputs()
         )
 
+        # ====================================================
+        # PHASE 4C.2-C BASE CHECKPOINT LOCK
+        #
+        # This executes BEFORE DPOTrainer construction and uses a
+        # fresh disk fingerprint rather than runtime cache state.
+        # ====================================================
+
+        provenance_model_fingerprint = (
+            validate_training_base_model_identity(
+                train=(
+                    train
+                ),
+
+                validation=(
+                    validation
+                ),
+
+                base_model_path=(
+                    self.settings
+                    .base_model_path
+                ),
+            )
+        )
+
+        # Existing Phase-4 training fingerprint semantics remain
+        # unchanged because historical synthetic manifests depend
+        # on this representation.
         model_fingerprint = (
             fingerprint_base_model(
                 self.settings
@@ -1914,6 +2735,10 @@ class SpecialistDpoQloraDryRun:
 
             "base_model_sha256":
                 model_fingerprint.content_sha256,
+
+            "provenance_model_sha256":
+                provenance_model_fingerprint
+                .content_sha256,
 
             "settings":
                 self.settings.model_dump(
@@ -2123,7 +2948,7 @@ class SpecialistDpoQloraDryRun:
 
                 for (
                     name,
-                    _
+                    _,
                 )
                 in trainable_parameters
 
@@ -2166,7 +2991,10 @@ class SpecialistDpoQloraDryRun:
                 )
             )
 
-            if total_parameter_count <= 0:
+            if (
+                total_parameter_count
+                <= 0
+            ):
 
                 raise ValueError(
                     "Trainer model reports zero parameters."
@@ -2180,10 +3008,6 @@ class SpecialistDpoQloraDryRun:
                 * 100.0
             )
 
-            # Constructing the optimizer is part of the hardware
-            # smoke test.
-            #
-            # No optimizer.step() is called.
             trainer.create_optimizer_and_scheduler(
                 num_training_steps=1
             )

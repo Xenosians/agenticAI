@@ -12,13 +12,8 @@ from datetime import (
     timezone,
 )
 
-from pathlib import (
-    Path,
-)
-
-from typing import (
-    Any,
-)
+from pathlib import Path
+from typing import Any
 
 from pydantic import (
     BaseModel,
@@ -34,6 +29,7 @@ from learning.training.dpo_qlora import (
     SpecialistDpoQloraDryRun,
     SpecialistDpoQloraSettings,
     fingerprint_base_model,
+    validate_training_base_model_identity,
 )
 
 from learning.cli.run_dpo_qlora_smoke import (
@@ -41,8 +37,8 @@ from learning.cli.run_dpo_qlora_smoke import (
     DEFAULT_MAX_LENGTH,
     DEFAULT_MODEL_PATH,
     PROJECT_ROOT,
-    _training_records,
-    _validation_records,
+    _build_model_profile,
+    _synthetic_preference_records,
 )
 
 
@@ -64,8 +60,7 @@ DEFAULT_TRAINING_OUTPUT_ROOT = (
 # ============================================================
 
 
-def _utc_now(
-) -> str:
+def _utc_now() -> str:
 
     return (
         datetime
@@ -76,8 +71,7 @@ def _utc_now(
     )
 
 
-def _run_timestamp(
-) -> str:
+def _run_timestamp() -> str:
 
     return (
         datetime
@@ -94,16 +88,14 @@ def _canonical_json(
     value: Any,
 ) -> str:
 
-    return (
-        json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(
-                ",",
-                ":",
-            ),
-        )
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(
+            ",",
+            ":",
+        ),
     )
 
 
@@ -111,9 +103,7 @@ def _sha256_file(
     path: Path,
 ) -> str:
 
-    digest = (
-        hashlib.sha256()
-    )
+    digest = hashlib.sha256()
 
     with path.open(
         "rb"
@@ -121,11 +111,9 @@ def _sha256_file(
 
         while True:
 
-            chunk = (
-                handle.read(
-                    1024
-                    * 1024
-                )
+            chunk = handle.read(
+                1024
+                * 1024
             )
 
             if not chunk:
@@ -136,9 +124,7 @@ def _sha256_file(
                 chunk
             )
 
-    return (
-        digest.hexdigest()
-    )
+    return digest.hexdigest()
 
 
 def _hash_trainable_parameters(
@@ -153,13 +139,9 @@ def _hash_trainable_parameters(
 
     import torch
 
-    digest = (
-        hashlib.sha256()
-    )
+    digest = hashlib.sha256()
 
-    trainable_parameter_count = (
-        0
-    )
+    trainable_parameter_count = 0
 
     with torch.no_grad():
 
@@ -217,9 +199,7 @@ def _hash_trainable_parameters(
             "Model contains no trainable parameters."
         )
 
-    return (
-        digest.hexdigest()
-    )
+    return digest.hexdigest()
 
 
 # ============================================================
@@ -239,8 +219,6 @@ def authorize_one_step_training(
 
         --allow-training
         --max-steps 1
-
-    No other optimizer-step count is permitted.
     """
 
     if not allow_training:
@@ -322,30 +300,23 @@ def fingerprint_adapter_directory(
 
             if candidate.is_file()
         ),
-
-        key=lambda item: (
-            str(
-                item.relative_to(
-                    resolved
-                )
+        key=lambda item: str(
+            item.relative_to(
+                resolved
             )
         ),
     ):
 
         files.append(
             TrainingArtifactFile(
-                path=(
-                    str(
-                        path.relative_to(
-                            resolved
-                        )
+                path=str(
+                    path.relative_to(
+                        resolved
                     )
                 ),
-
                 size_bytes=(
                     path.stat().st_size
                 ),
-
                 sha256=(
                     _sha256_file(
                         path
@@ -389,9 +360,7 @@ def fingerprint_adapter_directory(
             "weight file."
         )
 
-    aggregate = (
-        hashlib.sha256()
-    )
+    aggregate = hashlib.sha256()
 
     for file in files:
 
@@ -405,20 +374,12 @@ def fingerprint_adapter_directory(
             )
         )
 
-    return (
-        TrainingAdapterArtifact(
-            directory=(
-                resolved
-            ),
-
-            content_sha256=(
-                aggregate.hexdigest()
-            ),
-
-            files=(
-                files
-            ),
-        )
+    return TrainingAdapterArtifact(
+        directory=resolved,
+        content_sha256=(
+            aggregate.hexdigest()
+        ),
+        files=files,
     )
 
 
@@ -430,10 +391,8 @@ def fingerprint_adapter_directory(
 class OneStepTrainingSmokeManifest(
     BaseModel
 ):
-    model_config = (
-        ConfigDict(
-            populate_by_name=True
-        )
+    model_config = ConfigDict(
+        populate_by_name=True
     )
 
     schema_name: str = Field(
@@ -512,18 +471,15 @@ class OneStepTrainingSmokeManifest(
 # ============================================================
 
 
-def build_parser(
-) -> argparse.ArgumentParser:
+def build_parser() -> argparse.ArgumentParser:
 
-    parser = (
-        argparse.ArgumentParser(
-            description=(
-                "Run the Phase 4B.1 synthetic DPO/QLoRA "
-                "one-step training smoke. This performs "
-                "a real forward pass, backward pass, and "
-                "exactly one optimizer step. Real training "
-                "data cannot be supplied to this executable."
-            )
+    parser = argparse.ArgumentParser(
+        description=(
+            "Run the Phase 4B.1 synthetic DPO/QLoRA "
+            "one-step training smoke. This performs "
+            "a real forward pass, backward pass, and "
+            "exactly one optimizer step. Real training "
+            "data cannot be supplied to this executable."
         )
     )
 
@@ -540,33 +496,25 @@ def build_parser(
         "--max-steps",
         type=int,
         default=None,
-        help=(
-            "Must be exactly 1."
-        ),
+        help="Must be exactly 1.",
     )
 
     parser.add_argument(
         "--model-path",
         type=Path,
-        default=(
-            DEFAULT_MODEL_PATH
-        ),
+        default=DEFAULT_MODEL_PATH,
     )
 
     parser.add_argument(
         "--agent-path",
         type=Path,
-        default=(
-            DEFAULT_AGENT_PATH
-        ),
+        default=DEFAULT_AGENT_PATH,
     )
 
     parser.add_argument(
         "--max-length",
         type=int,
-        default=(
-            DEFAULT_MAX_LENGTH
-        ),
+        default=DEFAULT_MAX_LENGTH,
     )
 
     parser.add_argument(
@@ -626,24 +574,14 @@ def _run_training(
             "max_length must be at least 128."
         )
 
-    # ========================================================
-    # BASE MODEL IMMUTABILITY FINGERPRINT
-    # ========================================================
-
+    # Historical Phase-4B artifact fingerprint.
     base_before = (
         fingerprint_base_model(
             model_path
         )
     )
 
-    trainer = (
-        None
-    )
-
-    run_root: (
-        Path
-        | None
-    ) = None
+    trainer = None
 
     try:
 
@@ -653,10 +591,8 @@ def _run_training(
             )
         ) as temporary_directory:
 
-            temporary_root = (
-                Path(
-                    temporary_directory
-                )
+            temporary_root = Path(
+                temporary_directory
             )
 
             materialized_root = (
@@ -674,159 +610,89 @@ def _run_training(
             )
 
             # =================================================
-            # SYNTHETIC DATA ONLY
+            # PROVENANCE-AWARE SYNTHETIC DATA
             # =================================================
+
+            model_profile = (
+                _build_model_profile(
+                    model_path
+                )
+            )
 
             materializer = (
                 SpecialistDpoMaterializer(
-                    agent_definition_path=(
-                        agent_path
-                    ),
-
-                    output_root=(
-                        materialized_root
-                    ),
+                    agent_definition_path=agent_path,
+                    model_profile=model_profile,
+                    output_root=materialized_root,
                 )
             )
 
-            train_result = (
-                materializer.build(
-                    records=(
-                        _training_records()
-                    ),
-
-                    source_split_id=(
-                        split_id
-                    ),
-
-                    source_partition=(
-                        "train"
-                    ),
-
-                    source_sha256=(
-                        "synthetic-one-step-train"
-                    ),
-                )
+            (
+                training_records,
+                validation_records,
+            ) = _synthetic_preference_records(
+                agent=materializer.agent,
+                model_profile=model_profile,
             )
 
-            validation_result = (
-                materializer.build(
-                    records=(
-                        _validation_records()
-                    ),
+            train_result = materializer.build(
+                records=training_records,
+                source_split_id=split_id,
+                source_partition="train",
+                source_sha256=(
+                    "synthetic-one-step-train"
+                ),
+            )
 
-                    source_split_id=(
-                        split_id
-                    ),
-
-                    source_partition=(
-                        "validation"
-                    ),
-
-                    source_sha256=(
-                        "synthetic-one-step-validation"
-                    ),
-                )
+            validation_result = materializer.build(
+                records=validation_records,
+                source_split_id=split_id,
+                source_partition="validation",
+                source_sha256=(
+                    "synthetic-one-step-validation"
+                ),
             )
 
             # =================================================
             # ONE-STEP RECIPE
-            #
-            # This is deliberately not the eventual production
-            # training recipe.
-            #
-            # gradient_accumulation_steps = 1:
-            #     proves one actual forward/backward/update cycle.
-            #
-            # warmup_ratio = 0:
-            #     avoids the sole optimizer step receiving zero LR.
             # =================================================
 
-            settings = (
-                SpecialistDpoQloraSettings(
-                    base_model_path=(
-                        model_path
-                    ),
-
-                    expected_model_key=(
-                        "qwen2.5-0.5b-funccall"
-                    ),
-
-                    output_root=(
-                        trainer_work_root
-                    ),
-
-                    compute_dtype=(
-                        "bfloat16"
-                    ),
-
-                    bnb_4bit_quant_type=(
-                        "nf4"
-                    ),
-
-                    bnb_4bit_use_double_quant=True,
-
-                    lora_r=16,
-
-                    lora_alpha=32,
-
-                    lora_dropout=0.05,
-
-                    lora_target_modules=(
-                        "all-linear"
-                    ),
-
-                    beta=0.1,
-
-                    learning_rate=5e-6,
-
-                    num_train_epochs=1.0,
-
-                    per_device_train_batch_size=1,
-
-                    per_device_eval_batch_size=1,
-
-                    gradient_accumulation_steps=1,
-
-                    max_length=(
-                        max_length
-                    ),
-
-                    gradient_checkpointing=True,
-
-                    optimizer=(
-                        "paged_adamw_8bit"
-                    ),
-
-                    weight_decay=0.0,
-
-                    warmup_ratio=0.0,
-
-                    seed=42,
-                )
+            settings = SpecialistDpoQloraSettings(
+                base_model_path=model_path,
+                expected_model_key=(
+                    materializer.agent.model
+                ),
+                output_root=trainer_work_root,
+                compute_dtype="bfloat16",
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True,
+                lora_r=16,
+                lora_alpha=32,
+                lora_dropout=0.05,
+                lora_target_modules="all-linear",
+                beta=0.1,
+                learning_rate=5e-6,
+                num_train_epochs=1.0,
+                per_device_train_batch_size=1,
+                per_device_eval_batch_size=1,
+                gradient_accumulation_steps=1,
+                max_length=max_length,
+                gradient_checkpointing=True,
+                optimizer="paged_adamw_8bit",
+                weight_decay=0.0,
+                warmup_ratio=0.0,
+                seed=42,
             )
 
-            builder = (
-                SpecialistDpoQloraDryRun(
-                    train_directory=(
-                        train_result
-                        .output_directory
-                    ),
-
-                    validation_directory=(
-                        validation_result
-                        .output_directory
-                    ),
-
-                    settings=(
-                        settings
-                    ),
-                )
+            builder = SpecialistDpoQloraDryRun(
+                train_directory=(
+                    train_result.output_directory
+                ),
+                validation_directory=(
+                    validation_result.output_directory
+                ),
+                settings=settings,
             )
-
-            # =================================================
-            # REUSE PHASE 4A'S VERIFIED CONSTRUCTION PATH
-            # =================================================
 
             versions = (
                 builder
@@ -841,22 +707,30 @@ def _run_training(
                 ._load_inputs()
             )
 
+            # =================================================
+            # PHASE 4C.2-C BASE-MODEL LOCK
+            #
+            # The one-step smoke manually reuses the trainer
+            # constructor, so it must explicitly perform the same
+            # fresh checkpoint validation that DryRun.run() does.
+            # =================================================
+
+            validate_training_base_model_identity(
+                train=train,
+                validation=validation,
+                base_model_path=model_path,
+            )
+
             if torch.cuda.is_available():
 
                 torch.cuda.empty_cache()
-
                 torch.cuda.reset_peak_memory_stats()
 
             trainer = (
                 builder
                 ._construct_trainer(
-                    train=(
-                        train
-                    ),
-
-                    validation=(
-                        validation
-                    ),
+                    train=train,
+                    validation=validation,
                 )
             )
 
@@ -864,16 +738,12 @@ def _run_training(
             # DATASET SAFETY
             # =================================================
 
-            processed_train_count = (
-                len(
-                    trainer.train_dataset
-                )
+            processed_train_count = len(
+                trainer.train_dataset
             )
 
-            processed_validation_count = (
-                len(
-                    trainer.eval_dataset
-                )
+            processed_validation_count = len(
+                trainer.eval_dataset
             )
 
             if (
@@ -904,29 +774,11 @@ def _run_training(
             # ABSOLUTE ONE-STEP LIMIT
             # =================================================
 
-            trainer.args.max_steps = (
-                1
-            )
-
-            trainer.args.gradient_accumulation_steps = (
-                1
-            )
-
-            trainer.args.save_strategy = (
-                "no"
-            )
-
-            trainer.args.eval_strategy = (
-                "no"
-            )
-
-            trainer.args.logging_strategy = (
-                "no"
-            )
-
-            # =================================================
-            # BUILD AND VERIFY OPTIMIZER
-            # =================================================
+            trainer.args.max_steps = 1
+            trainer.args.gradient_accumulation_steps = 1
+            trainer.args.save_strategy = "no"
+            trainer.args.eval_strategy = "no"
+            trainer.args.logging_strategy = "no"
 
             trainer.create_optimizer_and_scheduler(
                 num_training_steps=1
@@ -954,33 +806,26 @@ def _run_training(
                 .__module__
             )
 
-            optimizer_bits = (
+            optimizer_bits = getattr(
                 getattr(
-                    getattr(
-                        optimizer,
-                        "args",
-                        None,
-                    ),
-                    "optim_bits",
+                    optimizer,
+                    "args",
                     None,
+                ),
+                "optim_bits",
+                None,
+            )
+
+            optimizer_is_paged = bool(
+                getattr(
+                    optimizer,
+                    "is_paged",
+                    False,
                 )
             )
 
-            optimizer_is_paged = (
-                bool(
-                    getattr(
-                        optimizer,
-                        "is_paged",
-                        False,
-                    )
-                )
-            )
-
-            if not (
-                optimizer_module
-                .startswith(
-                    "bitsandbytes"
-                )
+            if not optimizer_module.startswith(
+                "bitsandbytes"
             ):
 
                 raise ValueError(
@@ -1006,10 +851,6 @@ def _run_training(
                     "One-step smoke optimizer is not paged."
                 )
 
-            # =================================================
-            # TRAINABLE PARAMETER STATE BEFORE UPDATE
-            # =================================================
-
             parameter_hash_before = (
                 _hash_trainable_parameters(
                     trainer.model
@@ -1018,27 +859,16 @@ def _run_training(
 
             # =================================================
             # THE ONLY REAL TRAINING CALL
-            #
-            # trainer.train() performs:
-            #
-            #     forward
-            #     DPO loss
-            #     backward
-            #     optimizer.step()
-            #
-            # max_steps is hard-limited to exactly one.
             # =================================================
 
             train_output = (
                 trainer.train()
             )
 
-            observed_global_step = (
-                int(
-                    trainer
-                    .state
-                    .global_step
-                )
+            observed_global_step = int(
+                trainer
+                .state
+                .global_step
             )
 
             if (
@@ -1064,10 +894,6 @@ def _run_training(
                     "one global step."
                 )
 
-            # =================================================
-            # PROVE THE LORA PARAMETERS CHANGED
-            # =================================================
-
             parameter_hash_after = (
                 _hash_trainable_parameters(
                     trainer.model
@@ -1085,10 +911,6 @@ def _run_training(
                     "One optimizer step completed but no "
                     "trainable parameter change was observed."
                 )
-
-            # =================================================
-            # MEMORY
-            # =================================================
 
             peak_allocated_gib = (
                 float(
@@ -1158,12 +980,10 @@ def _run_training(
                     safe_serialization=True,
                 )
 
-                processing_class = (
-                    getattr(
-                        trainer,
-                        "processing_class",
-                        None,
-                    )
+                processing_class = getattr(
+                    trainer,
+                    "processing_class",
+                    None,
                 )
 
                 if (
@@ -1185,10 +1005,6 @@ def _run_training(
                     )
                 )
 
-                # =============================================
-                # BASE CHECKPOINT MUST BE IDENTICAL
-                # =============================================
-
                 base_after = (
                     fingerprint_base_model(
                         model_path
@@ -1207,135 +1023,91 @@ def _run_training(
                         "adapter training."
                     )
 
-                # =============================================
-                # RESULT MANIFEST
-                # =============================================
-
                 manifest = (
                     OneStepTrainingSmokeManifest(
-                        created_at=(
-                            _utc_now()
-                        ),
-
-                        run_id=(
-                            run_id
-                        ),
-
+                        created_at=_utc_now(),
+                        run_id=run_id,
                         synthetic_only=True,
-
                         training_executed=True,
-
                         requested_max_steps=1,
-
                         observed_global_step=(
                             observed_global_step
                         ),
-
                         source_split_id=(
                             train
                             .manifest
                             .source_split_id
                         ),
-
                         target_agent=(
                             train
                             .manifest
                             .target_agent
                         ),
-
                         target_model_key=(
                             train
                             .manifest
                             .target_model_key
                         ),
-
-                        max_length=(
-                            max_length
-                        ),
-
+                        max_length=max_length,
                         gradient_accumulation_steps=1,
-
                         train_record_count=(
                             len(
                                 train.records
                             )
                         ),
-
                         validation_record_count=(
                             len(
                                 validation.records
                             )
                         ),
-
                         processed_train_record_count=(
                             processed_train_count
                         ),
-
                         processed_validation_record_count=(
                             processed_validation_count
                         ),
-
                         optimizer_class=(
                             optimizer_class
                         ),
-
                         optimizer_module=(
                             optimizer_module
                         ),
-
-                        optimizer_bits=(
-                            int(
-                                optimizer_bits
-                            )
+                        optimizer_bits=int(
+                            optimizer_bits
                         ),
-
                         optimizer_is_paged=(
                             optimizer_is_paged
                         ),
-
                         trainable_parameter_sha256_before=(
                             parameter_hash_before
                         ),
-
                         trainable_parameter_sha256_after=(
                             parameter_hash_after
                         ),
-
                         weight_update_observed=(
                             weight_update_observed
                         ),
-
-                        training_loss=(
-                            float(
-                                train_output
-                                .training_loss
-                            )
+                        training_loss=float(
+                            train_output.training_loss
                         ),
-
                         peak_cuda_allocated_gib=(
                             peak_allocated_gib
                         ),
-
                         peak_cuda_reserved_gib=(
                             peak_reserved_gib
                         ),
-
                         base_model_sha256_before=(
                             base_before.content_sha256
                         ),
-
                         base_model_sha256_after=(
                             base_after.content_sha256
                         ),
-
                         base_model_unchanged=(
                             base_model_unchanged
                         ),
-
                         adapter=(
                             adapter_artifact
                         ),
-
                         package_versions=(
                             versions
                         ),
@@ -1366,15 +1138,9 @@ def _run_training(
                     ignore_errors=True,
                 )
 
-                run_root = (
-                    None
-                )
-
                 raise
 
-            return (
-                manifest
-            )
+            return manifest
 
     finally:
 
@@ -1402,23 +1168,19 @@ def _run_training(
 # ============================================================
 
 
-def main(
-) -> int:
+def main() -> int:
 
     args = (
         build_parser()
         .parse_args()
     )
 
-    # Authorization happens before model loading, CUDA setup,
-    # materialization, or any training-capable operation.
     try:
 
         authorize_one_step_training(
             allow_training=(
                 args.allow_training
             ),
-
             max_steps=(
                 args.max_steps
             ),
@@ -1463,6 +1225,10 @@ def main(
     )
 
     print(
+        "Execution provenance: REQUIRED"
+    )
+
+    print(
         "Optimizer steps permitted: EXACTLY 1"
     )
 
@@ -1474,30 +1240,18 @@ def main(
 
     try:
 
-        result = (
-            _run_training(
-                model_path=(
-                    args.model_path
-                ),
-
-                agent_path=(
-                    args.agent_path
-                ),
-
-                max_length=(
-                    args.max_length
-                ),
-            )
+        result = _run_training(
+            model_path=args.model_path,
+            agent_path=args.agent_path,
+            max_length=args.max_length,
         )
 
     except Exception as exc:
 
         print()
-
         print(
             "TRAINING SMOKE: FAIL"
         )
-
         print(
             f"{type(exc).__name__}: {exc}"
         )
@@ -1521,83 +1275,64 @@ def main(
     else:
 
         print()
-
         print(
             "TRAINING SMOKE: PASS"
         )
-
         print(
             "--------------------"
         )
-
         print(
-            f"Run ID: "
-            f"{result.run_id}"
+            f"Run ID: {result.run_id}"
         )
-
         print(
-            f"Global step: "
+            "Global step: "
             f"{result.observed_global_step}"
         )
-
         print(
-            f"Training loss: "
+            "Training loss: "
             f"{result.training_loss:.6f}"
         )
-
         print(
-            f"Optimizer: "
+            "Optimizer: "
             f"{result.optimizer_module}."
             f"{result.optimizer_class}"
         )
-
         print(
-            f"Optimizer bits: "
+            "Optimizer bits: "
             f"{result.optimizer_bits}"
         )
-
         print(
-            f"Optimizer paged: "
+            "Optimizer paged: "
             f"{result.optimizer_is_paged}"
         )
-
         print(
-            f"Weight update observed: "
+            "Weight update observed: "
             f"{result.weight_update_observed}"
         )
-
         print(
-            f"Base model unchanged: "
+            "Base model unchanged: "
             f"{result.base_model_unchanged}"
         )
-
         print(
             "Peak CUDA allocated: "
             f"{result.peak_cuda_allocated_gib:.3f} GiB"
         )
-
         print(
             "Peak CUDA reserved: "
             f"{result.peak_cuda_reserved_gib:.3f} GiB"
         )
-
         print(
-            f"Adapter: "
-            f"{result.adapter.directory}"
+            f"Adapter: {result.adapter.directory}"
         )
-
         print(
-            f"Adapter SHA-256: "
+            "Adapter SHA-256: "
             f"{result.adapter.content_sha256}"
         )
-
         print(
-            f"Synthetic only: "
-            f"{result.synthetic_only}"
+            f"Synthetic only: {result.synthetic_only}"
         )
-
         print(
-            f"Training executed: "
+            "Training executed: "
             f"{result.training_executed}"
         )
 

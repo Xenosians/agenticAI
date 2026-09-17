@@ -75,6 +75,10 @@ class PreferenceDatasetBuilder:
 
     Held-out evaluation contamination is checked again immediately
     before promotion as defense in depth.
+
+    Specialist execution provenance, when present, is preserved
+    exactly from the source preference example. Dataset promotion
+    must never reconstruct historical runtime identity.
     """
 
     def __init__(
@@ -296,6 +300,21 @@ class PreferenceDatasetBuilder:
                 "behavior."
             )
 
+        execution_provenance = (
+            example
+            .execution_provenance
+            .model_copy(
+                deep=True
+            )
+
+            if (
+                example.execution_provenance
+                is not None
+            )
+
+            else None
+        )
+
         return (
             PreferenceDatasetRecord(
                 record_id=(
@@ -320,6 +339,10 @@ class PreferenceDatasetBuilder:
 
                 task_instructions=(
                     example.task_instructions
+                ),
+
+                execution_provenance=(
+                    execution_provenance
                 ),
 
                 source=(
