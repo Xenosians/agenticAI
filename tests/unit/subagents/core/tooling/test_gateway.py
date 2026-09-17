@@ -25,16 +25,24 @@ ACCOUNT_AGENT = AgentDefinition(
 
 TOOLS = {
     "account_status": {
-        "risk": "read",
-        "requires_approval": False,
+        "risk":
+            "read",
+
+        "requires_approval":
+            False,
+
         "grounded_arguments": [
             "user_id",
         ],
     },
 
     "unlock_user": {
-        "risk": "high",
-        "requires_approval": True,
+        "risk":
+            "high",
+
+        "requires_approval":
+            True,
+
         "grounded_arguments": [
             "user_id",
         ],
@@ -45,8 +53,10 @@ TOOLS = {
 def fake_get_tool(
     name,
 ):
-    return TOOLS.get(
-        name
+    return (
+        TOOLS.get(
+            name
+        )
     )
 
 
@@ -56,7 +66,8 @@ def fake_create_approval(
     risk=None,
 ):
     return {
-        "id": "approval-001",
+        "id":
+            "approval-001",
 
         "risk": (
             risk
@@ -64,9 +75,11 @@ def fake_create_approval(
             else "high"
         ),
 
-        "tool": tool_name,
+        "tool":
+            tool_name,
 
-        "arguments": arguments,
+        "arguments":
+            arguments,
     }
 
 
@@ -74,6 +87,7 @@ class FakeMCP:
     def __init__(
         self,
     ):
+
         self.calls = []
 
     async def call_tool(
@@ -81,6 +95,7 @@ class FakeMCP:
         tool_name,
         arguments,
     ):
+
         self.calls.append(
             (
                 tool_name,
@@ -89,31 +104,45 @@ class FakeMCP:
         )
 
         return {
-            "ok": True,
+            "ok":
+                True,
 
-            "status": "success",
+            "status":
+                "success",
 
             "user_id":
                 arguments.get(
                     "user_id"
                 ),
 
-            "enabled": True,
-            "locked": False,
+            "enabled":
+                True,
+
+            "locked":
+                False,
         }
 
 
 def build_gateway():
-    mcp = FakeMCP()
 
-    gateway = ToolGateway(
-        tool_lookup=fake_get_tool,
+    mcp = (
+        FakeMCP()
+    )
 
-        approval_creator=(
-            fake_create_approval
-        ),
+    gateway = (
+        ToolGateway(
+            tool_lookup=(
+                fake_get_tool
+            ),
 
-        mcp=mcp,
+            approval_creator=(
+                fake_create_approval
+            ),
+
+            mcp=(
+                mcp
+            ),
+        )
     )
 
     return (
@@ -122,29 +151,61 @@ def build_gateway():
     )
 
 
-def test_identifier_guard_accepts_exact_identifier():
-    assert identifier_appears_in_request(
-        "jdoe",
-        "Is jdoe locked?",
+def test_identifier_guard_accepts_exact_identifier(
+):
+
+    assert (
+        identifier_appears_in_request(
+            "jdoe",
+            "Is jdoe locked?",
+        )
     )
 
 
-def test_identifier_guard_rejects_invented_identifier():
-    assert not identifier_appears_in_request(
-        "jsmith",
-        "Is jdoe locked?",
+def test_identifier_guard_rejects_invented_identifier(
+):
+
+    assert not (
+        identifier_appears_in_request(
+            "jsmith",
+            "Is jdoe locked?",
+        )
     )
 
 
-def test_agent_cannot_use_unlisted_tool():
+def test_identifier_guard_rejects_empty_identifier(
+):
+
+    assert not (
+        identifier_appears_in_request(
+            "",
+            "Can jdoe currently sign in?",
+        )
+    )
+
+    assert not (
+        identifier_appears_in_request(
+            "   ",
+            "Can jdoe currently sign in?",
+        )
+    )
+
+
+def test_agent_cannot_use_unlisted_tool(
+):
+
     (
         gateway,
         mcp,
-    ) = build_gateway()
+    ) = (
+        build_gateway()
+    )
 
     result = asyncio.run(
         gateway.execute(
-            agent=ACCOUNT_AGENT,
+            agent=(
+                ACCOUNT_AGENT
+            ),
 
             user_input=(
                 "Do something"
@@ -158,26 +219,48 @@ def test_agent_cannot_use_unlisted_tool():
         )
     )
 
-    assert result[
-        "ok"
-    ] is False
+    assert (
+        result[
+            "ok"
+        ]
+        is False
+    )
 
-    assert result[
-        "status"
-    ] == "denied"
+    assert (
+        result[
+            "status"
+        ]
+        == "denied"
+    )
 
-    assert mcp.calls == []
+    assert (
+        result[
+            "decision_code"
+        ]
+        == "agent_tool_not_allowed"
+    )
+
+    assert (
+        mcp.calls
+        == []
+    )
 
 
-def test_identifier_mismatch_blocks_execution():
+def test_identifier_mismatch_blocks_execution(
+):
+
     (
         gateway,
         mcp,
-    ) = build_gateway()
+    ) = (
+        build_gateway()
+    )
 
     result = asyncio.run(
         gateway.execute(
-            agent=ACCOUNT_AGENT,
+            agent=(
+                ACCOUNT_AGENT
+            ),
 
             user_input=(
                 "Is jdoe locked?"
@@ -194,26 +277,48 @@ def test_identifier_mismatch_blocks_execution():
         )
     )
 
-    assert result[
-        "ok"
-    ] is False
+    assert (
+        result[
+            "ok"
+        ]
+        is False
+    )
 
-    assert result[
-        "status"
-    ] == "denied"
+    assert (
+        result[
+            "status"
+        ]
+        == "denied"
+    )
 
-    assert mcp.calls == []
+    assert (
+        result[
+            "decision_code"
+        ]
+        == "grounding_failed"
+    )
+
+    assert (
+        mcp.calls
+        == []
+    )
 
 
-def test_read_operation_reaches_mcp():
+def test_read_operation_reaches_mcp(
+):
+
     (
         gateway,
         mcp,
-    ) = build_gateway()
+    ) = (
+        build_gateway()
+    )
 
     result = asyncio.run(
         gateway.execute(
-            agent=ACCOUNT_AGENT,
+            agent=(
+                ACCOUNT_AGENT
+            ),
 
             user_input=(
                 "Is jdoe locked?"
@@ -230,34 +335,56 @@ def test_read_operation_reaches_mcp():
         )
     )
 
-    assert result[
-        "ok"
-    ] is True
+    assert (
+        result[
+            "ok"
+        ]
+        is True
+    )
 
-    assert result[
-        "status"
-    ] == "success"
+    assert (
+        result[
+            "status"
+        ]
+        == "success"
+    )
 
-    assert mcp.calls == [
-        (
-            "account_status",
-            {
-                "user_id":
-                    "jdoe",
-            },
-        )
-    ]
+    assert (
+        result[
+            "decision_code"
+        ]
+        == "success"
+    )
+
+    assert (
+        mcp.calls
+        == [
+            (
+                "account_status",
+                {
+                    "user_id":
+                        "jdoe",
+                },
+            )
+        ]
+    )
 
 
-def test_mutation_requires_approval_without_mcp():
+def test_mutation_requires_approval_without_mcp(
+):
+
     (
         gateway,
         mcp,
-    ) = build_gateway()
+    ) = (
+        build_gateway()
+    )
 
     result = asyncio.run(
         gateway.execute(
-            agent=ACCOUNT_AGENT,
+            agent=(
+                ACCOUNT_AGENT
+            ),
 
             user_input=(
                 "Unlock jdoe"
@@ -274,79 +401,244 @@ def test_mutation_requires_approval_without_mcp():
         )
     )
 
-    assert result[
-        "ok"
-    ] is True
+    assert (
+        result[
+            "ok"
+        ]
+        is True
+    )
 
-    assert result[
-        "status"
-    ] == "approval_required"
+    assert (
+        result[
+            "status"
+        ]
+        == "approval_required"
+    )
 
-    assert result[
-        "approval_id"
-    ] == "approval-001"
+    assert (
+        result[
+            "decision_code"
+        ]
+        == "approval_required"
+    )
 
-    assert result[
-        "risk"
-    ] == "high"
+    assert (
+        result[
+            "approval_id"
+        ]
+        == "approval-001"
+    )
+
+    assert (
+        result[
+            "risk"
+        ]
+        == "high"
+    )
 
     # Critical security assertion:
     # mutation must NOT execute yet.
-    assert mcp.calls == []
+    assert (
+        mcp.calls
+        == []
+    )
 
 
-def test_resource_guard_accepts_explicit_resource():
+def test_resource_guard_accepts_explicit_resource(
+):
+
     (
         valid,
         error,
-    ) = validate_grounded_arguments(
-        user_input=(
-            "Does jdoe have VPN access?"
-        ),
+    ) = (
+        validate_grounded_arguments(
+            user_input=(
+                "Does jdoe have VPN access?"
+            ),
 
-        arguments={
-            "user_id":
-                "jdoe",
+            arguments={
+                "user_id":
+                    "jdoe",
 
-            "resource":
-                "VPN",
-        },
+                "resource":
+                    "VPN",
+            },
 
-        grounded_arguments=[
-            "user_id",
-            "resource",
-        ],
+            grounded_arguments=[
+                "user_id",
+                "resource",
+            ],
+        )
     )
 
-    assert valid is True
-    assert error is None
+    assert (
+        valid
+        is True
+    )
+
+    assert (
+        error
+        is None
+    )
 
 
-def test_resource_guard_rejects_invented_resource():
+def test_resource_guard_rejects_invented_resource(
+):
+
     (
         valid,
         error,
-    ) = validate_grounded_arguments(
-        user_input=(
-            "Does jdoe have Finance access?"
-        ),
+    ) = (
+        validate_grounded_arguments(
+            user_input=(
+                "Does jdoe have Finance access?"
+            ),
 
-        arguments={
-            "user_id":
-                "jdoe",
+            arguments={
+                "user_id":
+                    "jdoe",
 
-            "resource":
-                "VPN",
-        },
+                "resource":
+                    "VPN",
+            },
 
-        grounded_arguments=[
-            "user_id",
-            "resource",
-        ],
+            grounded_arguments=[
+                "user_id",
+                "resource",
+            ],
+        )
     )
 
-    assert valid is False
-    assert error is not None
+    assert (
+        valid
+        is False
+    )
 
-    assert "resource" in error
-    assert "VPN" in error
+    assert (
+        error
+        is not None
+    )
+
+    assert (
+        "resource"
+        in error
+    )
+
+    assert (
+        "VPN"
+        in error
+    )
+
+
+def test_resource_guard_rejects_empty_resource(
+):
+
+    (
+        valid,
+        error,
+    ) = (
+        validate_grounded_arguments(
+            user_input=(
+                "Can jdoe currently sign in?"
+            ),
+
+            arguments={
+                "user_id":
+                    "jdoe",
+
+                "resource":
+                    "",
+            },
+
+            grounded_arguments=[
+                "user_id",
+                "resource",
+            ],
+        )
+    )
+
+    assert (
+        valid
+        is False
+    )
+
+    assert (
+        error
+        == "resource must not be empty."
+    )
+
+
+def test_resource_guard_rejects_whitespace_resource(
+):
+
+    (
+        valid,
+        error,
+    ) = (
+        validate_grounded_arguments(
+            user_input=(
+                "Can jdoe currently sign in?"
+            ),
+
+            arguments={
+                "user_id":
+                    "jdoe",
+
+                "resource":
+                    "   ",
+            },
+
+            grounded_arguments=[
+                "user_id",
+                "resource",
+            ],
+        )
+    )
+
+    assert (
+        valid
+        is False
+    )
+
+    assert (
+        error
+        == "resource must not be empty."
+    )
+
+
+def test_missing_optional_grounded_argument_is_not_forced(
+):
+    """
+    Grounding and requiredness are intentionally separate concepts.
+
+    Some capabilities have optional grounded identifiers. Absence is
+    therefore allowed here; capability/schema validation may impose a
+    stronger requirement elsewhere.
+    """
+
+    (
+        valid,
+        error,
+    ) = (
+        validate_grounded_arguments(
+            user_input=(
+                "Show me recent tickets"
+            ),
+
+            arguments={},
+
+            grounded_arguments=[
+                "project_key",
+            ],
+        )
+    )
+
+    assert (
+        valid
+        is True
+    )
+
+    assert (
+        error
+        is None
+    )

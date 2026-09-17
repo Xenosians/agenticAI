@@ -14,6 +14,7 @@ from pathlib import (
 
 from typing import (
     Any,
+    Callable,
 )
 
 from pydantic import (
@@ -30,15 +31,23 @@ from subagents.core.definitions.types import (
     HubResult,
 )
 
+from tools.registry import (
+    get_tool,
+)
+
 
 ACCOUNT_SPECIALIST_NAME = (
     "account-specialist"
 )
 
 
-SAFE_ACCOUNT_EVIDENCE_EXECUTION_TOOLS = {
-    "account_status",
-}
+ToolLookup = Callable[
+    [
+        str,
+    ],
+    dict
+    | None,
+]
 
 
 # ============================================================
@@ -102,21 +111,59 @@ class AccountEvidenceMcpGuard:
     """
     Fail-closed wrapper around the real MCP runtime.
 
-    Read-only account_status is allowed to execute normally.
+    Physical execution is allowed only when the trusted tool registry
+    explicitly classifies the capability as:
 
-    Account mutations must never physically reach MCP from this
-    evidence harness, even if a trusted tool policy were accidentally
-    changed to auto-approve them in the future.
+        risk == "read"
+        requires_approval == False
+
+    Capabilities using a dynamic policy_resolver are also refused by
+    this secondary evidence-only boundary. ToolGateway remains the
+    authoritative runtime policy engine; this wrapper exists only as
+    an additional defense against accidental mutation during evidence
+    collection.
+
+    Unknown, malformed, mutating, approval-gated, or dynamically
+    resolved capabilities never reach MCP through this harness.
     """
 
     def __init__(
         self,
         delegate,
+        *,
+        tool_lookup: ToolLookup = (
+            get_tool
+        ),
     ) -> None:
 
         self.delegate = (
             delegate
         )
+
+        self.tool_lookup = (
+            tool_lookup
+        )
+
+    def _deny(
+        self,
+        *,
+        tool_name: str,
+        reason: str,
+    ) -> dict:
+
+        return {
+            "ok":
+                False,
+
+            "status":
+                "denied",
+
+            "error": (
+                "Account evidence MCP guard blocked "
+                f"physical execution of '{tool_name}': "
+                f"{reason}"
+            ),
+        }
 
     async def call_tool(
         self,
@@ -124,25 +171,102 @@ class AccountEvidenceMcpGuard:
         arguments: dict,
     ) -> dict:
 
-        if (
-            tool_name
-            not in
-            SAFE_ACCOUNT_EVIDENCE_EXECUTION_TOOLS
+        tool = (
+            self.tool_lookup(
+                tool_name
+            )
+        )
+
+        if not isinstance(
+            tool,
+            dict,
         ):
 
-            return {
-                "ok":
-                    False,
+            return (
+                self._deny(
+                    tool_name=(
+                        tool_name
+                    ),
 
-                "status":
-                    "denied",
+                    reason=(
+                        "capability is unknown or has "
+                        "invalid trusted metadata."
+                    ),
+                )
+            )
 
-                "error": (
-                    "Account evidence harness blocked "
-                    "physical execution of mutating tool "
-                    f"'{tool_name}'."
-                ),
-            }
+        risk = (
+            tool.get(
+                "risk"
+            )
+        )
+
+        requires_approval = (
+            tool.get(
+                "requires_approval"
+            )
+        )
+
+        policy_resolver = (
+            tool.get(
+                "policy_resolver"
+            )
+        )
+
+        if (
+            policy_resolver
+            is not None
+        ):
+
+            return (
+                self._deny(
+                    tool_name=(
+                        tool_name
+                    ),
+
+                    reason=(
+                        "dynamic policy capabilities are "
+                        "not physically executed by the "
+                        "evidence harness."
+                    ),
+                )
+            )
+
+        if (
+            risk
+            != "read"
+        ):
+
+            return (
+                self._deny(
+                    tool_name=(
+                        tool_name
+                    ),
+
+                    reason=(
+                        "trusted capability risk is not "
+                        "read-only."
+                    ),
+                )
+            )
+
+        if (
+            requires_approval
+            is not False
+        ):
+
+            return (
+                self._deny(
+                    tool_name=(
+                        tool_name
+                    ),
+
+                    reason=(
+                        "trusted capability is not explicitly "
+                        "marked as auto-approved read-only."
+                    ),
+                )
+            )
 
         return (
             await

@@ -22,6 +22,72 @@ from subagents.core.definitions.types import (
 )
 
 
+TRUSTED_TOOLS = {
+    "account_status": {
+        "risk":
+            "read",
+
+        "requires_approval":
+            False,
+    },
+
+    "check_access": {
+        "risk":
+            "read",
+
+        "requires_approval":
+            False,
+    },
+
+    "unlock_user": {
+        "risk":
+            "low",
+
+        "requires_approval":
+            True,
+    },
+
+    "reset_password": {
+        "risk":
+            "high",
+
+        "requires_approval":
+            True,
+    },
+
+    "dynamic_read": {
+        "risk":
+            "read",
+
+        "requires_approval":
+            False,
+
+        "policy_resolver":
+            lambda **_: {
+                "ok":
+                    True,
+
+                "risk":
+                    "read",
+
+                "requires_approval":
+                    False,
+            },
+    },
+}
+
+
+def fake_tool_lookup(
+    name: str,
+) -> dict | None:
+
+    return (
+        TRUSTED_TOOLS.get(
+            name
+        )
+    )
+
+
 class FakeMcp:
     def __init__(
         self,
@@ -54,20 +120,15 @@ class FakeMcp:
             "status":
                 "success",
 
-            "user_id":
-                arguments.get(
-                    "user_id"
-                ),
+            "tool":
+                tool_name,
 
-            "enabled":
-                True,
-
-            "locked":
-                False,
+            "arguments":
+                arguments,
         }
 
 
-def test_account_evidence_mcp_guard_allows_only_status(
+def test_account_evidence_mcp_guard_allows_trusted_read_only_tools(
 ) -> None:
 
     async def scenario(
@@ -79,17 +140,97 @@ def test_account_evidence_mcp_guard_allows_only_status(
 
         guard = (
             AccountEvidenceMcpGuard(
-                delegate
+                delegate,
+
+                tool_lookup=(
+                    fake_tool_lookup
+                ),
             )
         )
 
-        status_result = (
+        account_result = (
             await guard.call_tool(
                 "account_status",
                 {
                     "user_id":
                         "jdoe",
                 },
+            )
+        )
+
+        access_result = (
+            await guard.call_tool(
+                "check_access",
+                {
+                    "user_id":
+                        "jdoe",
+
+                    "resource":
+                        "VPN",
+                },
+            )
+        )
+
+        assert (
+            account_result[
+                "ok"
+            ]
+            is True
+        )
+
+        assert (
+            access_result[
+                "ok"
+            ]
+            is True
+        )
+
+        assert (
+            delegate.calls
+            == [
+                (
+                    "account_status",
+                    {
+                        "user_id":
+                            "jdoe",
+                    },
+                ),
+
+                (
+                    "check_access",
+                    {
+                        "user_id":
+                            "jdoe",
+
+                        "resource":
+                            "VPN",
+                    },
+                ),
+            ]
+        )
+
+    asyncio.run(
+        scenario()
+    )
+
+
+def test_account_evidence_mcp_guard_blocks_non_read_tools(
+) -> None:
+
+    async def scenario(
+    ) -> None:
+
+        delegate = (
+            FakeMcp()
+        )
+
+        guard = (
+            AccountEvidenceMcpGuard(
+                delegate,
+
+                tool_lookup=(
+                    fake_tool_lookup
+                ),
             )
         )
 
@@ -114,13 +255,6 @@ def test_account_evidence_mcp_guard_allows_only_status(
         )
 
         assert (
-            status_result[
-                "ok"
-            ]
-            is True
-        )
-
-        assert (
             unlock_result[
                 "ok"
             ]
@@ -142,16 +276,124 @@ def test_account_evidence_mcp_guard_allows_only_status(
         )
 
         assert (
-            delegate.calls
-            == [
-                (
-                    "account_status",
-                    {
-                        "user_id":
-                            "jdoe",
-                    },
-                )
+            reset_result[
+                "status"
             ]
+            == "denied"
+        )
+
+        assert (
+            delegate.calls
+            == []
+        )
+
+    asyncio.run(
+        scenario()
+    )
+
+
+def test_account_evidence_mcp_guard_blocks_unknown_tool(
+) -> None:
+
+    async def scenario(
+    ) -> None:
+
+        delegate = (
+            FakeMcp()
+        )
+
+        guard = (
+            AccountEvidenceMcpGuard(
+                delegate,
+
+                tool_lookup=(
+                    fake_tool_lookup
+                ),
+            )
+        )
+
+        result = (
+            await guard.call_tool(
+                "definitely_not_a_tool",
+                {},
+            )
+        )
+
+        assert (
+            result[
+                "ok"
+            ]
+            is False
+        )
+
+        assert (
+            result[
+                "status"
+            ]
+            == "denied"
+        )
+
+        assert (
+            delegate.calls
+            == []
+        )
+
+    asyncio.run(
+        scenario()
+    )
+
+
+def test_account_evidence_mcp_guard_blocks_dynamic_policy_tool(
+) -> None:
+
+    async def scenario(
+    ) -> None:
+
+        delegate = (
+            FakeMcp()
+        )
+
+        guard = (
+            AccountEvidenceMcpGuard(
+                delegate,
+
+                tool_lookup=(
+                    fake_tool_lookup
+                ),
+            )
+        )
+
+        result = (
+            await guard.call_tool(
+                "dynamic_read",
+                {},
+            )
+        )
+
+        assert (
+            result[
+                "ok"
+            ]
+            is False
+        )
+
+        assert (
+            result[
+                "status"
+            ]
+            == "denied"
+        )
+
+        assert (
+            "dynamic policy"
+            in result[
+                "error"
+            ]
+        )
+
+        assert (
+            delegate.calls
+            == []
         )
 
     asyncio.run(
@@ -471,6 +713,7 @@ def test_session_report_is_immutable_file(
         )
 
     except FileExistsError:
+
         pass
 
     else:

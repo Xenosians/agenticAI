@@ -60,7 +60,13 @@ def identifier_appears_in_request(
     """
     Check whether an identifier appears literally in the
     original user request without accepting partial identifiers.
+
+    Empty identifiers are never valid identifiers.
     """
+
+    if not identifier.strip():
+
+        return False
 
     identifier_chars = (
         r"A-Za-z0-9._/\\-"
@@ -102,22 +108,32 @@ def validate_grounded_arguments(
     """
     Verify model-produced identifiers that trusted tool policy
     declares must originate literally from the user request.
+
+    A grounded field may be absent when the capability defines it
+    as optional.
+
+    When a grounded field is present, however, it must contain a
+    non-empty string and that exact identifier must appear in the
+    original user request.
     """
 
     for field_name in (
         grounded_arguments
     ):
+
         value = arguments.get(
             field_name
         )
 
         if value is None:
+
             continue
 
         if not isinstance(
             value,
             str,
         ):
+
             return (
                 False,
                 (
@@ -126,10 +142,21 @@ def validate_grounded_arguments(
                 ),
             )
 
+        if not value.strip():
+
+            return (
+                False,
+                (
+                    f"{field_name} "
+                    "must not be empty."
+                ),
+            )
+
         if not identifier_appears_in_request(
             value,
             user_input,
         ):
+
             return (
                 False,
                 (
@@ -201,6 +228,7 @@ class ToolGateway:
             tool_name
             not in agent.tools
         ):
+
             return gateway_result(
                 ok=False,
                 status="denied",
@@ -225,6 +253,7 @@ class ToolGateway:
         )
 
         if tool is None:
+
             return gateway_result(
                 ok=False,
                 status="error",
@@ -252,6 +281,7 @@ class ToolGateway:
             grounded_arguments,
             list,
         ):
+
             return gateway_result(
                 ok=False,
                 status="error",
@@ -273,6 +303,7 @@ class ToolGateway:
             for field_name
             in grounded_arguments
         ):
+
             return gateway_result(
                 ok=False,
                 status="error",
@@ -305,6 +336,7 @@ class ToolGateway:
         )
 
         if not valid:
+
             return gateway_result(
                 ok=False,
                 status="denied",
@@ -342,7 +374,9 @@ class ToolGateway:
             policy_resolver
             is not None
         ):
+
             try:
+
                 policy_result = (
                     policy_resolver(
                         **arguments
@@ -350,6 +384,7 @@ class ToolGateway:
                 )
 
             except TypeError as exc:
+
                 return gateway_result(
                     ok=False,
                     status="denied",
@@ -364,6 +399,7 @@ class ToolGateway:
                 )
 
             except Exception as exc:
+
                 return gateway_result(
                     ok=False,
                     status="error",
@@ -380,6 +416,7 @@ class ToolGateway:
                 policy_result,
                 dict,
             ):
+
                 return gateway_result(
                     ok=False,
                     status="error",
@@ -396,6 +433,7 @@ class ToolGateway:
                 "ok",
                 False,
             ):
+
                 return gateway_result(
                     ok=False,
                     status=(
@@ -437,6 +475,7 @@ class ToolGateway:
             effective_risk
             not in VALID_RISKS
         ):
+
             return gateway_result(
                 ok=False,
                 status="error",
@@ -453,6 +492,7 @@ class ToolGateway:
             requires_approval,
             bool,
         ):
+
             return gateway_result(
                 ok=False,
                 status="error",
@@ -470,6 +510,7 @@ class ToolGateway:
         # ========================================================
 
         if requires_approval:
+
             approval = (
                 self.approval_creator(
                     tool_name,
@@ -516,6 +557,7 @@ class ToolGateway:
             "ok",
             False,
         ):
+
             result_status = (
                 result.get(
                     "status"
@@ -526,6 +568,7 @@ class ToolGateway:
                 result_status
                 == "denied"
             ):
+
                 failure_status = (
                     "denied"
                 )
@@ -535,6 +578,7 @@ class ToolGateway:
                 )
 
             else:
+
                 failure_status = (
                     "error"
                 )
