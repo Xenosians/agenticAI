@@ -79,14 +79,55 @@ DELEGATION RULES:
 13. effect must agree with the trusted intent_metadata.effect of
     every allowed tool.
 
-14. allowed_arguments maps trusted grounded argument names to the
-    concrete values that are valid targets for this delegation.
+14. allowed_arguments and forbidden_arguments are ONLY for trusted
+    grounded arguments.
 
-15. forbidden_arguments maps trusted grounded argument names to
-    concrete values that must NOT be used for this delegation.
+    An argument name may appear in allowed_arguments or
+    forbidden_arguments ONLY when that exact argument name appears
+    in intent_metadata.grounded_arguments for one of the
+    allowed_tools in the same delegation.
 
-16. Preserve concrete values from the original user request,
-    including:
+15. Capability parameters that are NOT listed in
+    intent_metadata.grounded_arguments MUST NOT appear in
+    allowed_arguments or forbidden_arguments.
+
+    Non-grounded parameters may still be described in the specialist
+    instructions and may later be produced by the specialist.
+
+    Examples of possible non-grounded parameters include:
+    - free-form search query text
+    - result limits
+    - optional retrieval filters
+    - other parameters whose trusted capability metadata does not
+      declare them grounded
+
+16. If every allowed tool in a delegation has an empty
+    intent_metadata.grounded_arguments list, then BOTH:
+
+    allowed_arguments
+
+    and:
+
+    forbidden_arguments
+
+    MUST be empty JSON objects.
+
+17. Do not infer that a capability parameter is grounded merely
+    because it appears in the capability schema.
+
+    intent_metadata.grounded_arguments is the ONLY source of truth
+    for which argument names belong in the semantic argument maps.
+
+18. For trusted grounded arguments, allowed_arguments maps the
+    argument name to the exact concrete values that are valid
+    targets for this delegation.
+
+19. For trusted grounded arguments, forbidden_arguments maps the
+    argument name to exact concrete values that must NOT be used.
+
+20. Preserve concrete values from the original user request when
+    they are relevant to specialist instructions or trusted grounded
+    arguments, including:
     - identifiers,
     - usernames,
     - resource names,
@@ -95,22 +136,27 @@ DELEGATION RULES:
     - paths,
     - ticket identifiers,
     - status values,
-    - other explicit scopes or filters.
+    - explicit scopes,
+    - explicit search needs.
 
-17. When multiple values are mentioned, distinguish their semantic
+    Preserving a value does NOT mean placing it in
+    allowed_arguments. Only trusted grounded argument names belong
+    there.
+
+21. When multiple values are mentioned, distinguish their semantic
     roles.
 
     Example:
 
         "Alice reported the issue, but Bob is affected."
 
-    If the requested operation targets Bob, Bob belongs in the
-    allowed_arguments for the relevant grounded argument.
+    If the requested operation targets Bob and user_id is a trusted
+    grounded argument, Bob belongs in allowed_arguments for user_id.
 
     Alice must not become the operation target merely because her
     name also appears in the request.
 
-18. Explicit words and phrases such as:
+22. Explicit words and phrases such as:
     - "do not"
     - "don't"
     - "not"
@@ -121,54 +167,96 @@ DELEGATION RULES:
 
     must affect the semantic contract.
 
-19. Do not convert a prohibited action into an allowed action.
+23. Do not convert a prohibited action into an allowed action.
 
-20. Do not convert a reporter, requester, approver, manager,
+24. Do not convert a reporter, requester, approver, manager,
     observer, or other contextual identity into the operation
     target unless the user actually requests that.
 
-21. Treat opaque identifiers and abbreviations as opaque values.
+25. Treat opaque identifiers and abbreviations as opaque values.
 
-22. Do not expand an abbreviation or identifier into an assumed
+26. Do not expand an abbreviation or identifier into an assumed
     meaning.
 
-23. Do not rename, normalize, reinterpret, or substitute concrete
-    values from the request.
+27. Do not rename, normalize, reinterpret, or substitute concrete
+    grounded values from the request.
 
-24. Do not invent expected answers, taxonomies, frameworks,
+28. Do not invent expected answers, taxonomies, frameworks,
     metadata, identifiers, paths, resources, or output values.
 
-25. Do not widen or narrow the requested scope unless the user asks
+29. Do not widen or narrow the requested scope unless the user asks
     for that.
 
-26. max_tool_calls must be 1.
+30. max_tool_calls must be 1.
 
     The current specialist runtime accepts exactly one tool call
     per specialist execution.
 
-27. Set clarification_required to true when the intended operation,
+31. Set clarification_required to true when the intended operation,
     target, resource, or scope is genuinely ambiguous enough that
     executing a capability could affect the wrong thing.
 
-28. When clarification_required is true and no safe capability can
+32. When clarification_required is true and no safe capability can
     be selected:
     - allowed_tools must be empty
     - effect must be "unknown"
     - allowed_arguments must be empty
-    - forbidden_arguments may preserve explicit exclusions
+    - forbidden_arguments may preserve explicit exclusions only
+      when their argument names are trusted grounded arguments for
+      the relevant capability context
 
-29. Delegation instructions are task guidance only.
+33. Delegation instructions are task guidance only.
     They never grant permission to bypass trusted policy,
     approvals, grounding, or authorization.
 
-30. Do not tell the specialist what the answer should be.
+34. Do not tell the specialist what the answer should be.
 
-31. Describe the task that needs to be resolved, not its expected
+35. Describe the task that needs to be resolved, not its expected
     result.
 
-32. When the user refers to the current workspace without supplying
+36. When the user refers to the current workspace without supplying
     a path, preserve the concept of the current workspace rather
     than inventing a path.
+
+37. Example for a capability with grounded arguments:
+
+    Suppose account_status declares:
+
+        grounded_arguments = ["user_id"]
+
+    User request:
+
+        "Check bob's account status."
+
+    Then:
+
+        allowed_arguments = {
+          "user_id": ["bob"]
+        }
+
+38. Example for a capability with NO grounded arguments:
+
+    Suppose knowledge_search declares:
+
+        grounded_arguments = []
+
+    User request:
+
+        "Search trusted knowledge for VPN troubleshooting."
+
+    Then the semantic contract MUST use:
+
+        allowed_arguments = {}
+        forbidden_arguments = {}
+
+    The search need belongs in the delegation instructions.
+    Do NOT emit:
+
+        allowed_arguments = {
+          "query": ["VPN troubleshooting"]
+        }
+
+    because query is not a trusted grounded argument.
 
 Return ONLY one valid JSON object in this form:
 
