@@ -14,6 +14,13 @@ from config import (
     Settings,
 )
 
+from services.assets import (
+    AssetMutationService,
+    AssetService,
+    build_asset_mutation_service,
+    build_asset_service,
+)
+
 from services.directory import (
     AccessMutationService,
     AccountLifecycleService,
@@ -40,6 +47,10 @@ from tools.access.mcp import (
 
 from tools.account.mcp import (
     register_account_lifecycle_tools,
+)
+
+from tools.assets.mcp import (
+    register_asset_tools,
 )
 
 from tools.developer.mcp import (
@@ -207,6 +218,14 @@ def create_mcp_server(
         AccessMutationService | None
     ) = None,
 
+    assets: (
+        AssetService | None
+    ) = None,
+
+    asset_mutations: (
+        AssetMutationService | None
+    ) = None,
+
     ticketing: (
         TicketService | None
     ) = None,
@@ -245,6 +264,21 @@ def create_mcp_server(
         is not None
         else build_access_mutation_service(
             directory_service
+        )
+    )
+
+    asset_service = (
+        assets
+        if assets is not None
+        else build_asset_service()
+    )
+
+    asset_mutation_service = (
+        asset_mutations
+        if asset_mutations
+        is not None
+        else build_asset_mutation_service(
+            asset_service
         )
     )
 
@@ -342,6 +376,16 @@ def create_mcp_server(
                 )
             )
         )
+
+    # ============================================================
+    # ASSET / DEVICE INVENTORY
+    # ============================================================
+
+    register_asset_tools(
+        server,
+        asset_service,
+        asset_mutation_service,
+    )
 
     # ============================================================
     # GENERIC PROCESS

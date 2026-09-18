@@ -15,6 +15,10 @@ from tools.access.catalog import (
     ACCESS_TOOLS,
 )
 
+from tools.assets.catalog import (
+    ASSET_TOOLS,
+)
+
 from tools.developer.catalog import (
     DEVELOPER_TOOLS,
 )
@@ -449,6 +453,10 @@ TOOLS.update(
 
 TOOLS.update(
     ACCESS_TOOLS
+)
+
+TOOLS.update(
+    ASSET_TOOLS
 )
 
 TOOLS.update(
