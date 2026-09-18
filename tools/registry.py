@@ -7,6 +7,10 @@ from services.process_runner import (
     evaluate_process_policy,
 )
 
+from tools.account.catalog import (
+    ACCOUNT_TOOLS,
+)
+
 from tools.access.catalog import (
     ACCESS_TOOLS,
 )
@@ -42,7 +46,7 @@ from tools.workspace.presentation import (
 
 TOOLS = {
     # ============================================================
-    # DIRECTORY / IDENTITY
+    # DIRECTORY / IDENTITY — READ
     # ============================================================
 
     "account_status": {
@@ -115,9 +119,16 @@ TOOLS = {
             format_access_check_result,
     },
 
+    # ============================================================
+    # DIRECTORY / IDENTITY — EXISTING MUTATIONS
+    # ============================================================
+
     "unlock_user": {
-        "description":
-            "Unlock an account.",
+        "description": (
+            "Unlock one explicitly identified locked account. "
+            "This clears account lockout state but does not enable "
+            "a disabled account."
+        ),
 
         "risk":
             "low",
@@ -145,8 +156,10 @@ TOOLS = {
     },
 
     "reset_password": {
-        "description":
-            "Reset an account password.",
+        "description": (
+            "Reset the password for one explicitly identified "
+            "account."
+        ),
 
         "risk":
             "high",
@@ -429,6 +442,10 @@ TOOLS = {
     },
 }
 
+
+TOOLS.update(
+    ACCOUNT_TOOLS
+)
 
 TOOLS.update(
     ACCESS_TOOLS

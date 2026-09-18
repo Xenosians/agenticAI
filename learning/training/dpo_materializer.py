@@ -38,13 +38,6 @@ from learning.training.provenance_gate import (
     validate_specialist_training_provenance,
 )
 
-from learning.training.specialist_response import (
-    preference_option_calls,
-    preference_option_shape,
-    serialize_preference_option,
-    validate_specialist_preference_pair,
-)
-
 from subagents.core.definitions.loader import (
     load_agent_definition,
 )
@@ -58,7 +51,6 @@ from subagents.core.definitions.loader import (
 SUPPORTED_SPECIALIST_CHANGE_TYPES = {
     "tool",
     "arguments",
-    "tool_calls",
 }
 
 
@@ -108,6 +100,31 @@ def _sha256_text(
             )
         )
         .hexdigest()
+    )
+
+
+def _tool_call_response(
+    *,
+    tool: str,
+    arguments: dict,
+) -> str:
+    """
+    Serialize exactly one specialist tool call using the runtime
+    worker contract.
+    """
+
+    return (
+        _canonical_json(
+            [
+                {
+                    "name":
+                        tool,
+
+                    "arguments":
+                        arguments,
+                }
+            ]
+        )
     )
 
 
@@ -336,25 +353,6 @@ class SpecialistDpoMaterializer:
         generation contract
 
     Legacy evidence remains readable upstream but fails closed here.
-
-    Phase-4D.2 specialist-response policy:
-
-        chosen behavior
-            must resolve to exactly one currently allowed
-            specialist capability
-
-        rejected behavior
-            is negative evidence only
-
-            it may contain:
-                - a hallucinated tool name
-                - multiple tool calls
-
-            rejected behavior is never executed here
-
-    This distinction is critical because malformed or hallucinated
-    worker generations are precisely the behavior DPO may need to
-    discourage.
     """
 
     def __init__(
@@ -409,15 +407,6 @@ class SpecialistDpoMaterializer:
 
             dimensions.add(
                 "agent"
-            )
-
-        if (
-            record.rejected.tool_calls
-            != record.chosen.tool_calls
-        ):
-
-            dimensions.add(
-                "tool_calls"
             )
 
         if (
@@ -527,20 +516,6 @@ class SpecialistDpoMaterializer:
         str
         | None
     ):
-        """
-        Validate that a preference record belongs to this target
-        specialist and can be interpreted as specialist-response
-        evidence.
-
-        IMPORTANT:
-
-        Rejected tools are NOT required to appear in the current
-        trusted capability catalog.
-
-        They are negative model-output evidence, not authorization.
-
-        The chosen response remains fail-closed.
-        """
 
         rejected_agent = (
             record.rejected.agent
@@ -561,172 +536,44 @@ class SpecialistDpoMaterializer:
                 "different_specialist"
             )
 
-        rejected_has_call_set = (
-            record.rejected.tool_calls
-            is not None
-        )
-
-        chosen_has_call_set = (
-            record.chosen.tool_calls
-            is not None
-        )
-
-        # ----------------------------------------------------
-        # Preserve historical singular-tool exclusion semantics.
-        #
-        # Old records without tool_calls still receive the same
-        # missing_tool / missing_arguments reason names.
-        # ----------------------------------------------------
-
         if (
-            not rejected_has_call_set
-            and not chosen_has_call_set
-        ):
-
-            if (
-                record.rejected.tool
-                is None
-                or record.chosen.tool
-                is None
-            ):
-
-                return (
-                    "missing_tool"
-                )
-
-            if (
-                record.rejected.arguments
-                is None
-                or record.chosen.arguments
-                is None
-            ):
-
-                return (
-                    "missing_arguments"
-                )
-
-        # ----------------------------------------------------
-        # Resolve representation shape.
-        # ----------------------------------------------------
-
-        try:
-
-            rejected_shape = (
-                preference_option_shape(
-                    record.rejected,
-                    label=(
-                        "rejected"
-                    ),
-                )
-            )
-
-            chosen_shape = (
-                preference_option_shape(
-                    record.chosen,
-                    label=(
-                        "chosen"
-                    ),
-                )
-            )
-
-        except ValueError:
-
-            return (
-                "invalid_specialist_response_shape"
-            )
-
-        if (
-            rejected_shape
-            != chosen_shape
+            record.rejected.tool
+            is None
+            or record.chosen.tool
+            is None
         ):
 
             return (
-                "mixed_specialist_response_shape"
+                "missing_tool"
             )
-
-        # ----------------------------------------------------
-        # Resolve exact structured worker responses.
-        # ----------------------------------------------------
-
-        try:
-
-            rejected_calls = (
-                preference_option_calls(
-                    record.rejected,
-                    label=(
-                        "rejected"
-                    ),
-                )
-            )
-
-            chosen_calls = (
-                preference_option_calls(
-                    record.chosen,
-                    label=(
-                        "chosen"
-                    ),
-                )
-            )
-
-        except ValueError:
-
-            return (
-                "invalid_specialist_response"
-            )
-
-        # ----------------------------------------------------
-        # CHOSEN = authoritative desired specialist behavior.
-        #
-        # Exactly one allowed call.
-        # ----------------------------------------------------
 
         if (
-            len(
-                chosen_calls
-            )
-            != 1
+            record.rejected.arguments
+            is None
+            or record.chosen.arguments
+            is None
         ):
 
             return (
-                "chosen_tool_call_count_invalid"
+                "missing_arguments"
             )
 
-        chosen_tool = (
-            chosen_calls[
-                0
-            ][
-                "name"
-            ]
-        )
+        if (
+            record.rejected.tool
+            not in self.agent.tools
+        ):
+
+            return (
+                "rejected_tool_not_allowed"
+            )
 
         if (
-            chosen_tool
+            record.chosen.tool
             not in self.agent.tools
         ):
 
             return (
                 "chosen_tool_not_allowed"
-            )
-
-        # ----------------------------------------------------
-        # REJECTED call-set representation is reserved for a
-        # genuine invalid multi-call generation.
-        #
-        # A one-element tool_calls negative should instead use the
-        # historical singular representation.
-        # ----------------------------------------------------
-
-        if (
-            rejected_shape
-            == "tool_calls"
-            and len(
-                rejected_calls
-            )
-            == 1
-        ):
-
-            return (
-                "rejected_tool_call_count_not_invalid"
             )
 
         return None
@@ -758,39 +605,28 @@ class SpecialistDpoMaterializer:
                 "accepted source has no execution provenance."
             )
 
-        # ----------------------------------------------------
-        # Serialize BOTH sides through the canonical specialist
-        # worker-response codec.
-        #
-        # Singular behavior:
-        #
-        #   [{"name":"account_status","arguments":{...}}]
-        #
-        # Multi-call rejected behavior:
-        #
-        #   [
-        #       {"name":"reset_password","arguments":{...}},
-        #       {"name":"reset_password","arguments":{...}}
-        #   ]
-        #
-        # No synthetic reconstruction of the rejected behavior is
-        # performed here.
-        # ----------------------------------------------------
-
         chosen = (
-            serialize_preference_option(
-                source.chosen,
-                label=(
-                    "chosen"
+            _tool_call_response(
+                tool=(
+                    source.chosen.tool
+                ),
+
+                arguments=(
+                    source.chosen.arguments
+                    or {}
                 ),
             )
         )
 
         rejected = (
-            serialize_preference_option(
-                source.rejected,
-                label=(
-                    "rejected"
+            _tool_call_response(
+                tool=(
+                    source.rejected.tool
+                ),
+
+                arguments=(
+                    source.rejected.arguments
+                    or {}
                 ),
             )
         )
@@ -940,10 +776,6 @@ class SpecialistDpoMaterializer:
 
         for record in records:
 
-            # =================================================
-            # TARGET / RESPONSE-SHAPE VALIDATION
-            # =================================================
-
             target_error = (
                 self._validate_specialist_target(
                     record
@@ -961,10 +793,6 @@ class SpecialistDpoMaterializer:
                 )
 
                 continue
-
-            # =================================================
-            # CHANGE CLASSIFICATION
-            # =================================================
 
             (
                 change_type,
@@ -996,52 +824,11 @@ class SpecialistDpoMaterializer:
                     "Internal DPO classification error."
                 )
 
-            # =================================================
-            # FINAL RESPONSE-PAIR POLICY VALIDATION
-            #
-            # This is defense in depth.
-            #
-            # The dedicated codec is the authoritative definition
-            # of a specialist DPO response pair.
-            # =================================================
-
-            try:
-
-                validate_specialist_preference_pair(
-                    rejected=(
-                        record.rejected
-                    ),
-
-                    chosen=(
-                        record.chosen
-                    ),
-
-                    allowed_tools=(
-                        set(
-                            self.agent.tools
-                        )
-                    ),
-                )
-
-            except ValueError:
-
-                _increment_exclusion(
-                    exclusion_counts,
-                    "invalid_specialist_response_pair",
-                )
-
-                continue
-
-            # =================================================
-            # CURRENT TARGET ENVIRONMENT
-            #
-            # Build only when at least one record has crossed the
-            # target/response-shape filters.
+            # Build the CURRENT environment only when at least one
+            # record is actually a specialist-training candidate.
             #
             # This hashes the current checkpoint once for the
             # entire materialization build.
-            # =================================================
-
             if (
                 environment
                 is None
@@ -1058,10 +845,6 @@ class SpecialistDpoMaterializer:
                         ),
                     )
                 )
-
-            # =================================================
-            # EXECUTION PROVENANCE GATE
-            # =================================================
 
             provenance_check = (
                 validate_specialist_training_provenance(
@@ -1108,10 +891,6 @@ class SpecialistDpoMaterializer:
                 )
             )
 
-        # ====================================================
-        # EMPTY BUILD = FAIL CLOSED
-        # ====================================================
-
         if not materialized:
 
             details = (
@@ -1152,10 +931,6 @@ class SpecialistDpoMaterializer:
                 "Internal provenance environment error."
             )
 
-        # ====================================================
-        # DPO RECORD-ID UNIQUENESS
-        # ====================================================
-
         seen_ids: set[
             str
         ] = set()
@@ -1175,10 +950,6 @@ class SpecialistDpoMaterializer:
             seen_ids.add(
                 record.dpo_record_id
             )
-
-        # ====================================================
-        # CONTENT SERIALIZATION
-        # ====================================================
 
         serialized_records = [
             _canonical_json(
@@ -1204,10 +975,6 @@ class SpecialistDpoMaterializer:
                 content_blob
             )
         )
-
-        # ====================================================
-        # IMMUTABLE TARGET ARTIFACT
-        # ====================================================
 
         target_directory = (
             self.output_root
@@ -1337,10 +1104,6 @@ class SpecialistDpoMaterializer:
                 ),
             )
         )
-
-        # ====================================================
-        # ATOMIC-ENOUGH ARTIFACT WRITE
-        # ====================================================
 
         try:
 

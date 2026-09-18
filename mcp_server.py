@@ -16,8 +16,10 @@ from config import (
 
 from services.directory import (
     AccessMutationService,
+    AccountLifecycleService,
     DirectoryService,
     build_access_mutation_service,
+    build_account_lifecycle_service,
     build_directory_service,
 )
 
@@ -34,6 +36,10 @@ from services.ticketing import (
 
 from tools.access.mcp import (
     register_access_mutation_tools,
+)
+
+from tools.account.mcp import (
+    register_account_lifecycle_tools,
 )
 
 from tools.developer.mcp import (
@@ -193,6 +199,10 @@ def create_mcp_server(
         DirectoryService | None
     ) = None,
 
+    account_lifecycle: (
+        AccountLifecycleService | None
+    ) = None,
+
     access_mutations: (
         AccessMutationService | None
     ) = None,
@@ -217,6 +227,15 @@ def create_mcp_server(
         if directory is not None
         else build_directory_service(
             runtime_settings
+        )
+    )
+
+    account_lifecycle_service = (
+        account_lifecycle
+        if account_lifecycle
+        is not None
+        else build_account_lifecycle_service(
+            directory_service
         )
     )
 
@@ -269,6 +288,11 @@ def create_mcp_server(
                 )
             )
         )
+
+    register_account_lifecycle_tools(
+        server,
+        account_lifecycle_service,
+    )
 
     @server.tool()
     def check_access(
@@ -484,4 +508,5 @@ mcp = (
 
 
 if __name__ == "__main__":
+
     mcp.run()
