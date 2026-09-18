@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import uuid
 
 from dataclasses import (
@@ -23,6 +24,7 @@ from subagents.core.definitions.types import (
     AgentResult,
     AgentTask,
     HubResult,
+    ResultCondition,
 )
 
 
@@ -30,34 +32,21 @@ class Orchestrator:
     """
     Main -> Specialist -> Main orchestration.
 
-    Direct conversational path:
+    Conditional workflow path:
 
-        valid Hub routing
+        trusted read
             ↓
-        valid empty delegation list
+        deterministic scalar condition
             ↓
-        Primary Assistant
-
-    Governed specialist path:
-
-        Hub routing + semantic intent
-            ↓
-        structured specialist request
-            ↓
-        deterministic semantic preconditions
-            ↓
-        Specialist runtime
+        conditional specialist execution
             ↓
         SemanticGuard
             ↓
         ToolGateway
             ↓
-        Main synthesis
+        approval boundary
 
-    Invalid routing contracts fail closed.
-
-    A malformed governed-routing response must never silently fall
-    through into ordinary Primary Assistant conversation.
+    Generative models do not evaluate trusted result conditions.
     """
 
     def __init__(
@@ -84,24 +73,203 @@ class Orchestrator:
             require_semantic_intent
         )
 
+    @staticmethod
+    def _valid_condition_scalar(
+        value,
+    ) -> bool:
+
+        if value is None:
+            return True
+
+        if isinstance(
+            value,
+            bool,
+        ):
+            return True
+
+        if isinstance(
+            value,
+            str,
+        ):
+            return True
+
+        if (
+            isinstance(
+                value,
+                int,
+            )
+            and not isinstance(
+                value,
+                bool,
+            )
+        ):
+            return True
+
+        if isinstance(
+            value,
+            float,
+        ):
+            return (
+                math.isfinite(
+                    value
+                )
+            )
+
+        return False
+
+    def _evaluate_condition(
+        self,
+        condition: ResultCondition,
+        *,
+        source_results: dict[
+            str,
+            AgentResult,
+        ],
+    ) -> tuple[
+        bool | None,
+        str | None,
+        str | None,
+    ]:
+
+        source_result = (
+            source_results.get(
+                condition.source_agent
+            )
+        )
+
+        if source_result is None:
+
+            return (
+                None,
+                "conditional_source_missing",
+                (
+                    "The conditional workflow source result "
+                    "is unavailable."
+                ),
+            )
+
+        if (
+            source_result.status
+            != "success"
+        ):
+
+            return (
+                None,
+                "conditional_source_failed",
+                (
+                    "The conditional workflow source did not "
+                    "complete successfully."
+                ),
+            )
+
+        tool_result = (
+            source_result.tool_result
+        )
+
+        if not isinstance(
+            tool_result,
+            dict,
+        ):
+
+            return (
+                None,
+                "conditional_source_result_invalid",
+                (
+                    "The conditional workflow source returned "
+                    "no valid trusted structured result."
+                ),
+            )
+
+        # A provider-level unsuccessful result must never satisfy a
+        # workflow condition even if it happens to expose similarly
+        # named fields.
+        if (
+            tool_result.get(
+                "ok"
+            )
+            is not True
+        ):
+
+            return (
+                None,
+                "conditional_source_result_unsuccessful",
+                (
+                    "The conditional workflow source did not "
+                    "return a successful trusted result."
+                ),
+            )
+
+        if (
+            condition.result_field
+            not in tool_result
+        ):
+
+            return (
+                None,
+                "conditional_result_field_missing",
+                (
+                    "The trusted workflow result does not "
+                    "contain the required condition field."
+                ),
+            )
+
+        actual_value = (
+            tool_result[
+                condition.result_field
+            ]
+        )
+
+        expected_value = (
+            condition.equals
+        )
+
+        if not (
+            self._valid_condition_scalar(
+                actual_value
+            )
+        ):
+
+            return (
+                None,
+                "conditional_result_value_invalid",
+                (
+                    "The trusted workflow condition field "
+                    "does not contain a supported scalar value."
+                ),
+            )
+
+        # Python considers True == 1.
+        #
+        # Workflow equality deliberately does not.
+        if (
+            type(
+                actual_value
+            )
+            is not type(
+                expected_value
+            )
+        ):
+
+            return (
+                None,
+                "conditional_result_type_mismatch",
+                (
+                    "The trusted workflow condition field has "
+                    "an unexpected value type."
+                ),
+            )
+
+        return (
+            actual_value
+            == expected_value,
+            None,
+            None,
+        )
+
     async def run(
         self,
         user_request: str,
     ) -> HubResult:
-
-        # ========================================================
-        # HUB ROUTING
-        #
-        # Important distinction:
-        #
-        #   valid []
-        #       ordinary conversational request
-        #
-        #   RoutingContractError
-        #       malformed / unsafe governed-routing plan
-        #
-        # The second case must NOT become conversational fallback.
-        # ========================================================
 
         try:
 
@@ -125,9 +293,7 @@ class Orchestrator:
 
             return (
                 HubResult(
-                    status=(
-                        "error"
-                    ),
+                    status="error",
 
                     user_request=(
                         user_request
@@ -147,12 +313,6 @@ class Orchestrator:
                 )
             )
 
-        # ========================================================
-        # PRIMARY CONVERSATIONAL PATH
-        #
-        # Only a VALID empty delegation list reaches this branch.
-        # ========================================================
-
         if not delegations:
 
             answer = (
@@ -165,9 +325,7 @@ class Orchestrator:
 
             return (
                 HubResult(
-                    status=(
-                        "success"
-                    ),
+                    status="success",
 
                     user_request=(
                         user_request
@@ -183,10 +341,6 @@ class Orchestrator:
                 )
             )
 
-        # ========================================================
-        # SPECIALIST EXECUTION
-        # ========================================================
-
         results: list[
             AgentResult
         ] = []
@@ -195,11 +349,13 @@ class Orchestrator:
             str
         ] = []
 
-        for delegation in delegations:
+        # Only unconditional executions may become sources.
+        source_results: dict[
+            str,
+            AgentResult
+        ] = {}
 
-            routes.append(
-                delegation.agent_name
-            )
+        for delegation in delegations:
 
             task_id = (
                 str(
@@ -208,13 +364,78 @@ class Orchestrator:
             )
 
             # ----------------------------------------------------
-            # PRODUCTION SEMANTIC CONTRACT REQUIREMENT
-            #
-            # Production build_hub enables this.
-            #
-            # This remains defense-in-depth because strict Router
-            # already rejects a missing contract before reaching
-            # this point.
+            # RESULT-AWARE PRECONDITION
+            # ----------------------------------------------------
+
+            if (
+                delegation.condition
+                is not None
+            ):
+
+                (
+                    matched,
+                    condition_code,
+                    condition_error,
+                ) = (
+                    self._evaluate_condition(
+                        delegation.condition,
+
+                        source_results=(
+                            source_results
+                        ),
+                    )
+                )
+
+                if matched is False:
+
+                    print(
+                        "[HUB] Conditional delegation skipped "
+                        f"agent='{delegation.agent_name}' "
+                        f"source="
+                        f"'{delegation.condition.source_agent}' "
+                        f"field="
+                        f"'{delegation.condition.result_field}'"
+                    )
+
+                    continue
+
+                if matched is None:
+
+                    results.append(
+                        AgentResult(
+                            task_id=(
+                                task_id
+                            ),
+
+                            agent_name=(
+                                delegation.agent_name
+                            ),
+
+                            status="error",
+
+                            task_instructions=(
+                                delegation.instructions
+                            ),
+
+                            outcome_code=(
+                                condition_code
+                            ),
+
+                            error=(
+                                condition_error
+                            ),
+                        )
+                    )
+
+                    continue
+
+            # Only actually executed specialist paths appear here.
+            routes.append(
+                delegation.agent_name
+            )
+
+            # ----------------------------------------------------
+            # SEMANTIC CONTRACT
             # ----------------------------------------------------
 
             if (
@@ -223,7 +444,7 @@ class Orchestrator:
                 is None
             ):
 
-                results.append(
+                result = (
                     AgentResult(
                         task_id=(
                             task_id
@@ -233,9 +454,7 @@ class Orchestrator:
                             delegation.agent_name
                         ),
 
-                        status=(
-                            "error"
-                        ),
+                        status="error",
 
                         task_instructions=(
                             delegation.instructions
@@ -253,18 +472,22 @@ class Orchestrator:
                     )
                 )
 
-                continue
+                results.append(
+                    result
+                )
 
-            # ----------------------------------------------------
-            # CLARIFICATION FAIL-CLOSED
-            #
-            # If the Hub itself says the operation/target/scope is
-            # ambiguous:
-            #
-            #   - do not ask the specialist to guess
-            #   - do not call ToolGateway
-            #   - do not mutate anything
-            # ----------------------------------------------------
+                if (
+                    delegation.condition
+                    is None
+                ):
+
+                    source_results[
+                        delegation.agent_name
+                    ] = (
+                        result
+                    )
+
+                continue
 
             if (
                 delegation.semantic_intent
@@ -274,7 +497,7 @@ class Orchestrator:
                 .clarification_required
             ):
 
-                results.append(
+                result = (
                     AgentResult(
                         task_id=(
                             task_id
@@ -284,9 +507,7 @@ class Orchestrator:
                             delegation.agent_name
                         ),
 
-                        status=(
-                            "error"
-                        ),
+                        status="error",
 
                         task_instructions=(
                             delegation.instructions
@@ -303,6 +524,21 @@ class Orchestrator:
                         ),
                     )
                 )
+
+                results.append(
+                    result
+                )
+
+                if (
+                    delegation.condition
+                    is None
+                ):
+
+                    source_results[
+                        delegation.agent_name
+                    ] = (
+                        result
+                    )
 
                 continue
 
@@ -336,14 +572,6 @@ class Orchestrator:
                 )
             )
 
-            # ----------------------------------------------------
-            # Preserve exact specialist input evidence.
-            #
-            # AgentRuntime owns provenance construction.
-            #
-            # Orchestrator transfers it into the durable result.
-            # ----------------------------------------------------
-
             result = (
                 replace(
                     runtime_result,
@@ -362,22 +590,23 @@ class Orchestrator:
                 result
             )
 
+            if (
+                delegation.condition
+                is None
+            ):
+
+                source_results[
+                    delegation.agent_name
+                ] = (
+                    result
+                )
+
         statuses = {
             result.status
 
             for result
             in results
         }
-
-        # ========================================================
-        # DETERMINISTIC FAILURE / APPROVAL STATES
-        #
-        # Never let generative synthesis obscure:
-        #
-        #   semantic denial
-        #   approval requirement
-        #   runtime failure
-        # ========================================================
 
         if (
             "error"
@@ -416,10 +645,6 @@ class Orchestrator:
             overall_status = (
                 "success"
             )
-
-            # ====================================================
-            # MAIN SYNTHESIS
-            # ====================================================
 
             try:
 

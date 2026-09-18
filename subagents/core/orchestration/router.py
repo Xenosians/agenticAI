@@ -14,6 +14,10 @@ from subagents.core.definitions.types import (
     SpecialistRequest,
 )
 
+from subagents.core.orchestration.condition_contract import (
+    parse_result_condition,
+)
+
 from subagents.core.orchestration.intent_contract import (
     build_router_semantic_agent_spec,
     parse_semantic_intent,
@@ -37,16 +41,7 @@ class RoutingContractError(
 ):
     """
     Raised when production Hub output cannot be trusted as a valid
-    structured routing / semantic-intent contract.
-
-    This is deliberately distinct from:
-
-        no delegation
-
-    A valid empty delegation list means the Primary Assistant may
-    handle the request conversationally.
-
-    An invalid routing contract must fail closed instead.
+    routing / semantic contract.
     """
 
 
@@ -54,32 +49,13 @@ class LLMRouter:
     """
     Hub routing and semantic-intent stage.
 
-    The router reasons over specialists together with trusted
-    runtime capability metadata.
+    Normal execution still permits one unconditional delegation per
+    specialist.
 
-    The Hub produces:
+    Result-aware workflow execution may additionally contain one
+    validated conditional mutation for a specialist.
 
-        specialist identity
-        task instructions
-        structured semantic intent
-
-    Semantic intent is descriptive only.
-
-    It is NOT authorization.
-
-    In strict production mode:
-
-        malformed JSON
-        malformed delegation
-        unknown specialist
-        missing semantic intent
-        invalid semantic intent
-        duplicate same-specialist delegation
-
-    fail closed with RoutingContractError.
-
-    A VALID empty delegation list remains a normal conversational
-    path.
+    Conditions do not grant authorization.
     """
 
     def __init__(
@@ -156,18 +132,25 @@ class LLMRouter:
             )
         )
 
-        template = (
+        base_template = (
             load_prompt(
                 "hub_router.txt"
             )
         )
 
+        workflow_template = (
+            load_prompt(
+                "hub_conditional_workflow.txt"
+            )
+        )
+
         return (
-            template
-            .replace(
+            base_template.replace(
                 "{{SPECIALISTS_JSON}}",
                 specialists_json,
             )
+            + "\n\n"
+            + workflow_template
         )
 
     def _contract_error(
@@ -175,9 +158,7 @@ class LLMRouter:
         message: str,
     ) -> None:
 
-        if (
-            self.strict_contract
-        ):
+        if self.strict_contract:
 
             raise (
                 RoutingContractError(
@@ -288,12 +269,6 @@ class LLMRouter:
 
             return []
 
-        # --------------------------------------------------------
-        # VALID EMPTY ROUTING RESULT
-        #
-        # This is deliberately different from malformed routing.
-        # --------------------------------------------------------
-
         if not delegations:
 
             return []
@@ -302,13 +277,15 @@ class LLMRouter:
             SpecialistRequest
         ] = []
 
-        seen_agents: set[
+        unconditional_agents: set[
             str
         ] = set()
 
-        for delegation in (
-            delegations
-        ):
+        conditional_agents: set[
+            str
+        ] = set()
+
+        for delegation in delegations:
 
             if not isinstance(
                 delegation,
@@ -358,13 +335,11 @@ class LLMRouter:
                 continue
 
             agent_name = (
-                agent_name
-                .strip()
+                agent_name.strip()
             )
 
             instructions = (
-                instructions
-                .strip()
+                instructions.strip()
             )
 
             if not agent_name:
@@ -385,13 +360,8 @@ class LLMRouter:
 
                 continue
 
-            # ----------------------------------------------------
-            # TRUSTED AGENT RESOLUTION
-            # ----------------------------------------------------
-
             if not (
-                self.registry
-                .exists(
+                self.registry.exists(
                     agent_name
                 )
             ):
@@ -403,39 +373,11 @@ class LLMRouter:
 
                 continue
 
-            # ----------------------------------------------------
-            # CURRENT RUNTIME:
-            #
-            # One delegation per specialist.
-            #
-            # Silently dropping a second task would lose user
-            # intent, so strict production mode rejects it.
-            # ----------------------------------------------------
-
-            if (
-                agent_name
-                in seen_agents
-            ):
-
-                self._contract_error(
-                    "Hub router produced multiple delegations "
-                    "for the same specialist while the current "
-                    "runtime supports one delegation per "
-                    f"specialist: {agent_name}"
-                )
-
-                continue
-
             agent = (
-                self.registry
-                .get(
+                self.registry.get(
                     agent_name
                 )
             )
-
-            # ----------------------------------------------------
-            # SEMANTIC INTENT VALIDATION
-            # ----------------------------------------------------
 
             try:
 
@@ -467,22 +409,87 @@ class LLMRouter:
 
                 continue
 
-            if (
-                semantic_intent
-                is None
-            ):
+            if semantic_intent is None:
 
                 self._contract_error(
                     "Hub router omitted the semantic intent "
                     f"contract for specialist '{agent_name}'."
                 )
 
-                # Legacy / isolated non-strict callers remain
-                # readable during the transition.
+            try:
 
-            seen_agents.add(
-                agent_name
-            )
+                condition = (
+                    parse_result_condition(
+                        delegation.get(
+                            "when"
+                        ),
+
+                        prior_delegations=(
+                            validated
+                        ),
+
+                        target_intent=(
+                            semantic_intent
+                        ),
+                    )
+                )
+
+            except ValueError as exc:
+
+                print(
+                    "[ROUTER] Rejected workflow condition "
+                    f"agent={agent_name!r} "
+                    f"error={exc}"
+                )
+
+                self._contract_error(
+                    "Hub router produced an invalid workflow "
+                    f"condition for specialist '{agent_name}': "
+                    f"{exc}"
+                )
+
+                continue
+
+            if condition is None:
+
+                if (
+                    agent_name
+                    in unconditional_agents
+                    or agent_name
+                    in conditional_agents
+                ):
+
+                    self._contract_error(
+                        "Hub router produced multiple "
+                        "delegations for the same specialist "
+                        "without a valid conditional workflow: "
+                        f"{agent_name}"
+                    )
+
+                    continue
+
+                unconditional_agents.add(
+                    agent_name
+                )
+
+            else:
+
+                if (
+                    agent_name
+                    in conditional_agents
+                ):
+
+                    self._contract_error(
+                        "Hub router produced multiple "
+                        "conditional delegations for the same "
+                        f"specialist: {agent_name}"
+                    )
+
+                    continue
+
+                conditional_agents.add(
+                    agent_name
+                )
 
             validated.append(
                 SpecialistRequest(
@@ -497,16 +504,12 @@ class LLMRouter:
                     semantic_intent=(
                         semantic_intent
                     ),
+
+                    condition=(
+                        condition
+                    ),
                 )
             )
-
-        # --------------------------------------------------------
-        # STRICT MODE:
-        #
-        # A non-empty model delegation list must not collapse into
-        # conversational fallback because every delegation was
-        # malformed.
-        # --------------------------------------------------------
 
         if (
             self.strict_contract

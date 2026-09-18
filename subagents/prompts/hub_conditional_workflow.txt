@@ -1,0 +1,179 @@
+CONDITIONAL WORKFLOW PROTOCOL:
+
+This section defines the ONLY valid representation for a
+result-dependent follow-up operation.
+
+A request such as:
+
+    perform a read,
+    then perform a mutation only if the trusted read result
+    satisfies a condition
+
+MUST be represented as TWO delegations.
+
+The FIRST delegation is the unconditional READ.
+
+The SECOND delegation is the conditional MUTATION.
+
+The condition belongs ONLY to the SECOND delegation.
+
+============================================================
+REQUIRED SHAPE
+============================================================
+
+The valid shape is:
+
+{
+  "delegations": [
+    {
+      "agent": "specialist-name",
+      "instructions": "perform the read operation",
+      "intent": {
+        "summary": "read operation",
+        "effect": "read",
+        "allowed_tools": [
+          "exact_read_capability"
+        ],
+        "forbidden_tools": [],
+        "allowed_arguments": {},
+        "forbidden_arguments": {},
+        "max_tool_calls": 1,
+        "clarification_required": false
+      }
+    },
+    {
+      "agent": "specialist-name",
+      "instructions": "perform the mutation only if the trusted read result satisfies the condition",
+      "intent": {
+        "summary": "conditional mutation",
+        "effect": "mutation",
+        "allowed_tools": [
+          "exact_mutation_capability"
+        ],
+        "forbidden_tools": [],
+        "allowed_arguments": {},
+        "forbidden_arguments": {},
+        "max_tool_calls": 1,
+        "clarification_required": false
+      },
+      "when": {
+        "source_agent": "specialist-name",
+        "result_field": "trusted_condition_field",
+        "equals": false
+      }
+    }
+  ]
+}
+
+The capability names and arguments above are placeholders describing
+the structure.
+
+Use ONLY actual specialists, capabilities, grounded arguments, and
+trusted condition fields from AVAILABLE SPECIALISTS.
+
+============================================================
+STRICT RULES
+============================================================
+
+1. The unconditional READ delegation MUST NOT contain "when".
+
+2. The conditional MUTATION delegation MUST contain "when".
+
+3. "when" is a sibling of:
+   - "agent"
+   - "instructions"
+   - "intent"
+
+   It is NEVER placed inside "intent".
+
+4. The first delegation's intent.effect MUST be "read".
+
+5. The first delegation's allowed_tools MUST contain only read
+   capabilities.
+
+6. The second delegation's intent.effect MUST be "mutation".
+
+7. The second delegation's allowed_tools MUST contain only mutation
+   capabilities.
+
+8. NEVER place both a read capability and a mutation capability in
+   the same semantic intent.
+
+9. NEVER use effect "unknown" when an explicit trusted read
+   capability has been selected.
+
+10. effect "unknown" is permitted only for genuine clarification
+    cases with no safely selectable capability.
+
+11. source_agent must refer to an EARLIER unconditional read
+    delegation.
+
+12. result_field must exactly equal a field exposed through the
+    source capability's:
+
+        intent_metadata.condition_fields
+
+13. NEVER invent result fields.
+
+14. NEVER place "when" on the source/read delegation.
+
+15. NEVER create a conditional mutation without an earlier read
+    delegation.
+
+16. NEVER create a conditional chain.
+
+17. The conditional mutation must have been explicitly requested by
+    the ORIGINAL USER REQUEST.
+
+18. Grounded identifiers and resources remain exact literal values
+    from the ORIGINAL USER REQUEST.
+
+19. Approval policy is trusted application metadata.
+
+    NEVER emit any of these inside an intent:
+
+        requires_approval
+        risk
+        policy_resolver
+        approval_required
+        approval_id
+
+20. The Hub does NOT authorize the conditional mutation.
+
+21. The Hub does NOT evaluate the condition.
+
+22. The Hub does NOT decide whether approval is required.
+
+23. The runtime evaluates the trusted structured result
+    deterministically.
+
+24. SemanticGuard and ToolGateway remain authoritative.
+
+25. If the read and conditional mutation use the same specialist,
+    two delegations for that specialist are valid ONLY in this
+    read-then-conditional-mutation shape.
+
+============================================================
+SELF-CHECK BEFORE OUTPUT
+============================================================
+
+For every result-dependent workflow verify:
+
+- exactly one unconditional read delegation exists first
+- the read delegation has no "when"
+- read intent.effect == "read"
+- read intent contains no mutation capability
+- exactly one conditional mutation delegation follows
+- the mutation delegation owns "when"
+- mutation intent.effect == "mutation"
+- mutation intent contains no read capability
+- "when" is outside "intent"
+- no approval-policy fields appear in either intent
+- result_field exists in trusted condition_fields
+- every grounded value is copied literally from the original request
+
+If any of these checks fail, correct the JSON before returning it.
+
+No markdown.
+No explanation.
+No additional text.

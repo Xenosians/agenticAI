@@ -159,6 +159,212 @@ def trusted_grounded_arguments(
     return normalized
 
 
+def trusted_condition_fields(
+    *,
+    tool_name: str,
+    tool: dict,
+) -> list[str]:
+    """
+    Return trusted top-level structured-result fields that may be
+    used for deterministic workflow branching.
+
+    Capabilities opt in explicitly.
+
+    Missing metadata means that capability may NOT authorize a
+    result-dependent workflow branch.
+    """
+
+    value = (
+        tool.get(
+            "condition_fields",
+            [],
+        )
+    )
+
+    if not isinstance(
+        value,
+        list,
+    ):
+
+        raise ValueError(
+            f"Capability '{tool_name}' has invalid "
+            "condition_fields metadata."
+        )
+
+    normalized: list[str] = []
+
+    seen: set[str] = set()
+
+    for item in value:
+
+        if not isinstance(
+            item,
+            str,
+        ):
+
+            raise ValueError(
+                f"Capability '{tool_name}' contains a "
+                "non-string condition field."
+            )
+
+        field_name = (
+            item.strip()
+        )
+
+        if not field_name:
+
+            raise ValueError(
+                f"Capability '{tool_name}' contains an "
+                "empty condition field."
+            )
+
+        if field_name in seen:
+
+            continue
+
+        seen.add(
+            field_name
+        )
+
+        normalized.append(
+            field_name
+        )
+
+    return normalized
+
+
+def trusted_requires_approval(
+    *,
+    tool_name: str,
+    tool: dict,
+) -> bool:
+    """
+    Read the static trusted approval requirement.
+
+    Conditional mutation v1 deliberately supports only capabilities
+    whose trusted metadata guarantees approval and whose approval
+    policy is not dynamically rewritten at execution time.
+    """
+
+    value = (
+        tool.get(
+            "requires_approval"
+        )
+    )
+
+    if not isinstance(
+        value,
+        bool,
+    ):
+
+        raise ValueError(
+            f"Capability '{tool_name}' has invalid "
+            "requires_approval metadata."
+        )
+
+    return value
+
+
+def trusted_condition_fields(
+    *,
+    tool_name: str,
+    tool: dict,
+) -> list[str]:
+    """
+    Return trusted top-level structured-result fields that may
+    control deterministic workflow branching.
+
+    Capabilities must explicitly opt in.
+
+    Missing metadata means the capability cannot be used as a
+    result-dependent workflow source.
+    """
+
+    value = (
+        tool.get(
+            "condition_fields",
+            [],
+        )
+    )
+
+    if not isinstance(
+        value,
+        list,
+    ):
+
+        raise ValueError(
+            f"Capability '{tool_name}' has invalid "
+            "condition_fields metadata."
+        )
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+
+    for item in value:
+
+        if not isinstance(
+            item,
+            str,
+        ):
+
+            raise ValueError(
+                f"Capability '{tool_name}' contains a "
+                "non-string condition field."
+            )
+
+        field_name = (
+            item.strip()
+        )
+
+        if not field_name:
+
+            raise ValueError(
+                f"Capability '{tool_name}' contains an "
+                "empty condition field."
+            )
+
+        if field_name in seen:
+            continue
+
+        seen.add(
+            field_name
+        )
+
+        normalized.append(
+            field_name
+        )
+
+    return normalized
+
+
+def trusted_requires_approval(
+    *,
+    tool_name: str,
+    tool: dict,
+) -> bool:
+    """
+    Return the capability's static trusted approval requirement.
+    """
+
+    value = (
+        tool.get(
+            "requires_approval"
+        )
+    )
+
+    if not isinstance(
+        value,
+        bool,
+    ):
+
+        raise ValueError(
+            f"Capability '{tool_name}' has invalid "
+            "requires_approval metadata."
+        )
+
+    return value
+
+
 def build_router_semantic_agent_spec(
     agent: AgentDefinition,
     *,
@@ -168,11 +374,10 @@ def build_router_semantic_agent_spec(
     Any,
 ]:
     """
-    Build the Hub-facing specialist specification plus trusted,
-    generic semantic metadata.
+    Build Hub-facing specialist metadata from the trusted runtime
+    registry.
 
-    This metadata is generated from the tool registry rather than
-    maintained as a parallel hardcoded intent table.
+    There is no parallel hardcoded workflow table.
     """
 
     spec = (
@@ -218,10 +423,13 @@ def build_router_semantic_agent_spec(
             )
         )
 
-        if not isinstance(
-            tool_name,
-            str,
-        ) or not tool_name.strip():
+        if (
+            not isinstance(
+                tool_name,
+                str,
+            )
+            or not tool_name.strip()
+        ):
 
             raise ValueError(
                 f"Agent '{agent.name}' has invalid "
@@ -241,7 +449,8 @@ def build_router_semantic_agent_spec(
         if tool is None:
 
             raise ValueError(
-                f"Unknown trusted capability: {tool_name}"
+                "Unknown trusted capability: "
+                f"{tool_name}"
             )
 
         capability[
@@ -254,6 +463,28 @@ def build_router_semantic_agent_spec(
 
             "grounded_arguments":
                 trusted_grounded_arguments(
+                    tool_name=(
+                        tool_name
+                    ),
+
+                    tool=(
+                        tool
+                    ),
+                ),
+
+            "condition_fields":
+                trusted_condition_fields(
+                    tool_name=(
+                        tool_name
+                    ),
+
+                    tool=(
+                        tool
+                    ),
+                ),
+
+            "requires_approval":
+                trusted_requires_approval(
                     tool_name=(
                         tool_name
                     ),
@@ -417,6 +648,35 @@ def parse_semantic_intent(
 
         raise ValueError(
             "intent must be an object."
+        )
+
+    supported_fields = {
+        "summary",
+        "effect",
+        "allowed_tools",
+        "forbidden_tools",
+        "allowed_arguments",
+        "forbidden_arguments",
+        "max_tool_calls",
+        "clarification_required",
+    }
+
+    unexpected_fields = (
+        set(
+            value.keys()
+        )
+        - supported_fields
+    )
+
+    if unexpected_fields:
+
+        raise ValueError(
+            "intent contains unsupported fields: "
+            + ", ".join(
+                sorted(
+                    unexpected_fields
+                )
+            )
         )
 
     summary = (

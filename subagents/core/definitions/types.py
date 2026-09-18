@@ -76,6 +76,69 @@ class SemanticIntent:
     clarification_required: bool = False
 
 
+@dataclass(
+    frozen=True
+)
+class ResultCondition:
+    """
+    Deterministic condition over one trusted specialist result.
+
+    source_agent:
+        Earlier unconditional read specialist whose trusted
+        structured result is inspected.
+
+    result_field:
+        Trusted top-level result field explicitly declared by that
+        capability as safe for workflow branching.
+
+    equals:
+        Exact scalar value required before the conditional
+        specialist execution may proceed.
+
+    The condition is routing/execution control only.
+
+    It is NOT authorization.
+    """
+
+    source_agent: str
+
+    result_field: str
+
+    equals: (
+        str
+        | int
+        | float
+        | bool
+        | None
+    )
+
+
+@dataclass(
+    frozen=True
+)
+class ResultCondition:
+    """
+    Deterministic condition over one earlier trusted specialist
+    result.
+
+    The condition controls workflow progression only.
+
+    It is NOT authorization.
+    """
+
+    source_agent: str
+
+    result_field: str
+
+    equals: (
+        str
+        | int
+        | float
+        | bool
+        | None
+    )
+
+
 @dataclass
 class SpecialistRequest:
     """
@@ -88,7 +151,11 @@ class SpecialistRequest:
         machine-checkable description of what the Hub believes the
         user requested
 
-    Neither field grants authorization.
+    condition:
+        optional deterministic predicate over an earlier trusted
+        read result
+
+    None of these fields independently grant authorization.
 
     Trusted execution remains owned by deterministic application
     code.
@@ -103,6 +170,10 @@ class SpecialistRequest:
         | None
     ) = None
 
+    condition: (
+        ResultCondition
+        | None
+    ) = None
 
 @dataclass
 class AgentTask:

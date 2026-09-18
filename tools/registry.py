@@ -72,6 +72,11 @@ TOOLS = {
             "user_id",
         ],
 
+        "condition_fields": [
+            "enabled",
+            "locked",
+        ],
+
         "parameters": {
             "user_id": {
                 "type":
@@ -101,6 +106,10 @@ TOOLS = {
         "grounded_arguments": [
             "user_id",
             "resource",
+        ],
+
+        "condition_fields": [
+            "has_access",
         ],
 
         "parameters": {
