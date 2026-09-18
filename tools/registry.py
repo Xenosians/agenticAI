@@ -27,6 +27,10 @@ from tools.git.catalog import (
     GIT_TOOLS,
 )
 
+from tools.knowledge.catalog import (
+    KNOWLEDGE_TOOLS,
+)
+
 from tools.presentation import (
     format_access_check_result,
     format_account_status_result,
@@ -465,6 +469,10 @@ TOOLS.update(
 
 TOOLS.update(
     GIT_TOOLS
+)
+
+TOOLS.update(
+    KNOWLEDGE_TOOLS
 )
 
 TOOLS.update(

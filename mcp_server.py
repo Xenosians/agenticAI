@@ -30,6 +30,11 @@ from services.directory import (
     build_directory_service,
 )
 
+from services.knowledge import (
+    KnowledgeService,
+    build_knowledge_service,
+)
+
 from services.process_runner import (
     run_process,
 )
@@ -59,6 +64,10 @@ from tools.developer.mcp import (
 
 from tools.git.mcp import (
     register_git_tools,
+)
+
+from tools.knowledge.mcp import (
+    register_knowledge_tools,
 )
 
 from tools.ticketing.mcp import (
@@ -226,6 +235,10 @@ def create_mcp_server(
         AssetMutationService | None
     ) = None,
 
+    knowledge: (
+        KnowledgeService | None
+    ) = None,
+
     ticketing: (
         TicketService | None
     ) = None,
@@ -280,6 +293,12 @@ def create_mcp_server(
         else build_asset_mutation_service(
             asset_service
         )
+    )
+
+    knowledge_service = (
+        knowledge
+        if knowledge is not None
+        else build_knowledge_service()
     )
 
     ticket_service = (
@@ -385,6 +404,15 @@ def create_mcp_server(
         server,
         asset_service,
         asset_mutation_service,
+    )
+
+    # ============================================================
+    # KNOWLEDGE / RUNBOOK
+    # ============================================================
+
+    register_knowledge_tools(
+        server,
+        knowledge_service,
     )
 
     # ============================================================
