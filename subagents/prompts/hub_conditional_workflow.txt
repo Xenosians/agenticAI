@@ -128,15 +128,12 @@ STRICT RULES
 18. Grounded identifiers and resources remain exact literal values
     from the ORIGINAL USER REQUEST.
 
-19. Approval policy is trusted application metadata.
+19. Approval and execution policy are controlled by trusted
+    application code.
 
-    NEVER emit any of these inside an intent:
-
-        requires_approval
-        risk
-        policy_resolver
-        approval_required
-        approval_id
+    NEVER emit approval state, risk policy, internal policy
+    implementation details, executor metadata, or provider
+    implementation metadata inside an intent.
 
 20. The Hub does NOT authorize the conditional mutation.
 
@@ -154,6 +151,65 @@ STRICT RULES
     read-then-conditional-mutation shape.
 
 ============================================================
+TRUSTED BOUNDED ARGUMENT VALUES
+============================================================
+
+Some capabilities may expose:
+
+    intent_metadata.bounded_argument_values
+
+These are trusted configured canonical values known to the runtime.
+
+They are descriptive capability metadata.
+
+They do NOT authorize execution.
+
+The semantic intent must STILL preserve the user's grounded target
+as an exact literal value from the ORIGINAL USER REQUEST.
+
+Do NOT rewrite the user's value to match a bounded value.
+
+For example:
+
+    User request:
+        "Check the status of the AI repository."
+
+    Trusted bounded values:
+        repository = [
+          "ai",
+          "backend",
+          "frontend"
+        ]
+
+The Hub may still emit:
+
+    allowed_arguments = {
+      "repository": [
+        "AI"
+      ]
+    }
+
+because "AI" is the exact grounded value from the user request.
+
+Trusted deterministic application code may later map that literal
+value to exactly one canonical bounded value when the mapping is
+unambiguous.
+
+The Hub must NOT perform that canonicalization itself.
+
+Never use bounded values to:
+
+- infer an unmentioned target,
+- widen the requested scope,
+- substitute a different resource,
+- perform fuzzy matching,
+- guess an abbreviation,
+- translate a value,
+- remove words,
+- add words,
+- select a merely similar identifier.
+
+============================================================
 SELF-CHECK BEFORE OUTPUT
 ============================================================
 
@@ -168,9 +224,11 @@ For every result-dependent workflow verify:
 - mutation intent.effect == "mutation"
 - mutation intent contains no read capability
 - "when" is outside "intent"
-- no approval-policy fields appear in either intent
+- no approval or internal execution-policy fields appear in either
+  intent
 - result_field exists in trusted condition_fields
 - every grounded value is copied literally from the original request
+- bounded argument metadata is never treated as authorization
 
 If any of these checks fail, correct the JSON before returning it.
 

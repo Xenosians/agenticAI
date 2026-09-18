@@ -7,6 +7,11 @@ from dataclasses import (
     replace,
 )
 
+from learning.evidence.runtime_decisions import (
+    attach_hub_runtime_decisions,
+    extract_task_runtime_decisions,
+)
+
 from subagents.core.orchestration.router import (
     LLMRouter,
     RoutingContractError,
@@ -47,6 +52,14 @@ class Orchestrator:
         approval boundary
 
     Generative models do not evaluate trusted result conditions.
+
+    Exact live SemanticGuard and ToolGateway decision evidence is
+    collected from AgentTask runtime context and attached privately
+    to the final HubResult.
+
+    That evidence is observability only.
+
+    It is NOT authorization.
     """
 
     def __init__(
@@ -85,12 +98,14 @@ class Orchestrator:
             value,
             bool,
         ):
+
             return True
 
         if isinstance(
             value,
             str,
         ):
+
             return True
 
         if (
@@ -103,12 +118,14 @@ class Orchestrator:
                 bool,
             )
         ):
+
             return True
 
         if isinstance(
             value,
             float,
         ):
+
             return (
                 math.isfinite(
                     value
@@ -180,9 +197,8 @@ class Orchestrator:
                 ),
             )
 
-        # A provider-level unsuccessful result must never satisfy a
-        # workflow condition even if it happens to expose similarly
-        # named fields.
+        # Provider-level unsuccessful results must never satisfy a
+        # workflow condition.
         if (
             tool_result.get(
                 "ok"
@@ -238,7 +254,9 @@ class Orchestrator:
                 ),
             )
 
-        # Python considers True == 1.
+        # Python considers:
+        #
+        #     True == 1
         #
         # Workflow equality deliberately does not.
         if (
@@ -349,10 +367,20 @@ class Orchestrator:
             str
         ] = []
 
-        # Only unconditional executions may become sources.
+        # Only unconditional executions may become trusted
+        # conditional-workflow sources.
         source_results: dict[
             str,
-            AgentResult
+            AgentResult,
+        ] = {}
+
+        # Private task-indexed live learning evidence.
+        #
+        # This is attached to the final HubResult only after
+        # orchestration is complete.
+        runtime_decisions_by_task_id: dict[
+            str,
+            dict,
         ] = {}
 
         for delegation in delegations:
@@ -363,9 +391,9 @@ class Orchestrator:
                 )
             )
 
-            # ----------------------------------------------------
+            # ====================================================
             # RESULT-AWARE PRECONDITION
-            # ----------------------------------------------------
+            # ====================================================
 
             if (
                 delegation.condition
@@ -417,6 +445,10 @@ class Orchestrator:
                                 delegation.instructions
                             ),
 
+                            semantic_intent=(
+                                delegation.semantic_intent
+                            ),
+
                             outcome_code=(
                                 condition_code
                             ),
@@ -434,9 +466,9 @@ class Orchestrator:
                 delegation.agent_name
             )
 
-            # ----------------------------------------------------
+            # ====================================================
             # SEMANTIC CONTRACT
-            # ----------------------------------------------------
+            # ====================================================
 
             if (
                 self.require_semantic_intent
@@ -513,6 +545,10 @@ class Orchestrator:
                             delegation.instructions
                         ),
 
+                        semantic_intent=(
+                            delegation.semantic_intent
+                        ),
+
                         outcome_code=(
                             "semantic_clarification_required"
                         ),
@@ -541,6 +577,10 @@ class Orchestrator:
                     )
 
                 continue
+
+            # ====================================================
+            # SPECIALIST EXECUTION
+            # ====================================================
 
             task = (
                 AgentTask(
@@ -572,12 +612,42 @@ class Orchestrator:
                 )
             )
 
+            # ----------------------------------------------------
+            # LIVE DECISION EVIDENCE
+            #
+            # Copy it BEFORE moving on to another task.
+            #
+            # This does not change runtime_result.
+            # ----------------------------------------------------
+
+            task_runtime_decisions = (
+                extract_task_runtime_decisions(
+                    task
+                )
+            )
+
+            if task_runtime_decisions:
+
+                runtime_decisions_by_task_id[
+                    task_id
+                ] = (
+                    task_runtime_decisions
+                )
+
+            # ----------------------------------------------------
+            # DURABLE SPECIALIST RESULT
+            # ----------------------------------------------------
+
             result = (
                 replace(
                     runtime_result,
 
                     task_instructions=(
                         task.instructions
+                    ),
+
+                    semantic_intent=(
+                        task.semantic_intent
                     ),
 
                     execution_provenance=(
@@ -600,6 +670,10 @@ class Orchestrator:
                 ] = (
                     result
                 )
+
+        # ========================================================
+        # OVERALL RESULT
+        # ========================================================
 
         statuses = {
             result.status
@@ -680,7 +754,7 @@ class Orchestrator:
                     )
                 )
 
-        return (
+        hub_result = (
             HubResult(
                 status=(
                     overall_status
@@ -702,6 +776,32 @@ class Orchestrator:
                     answer
                 ),
             )
+        )
+
+        # ========================================================
+        # PRIVATE LEARNING-EVIDENCE HANDOFF
+        #
+        # Dynamic attribute:
+        #     ignored by dataclasses.asdict()
+        #
+        # Therefore it does not leak into Phoenix/public result
+        # serialization or Main synthesis.
+        # ========================================================
+
+        hub_result = (
+            attach_hub_runtime_decisions(
+                hub_result=(
+                    hub_result
+                ),
+
+                decisions_by_task_id=(
+                    runtime_decisions_by_task_id
+                ),
+            )
+        )
+
+        return (
+            hub_result
         )
 
     def _compose_deterministic_answer(

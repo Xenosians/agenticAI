@@ -25,20 +25,42 @@ class TrajectoryStep(
 ):
     task_id: str
 
-    # Exact advisory Hub -> specialist task context that was
-    # supplied alongside the original user request.
-    #
-    # This is model-input evidence only.
-    # It is never authorization.
     task_instructions: (
         str | None
     ) = None
 
-    # Exact immutable runtime identity evidence captured before
-    # specialist generation.
+    semantic_intent: (
+        dict[
+            str,
+            Any,
+        ]
+        | None
+    ) = None
+
+    # Exact live SemanticGuard decision returned during this
+    # specialist execution.
     #
-    # Optional preserves compatibility with historical trajectory
-    # records created before provenance capture existed.
+    # Historical records remain valid because this is optional.
+    semantic_guard_decision: (
+        dict[
+            str,
+            Any,
+        ]
+        | None
+    ) = None
+
+    # Exact ToolGateway decision metadata returned during this
+    # specialist execution.
+    #
+    # The provider result itself remains in tool_result.
+    gateway_decision: (
+        dict[
+            str,
+            Any,
+        ]
+        | None
+    ) = None
+
     execution_provenance: (
         SpecialistExecutionProvenance
         | None
@@ -52,19 +74,10 @@ class TrajectoryStep(
         str | None
     ) = None
 
-    # Supplemental worker-output evidence.
-    #
-    # Historical trajectory.v1 records do not contain these fields
-    # and remain readable because both are optional.
     raw_model_output: (
         str | None
     ) = None
 
-    # Complete validated tool-call list when the worker violates
-    # the exactly-one-call runtime contract.
-    #
-    # These calls are observed model behavior only.
-    # Their presence does not imply authorization or execution.
     proposed_tool_calls: (
         list[
             dict[
@@ -138,15 +151,6 @@ class TrajectorySignals(
 class ExecutionReward(
     BaseModel
 ):
-    """
-    Deterministic runtime reward.
-
-    This measures operational execution evidence only.
-
-    It must never automatically be interpreted as semantic
-    correctness.
-    """
-
     model_config = (
         ConfigDict(
             populate_by_name=True
@@ -181,14 +185,6 @@ class ExecutionReward(
 class TrajectoryQuality(
     BaseModel
 ):
-    """
-    Semantic and deterministic quality evidence associated with a
-    trajectory.
-
-    Semantic fields remain None until trusted evidence establishes
-    whether they are correct.
-    """
-
     model_config = (
         ConfigDict(
             populate_by_name=True
@@ -331,12 +327,6 @@ class PreferenceOption(
         str | None
     ) = None
 
-    # Complete structured worker output when one preference option
-    # represents a tool-call SET rather than the normal singular
-    # runtime proposal.
-    #
-    # This is additive and optional so all historical preference
-    # examples remain readable.
     tool_calls: (
         list[
             dict[

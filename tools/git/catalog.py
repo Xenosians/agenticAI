@@ -35,21 +35,6 @@ def resolve_git_argument_values(
     Values come from trusted runtime configuration.
 
     Physical paths are never exposed.
-
-    Example:
-
-        {
-            "repository": [
-                "ai",
-                "backend",
-                "frontend",
-            ]
-        }
-
-    This metadata helps the model map natural-language references
-    such as "AI repo" onto canonical structured identifiers.
-
-    ToolGateway and GitRepositoryRegistry remain authoritative.
     """
 
     registry = (
@@ -90,8 +75,10 @@ REPOSITORY_PARAMETER = {
 GIT_TOOLS = {
     "workspace_git_status": {
         "description": (
-            "Inspect the current branch and working-tree state "
-            "of one configured logical Git repository."
+            "Inspect the current branch and complete working-tree "
+            "state of one configured logical Git repository, "
+            "including staged, unstaged, untracked, and conflicted "
+            "files."
         ),
 
         "risk":
@@ -183,8 +170,9 @@ GIT_TOOLS = {
 
     "workspace_git_diff": {
         "description": (
-            "Retrieve the bounded current unstaged Git diff for "
-            "one configured logical repository."
+            "Retrieve the bounded current UNSTAGED Git diff for "
+            "one configured logical repository. This capability "
+            "does not include staged changes."
         ),
 
         "risk":
@@ -214,8 +202,9 @@ GIT_TOOLS = {
 
     "workspace_git_changed_files": {
         "description": (
-            "List files with current unstaged Git changes in "
-            "one configured logical repository."
+            "List all currently changed files in one configured "
+            "logical Git repository, including staged, unstaged, "
+            "untracked, and conflicted files."
         ),
 
         "risk":

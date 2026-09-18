@@ -11,6 +11,7 @@ from subagents.core.definitions.types import (
 )
 
 from subagents.core.tooling.capabilities import (
+    build_capability_spec,
     build_router_agent_spec,
 )
 
@@ -265,104 +266,149 @@ def trusted_requires_approval(
     return value
 
 
-def trusted_condition_fields(
+def trusted_bounded_argument_values(
     *,
     tool_name: str,
-    tool: dict,
-) -> list[str]:
+    tool_lookup: ToolLookup = get_tool,
+) -> dict[
+    str,
+    list[str],
+]:
     """
-    Return trusted top-level structured-result fields that may
-    control deterministic workflow branching.
+    Return trusted bounded model-facing argument values for one
+    capability.
 
-    Capabilities must explicitly opt in.
+    These values come only from trusted capability metadata via the
+    existing argument_values_resolver path.
 
-    Missing metadata means the capability cannot be used as a
-    result-dependent workflow source.
+    Example:
+
+        workspace_git_status
+            repository -> ["ai", "backend", "frontend"]
+
+    This information may be used to canonicalize a Hub semantic
+    contract.
+
+    It does NOT:
+        - authorize the capability;
+        - bypass grounding;
+        - widen the user's requested scope;
+        - infer aliases not present in trusted metadata.
     """
 
-    value = (
-        tool.get(
-            "condition_fields",
-            [],
+    capability = (
+        build_capability_spec(
+            tool_name,
+
+            tool_lookup=(
+                tool_lookup
+            ),
+
+            include_arguments=True,
+        )
+    )
+
+    argument_schema = (
+        capability.get(
+            "argument_schema"
         )
     )
 
     if not isinstance(
-        value,
-        list,
+        argument_schema,
+        dict,
     ):
 
         raise ValueError(
             f"Capability '{tool_name}' has invalid "
-            "condition_fields metadata."
+            "model-facing argument schema."
         )
 
-    normalized: list[str] = []
-    seen: set[str] = set()
+    bounded: dict[
+        str,
+        list[str],
+    ] = {}
 
-    for item in value:
+    for (
+        argument_name,
+        field_schema,
+    ) in argument_schema.items():
 
         if not isinstance(
-            item,
-            str,
+            field_schema,
+            dict,
+        ):
+
+            continue
+
+        enum = (
+            field_schema.get(
+                "enum"
+            )
+        )
+
+        if enum is None:
+
+            continue
+
+        if not isinstance(
+            enum,
+            list,
         ):
 
             raise ValueError(
-                f"Capability '{tool_name}' contains a "
-                "non-string condition field."
+                f"Capability '{tool_name}' contains invalid "
+                f"bounded values for '{argument_name}'."
             )
 
-        field_name = (
-            item.strip()
-        )
+        values: list[str] = []
 
-        if not field_name:
+        seen: set[str] = set()
 
-            raise ValueError(
-                f"Capability '{tool_name}' contains an "
-                "empty condition field."
+        for item in enum:
+
+            if not isinstance(
+                item,
+                str,
+            ):
+
+                raise ValueError(
+                    f"Capability '{tool_name}' contains a "
+                    "non-string bounded argument value."
+                )
+
+            normalized = (
+                item.strip()
             )
 
-        if field_name in seen:
-            continue
+            if not normalized:
 
-        seen.add(
-            field_name
-        )
+                raise ValueError(
+                    f"Capability '{tool_name}' contains an "
+                    "empty bounded argument value."
+                )
 
-        normalized.append(
-            field_name
-        )
+            if normalized in seen:
 
-    return normalized
+                continue
 
+            seen.add(
+                normalized
+            )
 
-def trusted_requires_approval(
-    *,
-    tool_name: str,
-    tool: dict,
-) -> bool:
-    """
-    Return the capability's static trusted approval requirement.
-    """
+            values.append(
+                normalized
+            )
 
-    value = (
-        tool.get(
-            "requires_approval"
-        )
-    )
+        if values:
 
-    if not isinstance(
-        value,
-        bool,
-    ):
+            bounded[
+                argument_name
+            ] = (
+                values
+            )
 
-        raise ValueError(
-            f"Capability '{tool_name}' has invalid "
-            "requires_approval metadata."
-        )
-
-    return value
+    return bounded
 
 
 def build_router_semantic_agent_spec(
@@ -378,6 +424,11 @@ def build_router_semantic_agent_spec(
     registry.
 
     There is no parallel hardcoded workflow table.
+
+    Bounded argument values are included when trusted runtime
+    metadata provides them.
+
+    They are descriptive model-facing metadata only.
     """
 
     spec = (
@@ -469,6 +520,17 @@ def build_router_semantic_agent_spec(
 
                     tool=(
                         tool
+                    ),
+                ),
+
+            "bounded_argument_values":
+                trusted_bounded_argument_values(
+                    tool_name=(
+                        tool_name
+                    ),
+
+                    tool_lookup=(
+                        tool_lookup
                     ),
                 ),
 
@@ -617,6 +679,258 @@ def _normalize_argument_map(
     return normalized
 
 
+def _collect_trusted_bounded_values(
+    *,
+    tool_names: list[str],
+    tool_lookup: ToolLookup,
+) -> dict[
+    str,
+    list[str],
+]:
+    """
+    Build a union of trusted bounded values exposed by the
+    capabilities participating in one semantic intent.
+
+    Values remain exact trusted canonical identifiers.
+    """
+
+    result: dict[
+        str,
+        list[str],
+    ] = {}
+
+    seen: dict[
+        str,
+        set[str],
+    ] = {}
+
+    for tool_name in tool_names:
+
+        values_by_argument = (
+            trusted_bounded_argument_values(
+                tool_name=(
+                    tool_name
+                ),
+
+                tool_lookup=(
+                    tool_lookup
+                ),
+            )
+        )
+
+        for (
+            argument_name,
+            values,
+        ) in values_by_argument.items():
+
+            output_values = (
+                result.setdefault(
+                    argument_name,
+                    [],
+                )
+            )
+
+            output_seen = (
+                seen.setdefault(
+                    argument_name,
+                    set(),
+                )
+            )
+
+            for item in values:
+
+                if item in output_seen:
+
+                    continue
+
+                output_seen.add(
+                    item
+                )
+
+                output_values.append(
+                    item
+                )
+
+    return result
+
+
+def _canonicalize_bounded_value(
+    value: str,
+    *,
+    trusted_values: list[str],
+    field_name: str,
+) -> str:
+    """
+    Canonicalize one Hub-produced value only when trusted bounded
+    metadata makes the mapping deterministic.
+
+    Rules:
+
+        exact trusted value
+            -> preserve
+
+        exactly one case-insensitive trusted match
+            -> canonical trusted spelling
+
+        no trusted match
+            -> reject
+
+        multiple case-insensitive trusted matches
+            -> reject as ambiguous
+
+    No substring, synonym, abbreviation, fuzzy, semantic, or
+    model-based normalization is permitted.
+    """
+
+    if value in trusted_values:
+
+        return value
+
+    folded = (
+        value.casefold()
+    )
+
+    matches = [
+        candidate
+
+        for candidate
+        in trusted_values
+
+        if (
+            candidate.casefold()
+            == folded
+        )
+    ]
+
+    if len(
+        matches
+    ) == 1:
+
+        return (
+            matches[
+                0
+            ]
+        )
+
+    if not matches:
+
+        raise ValueError(
+            f"{field_name} contains value "
+            f"'{value}' that does not match any "
+            "trusted bounded value."
+        )
+
+    raise ValueError(
+        f"{field_name} contains value "
+        f"'{value}' whose trusted bounded mapping "
+        "is ambiguous."
+    )
+
+
+def _canonicalize_bounded_argument_map(
+    value: dict[
+        str,
+        list[str],
+    ],
+    *,
+    bounded_values: dict[
+        str,
+        list[str],
+    ],
+    field_name: str,
+) -> dict[
+    str,
+    list[str],
+]:
+    """
+    Canonicalize only argument values backed by trusted bounded
+    metadata.
+
+    Arguments without trusted bounded values remain exact.
+
+    This distinction is critical.
+
+    Example:
+
+        repository:
+            "AI" -> "ai"
+
+        resource:
+            "resource admin" remains "resource admin"
+
+    because repository may have trusted configured enum values while
+    resource may not.
+    """
+
+    normalized: dict[
+        str,
+        list[str],
+    ] = {}
+
+    for (
+        argument_name,
+        values,
+    ) in value.items():
+
+        trusted_values = (
+            bounded_values.get(
+                argument_name
+            )
+        )
+
+        if not trusted_values:
+
+            normalized[
+                argument_name
+            ] = (
+                list(
+                    values
+                )
+            )
+
+            continue
+
+        canonical_values: list[str] = []
+
+        seen: set[str] = set()
+
+        for item in values:
+
+            canonical = (
+                _canonicalize_bounded_value(
+                    item,
+
+                    trusted_values=(
+                        trusted_values
+                    ),
+
+                    field_name=(
+                        f"{field_name}.{argument_name}"
+                    ),
+                )
+            )
+
+            if canonical in seen:
+
+                continue
+
+            seen.add(
+                canonical
+            )
+
+            canonical_values.append(
+                canonical
+            )
+
+        normalized[
+            argument_name
+        ] = (
+            canonical_values
+        )
+
+    return normalized
+
+
 def parse_semantic_intent(
     value: Any,
     *,
@@ -635,6 +949,10 @@ def parse_semantic_intent(
 
     When a semantic contract IS present, malformed or invented
     capability metadata fails closed.
+
+    Trusted bounded values may be canonicalized deterministically.
+
+    Unbounded grounded values remain exact.
     """
 
     if value is None:
@@ -703,10 +1021,13 @@ def parse_semantic_intent(
         )
     )
 
-    if not isinstance(
-        summary,
-        str,
-    ) or not summary.strip():
+    if (
+        not isinstance(
+            summary,
+            str,
+        )
+        or not summary.strip()
+    ):
 
         raise ValueError(
             "intent.summary must be a non-empty string."
@@ -771,6 +1092,7 @@ def parse_semantic_intent(
                 "allowed_tools",
                 [],
             ),
+
             field_name=(
                 "intent.allowed_tools"
             ),
@@ -783,6 +1105,7 @@ def parse_semantic_intent(
                 "forbidden_tools",
                 [],
             ),
+
             field_name=(
                 "intent.forbidden_tools"
             ),
@@ -795,6 +1118,7 @@ def parse_semantic_intent(
                 "allowed_arguments",
                 {},
             ),
+
             field_name=(
                 "intent.allowed_arguments"
             ),
@@ -807,6 +1131,7 @@ def parse_semantic_intent(
                 "forbidden_arguments",
                 {},
             ),
+
             field_name=(
                 "intent.forbidden_arguments"
             ),
@@ -945,13 +1270,79 @@ def parse_semantic_intent(
         )
     ):
 
-        if argument_name not in grounded_argument_names:
+        if (
+            argument_name
+            not in grounded_argument_names
+        ):
 
             raise ValueError(
                 "Semantic intent references untrusted "
                 "or irrelevant grounded argument "
                 f"'{argument_name}'."
             )
+
+    # ========================================================
+    # TRUSTED BOUNDED-VALUE CANONICALIZATION
+    #
+    # This happens only after:
+    #     - capability identity validation
+    #     - specialist allowlist validation
+    #     - effect validation
+    #     - grounded argument validation
+    #
+    # No unbounded value is transformed.
+    # ========================================================
+
+    bounded_values = (
+        _collect_trusted_bounded_values(
+            tool_names=(
+                allowed_tools
+            ),
+
+            tool_lookup=(
+                tool_lookup
+            ),
+        )
+    )
+
+    allowed_arguments = (
+        _canonicalize_bounded_argument_map(
+            allowed_arguments,
+
+            bounded_values=(
+                bounded_values
+            ),
+
+            field_name=(
+                "intent.allowed_arguments"
+            ),
+        )
+    )
+
+    forbidden_arguments = (
+        _canonicalize_bounded_argument_map(
+            forbidden_arguments,
+
+            bounded_values=(
+                bounded_values
+            ),
+
+            field_name=(
+                "intent.forbidden_arguments"
+            ),
+        )
+    )
+
+    # ========================================================
+    # CONFLICT CHECK AFTER CANONICALIZATION
+    #
+    # Example:
+    #
+    #     allow "AI"
+    #     forbid "ai"
+    #
+    # both become canonical "ai" and therefore conflict.
+    # ========================================================
 
     for argument_name in (
         set(

@@ -18,6 +18,7 @@ def _repository_name(
         Any,
     ],
 ) -> str:
+
     repository = (
         result.get(
             "repository"
@@ -31,13 +32,12 @@ def _repository_name(
         )
         and repository.strip()
     ):
+
         return (
             repository.strip()
         )
 
-    return (
-        "repository"
-    )
+    return "repository"
 
 
 # ============================================================
@@ -51,6 +51,7 @@ def format_git_status_result(
         Any,
     ],
 ) -> str:
+
     repository = (
         _repository_name(
             result
@@ -69,13 +70,6 @@ def format_git_status_result(
         )
     )
 
-    change_count = (
-        result.get(
-            "change_count",
-            0,
-        )
-    )
-
     branch_text = (
         branch
         if isinstance(
@@ -86,6 +80,7 @@ def format_git_status_result(
     )
 
     if clean is True:
+
         return (
             f"{repository} Git status:\n"
             f"- Branch: {branch_text}\n"
@@ -95,7 +90,16 @@ def format_git_status_result(
     return (
         f"{repository} Git status:\n"
         f"- Branch: {branch_text}\n"
-        f"- Working tree changes: {change_count}"
+        f"- Changed files: "
+        f"{result.get('count', 0)}\n"
+        f"- Staged: "
+        f"{result.get('staged_count', 0)}\n"
+        f"- Unstaged: "
+        f"{result.get('unstaged_count', 0)}\n"
+        f"- Untracked: "
+        f"{result.get('untracked_count', 0)}\n"
+        f"- Conflicted: "
+        f"{result.get('conflicted_count', 0)}"
     )
 
 
@@ -108,6 +112,7 @@ def build_git_status_card(
     str,
     Any,
 ]:
+
     repository = (
         _repository_name(
             result
@@ -132,10 +137,12 @@ def build_git_status_card(
     items = []
 
     for change in changes:
+
         if not isinstance(
             change,
             dict,
         ):
+
             continue
 
         code = (
@@ -154,11 +161,10 @@ def build_git_status_card(
             path,
             str,
         ):
+
             continue
 
-        rendered = (
-            path
-        )
+        rendered = path
 
         if (
             isinstance(
@@ -167,6 +173,7 @@ def build_git_status_card(
             )
             and code.strip()
         ):
+
             rendered = (
                 f"{code} {path}"
             )
@@ -178,10 +185,16 @@ def build_git_status_card(
     sections = []
 
     if items:
+
         sections.append(
             list_section(
-                title="Working tree changes",
-                items=items,
+                title=(
+                    "Working tree changes"
+                ),
+
+                items=(
+                    items
+                ),
             )
         )
 
@@ -244,14 +257,51 @@ def build_git_status_card(
                 ),
 
                 result_field(
-                    "Changes",
+                    "Changed files",
                     result.get(
-                        "change_count"
+                        "count"
+                    ),
+                ),
+
+                result_field(
+                    "Staged",
+                    result.get(
+                        "staged_count"
+                    ),
+                ),
+
+                result_field(
+                    "Unstaged",
+                    result.get(
+                        "unstaged_count"
+                    ),
+                ),
+
+                result_field(
+                    "Untracked",
+                    result.get(
+                        "untracked_count"
+                    ),
+                ),
+
+                result_field(
+                    "Conflicted",
+                    result.get(
+                        "conflicted_count"
+                    ),
+                ),
+
+                result_field(
+                    "Truncated",
+                    result.get(
+                        "truncated"
                     ),
                 ),
             ],
 
-            sections=sections,
+            sections=(
+                sections
+            ),
         )
     )
 
@@ -267,6 +317,7 @@ def format_git_branches_result(
         Any,
     ],
 ) -> str:
+
     repository = (
         _repository_name(
             result
@@ -283,12 +334,14 @@ def format_git_branches_result(
         branches,
         list,
     ):
+
         return (
             f"No valid local Git branches were "
             f"returned for {repository}."
         )
 
     if not branches:
+
         return (
             f"No local Git branches were "
             f"returned for {repository}."
@@ -297,10 +350,12 @@ def format_git_branches_result(
     lines = []
 
     for branch in branches:
+
         if not isinstance(
             branch,
             dict,
         ):
+
             continue
 
         name = (
@@ -313,6 +368,7 @@ def format_git_branches_result(
             name,
             str,
         ):
+
             continue
 
         if (
@@ -321,11 +377,13 @@ def format_git_branches_result(
             )
             is True
         ):
+
             lines.append(
                 f"- {name} (current)"
             )
 
         else:
+
             lines.append(
                 f"- {name}"
             )
@@ -347,6 +405,7 @@ def build_git_branches_card(
     str,
     Any,
 ]:
+
     repository = (
         _repository_name(
             result
@@ -363,15 +422,18 @@ def build_git_branches_card(
         branches,
         list,
     ):
+
         branches = []
 
     items = []
 
     for branch in branches:
+
         if not isinstance(
             branch,
             dict,
         ):
+
             continue
 
         name = (
@@ -384,6 +446,7 @@ def build_git_branches_card(
             name,
             str,
         ):
+
             continue
 
         if (
@@ -392,11 +455,13 @@ def build_git_branches_card(
             )
             is True
         ):
+
             items.append(
                 f"{name} (current)"
             )
 
         else:
+
             items.append(
                 name
             )
@@ -404,6 +469,7 @@ def build_git_branches_card(
     sections = []
 
     if items:
+
         sections.append(
             list_section(
                 title="Branches",
@@ -447,6 +513,13 @@ def build_git_branches_card(
                         "count"
                     ),
                 ),
+
+                result_field(
+                    "Truncated",
+                    result.get(
+                        "truncated"
+                    ),
+                ),
             ],
 
             sections=sections,
@@ -465,6 +538,7 @@ def format_git_log_result(
         Any,
     ],
 ) -> str:
+
     repository = (
         _repository_name(
             result
@@ -481,12 +555,14 @@ def format_git_log_result(
         commits,
         list,
     ):
+
         return (
             f"No valid Git history was "
             f"returned for {repository}."
         )
 
     if not commits:
+
         return (
             f"No Git history was returned "
             f"for {repository}."
@@ -495,10 +571,12 @@ def format_git_log_result(
     lines = []
 
     for commit in commits:
+
         if not isinstance(
             commit,
             dict,
         ):
+
             continue
 
         commit_hash = (
@@ -517,17 +595,20 @@ def format_git_log_result(
             commit_hash,
             str,
         ):
+
             continue
 
         if isinstance(
             message,
             str,
         ):
+
             lines.append(
                 f"- {commit_hash} {message}"
             )
 
         else:
+
             lines.append(
                 f"- {commit_hash}"
             )
@@ -549,6 +630,7 @@ def build_git_log_card(
     str,
     Any,
 ]:
+
     repository = (
         _repository_name(
             result
@@ -565,15 +647,18 @@ def build_git_log_card(
         commits,
         list,
     ):
+
         commits = []
 
     items = []
 
     for commit in commits:
+
         if not isinstance(
             commit,
             dict,
         ):
+
             continue
 
         commit_hash = (
@@ -592,6 +677,7 @@ def build_git_log_card(
             commit_hash,
             str,
         ):
+
             continue
 
         rendered = (
@@ -605,6 +691,7 @@ def build_git_log_card(
             )
             and message.strip()
         ):
+
             rendered += (
                 f" — {message.strip()}"
             )
@@ -616,6 +703,7 @@ def build_git_log_card(
     sections = []
 
     if items:
+
         sections.append(
             list_section(
                 title="Recent commits",
@@ -652,6 +740,13 @@ def build_git_log_card(
                         "count"
                     ),
                 ),
+
+                result_field(
+                    "Truncated",
+                    result.get(
+                        "truncated"
+                    ),
+                ),
             ],
 
             sections=sections,
@@ -670,6 +765,7 @@ def format_git_diff_result(
         Any,
     ],
 ) -> str:
+
     repository = (
         _repository_name(
             result
@@ -686,12 +782,14 @@ def format_git_diff_result(
         diff,
         str,
     ):
+
         return (
             f"Git diff completed for {repository}, "
             "but no valid diff text was returned."
         )
 
     if not diff.strip():
+
         return (
             f"There are no unstaged Git changes "
             f"in {repository}."
@@ -713,6 +811,7 @@ def build_git_diff_card(
     str,
     Any,
 ]:
+
     repository = (
         _repository_name(
             result
@@ -734,12 +833,15 @@ def build_git_diff_card(
         )
         and diff.strip()
     ):
+
         sections.append(
             text_section(
                 title="Diff",
+
                 content=(
                     diff
                 ),
+
                 kind="preformatted",
             )
         )
@@ -765,6 +867,13 @@ def build_git_diff_card(
                 result_field(
                     "Repository",
                     repository,
+                ),
+
+                result_field(
+                    "Scope",
+                    result.get(
+                        "scope"
+                    ),
                 ),
 
                 result_field(
@@ -798,6 +907,7 @@ def format_git_changed_files_result(
         Any,
     ],
 ) -> str:
+
     repository = (
         _repository_name(
             result
@@ -814,26 +924,50 @@ def format_git_changed_files_result(
         files,
         list,
     ):
+
         return (
             f"No valid changed-file list was "
             f"returned for {repository}."
         )
 
     if not files:
+
         return (
-            f"There are no unstaged changed files "
+            f"There are no current changed files "
             f"in {repository}."
         )
 
-    return (
-        f"Changed files in {repository}:\n"
-        + "\n".join(
-            f"- {path}"
-            for path in files
-            if isinstance(
-                path,
-                str,
+    lines = [
+        f"Changed files in {repository}:",
+    ]
+
+    for path in files:
+
+        if isinstance(
+            path,
+            str,
+        ):
+
+            lines.append(
+                f"- {path}"
             )
+
+    lines.extend(
+        [
+            "",
+            (
+                "Summary: "
+                f"staged={result.get('staged_count', 0)}, "
+                f"unstaged={result.get('unstaged_count', 0)}, "
+                f"untracked={result.get('untracked_count', 0)}, "
+                f"conflicted={result.get('conflicted_count', 0)}"
+            ),
+        ]
+    )
+
+    return (
+        "\n".join(
+            lines
         )
     )
 
@@ -847,6 +981,7 @@ def build_git_changed_files_card(
     str,
     Any,
 ]:
+
     repository = (
         _repository_name(
             result
@@ -863,6 +998,7 @@ def build_git_changed_files_card(
         files,
         list,
     ):
+
         files = []
 
     items = [
@@ -871,16 +1007,19 @@ def build_git_changed_files_card(
         for path
         in files
 
-        if isinstance(
-            path,
-            str,
+        if (
+            isinstance(
+                path,
+                str,
+            )
+            and path.strip()
         )
-        and path.strip()
     ]
 
     sections = []
 
     if items:
+
         sections.append(
             list_section(
                 title="Changed files",
@@ -912,9 +1051,51 @@ def build_git_changed_files_card(
                 ),
 
                 result_field(
+                    "Scope",
+                    result.get(
+                        "scope"
+                    ),
+                ),
+
+                result_field(
                     "Files",
                     result.get(
                         "count"
+                    ),
+                ),
+
+                result_field(
+                    "Staged",
+                    result.get(
+                        "staged_count"
+                    ),
+                ),
+
+                result_field(
+                    "Unstaged",
+                    result.get(
+                        "unstaged_count"
+                    ),
+                ),
+
+                result_field(
+                    "Untracked",
+                    result.get(
+                        "untracked_count"
+                    ),
+                ),
+
+                result_field(
+                    "Conflicted",
+                    result.get(
+                        "conflicted_count"
+                    ),
+                ),
+
+                result_field(
+                    "Truncated",
+                    result.get(
+                        "truncated"
                     ),
                 ),
             ],

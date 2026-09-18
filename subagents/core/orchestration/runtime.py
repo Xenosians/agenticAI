@@ -13,6 +13,11 @@ from learning.evidence.execution_provenance import (
     build_specialist_execution_provenance,
 )
 
+from learning.evidence.runtime_decisions import (
+    capture_gateway_decision,
+    capture_semantic_guard_decision,
+)
+
 from subagents.core.tooling.capabilities import (
     build_agent_capability_catalog,
 )
@@ -102,7 +107,16 @@ class AgentRuntime:
     Runtime provenance is captured before generation whenever a
     model-profile resolver is available.
 
-    Provenance capture remains deliberately non-fatal.
+    Exact SemanticGuard and ToolGateway decision metadata is
+    captured as private learning evidence.
+
+    Learning evidence:
+        - does not authorize;
+        - does not change policy;
+        - does not change execution;
+        - does not reach the model as authority.
+
+    Provenance and learning capture remain deliberately non-fatal.
     """
 
     def __init__(
@@ -180,6 +194,17 @@ class AgentRuntime:
         task.execution_provenance = (
             None
         )
+
+        # Private per-execution context must also begin clean.
+        if isinstance(
+            task.context,
+            dict,
+        ):
+
+            task.context.pop(
+                "_learning_runtime_decisions",
+                None,
+            )
 
         # ========================================================
         # AGENT RESOLUTION
@@ -264,12 +289,6 @@ class AgentRuntime:
 
         # --------------------------------------------------------
         # HUB TASK CONTEXT
-        #
-        # This remains separate from the original user request.
-        #
-        # The specialist may use it as semantic task-scoping
-        # context, but trusted policy still evaluates execution
-        # against the original user request.
         # --------------------------------------------------------
 
         normalized_instructions: (
@@ -496,8 +515,6 @@ class AgentRuntime:
 
         # ========================================================
         # CURRENT RUNTIME CONTRACT
-        #
-        # Exactly one tool call per specialist execution.
         # ========================================================
 
         if (
@@ -572,13 +589,6 @@ class AgentRuntime:
 
         # ========================================================
         # SEMANTIC GUARD
-        #
-        # Production Orchestrator requires SemanticIntent.
-        #
-        # Runtime keeps None compatible for isolated low-level
-        # tests and explicit non-Hub callers.
-        #
-        # When intent is present, it MUST pass before ToolGateway.
         # ========================================================
 
         if (
@@ -647,6 +657,19 @@ class AgentRuntime:
                     )
                 )
 
+            # ----------------------------------------------------
+            # LEARNING EVIDENCE
+            #
+            # Exact returned decision only.
+            #
+            # Capture failure does not affect execution.
+            # ----------------------------------------------------
+
+            capture_semantic_guard_decision(
+                task,
+                semantic_decision,
+            )
+
             print(
                 "[SEMANTIC_GUARD] "
                 f"agent='{agent.name}' "
@@ -709,13 +732,6 @@ class AgentRuntime:
                         agent
                     ),
 
-                    # IMPORTANT:
-                    #
-                    # Trusted grounding remains bound to the
-                    # original user request.
-                    #
-                    # Router instructions and SemanticIntent are
-                    # not authorization.
                     user_input=(
                         task.user_request
                     ),
@@ -769,6 +785,20 @@ class AgentRuntime:
                     ),
                 )
             )
+
+        # --------------------------------------------------------
+        # LEARNING EVIDENCE
+        #
+        # Capture the exact gateway decision metadata returned by
+        # ToolGateway.
+        #
+        # The provider result itself remains tool_result.
+        # --------------------------------------------------------
+
+        capture_gateway_decision(
+            task,
+            gateway_result,
+        )
 
         decision_code = (
             gateway_result.get(

@@ -14,7 +14,7 @@ from services.process_runner import (
 import tools.git as git_tools
 
 
-class FakeProcessRunner:
+class FakeTrustedProcessRunner:
 
     def __init__(
         self,
@@ -30,12 +30,12 @@ class FakeProcessRunner:
 
     def __call__(
         self,
-        *,
         executable,
         args,
         cwd=None,
-        timeout_seconds=10,
+        timeout_seconds=60,
     ):
+
         self.calls.append(
             {
                 "executable":
@@ -90,9 +90,12 @@ def install_target(
     *,
     name: str = "frontend",
 ):
+
     target = (
         GitRepositoryTarget(
-            name=name,
+            name=(
+                name
+            ),
 
             path=(
                 Path(
@@ -115,9 +118,33 @@ def install_target(
     return target
 
 
-def test_git_status_uses_fixed_command(
+def install_runner(
+    monkeypatch,
+    *,
+    stdout: str,
+) -> FakeTrustedProcessRunner:
+
+    runner = (
+        FakeTrustedProcessRunner(
+            stdout=(
+                stdout
+            )
+        )
+    )
+
+    monkeypatch.setattr(
+        git_tools,
+        "run_trusted_process",
+        runner,
+    )
+
+    return runner
+
+
+def test_git_status_uses_fixed_trusted_command(
     monkeypatch,
 ):
+
     target = (
         install_target(
             monkeypatch
@@ -125,18 +152,14 @@ def test_git_status_uses_fixed_command(
     )
 
     runner = (
-        FakeProcessRunner(
+        install_runner(
+            monkeypatch,
+
             stdout=(
                 "## main...origin/main\n"
                 " M src/app.nim\n"
-            )
+            ),
         )
-    )
-
-    monkeypatch.setattr(
-        git_tools,
-        "run_process",
-        runner,
     )
 
     result = (
@@ -181,6 +204,15 @@ def test_git_status_uses_fixed_command(
         == 1
     )
 
+    assert (
+        result[
+            "unstaged_files"
+        ]
+        == [
+            "src/app.nim",
+        ]
+    )
+
     assert runner.calls == [
         {
             "executable":
@@ -190,6 +222,7 @@ def test_git_status_uses_fixed_command(
                 "status",
                 "--short",
                 "--branch",
+                "--untracked-files=all",
             ],
 
             "cwd":
@@ -203,26 +236,26 @@ def test_git_status_uses_fixed_command(
     ]
 
 
-def test_git_status_parses_ahead_and_behind(
+def test_git_status_classifies_working_tree_state(
     monkeypatch,
 ):
+
     install_target(
         monkeypatch
     )
 
-    runner = (
-        FakeProcessRunner(
-            stdout=(
-                "## main...origin/main "
-                "[ahead 2, behind 1]\n"
-            )
-        )
-    )
+    install_runner(
+        monkeypatch,
 
-    monkeypatch.setattr(
-        git_tools,
-        "run_process",
-        runner,
+        stdout=(
+            "## main...origin/main "
+            "[ahead 2, behind 1]\n"
+            "M  staged.py\n"
+            " M unstaged.py\n"
+            "MM both.py\n"
+            "?? new.py\n"
+            "UU conflict.py\n"
+        ),
     )
 
     result = (
@@ -250,6 +283,123 @@ def test_git_status_parses_ahead_and_behind(
         result[
             "clean"
         ]
+        is False
+    )
+
+    assert (
+        result[
+            "files"
+        ]
+        == [
+            "staged.py",
+            "unstaged.py",
+            "both.py",
+            "new.py",
+            "conflict.py",
+        ]
+    )
+
+    assert (
+        result[
+            "staged_files"
+        ]
+        == [
+            "staged.py",
+            "both.py",
+        ]
+    )
+
+    assert (
+        result[
+            "unstaged_files"
+        ]
+        == [
+            "unstaged.py",
+            "both.py",
+        ]
+    )
+
+    assert (
+        result[
+            "untracked_files"
+        ]
+        == [
+            "new.py",
+        ]
+    )
+
+    assert (
+        result[
+            "conflicted_files"
+        ]
+        == [
+            "conflict.py",
+        ]
+    )
+
+    assert (
+        result[
+            "staged_count"
+        ]
+        == 2
+    )
+
+    assert (
+        result[
+            "unstaged_count"
+        ]
+        == 2
+    )
+
+    assert (
+        result[
+            "untracked_count"
+        ]
+        == 1
+    )
+
+    assert (
+        result[
+            "conflicted_count"
+        ]
+        == 1
+    )
+
+
+def test_git_status_parses_new_repository_branch(
+    monkeypatch,
+):
+
+    install_target(
+        monkeypatch
+    )
+
+    install_runner(
+        monkeypatch,
+
+        stdout=(
+            "## No commits yet on main\n"
+        ),
+    )
+
+    result = (
+        git_tools
+        .workspace_git_status(
+            repository="frontend"
+        )
+    )
+
+    assert (
+        result[
+            "branch"
+        ]
+        == "main"
+    )
+
+    assert (
+        result[
+            "clean"
+        ]
         is True
     )
 
@@ -257,24 +407,23 @@ def test_git_status_parses_ahead_and_behind(
 def test_git_branches_uses_fixed_command(
     monkeypatch,
 ):
-    install_target(
-        monkeypatch,
-        name="backend",
-    )
 
-    runner = (
-        FakeProcessRunner(
-            stdout=(
-                "* main\n"
-                "  feature/test\n"
-            )
+    target = (
+        install_target(
+            monkeypatch,
+            name="backend",
         )
     )
 
-    monkeypatch.setattr(
-        git_tools,
-        "run_process",
-        runner,
+    runner = (
+        install_runner(
+            monkeypatch,
+
+            stdout=(
+                "* main\n"
+                "  feature/test\n"
+            ),
+        )
     )
 
     result = (
@@ -298,6 +447,17 @@ def test_git_branches_uses_fixed_command(
     )
 
     assert (
+        runner.calls[
+            0
+        ][
+            "cwd"
+        ]
+        == str(
+            target.path
+        )
+    )
+
+    assert (
         result[
             "current_branch"
         ]
@@ -315,24 +475,21 @@ def test_git_branches_uses_fixed_command(
 def test_git_log_uses_bounded_history(
     monkeypatch,
 ):
+
     install_target(
         monkeypatch,
         name="ai",
     )
 
     runner = (
-        FakeProcessRunner(
+        install_runner(
+            monkeypatch,
+
             stdout=(
                 "abc123 first commit\n"
                 "def456 second commit\n"
-            )
+            ),
         )
-    )
-
-    monkeypatch.setattr(
-        git_tools,
-        "run_process",
-        runner,
     )
 
     result = (
@@ -376,27 +533,24 @@ def test_git_log_uses_bounded_history(
     )
 
 
-def test_git_diff_disables_external_diff(
+def test_git_diff_is_explicitly_unstaged(
     monkeypatch,
 ):
+
     install_target(
         monkeypatch
     )
 
     runner = (
-        FakeProcessRunner(
+        install_runner(
+            monkeypatch,
+
             stdout=(
                 "diff --git a/a b/a\n"
                 "--- a/a\n"
                 "+++ b/a\n"
-            )
+            ),
         )
-    )
-
-    monkeypatch.setattr(
-        git_tools,
-        "run_process",
-        runner,
     )
 
     result = (
@@ -422,32 +576,38 @@ def test_git_diff_disables_external_diff(
 
     assert (
         result[
+            "scope"
+        ]
+        == "unstaged"
+    )
+
+    assert (
+        result[
             "has_changes"
         ]
         is True
     )
 
 
-def test_git_changed_files_uses_name_only(
+def test_git_changed_files_includes_all_working_tree_classes(
     monkeypatch,
 ):
+
     install_target(
         monkeypatch
     )
 
     runner = (
-        FakeProcessRunner(
-            stdout=(
-                "src/app.nim\n"
-                "public/index.html\n"
-            )
-        )
-    )
+        install_runner(
+            monkeypatch,
 
-    monkeypatch.setattr(
-        git_tools,
-        "run_process",
-        runner,
+            stdout=(
+                "M  staged.py\n"
+                " M unstaged.py\n"
+                "?? untracked.py\n"
+                "UU conflicted.py\n"
+            ),
+        )
     )
 
     result = (
@@ -464,10 +624,17 @@ def test_git_changed_files_uses_name_only(
             "args"
         ]
         == [
-            "diff",
-            "--no-ext-diff",
-            "--name-only",
+            "status",
+            "--short",
+            "--untracked-files=all",
         ]
+    )
+
+    assert (
+        result[
+            "scope"
+        ]
+        == "working_tree"
     )
 
     assert (
@@ -475,15 +642,95 @@ def test_git_changed_files_uses_name_only(
             "files"
         ]
         == [
-            "src/app.nim",
-            "public/index.html",
+            "staged.py",
+            "unstaged.py",
+            "untracked.py",
+            "conflicted.py",
         ]
+    )
+
+    assert (
+        result[
+            "staged_files"
+        ]
+        == [
+            "staged.py",
+        ]
+    )
+
+    assert (
+        result[
+            "unstaged_files"
+        ]
+        == [
+            "unstaged.py",
+        ]
+    )
+
+    assert (
+        result[
+            "untracked_files"
+        ]
+        == [
+            "untracked.py",
+        ]
+    )
+
+    assert (
+        result[
+            "conflicted_files"
+        ]
+        == [
+            "conflicted.py",
+        ]
+    )
+
+
+def test_truncation_marker_is_not_treated_as_file(
+    monkeypatch,
+):
+
+    install_target(
+        monkeypatch
+    )
+
+    install_runner(
+        monkeypatch,
+
+        stdout=(
+            " M src/app.py\n"
+            "...[output truncated]\n"
+        ),
+    )
+
+    result = (
+        git_tools
+        .workspace_git_changed_files(
+            repository="frontend"
+        )
+    )
+
+    assert (
+        result[
+            "files"
+        ]
+        == [
+            "src/app.py",
+        ]
+    )
+
+    assert (
+        result[
+            "truncated"
+        ]
+        is True
     )
 
 
 def test_repository_registry_resolves_logical_alias(
     tmp_path,
 ):
+
     frontend = (
         tmp_path
         / "frontend"
@@ -498,7 +745,9 @@ def test_repository_registry_resolves_logical_alias(
 
     registry = (
         GitRepositoryRegistry(
-            root=tmp_path,
+            root=(
+                tmp_path
+            ),
 
             repositories={
                 "frontend":
@@ -533,6 +782,7 @@ def test_repository_registry_resolves_logical_alias(
 def test_repository_registry_uses_default(
     tmp_path,
 ):
+
     ai = (
         tmp_path
         / "ai"
@@ -547,7 +797,9 @@ def test_repository_registry_uses_default(
 
     registry = (
         GitRepositoryRegistry(
-            root=tmp_path,
+            root=(
+                tmp_path
+            ),
 
             repositories={
                 "ai":
@@ -569,6 +821,7 @@ def test_repository_registry_uses_default(
 def test_repository_registry_rejects_unknown_alias(
     tmp_path,
 ):
+
     ai = (
         tmp_path
         / "ai"
@@ -583,7 +836,9 @@ def test_repository_registry_rejects_unknown_alias(
 
     registry = (
         GitRepositoryRegistry(
-            root=tmp_path,
+            root=(
+                tmp_path
+            ),
 
             repositories={
                 "ai":
@@ -597,11 +852,13 @@ def test_repository_registry_rejects_unknown_alias(
     )
 
     try:
+
         registry.resolve(
             "production"
         )
 
     except ValueError as exc:
+
         assert (
             "Unknown Git repository"
             in str(
@@ -610,6 +867,7 @@ def test_repository_registry_rejects_unknown_alias(
         )
 
     else:
+
         raise AssertionError(
             "Unknown repository "
             "should have been denied."
@@ -619,6 +877,7 @@ def test_repository_registry_rejects_unknown_alias(
 def test_repository_registry_rejects_escape(
     tmp_path,
 ):
+
     root = (
         tmp_path
         / "workspace"
@@ -640,7 +899,9 @@ def test_repository_registry_rejects_escape(
 
     registry = (
         GitRepositoryRegistry(
-            root=root,
+            root=(
+                root
+            ),
 
             repositories={
                 "escape":
@@ -654,11 +915,13 @@ def test_repository_registry_rejects_escape(
     )
 
     try:
+
         registry.resolve(
             "escape"
         )
 
     except ValueError as exc:
+
         assert (
             "escapes the approved workspace"
             in str(
@@ -667,13 +930,20 @@ def test_repository_registry_rejects_escape(
         )
 
     else:
+
         raise AssertionError(
             "Escaping repository path "
             "should have been denied."
         )
 
 
+# ============================================================
+# GENERIC PROCESS POLICY MUST REMAIN NARROW
+# ============================================================
+
+
 def test_process_policy_rejects_git_push():
+
     result = (
         evaluate_process_policy(
             executable="git",
@@ -700,6 +970,7 @@ def test_process_policy_rejects_git_push():
 
 
 def test_process_policy_rejects_arbitrary_git_config():
+
     result = (
         evaluate_process_policy(
             executable="git",
@@ -728,6 +999,7 @@ def test_process_policy_rejects_arbitrary_git_config():
 
 
 def test_process_policy_rejects_git_shell_alias():
+
     result = (
         evaluate_process_policy(
             executable="git",
@@ -756,6 +1028,7 @@ def test_process_policy_rejects_git_shell_alias():
 
 
 def test_process_policy_rejects_unapproved_revision():
+
     result = (
         evaluate_process_policy(
             executable="git",

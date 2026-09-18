@@ -10,7 +10,7 @@ from services.git_repositories import (
 )
 
 from services.process_runner import (
-    run_process,
+    run_trusted_process,
 )
 
 
@@ -19,6 +19,22 @@ DEFAULT_TIMEOUT_SECONDS = 10
 OUTPUT_TRUNCATION_MARKER = (
     "...[output truncated]"
 )
+
+
+CONFLICT_STATUS_CODES = {
+    "DD",
+    "AU",
+    "UD",
+    "UA",
+    "DU",
+    "AA",
+    "UU",
+}
+
+
+# ============================================================
+# REPOSITORY RESOLUTION
+# ============================================================
 
 
 def _resolve_target(
@@ -32,7 +48,9 @@ def _resolve_target(
         Any,
     ] | None,
 ]:
+
     try:
+
         target = (
             resolve_git_repository(
                 repository
@@ -40,6 +58,7 @@ def _resolve_target(
         )
 
     except ValueError as exc:
+
         return (
             None,
 
@@ -66,6 +85,11 @@ def _resolve_target(
     )
 
 
+# ============================================================
+# PROCESS HELPERS
+# ============================================================
+
+
 def _process_failure(
     *,
     repository: str,
@@ -88,6 +112,7 @@ def _process_failure(
         error,
         str,
     ):
+
         stderr = (
             result.get(
                 "stderr"
@@ -101,6 +126,7 @@ def _process_failure(
             )
             and stderr.strip()
         ):
+
             error = (
                 stderr.strip()
             )
@@ -109,6 +135,7 @@ def _process_failure(
         error,
         str,
     ):
+
         error = (
             "Git operation failed."
         )
@@ -150,11 +177,10 @@ def _stdout(
         value,
         str,
     ):
+
         return ""
 
-    return (
-        value
-    )
+    return value
 
 
 def _stdout_lines(
@@ -164,16 +190,30 @@ def _stdout_lines(
     ],
 ) -> list[str]:
 
-    return [
-        line
+    lines = []
 
-        for line
-        in _stdout(
+    for line in (
+        _stdout(
             result
-        ).splitlines()
+        )
+        .splitlines()
+    ):
 
-        if line.strip()
-    ]
+        if not line.strip():
+            continue
+
+        if (
+            line.strip()
+            == OUTPUT_TRUNCATION_MARKER
+        ):
+
+            continue
+
+        lines.append(
+            line
+        )
+
+    return lines
 
 
 def _is_truncated(
@@ -195,12 +235,29 @@ def _run_git(
     str,
     Any,
 ]:
+    """
+    Execute one Git command whose complete command shape is owned by
+    trusted application code.
+
+    This intentionally uses run_trusted_process rather than the
+    generic model-facing process_exec policy.
+
+    The model may select only the bounded logical repository ID.
+
+    The model does NOT select:
+        executable
+        Git subcommand
+        Git flags
+        cwd
+    """
 
     return (
-        run_process(
+        run_trusted_process(
             executable="git",
 
-            args=args,
+            args=(
+                args
+            ),
 
             cwd=(
                 str(
@@ -213,6 +270,11 @@ def _run_git(
             ),
         )
     )
+
+
+# ============================================================
+# STATUS PARSING
+# ============================================================
 
 
 def _parse_branch_header(
@@ -231,6 +293,7 @@ def _parse_branch_header(
     if line.startswith(
         "## "
     ):
+
         line = (
             line[
                 3:
@@ -239,8 +302,44 @@ def _parse_branch_header(
         )
 
     if not line:
+
         return (
             None,
+            None,
+            0,
+            0,
+        )
+
+    # Fresh repository with no commits yet.
+    if line.startswith(
+        "No commits yet on "
+    ):
+
+        return (
+            line[
+                len(
+                    "No commits yet on "
+                ):
+            ].strip()
+            or None,
+
+            None,
+            0,
+            0,
+        )
+
+    if line.startswith(
+        "Initial commit on "
+    ):
+
+        return (
+            line[
+                len(
+                    "Initial commit on "
+                ):
+            ].strip()
+            or None,
+
             None,
             0,
             0,
@@ -252,6 +351,7 @@ def _parse_branch_header(
     tracking_part = None
 
     if " [" in line:
+
         line, tracking_part = (
             line.split(
                 " [",
@@ -267,6 +367,7 @@ def _parse_branch_header(
     upstream = None
 
     if "..." in line:
+
         branch, upstream = (
             line.split(
                 "...",
@@ -283,16 +384,19 @@ def _parse_branch_header(
         )
 
     else:
+
         branch = (
             line.strip()
         )
 
     if tracking_part:
+
         for component in (
             tracking_part.split(
                 ","
             )
         ):
+
             component = (
                 component.strip()
             )
@@ -300,35 +404,339 @@ def _parse_branch_header(
             if component.startswith(
                 "ahead "
             ):
+
                 try:
-                    ahead = int(
-                        component[
-                            6:
-                        ]
+
+                    ahead = (
+                        int(
+                            component[
+                                6:
+                            ]
+                        )
                     )
 
                 except ValueError:
+
                     ahead = 0
 
             elif component.startswith(
                 "behind "
             ):
+
                 try:
-                    behind = int(
-                        component[
-                            7:
-                        ]
+
+                    behind = (
+                        int(
+                            component[
+                                7:
+                            ]
+                        )
                     )
 
                 except ValueError:
+
                     behind = 0
 
     return (
-        branch or None,
-        upstream or None,
+        branch
+        or None,
+
+        upstream
+        or None,
+
         ahead,
+
         behind,
     )
+
+
+def _parse_status_change(
+    line: str,
+) -> dict[
+    str,
+    Any,
+] | None:
+    """
+    Parse one Git porcelain-v1 short-status line.
+
+    XY semantics:
+
+        X = index / staged state
+        Y = work-tree / unstaged state
+
+    Special cases:
+
+        ?? = untracked
+        !! = ignored
+    """
+
+    if len(
+        line
+    ) < 3:
+
+        return None
+
+    code = (
+        line[
+            :2
+        ]
+    )
+
+    path = (
+        line[
+            3:
+        ]
+        .strip()
+    )
+
+    if not path:
+
+        return None
+
+    untracked = (
+        code
+        == "??"
+    )
+
+    ignored = (
+        code
+        == "!!"
+    )
+
+    conflicted = (
+        code
+        in CONFLICT_STATUS_CODES
+    )
+
+    staged = False
+    unstaged = False
+
+    if not (
+        untracked
+        or ignored
+        or conflicted
+    ):
+
+        staged = (
+            code[
+                0
+            ]
+            != " "
+        )
+
+        unstaged = (
+            code[
+                1
+            ]
+            != " "
+        )
+
+    return {
+        "code":
+            code,
+
+        "path":
+            path,
+
+        "staged":
+            staged,
+
+        "unstaged":
+            unstaged,
+
+        "untracked":
+            untracked,
+
+        "conflicted":
+            conflicted,
+    }
+
+
+def _parse_status_changes(
+    lines: list[str],
+) -> list[
+    dict[
+        str,
+        Any,
+    ]
+]:
+
+    changes: list[
+        dict[
+            str,
+            Any,
+        ]
+    ] = []
+
+    for line in lines:
+
+        parsed = (
+            _parse_status_change(
+                line
+            )
+        )
+
+        if parsed is None:
+
+            continue
+
+        changes.append(
+            parsed
+        )
+
+    return changes
+
+
+def _unique_paths(
+    changes: list[
+        dict[
+            str,
+            Any,
+        ]
+    ],
+    *,
+    flag: (
+        str
+        | None
+    ) = None,
+) -> list[str]:
+
+    paths: list[str] = []
+
+    seen: set[str] = set()
+
+    for change in changes:
+
+        if (
+            flag is not None
+            and change.get(
+                flag
+            )
+            is not True
+        ):
+
+            continue
+
+        path = (
+            change.get(
+                "path"
+            )
+        )
+
+        if not isinstance(
+            path,
+            str,
+        ):
+
+            continue
+
+        if path in seen:
+
+            continue
+
+        seen.add(
+            path
+        )
+
+        paths.append(
+            path
+        )
+
+    return paths
+
+
+def _working_tree_summary(
+    changes: list[
+        dict[
+            str,
+            Any,
+        ]
+    ],
+) -> dict[
+    str,
+    Any,
+]:
+
+    files = (
+        _unique_paths(
+            changes
+        )
+    )
+
+    staged_files = (
+        _unique_paths(
+            changes,
+            flag="staged",
+        )
+    )
+
+    unstaged_files = (
+        _unique_paths(
+            changes,
+            flag="unstaged",
+        )
+    )
+
+    untracked_files = (
+        _unique_paths(
+            changes,
+            flag="untracked",
+        )
+    )
+
+    conflicted_files = (
+        _unique_paths(
+            changes,
+            flag="conflicted",
+        )
+    )
+
+    return {
+        "files":
+            files,
+
+        "count":
+            len(
+                files
+            ),
+
+        "staged_files":
+            staged_files,
+
+        "staged_count":
+            len(
+                staged_files
+            ),
+
+        "unstaged_files":
+            unstaged_files,
+
+        "unstaged_count":
+            len(
+                unstaged_files
+            ),
+
+        "untracked_files":
+            untracked_files,
+
+        "untracked_count":
+            len(
+                untracked_files
+            ),
+
+        "conflicted_files":
+            conflicted_files,
+
+        "conflicted_count":
+            len(
+                conflicted_files
+            ),
+    }
+
+
+# ============================================================
+# STATUS
+# ============================================================
 
 
 def workspace_git_status(
@@ -344,8 +752,15 @@ def workspace_git_status(
     Any,
 ]:
     """
-    Inspect branch and working-tree state for one configured
-    logical repository.
+    Inspect branch and complete working-tree state for one
+    configured logical repository.
+
+    Includes:
+
+        staged changes
+        unstaged changes
+        untracked files
+        merge conflicts
 
     Repository selection is logical and trusted.
 
@@ -362,6 +777,7 @@ def workspace_git_status(
     )
 
     if target is None:
+
         return (
             target_error
             or {
@@ -378,12 +794,15 @@ def workspace_git_status(
 
     result = (
         _run_git(
-            target=target,
+            target=(
+                target
+            ),
 
             args=[
                 "status",
                 "--short",
                 "--branch",
+                "--untracked-files=all",
             ],
 
             timeout_seconds=(
@@ -398,15 +817,24 @@ def workspace_git_status(
             False,
         )
     ):
+
         return (
             _process_failure(
                 repository=(
                     target.name
                 ),
 
-                result=result,
+                result=(
+                    result
+                ),
             )
         )
+
+    raw_stdout = (
+        _stdout(
+            result
+        )
+    )
 
     lines = (
         _stdout_lines(
@@ -431,6 +859,7 @@ def workspace_git_status(
             "## "
         )
     ):
+
         (
             branch,
             upstream,
@@ -450,41 +879,17 @@ def workspace_git_status(
             ]
         )
 
-    changes = []
-
-    for line in change_lines:
-        if len(
-            line
-        ) >= 3:
-            code = (
-                line[
-                    :2
-                ]
-            )
-
-            path = (
-                line[
-                    3:
-                ]
-                .strip()
-            )
-
-        else:
-            code = (
-                line.strip()
-            )
-
-            path = ""
-
-        changes.append(
-            {
-                "code":
-                    code,
-
-                "path":
-                    path,
-            }
+    changes = (
+        _parse_status_changes(
+            change_lines
         )
+    )
+
+    summary = (
+        _working_tree_summary(
+            changes
+        )
+    )
 
     return {
         "ok":
@@ -521,7 +926,19 @@ def workspace_git_status(
             len(
                 changes
             ),
+
+        **summary,
+
+        "truncated":
+            _is_truncated(
+                raw_stdout
+            ),
     }
+
+
+# ============================================================
+# BRANCHES
+# ============================================================
 
 
 def workspace_git_branches(
@@ -550,6 +967,7 @@ def workspace_git_branches(
     )
 
     if target is None:
+
         return (
             target_error
             or {
@@ -566,7 +984,9 @@ def workspace_git_branches(
 
     result = (
         _run_git(
-            target=target,
+            target=(
+                target
+            ),
 
             args=[
                 "branch",
@@ -586,13 +1006,16 @@ def workspace_git_branches(
             False,
         )
     ):
+
         return (
             _process_failure(
                 repository=(
                     target.name
                 ),
 
-                result=result,
+                result=(
+                    result
+                ),
             )
         )
 
@@ -605,6 +1028,7 @@ def workspace_git_branches(
             result
         )
     ):
+
         stripped = (
             line.strip()
         )
@@ -616,6 +1040,7 @@ def workspace_git_branches(
         )
 
         if current:
+
             name = (
                 stripped[
                     1:
@@ -624,11 +1049,13 @@ def workspace_git_branches(
             )
 
         else:
+
             name = (
                 stripped
             )
 
         if not name:
+
             continue
 
         branches.append(
@@ -642,6 +1069,7 @@ def workspace_git_branches(
         )
 
         if current:
+
             current_branch = (
                 name
             )
@@ -666,7 +1094,19 @@ def workspace_git_branches(
             len(
                 branches
             ),
+
+        "truncated":
+            _is_truncated(
+                _stdout(
+                    result
+                )
+            ),
     }
+
+
+# ============================================================
+# LOG
+# ============================================================
 
 
 def workspace_git_log(
@@ -698,6 +1138,7 @@ def workspace_git_log(
     )
 
     if target is None:
+
         return (
             target_error
             or {
@@ -714,7 +1155,9 @@ def workspace_git_log(
 
     result = (
         _run_git(
-            target=target,
+            target=(
+                target
+            ),
 
             args=[
                 "log",
@@ -736,13 +1179,16 @@ def workspace_git_log(
             False,
         )
     ):
+
         return (
             _process_failure(
                 repository=(
                     target.name
                 ),
 
-                result=result,
+                result=(
+                    result
+                ),
             )
         )
 
@@ -753,6 +1199,7 @@ def workspace_git_log(
             result
         )
     ):
+
         pieces = (
             line.split(
                 " ",
@@ -804,7 +1251,19 @@ def workspace_git_log(
             len(
                 commits
             ),
+
+        "truncated":
+            _is_truncated(
+                _stdout(
+                    result
+                )
+            ),
     }
+
+
+# ============================================================
+# DIFF
+# ============================================================
 
 
 def workspace_git_diff(
@@ -820,8 +1279,11 @@ def workspace_git_diff(
     Any,
 ]:
     """
-    Return the bounded current unstaged diff for one configured
+    Return the bounded current UNSTAGED diff for one configured
     repository.
+
+    Staged changes are intentionally not included by this
+    capability.
     """
 
     (
@@ -834,6 +1296,7 @@ def workspace_git_diff(
     )
 
     if target is None:
+
         return (
             target_error
             or {
@@ -850,7 +1313,9 @@ def workspace_git_diff(
 
     result = (
         _run_git(
-            target=target,
+            target=(
+                target
+            ),
 
             args=[
                 "diff",
@@ -871,13 +1336,16 @@ def workspace_git_diff(
             False,
         )
     ):
+
         return (
             _process_failure(
                 repository=(
                     target.name
                 ),
 
-                result=result,
+                result=(
+                    result
+                ),
             )
         )
 
@@ -903,6 +1371,9 @@ def workspace_git_diff(
         "repository":
             target.name,
 
+        "scope":
+            "unstaged",
+
         "diff":
             diff.strip(),
 
@@ -914,6 +1385,11 @@ def workspace_git_diff(
         "truncated":
             truncated,
     }
+
+
+# ============================================================
+# CHANGED FILES
+# ============================================================
 
 
 def workspace_git_changed_files(
@@ -929,8 +1405,16 @@ def workspace_git_changed_files(
     Any,
 ]:
     """
-    Return unstaged changed filenames from one configured
-    repository.
+    Return all current changed files from one configured repository.
+
+    Includes:
+        staged
+        unstaged
+        untracked
+        conflicted
+
+    This capability reports working-tree state rather than only
+    `git diff --name-only`.
     """
 
     (
@@ -943,6 +1427,7 @@ def workspace_git_changed_files(
     )
 
     if target is None:
+
         return (
             target_error
             or {
@@ -959,12 +1444,14 @@ def workspace_git_changed_files(
 
     result = (
         _run_git(
-            target=target,
+            target=(
+                target
+            ),
 
             args=[
-                "diff",
-                "--no-ext-diff",
-                "--name-only",
+                "status",
+                "--short",
+                "--untracked-files=all",
             ],
 
             timeout_seconds=(
@@ -979,19 +1466,36 @@ def workspace_git_changed_files(
             False,
         )
     ):
+
         return (
             _process_failure(
                 repository=(
                     target.name
                 ),
 
-                result=result,
+                result=(
+                    result
+                ),
             )
         )
 
-    files = (
-        _stdout_lines(
+    raw_stdout = (
+        _stdout(
             result
+        )
+    )
+
+    changes = (
+        _parse_status_changes(
+            _stdout_lines(
+                result
+            )
+        )
+    )
+
+    summary = (
+        _working_tree_summary(
+            changes
         )
     )
 
@@ -1005,11 +1509,16 @@ def workspace_git_changed_files(
         "repository":
             target.name,
 
-        "files":
-            files,
+        "scope":
+            "working_tree",
 
-        "count":
-            len(
-                files
+        "changes":
+            changes,
+
+        **summary,
+
+        "truncated":
+            _is_truncated(
+                raw_stdout
             ),
     }

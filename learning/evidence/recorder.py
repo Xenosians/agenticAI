@@ -5,6 +5,10 @@ import os
 import threading
 import uuid
 
+from dataclasses import (
+    asdict,
+)
+
 from datetime import (
     datetime,
     timezone,
@@ -12,6 +16,10 @@ from datetime import (
 
 from pathlib import (
     Path,
+)
+
+from typing import (
+    TYPE_CHECKING,
 )
 
 from subagents.core.definitions.types import (
@@ -26,6 +34,10 @@ from learning.evidence.rewards import (
     derive_execution_reward,
 )
 
+from learning.evidence.runtime_decisions import (
+    extract_hub_runtime_decisions,
+)
+
 from learning.evidence.sanitizer import (
     sanitize_value,
 )
@@ -35,6 +47,13 @@ from learning.evidence.types import (
     TrajectorySignals,
     TrajectoryStep,
 )
+
+
+if TYPE_CHECKING:
+
+    from learning.integrations.runtime_hooks import (
+        ContinualLearningRuntimeHooks,
+    )
 
 
 class TrajectoryRecorder:
@@ -49,14 +68,18 @@ class TrajectoryRecorder:
     Specialist execution provenance is captured as immutable
     evidence when supplied by the runtime.
 
-    Supplemental abnormal worker-output evidence is also preserved
-    when supplied by the runtime so invalid multi-call or malformed
-    generations are not flattened into an incomplete single-call
-    representation.
+    Hub SemanticIntent is retained as descriptive learning evidence.
 
-    Historical results without provenance or supplemental worker
-    output remain readable, but later production-training gates
-    must fail closed whenever required evidence is absent.
+    Exact live SemanticGuard and ToolGateway decision metadata is
+    retrieved from private task-indexed evidence attached to the
+    HubResult by the orchestrator.
+
+    That private evidence is intentionally absent from normal
+    dataclass serialization and therefore does not become part of
+    the public execution result.
+
+    Context capture remains best-effort and happens only after the
+    durable trajectory has been written.
     """
 
     def __init__(
@@ -65,6 +88,10 @@ class TrajectoryRecorder:
         path: Path,
         enabled: bool,
         hub_model: str,
+        context_hooks: (
+            "ContinualLearningRuntimeHooks"
+            | None
+        ) = None,
     ) -> None:
 
         self.path = (
@@ -81,6 +108,10 @@ class TrajectoryRecorder:
             hub_model
         )
 
+        self.context_hooks = (
+            context_hooks
+        )
+
         self._lock = (
             threading.Lock()
         )
@@ -93,64 +124,145 @@ class TrajectoryRecorder:
         result: HubResult,
     ) -> LearningTrajectory:
 
-        steps = [
-            TrajectoryStep(
-                task_id=(
-                    item.task_id
-                ),
+        # ========================================================
+        # PRIVATE LIVE DECISION EVIDENCE
+        # ========================================================
 
-                task_instructions=(
-                    item.task_instructions
-                ),
+        runtime_decisions_by_task_id = (
+            extract_hub_runtime_decisions(
+                result
+            )
+        )
 
-                execution_provenance=(
-                    item.execution_provenance
-                ),
+        steps: list[
+            TrajectoryStep
+        ] = []
 
-                agent=(
-                    item.agent_name
-                ),
+        for item in (
+            result.results
+        ):
 
-                status=(
-                    item.status
-                ),
-
-                outcome_code=(
-                    item.outcome_code
-                ),
-
-                raw_model_output=(
-                    item.raw_model_output
-                ),
-
-                proposed_tool_calls=(
-                    item.proposed_tool_calls
-                ),
-
-                proposed_tool=(
-                    item.proposed_tool
-                ),
-
-                proposed_arguments=(
-                    item.proposed_arguments
-                ),
-
-                tool_result=(
-                    item.tool_result
-                ),
-
-                approval_id=(
-                    item.approval_id
-                ),
-
-                error=(
-                    item.error
-                ),
+            runtime_decisions = (
+                runtime_decisions_by_task_id
+                .get(
+                    item.task_id,
+                    {},
+                )
             )
 
-            for item
-            in result.results
-        ]
+            if not isinstance(
+                runtime_decisions,
+                dict,
+            ):
+
+                runtime_decisions = {}
+
+            semantic_guard_decision = (
+                runtime_decisions.get(
+                    "semantic_guard_decision"
+                )
+            )
+
+            if not isinstance(
+                semantic_guard_decision,
+                dict,
+            ):
+
+                semantic_guard_decision = (
+                    None
+                )
+
+            gateway_decision = (
+                runtime_decisions.get(
+                    "gateway_decision"
+                )
+            )
+
+            if not isinstance(
+                gateway_decision,
+                dict,
+            ):
+
+                gateway_decision = (
+                    None
+                )
+
+            steps.append(
+                TrajectoryStep(
+                    task_id=(
+                        item.task_id
+                    ),
+
+                    task_instructions=(
+                        item.task_instructions
+                    ),
+
+                    semantic_intent=(
+                        asdict(
+                            item.semantic_intent
+                        )
+                        if item.semantic_intent
+                        is not None
+                        else None
+                    ),
+
+                    semantic_guard_decision=(
+                        semantic_guard_decision
+                    ),
+
+                    gateway_decision=(
+                        gateway_decision
+                    ),
+
+                    execution_provenance=(
+                        item.execution_provenance
+                    ),
+
+                    agent=(
+                        item.agent_name
+                    ),
+
+                    status=(
+                        item.status
+                    ),
+
+                    outcome_code=(
+                        item.outcome_code
+                    ),
+
+                    raw_model_output=(
+                        item.raw_model_output
+                    ),
+
+                    proposed_tool_calls=(
+                        item.proposed_tool_calls
+                    ),
+
+                    proposed_tool=(
+                        item.proposed_tool
+                    ),
+
+                    proposed_arguments=(
+                        item.proposed_arguments
+                    ),
+
+                    tool_result=(
+                        item.tool_result
+                    ),
+
+                    approval_id=(
+                        item.approval_id
+                    ),
+
+                    error=(
+                        item.error
+                    ),
+                )
+            )
+
+        # ========================================================
+        # TRAJECTORY SIGNALS
+        # ========================================================
 
         specialist_success_count = sum(
             1
@@ -349,6 +461,49 @@ class TrajectoryRecorder:
             )
         )
 
+    def _record_context(
+        self,
+        payload: dict,
+    ) -> None:
+        """
+        Best-effort trajectory -> contextual-evidence bridge.
+
+        The durable trajectory already exists before this method
+        executes.
+        """
+
+        if (
+            self.context_hooks
+            is None
+        ):
+
+            return
+
+        try:
+
+            records = (
+                self.context_hooks
+                .record_trajectory_context(
+                    payload
+                )
+            )
+
+            print(
+                "[LEARNING] Contextualized trajectory "
+                "trajectory_id="
+                f"{payload.get('trajectory_id')} "
+                f"context_records={len(records)}"
+            )
+
+        except Exception as exc:
+
+            print(
+                "[LEARNING] Context capture failed "
+                "trajectory_id="
+                f"{payload.get('trajectory_id')} "
+                f"error={exc!r}"
+            )
+
     def record(
         self,
         *,
@@ -390,6 +545,16 @@ class TrajectoryRecorder:
             )
         )
 
+        if not isinstance(
+            payload,
+            dict,
+        ):
+
+            raise ValueError(
+                "Sanitized trajectory must "
+                "remain a JSON object."
+            )
+
         self.path.parent.mkdir(
             parents=True,
             exist_ok=True,
@@ -402,6 +567,10 @@ class TrajectoryRecorder:
                 sort_keys=True,
             )
         )
+
+        # ========================================================
+        # DURABLE TRAJECTORY FIRST
+        # ========================================================
 
         with self._lock:
 
@@ -423,5 +592,13 @@ class TrajectoryRecorder:
                 os.fsync(
                     handle.fileno()
                 )
+
+        # ========================================================
+        # CONTEXT SECOND
+        # ========================================================
+
+        self._record_context(
+            payload
+        )
 
         return payload

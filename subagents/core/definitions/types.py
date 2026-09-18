@@ -175,6 +175,7 @@ class SpecialistRequest:
         | None
     ) = None
 
+
 @dataclass
 class AgentTask:
     task_id: str
@@ -233,6 +234,18 @@ class AgentResult:
     # against the original user request.
     task_instructions: (
         str | None
+    ) = None
+
+    # Exact validated Hub semantic contract associated with this
+    # specialist execution.
+    #
+    # This is learning / audit evidence only.
+    #
+    # It does NOT grant authorization. SemanticGuard and
+    # ToolGateway remain authoritative.
+    semantic_intent: (
+        SemanticIntent
+        | None
     ) = None
 
     # Immutable model/prompt identity evidence captured by the

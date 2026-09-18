@@ -29,6 +29,10 @@ from learning.evidence.recorder import (
     TrajectoryRecorder,
 )
 
+from learning.integrations.runtime_hooks import (
+    ContinualLearningRuntimeHooks,
+)
+
 from subagents.core.orchestration.orchestrator import (
     Orchestrator,
 )
@@ -58,6 +62,12 @@ class ApplicationRuntime:
     FastAPI lifespan creates exactly one instance.
 
     Tests may construct isolated runtime graphs independently.
+
+    Learning capture is observability only.
+
+    The learning subsystem is downstream from authoritative runtime
+    execution and cannot authorize capabilities, execute tools, or
+    mutate model weights.
     """
 
     settings: Settings
@@ -106,10 +116,17 @@ class ApplicationRuntime:
     )
 
     outbox_task: (
-        asyncio.Task | None
+        asyncio.Task
+        | None
     ) = None
 
     ready: bool = False
+
+    learning_hooks: (
+        ContinualLearningRuntimeHooks
+    ) = field(
+        init=False
+    )
 
     trajectory_recorder: (
         TrajectoryRecorder
@@ -129,6 +146,30 @@ class ApplicationRuntime:
             )
         )
 
+        # ====================================================
+        # PHASE-5 CONTEXT HOOKS
+        #
+        # Context capture follows the same enable/disable switch
+        # as trajectory capture.
+        #
+        # Context is:
+        #     evidence only
+        #     non-authoritative
+        #     non-training-eligible by default
+        #
+        # Actual dataset promotion continues through the governed
+        # curation/review/evaluation pipeline.
+        # ====================================================
+
+        self.learning_hooks = (
+            ContinualLearningRuntimeHooks(
+                enabled=(
+                    self.settings
+                    .learning_capture_enabled
+                )
+            )
+        )
+
         self.trajectory_recorder = (
             TrajectoryRecorder(
                 path=(
@@ -143,6 +184,10 @@ class ApplicationRuntime:
                 hub_model=(
                     self.settings
                     .hub_model_key
+                ),
+
+                context_hooks=(
+                    self.learning_hooks
                 ),
             )
         )
