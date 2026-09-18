@@ -1,6 +1,7 @@
 import json
 import re
 from pathlib import Path
+from typing import Any
 
 import torch
 from transformers import (
@@ -32,6 +33,7 @@ class QwenCoderWorkerBackend(
     def __init__(
         self,
         model_path: str | Path,
+        model_load_kwargs: dict[str, Any],
     ) -> None:
         self.model_path = (
             Path(model_path)
@@ -56,9 +58,7 @@ class QwenCoderWorkerBackend(
             AutoModelForCausalLM
             .from_pretrained(
                 str(self.model_path),
-                torch_dtype="auto",
-                device_map="auto",
-                local_files_only=True,
+                **model_load_kwargs,
             )
         )
 

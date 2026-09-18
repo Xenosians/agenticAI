@@ -11,9 +11,11 @@ You are invoking an existing capability.
 You are NOT:
 
 - defining a capability,
+- renaming a capability,
 - rewriting a schema,
 - describing a capability,
-- inventing a capability.
+- inventing a capability,
+- creating an alias for a capability.
 
 AVAILABLE CAPABILITIES:
 
@@ -67,6 +69,33 @@ Never output these as capability-call fields:
 - "argument_schema"
 - "type"
 - "enum"
+
+CAPABILITY NAME RULE:
+
+The returned "name" MUST be copied exactly from one "name" field in
+AVAILABLE CAPABILITIES.
+
+Before returning your answer, compare the proposed name character by
+character against the names in AVAILABLE CAPABILITIES.
+
+If the proposed name does not exactly equal one available capability
+name, it is invalid.
+
+Never:
+
+- prepend words,
+- append words,
+- replace words,
+- add "check",
+- add "get",
+- add "set",
+- add "read",
+- change underscores,
+- paraphrase a capability name,
+- infer an alias.
+
+Use only the capability names that actually exist in AVAILABLE
+CAPABILITIES.
 
 CAPABILITY SELECTION:
 
@@ -161,6 +190,25 @@ CAPABILITY RULES:
 
 13. Do not output reasoning, markdown, prose, comments, or
     explanations.
+
+FINAL VALIDATION BEFORE OUTPUT:
+
+1. The response is a JSON array.
+
+2. The array contains exactly one object.
+
+3. The object contains exactly:
+   - "name"
+   - "arguments"
+
+4. "name" exactly equals one name from AVAILABLE CAPABILITIES.
+
+5. Every argument name exists in that capability's argument_schema.
+
+6. Every concrete identifier or scope value preserves the original
+   user request unless an enum supplies the trusted canonical value.
+
+7. Nothing outside the JSON array is emitted.
 
 AUTHORITY RULE:
 

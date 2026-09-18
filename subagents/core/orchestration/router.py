@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import json
 
+from config import (
+    get_settings,
+)
+
 from subagents.core.definitions.registry import (
     AgentRegistry,
 )
@@ -84,6 +88,9 @@ class LLMRouter:
         inference: InferenceEngine,
         model_key: str,
         strict_contract: bool = False,
+        max_new_tokens: (
+            int | None
+        ) = None,
     ) -> None:
 
         self.registry = (
@@ -101,6 +108,30 @@ class LLMRouter:
         self.strict_contract = (
             strict_contract
         )
+
+        self.max_new_tokens = (
+            max_new_tokens
+            if max_new_tokens
+            is not None
+            else (
+                get_settings()
+                .hub_router_max_new_tokens
+            )
+        )
+
+        if (
+            not isinstance(
+                self.max_new_tokens,
+                int,
+            )
+            or self.max_new_tokens
+            < 1
+        ):
+
+            raise ValueError(
+                "Router max_new_tokens must "
+                "be a positive integer."
+            )
 
     def _build_system_prompt(
         self,
@@ -189,7 +220,9 @@ class LLMRouter:
                     messages
                 ),
 
-                max_new_tokens=512,
+                max_new_tokens=(
+                    self.max_new_tokens
+                ),
 
                 priority=(
                     InferencePriority

@@ -1,3 +1,7 @@
+from config import (
+    Settings,
+)
+
 from .base import (
     KnowledgeService,
 )
@@ -8,17 +12,28 @@ from .mock import (
 
 
 def build_knowledge_service(
+    settings: Settings,
 ) -> KnowledgeService:
     """
-    Build the current trusted knowledge provider.
+    Build one trusted knowledge provider from validated
+    application configuration.
 
-    The model-facing capability contract remains independent from
-    the underlying storage or retrieval implementation.
-
-    Future providers may use local files, an indexed corpus, RAG,
-    Confluence, SharePoint, or another trusted knowledge source.
+    Model-facing knowledge capabilities remain independent from
+    the underlying storage or retrieval provider.
     """
 
-    return (
-        MockKnowledgeService()
+    backend = (
+        settings
+        .knowledge_backend
+    )
+
+    if backend == "mock":
+
+        return (
+            MockKnowledgeService()
+        )
+
+    raise RuntimeError(
+        "Unsupported knowledge backend: "
+        f"{backend}"
     )

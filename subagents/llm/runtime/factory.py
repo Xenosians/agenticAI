@@ -12,6 +12,10 @@ from subagents.llm.runtime.memory import (
     release_unused_accelerator_memory,
 )
 
+from subagents.llm.runtime.load_profile import (
+    build_transformers_model_load_kwargs,
+)
+
 from subagents.llm.backends.ministral_hub import (
     MinistralHubBackend,
 )
@@ -151,6 +155,12 @@ def build_model_backend(
                 model_path=(
                     model_path
                 ),
+
+                model_load_kwargs=(
+                    build_transformers_model_load_kwargs(
+                        profile
+                    )
+                ),
             )
         )
 
@@ -167,6 +177,12 @@ def build_model_backend(
                 model_path=(
                     model_path
                 ),
+
+                model_load_kwargs=(
+                    build_transformers_model_load_kwargs(
+                        profile
+                    )
+                ),
             )
         )
 
@@ -182,6 +198,12 @@ def build_model_backend(
             QwenCoderWorkerBackend(
                 model_path=(
                     model_path
+                ),
+
+                model_load_kwargs=(
+                    build_transformers_model_load_kwargs(
+                        profile
+                    )
                 ),
             )
         )

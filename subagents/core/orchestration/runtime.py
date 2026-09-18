@@ -6,6 +6,7 @@ from typing import (
 
 from config import (
     ModelProfileSettings,
+    get_settings,
 )
 
 from learning.evidence.execution_provenance import (
@@ -56,11 +57,6 @@ from tools.registry import (
 
 from tools.presentation.registry import (
     build_tool_presentation,
-)
-
-
-SPECIALIST_MAX_NEW_TOKENS = (
-    256
 )
 
 
@@ -122,6 +118,10 @@ class AgentRuntime:
             SemanticGuard
             | None
         ) = None,
+
+        max_new_tokens: (
+            int | None
+        ) = None,
     ) -> None:
 
         self.agent_registry = (
@@ -145,6 +145,30 @@ class AgentRuntime:
             if semantic_guard is not None
             else SemanticGuard()
         )
+
+        self.max_new_tokens = (
+            max_new_tokens
+            if max_new_tokens
+            is not None
+            else (
+                get_settings()
+                .specialist_max_new_tokens
+            )
+        )
+
+        if (
+            not isinstance(
+                self.max_new_tokens,
+                int,
+            )
+            or self.max_new_tokens
+            < 1
+        ):
+
+            raise ValueError(
+                "Specialist max_new_tokens must "
+                "be a positive integer."
+            )
 
     async def run(
         self,
@@ -327,7 +351,7 @@ class AgentRuntime:
                         ),
 
                         max_new_tokens=(
-                            SPECIALIST_MAX_NEW_TOKENS
+                            self.max_new_tokens
                         ),
                     )
                 )
@@ -372,7 +396,7 @@ class AgentRuntime:
                     ),
 
                     max_new_tokens=(
-                        SPECIALIST_MAX_NEW_TOKENS
+                        self.max_new_tokens
                     ),
 
                     priority=(

@@ -194,6 +194,11 @@ def build_hub(
             semantic_guard=(
                 semantic_guard
             ),
+
+            max_new_tokens=(
+                settings
+                .specialist_max_new_tokens
+            ),
         )
     )
 
@@ -222,6 +227,11 @@ def build_hub(
             ),
 
             strict_contract=True,
+
+            max_new_tokens=(
+                settings
+                .hub_router_max_new_tokens
+            ),
         )
     )
 
@@ -238,6 +248,16 @@ def build_hub(
             model_key=(
                 settings
                 .hub_model_key
+            ),
+
+            response_max_new_tokens=(
+                settings
+                .primary_response_max_new_tokens
+            ),
+
+            synthesis_max_new_tokens=(
+                settings
+                .primary_synthesis_max_new_tokens
             ),
         )
     )

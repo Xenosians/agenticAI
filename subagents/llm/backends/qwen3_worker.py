@@ -1,5 +1,6 @@
 import re
 from pathlib import Path
+from typing import Any
 
 from transformers import (
     AutoModelForCausalLM,
@@ -29,6 +30,7 @@ class Qwen3WorkerBackend(LLMBackend):
     def __init__(
         self,
         model_path: str | Path,
+        model_load_kwargs: dict[str, Any],
     ) -> None:
         self.model_path = (
             Path(model_path)
@@ -39,6 +41,7 @@ class Qwen3WorkerBackend(LLMBackend):
         self.tokenizer = (
             AutoTokenizer.from_pretrained(
                 str(self.model_path),
+                local_files_only=True,
                 trust_remote_code=True,
             )
         )
@@ -46,9 +49,8 @@ class Qwen3WorkerBackend(LLMBackend):
         self.model = (
             AutoModelForCausalLM.from_pretrained(
                 str(self.model_path),
-                torch_dtype="auto",
-                device_map="auto",
                 trust_remote_code=True,
+                **model_load_kwargs,
             )
         )
 

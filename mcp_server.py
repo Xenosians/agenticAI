@@ -283,7 +283,9 @@ def create_mcp_server(
     asset_service = (
         assets
         if assets is not None
-        else build_asset_service()
+        else build_asset_service(
+            runtime_settings
+        )
     )
 
     asset_mutation_service = (
@@ -298,7 +300,9 @@ def create_mcp_server(
     knowledge_service = (
         knowledge
         if knowledge is not None
-        else build_knowledge_service()
+        else build_knowledge_service(
+            runtime_settings
+        )
     )
 
     ticket_service = (

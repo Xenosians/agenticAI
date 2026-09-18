@@ -66,6 +66,13 @@ class ModelProfileSettings(
         "bfloat16"
     )
 
+    # Model parameter storage/loading dtype.
+    #
+    # "auto" preserves checkpoint/backend-native dtype behavior.
+    model_dtype: str = (
+        "auto"
+    )
+
     device_map: (
         str | None
     ) = (
@@ -177,6 +184,41 @@ class ModelProfileSettings(
         if normalized not in supported:
             raise ValueError(
                 "Model compute_dtype must be one of: "
+                + ", ".join(
+                    sorted(
+                        supported
+                    )
+                )
+            )
+
+        return normalized
+
+    @field_validator(
+        "model_dtype"
+    )
+    @classmethod
+    def validate_model_dtype(
+        cls,
+        value: str,
+    ) -> str:
+
+        normalized = (
+            value
+            .strip()
+            .lower()
+        )
+
+        supported = {
+            "auto",
+            "bfloat16",
+            "float16",
+            "float32",
+        }
+
+        if normalized not in supported:
+
+            raise ValueError(
+                "Model model_dtype must be one of: "
                 + ", ".join(
                     sorted(
                         supported
@@ -428,6 +470,35 @@ class Settings(
     )
 
     # ============================================================
+    # GENERATION POLICY
+    #
+    # Generation budgets are deployment/runtime configuration.
+    #
+    # Orchestration consumes these values instead of owning
+    # model-size or machine-specific token assumptions.
+    # ============================================================
+
+    hub_router_max_new_tokens: int = Field(
+        default=512,
+        ge=1,
+    )
+
+    specialist_max_new_tokens: int = Field(
+        default=256,
+        ge=1,
+    )
+
+    primary_response_max_new_tokens: int = Field(
+        default=384,
+        ge=1,
+    )
+
+    primary_synthesis_max_new_tokens: int = Field(
+        default=512,
+        ge=1,
+    )
+
+    # ============================================================
     # DIRECTORY PROVIDER
     # ============================================================
 
@@ -440,6 +511,22 @@ class Settings(
     # ============================================================
 
     ticketing_backend: str = (
+        "mock"
+    )
+
+    # ============================================================
+    # ASSET / DEVICE PROVIDER
+    # ============================================================
+
+    asset_backend: str = (
+        "mock"
+    )
+
+    # ============================================================
+    # KNOWLEDGE / RUNBOOK PROVIDER
+    # ============================================================
+
+    knowledge_backend: str = (
         "mock"
     )
 
@@ -596,6 +683,70 @@ class Settings(
         if normalized not in supported:
             raise ValueError(
                 "TICKETING_BACKEND must be one of: "
+                + ", ".join(
+                    sorted(
+                        supported
+                    )
+                )
+            )
+
+        return normalized
+
+    @field_validator(
+        "asset_backend"
+    )
+    @classmethod
+    def validate_asset_backend(
+        cls,
+        value: str,
+    ) -> str:
+
+        normalized = (
+            value
+            .strip()
+            .lower()
+        )
+
+        supported = {
+            "mock",
+        }
+
+        if normalized not in supported:
+
+            raise ValueError(
+                "ASSET_BACKEND must be one of: "
+                + ", ".join(
+                    sorted(
+                        supported
+                    )
+                )
+            )
+
+        return normalized
+
+    @field_validator(
+        "knowledge_backend"
+    )
+    @classmethod
+    def validate_knowledge_backend(
+        cls,
+        value: str,
+    ) -> str:
+
+        normalized = (
+            value
+            .strip()
+            .lower()
+        )
+
+        supported = {
+            "mock",
+        }
+
+        if normalized not in supported:
+
+            raise ValueError(
+                "KNOWLEDGE_BACKEND must be one of: "
                 + ", ".join(
                     sorted(
                         supported

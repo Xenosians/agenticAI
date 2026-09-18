@@ -1,3 +1,7 @@
+from config import (
+    Settings,
+)
+
 from .base import (
     AssetService,
 )
@@ -8,16 +12,30 @@ from .mock import (
 
 
 def build_asset_service(
+    settings: Settings,
 ) -> AssetService:
     """
-    Build the current asset inventory provider.
+    Build one asset inventory provider from validated
+    application configuration.
 
-    The provider-neutral boundary is established now.
+    Model-facing capabilities depend only on AssetService.
 
-    External CMDB / MDM providers can be added behind this factory
-    without changing model-facing capabilities.
+    Provider selection is deployment configuration rather than
+    orchestration or business-logic state.
     """
 
-    return (
-        MockAssetService()
+    backend = (
+        settings
+        .asset_backend
+    )
+
+    if backend == "mock":
+
+        return (
+            MockAssetService()
+        )
+
+    raise RuntimeError(
+        "Unsupported asset backend: "
+        f"{backend}"
     )

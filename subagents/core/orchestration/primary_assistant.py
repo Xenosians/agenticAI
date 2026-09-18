@@ -4,6 +4,10 @@ from dataclasses import (
     asdict,
 )
 
+from config import (
+    get_settings,
+)
+
 from subagents.core.definitions.types import (
     AgentResult,
 )
@@ -37,7 +41,16 @@ class PrimaryAssistant:
         self,
         inference: InferenceEngine,
         model_key: str,
+
+        response_max_new_tokens: (
+            int | None
+        ) = None,
+
+        synthesis_max_new_tokens: (
+            int | None
+        ) = None,
     ) -> None:
+
         self.inference = (
             inference
         )
@@ -45,6 +58,58 @@ class PrimaryAssistant:
         self.model_key = (
             model_key
         )
+
+        settings = (
+            get_settings()
+        )
+
+        self.response_max_new_tokens = (
+            response_max_new_tokens
+            if response_max_new_tokens
+            is not None
+            else (
+                settings
+                .primary_response_max_new_tokens
+            )
+        )
+
+        self.synthesis_max_new_tokens = (
+            synthesis_max_new_tokens
+            if synthesis_max_new_tokens
+            is not None
+            else (
+                settings
+                .primary_synthesis_max_new_tokens
+            )
+        )
+
+        if (
+            not isinstance(
+                self.response_max_new_tokens,
+                int,
+            )
+            or self.response_max_new_tokens
+            < 1
+        ):
+
+            raise ValueError(
+                "Primary response max_new_tokens "
+                "must be a positive integer."
+            )
+
+        if (
+            not isinstance(
+                self.synthesis_max_new_tokens,
+                int,
+            )
+            or self.synthesis_max_new_tokens
+            < 1
+        ):
+
+            raise ValueError(
+                "Primary synthesis max_new_tokens "
+                "must be a positive integer."
+            )
 
         self.system_prompt = (
             load_prompt(
@@ -80,7 +145,9 @@ class PrimaryAssistant:
                     self.model_key
                 ),
                 messages=messages,
-                max_new_tokens=384,
+                max_new_tokens=(
+                    self.response_max_new_tokens
+                ),
                 priority=(
                     InferencePriority
                     .PRIMARY_RESPONSE
@@ -153,7 +220,9 @@ class PrimaryAssistant:
                 messages=(
                     messages
                 ),
-                max_new_tokens=512,
+                max_new_tokens=(
+                    self.synthesis_max_new_tokens
+                ),
                 priority=(
                     InferencePriority
                     .PRIMARY_RESPONSE

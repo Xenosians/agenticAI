@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -14,6 +15,7 @@ class QwenFuncCallBackend(LLMBackend):
     def __init__(
         self,
         model_path: str | Path,
+        model_load_kwargs: dict[str, Any],
     ) -> None:
         self.model_path = Path(model_path)
 
@@ -30,9 +32,7 @@ class QwenFuncCallBackend(LLMBackend):
 
         self.model = AutoModelForCausalLM.from_pretrained(
             self.model_path,
-            torch_dtype="auto",
-            device_map="auto",
-            local_files_only=True,
+            **model_load_kwargs,
         )
 
         self.model.eval()
