@@ -51,6 +51,7 @@ from subagents.core.definitions.loader import (
 SUPPORTED_SPECIALIST_CHANGE_TYPES = {
     "tool",
     "arguments",
+    "tool_calls",
 }
 
 
@@ -100,6 +101,28 @@ def _sha256_text(
             )
         )
         .hexdigest()
+    )
+
+
+def _tool_calls_response(
+    tool_calls: list[
+        dict
+    ],
+) -> str:
+    """
+    Serialize an exact specialist worker call set.
+
+    This representation is used for reviewed invalid-cardinality
+    negative evidence.
+
+    The call set is preserved exactly rather than normalized into
+    one canonical call.
+    """
+
+    return (
+        _canonical_json(
+            tool_calls
+        )
     )
 
 
@@ -409,6 +432,42 @@ class SpecialistDpoMaterializer:
                 "agent"
             )
 
+        rejected_calls = (
+            record.rejected.tool_calls
+        )
+
+        chosen_calls = (
+            record.chosen.tool_calls
+        )
+
+        # ====================================================
+        # EXACT WORKER CALL-SET EVIDENCE
+        #
+        # tool_calls is a distinct response representation.
+        #
+        # It is used for reviewed invalid-cardinality behavior
+        # such as a worker returning two calls when the runtime
+        # contract allows exactly one.
+        # ====================================================
+
+        if (
+            rejected_calls is not None
+            or chosen_calls is not None
+        ):
+
+            if (
+                rejected_calls
+                != chosen_calls
+            ):
+
+                dimensions.add(
+                    "tool_calls"
+                )
+
+            return (
+                dimensions
+            )
+
         if (
             record.rejected.tool
             != record.chosen.tool
@@ -436,7 +495,9 @@ class SpecialistDpoMaterializer:
                 "answer"
             )
 
-        return dimensions
+        return (
+            dimensions
+        )
 
     def _classify(
         self,
@@ -536,6 +597,204 @@ class SpecialistDpoMaterializer:
                 "different_specialist"
             )
 
+        rejected_calls = (
+            record.rejected.tool_calls
+        )
+
+        chosen_calls = (
+            record.chosen.tool_calls
+        )
+
+        # ====================================================
+        # INVALID-CARDINALITY WORKER RESPONSE EVIDENCE
+        #
+        # The runtime contract permits exactly one call.
+        #
+        # Therefore:
+        #
+        # chosen:
+        #     MUST contain exactly one valid target capability.
+        #
+        # rejected:
+        #     MUST represent invalid cardinality.
+        #
+        # Rejected calls may contain hallucinated capability
+        # names because hallucination is precisely the behavior
+        # being preserved as negative evidence.
+        # ====================================================
+
+        if (
+            rejected_calls is not None
+            or chosen_calls is not None
+        ):
+
+            if (
+                rejected_calls is None
+                or chosen_calls is None
+            ):
+
+                return (
+                    "mixed_worker_response_representation"
+                )
+
+            if not isinstance(
+                chosen_calls,
+                list,
+            ):
+
+                return (
+                    "chosen_tool_calls_invalid"
+                )
+
+            if (
+                len(
+                    chosen_calls
+                )
+                != 1
+            ):
+
+                return (
+                    "chosen_tool_call_count_invalid"
+                )
+
+            if not isinstance(
+                rejected_calls,
+                list,
+            ):
+
+                return (
+                    "rejected_tool_calls_invalid"
+                )
+
+            if (
+                len(
+                    rejected_calls
+                )
+                == 1
+            ):
+
+                return (
+                    "rejected_tool_call_count_not_invalid"
+                )
+
+            # --------------------------------------------
+            # Chosen response must be executable by the
+            # target specialist.
+            # --------------------------------------------
+
+            chosen_call = (
+                chosen_calls[
+                    0
+                ]
+            )
+
+            if not isinstance(
+                chosen_call,
+                dict,
+            ):
+
+                return (
+                    "chosen_tool_call_invalid"
+                )
+
+            chosen_name = (
+                chosen_call.get(
+                    "name"
+                )
+            )
+
+            chosen_arguments = (
+                chosen_call.get(
+                    "arguments"
+                )
+            )
+
+            if (
+                not isinstance(
+                    chosen_name,
+                    str,
+                )
+                or not chosen_name
+            ):
+
+                return (
+                    "chosen_tool_call_invalid"
+                )
+
+            if not isinstance(
+                chosen_arguments,
+                dict,
+            ):
+
+                return (
+                    "chosen_tool_call_invalid"
+                )
+
+            if (
+                chosen_name
+                not in self.agent.tools
+            ):
+
+                return (
+                    "chosen_tool_not_allowed"
+                )
+
+            # --------------------------------------------
+            # Rejected response must still be structurally
+            # valid worker-call evidence.
+            #
+            # Capability names are intentionally NOT checked
+            # against the target capability list.
+            #
+            # A hallucinated rejected capability is legitimate
+            # negative evidence.
+            # --------------------------------------------
+
+            for call in rejected_calls:
+
+                if not isinstance(
+                    call,
+                    dict,
+                ):
+
+                    return (
+                        "rejected_tool_call_invalid"
+                    )
+
+                name = (
+                    call.get(
+                        "name"
+                    )
+                )
+
+                arguments = (
+                    call.get(
+                        "arguments"
+                    )
+                )
+
+                if (
+                    not isinstance(
+                        name,
+                        str,
+                    )
+                    or not name
+                    or not isinstance(
+                        arguments,
+                        dict,
+                    )
+                ):
+
+                    return (
+                        "rejected_tool_call_invalid"
+                    )
+
+            return None
+
+        # ====================================================
+        # NORMAL EXACTLY-ONE-CALL PREFERENCE
+        # ====================================================
+
         if (
             record.rejected.tool
             is None
@@ -558,15 +817,7 @@ class SpecialistDpoMaterializer:
                 "missing_arguments"
             )
 
-        if (
-            record.rejected.tool
-            not in self.agent.tools
-        ):
-
-            return (
-                "rejected_tool_not_allowed"
-            )
-
+        # Chosen behavior must be an actual target capability.
         if (
             record.chosen.tool
             not in self.agent.tools
@@ -575,6 +826,14 @@ class SpecialistDpoMaterializer:
             return (
                 "chosen_tool_not_allowed"
             )
+
+        # IMPORTANT:
+        #
+        # rejected.tool is deliberately NOT required to belong
+        # to self.agent.tools.
+        #
+        # A hallucinated rejected tool is valid reviewed negative
+        # evidence and must survive materialization.
 
         return None
 
@@ -605,31 +864,80 @@ class SpecialistDpoMaterializer:
                 "accepted source has no execution provenance."
             )
 
-        chosen = (
-            _tool_call_response(
-                tool=(
-                    source.chosen.tool
-                ),
+        if (
+            change_type
+            == "tool_calls"
+        ):
 
-                arguments=(
-                    source.chosen.arguments
-                    or {}
-                ),
+            chosen_calls = (
+                source.chosen.tool_calls
             )
-        )
 
-        rejected = (
-            _tool_call_response(
-                tool=(
-                    source.rejected.tool
-                ),
-
-                arguments=(
-                    source.rejected.arguments
-                    or {}
-                ),
+            rejected_calls = (
+                source.rejected.tool_calls
             )
-        )
+
+            if (
+                chosen_calls is None
+                or rejected_calls is None
+            ):
+
+                raise ValueError(
+                    "Internal tool_calls materialization "
+                    "error."
+                )
+
+            chosen = (
+                _tool_calls_response(
+                    chosen_calls
+                )
+            )
+
+            rejected = (
+                _tool_calls_response(
+                    rejected_calls
+                )
+            )
+
+        else:
+
+            if (
+                source.chosen.tool
+                is None
+                or source.rejected.tool
+                is None
+            ):
+
+                raise ValueError(
+                    "Internal single-call materialization "
+                    "error."
+                )
+
+            chosen = (
+                _tool_call_response(
+                    tool=(
+                        source.chosen.tool
+                    ),
+
+                    arguments=(
+                        source.chosen.arguments
+                        or {}
+                    ),
+                )
+            )
+
+            rejected = (
+                _tool_call_response(
+                    tool=(
+                        source.rejected.tool
+                    ),
+
+                    arguments=(
+                        source.rejected.arguments
+                        or {}
+                    ),
+                )
+            )
 
         provenance_payload = (
             source

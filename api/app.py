@@ -48,6 +48,10 @@ from api.runtime import (
     ApplicationRuntime,
 )
 
+from learning.integrations.approval_execution import (
+    capture_approval_execution_evidence,
+)
+
 from config import (
     Settings,
 )
@@ -1611,6 +1615,61 @@ async def approve(
             approval_id
         )
     )
+
+    # ========================================================
+    # POST-APPROVAL LEARNING EVIDENCE
+    #
+    # ApprovalManager remains authoritative.
+    #
+    # Learning observes the result only AFTER the approval
+    # execution attempt has completed.
+    #
+    # Any learning failure is non-fatal and cannot change the
+    # authoritative approval response.
+    # ========================================================
+
+    try:
+
+        evidence_records = (
+            capture_approval_execution_evidence(
+                hooks=(
+                    runtime
+                    .learning_hooks
+                ),
+
+                trajectory_path=(
+                    runtime
+                    .trajectory_recorder
+                    .path
+                ),
+
+                approval_id=(
+                    approval_id
+                ),
+
+                approval_result=(
+                    approval_result
+                ),
+            )
+        )
+
+        if evidence_records:
+
+            print(
+                "[LEARNING] Captured approval execution "
+                f"approval_id={approval_id} "
+                "context_records="
+                f"{len(evidence_records)}"
+            )
+
+    except Exception as exc:
+
+        print(
+            "[LEARNING] Approval execution evidence "
+            "capture failed "
+            f"approval_id={approval_id} "
+            f"error={exc!r}"
+        )
 
     if not approval_result.get(
         "ok"

@@ -255,7 +255,7 @@ def test_runtime_executes_account_specialist():
     )
 
     assert (
-        "ITSM account specialist"
+        "ITSM account-management specialist"
         in messages[0][
             "content"
         ]

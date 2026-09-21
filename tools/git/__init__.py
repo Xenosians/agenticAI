@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import re
+
+from pathlib import (
+    Path,
+)
+
 from typing import (
     Any,
 )
@@ -15,6 +21,9 @@ from services.process_runner import (
 
 
 DEFAULT_TIMEOUT_SECONDS = 10
+
+MAX_STAGE_PATHS = 50
+MAX_GIT_PATH_CHARS = 512
 
 OUTPUT_TRUNCATION_MARKER = (
     "...[output truncated]"
@@ -32,15 +41,18 @@ CONFLICT_STATUS_CODES = {
 }
 
 
+WINDOWS_DRIVE_PREFIX = re.compile(
+    r"^[A-Za-z]:"
+)
+
+
 # ============================================================
 # REPOSITORY RESOLUTION
 # ============================================================
 
 
 def _resolve_target(
-    repository: (
-        str | None
-    ),
+    repository: str | None,
 ) -> tuple[
     GitRepositoryTarget | None,
     dict[
@@ -190,7 +202,7 @@ def _stdout_lines(
     ],
 ) -> list[str]:
 
-    lines = []
+    lines: list[str] = []
 
     for line in (
         _stdout(
@@ -200,6 +212,7 @@ def _stdout_lines(
     ):
 
         if not line.strip():
+
             continue
 
         if (
@@ -235,21 +248,6 @@ def _run_git(
     str,
     Any,
 ]:
-    """
-    Execute one Git command whose complete command shape is owned by
-    trusted application code.
-
-    This intentionally uses run_trusted_process rather than the
-    generic model-facing process_exec policy.
-
-    The model may select only the bounded logical repository ID.
-
-    The model does NOT select:
-        executable
-        Git subcommand
-        Git flags
-        cwd
-    """
 
     return (
         run_trusted_process(
@@ -310,19 +308,21 @@ def _parse_branch_header(
             0,
         )
 
-    # Fresh repository with no commits yet.
     if line.startswith(
         "No commits yet on "
     ):
 
-        return (
+        branch = (
             line[
                 len(
                     "No commits yet on "
                 ):
-            ].strip()
-            or None,
+            ]
+            .strip()
+        )
 
+        return (
+            branch or None,
             None,
             0,
             0,
@@ -332,14 +332,17 @@ def _parse_branch_header(
         "Initial commit on "
     ):
 
-        return (
+        branch = (
             line[
                 len(
                     "Initial commit on "
                 ):
-            ].strip()
-            or None,
+            ]
+            .strip()
+        )
 
+        return (
+            branch or None,
             None,
             0,
             0,
@@ -360,8 +363,9 @@ def _parse_branch_header(
         )
 
         tracking_part = (
-            tracking_part
-            .rstrip("]")
+            tracking_part.rstrip(
+                "]"
+            )
         )
 
     upstream = None
@@ -438,14 +442,9 @@ def _parse_branch_header(
                     behind = 0
 
     return (
-        branch
-        or None,
-
-        upstream
-        or None,
-
+        branch or None,
+        upstream or None,
         ahead,
-
         behind,
     )
 
@@ -456,19 +455,6 @@ def _parse_status_change(
     str,
     Any,
 ] | None:
-    """
-    Parse one Git porcelain-v1 short-status line.
-
-    XY semantics:
-
-        X = index / staged state
-        Y = work-tree / unstaged state
-
-    Special cases:
-
-        ?? = untracked
-        !! = ignored
-    """
 
     if len(
         line
@@ -576,15 +562,15 @@ def _parse_status_changes(
             )
         )
 
-        if parsed is None:
+        if parsed is not None:
 
-            continue
+            changes.append(
+                parsed
+            )
 
-        changes.append(
-            parsed
-        )
-
-    return changes
+    return (
+        changes
+    )
 
 
 def _unique_paths(
@@ -595,10 +581,7 @@ def _unique_paths(
         ]
     ],
     *,
-    flag: (
-        str
-        | None
-    ) = None,
+    flag: str | None = None,
 ) -> list[str]:
 
     paths: list[str] = []
@@ -642,7 +625,9 @@ def _unique_paths(
             path
         )
 
-    return paths
+    return (
+        paths
+    )
 
 
 def _working_tree_summary(
@@ -740,10 +725,7 @@ def _working_tree_summary(
 
 
 def workspace_git_status(
-    repository: (
-        str | None
-    ) = None,
-
+    repository: str | None = None,
     timeout_seconds: int = (
         DEFAULT_TIMEOUT_SECONDS
     ),
@@ -751,21 +733,6 @@ def workspace_git_status(
     str,
     Any,
 ]:
-    """
-    Inspect branch and complete working-tree state for one
-    configured logical repository.
-
-    Includes:
-
-        staged changes
-        unstaged changes
-        untracked files
-        merge conflicts
-
-    Repository selection is logical and trusted.
-
-    Git command shape is fixed by application code.
-    """
 
     (
         target,
@@ -811,11 +778,9 @@ def workspace_git_status(
         )
     )
 
-    if not (
-        result.get(
-            "ok",
-            False,
-        )
+    if not result.get(
+        "ok",
+        False,
     ):
 
         return (
@@ -942,10 +907,7 @@ def workspace_git_status(
 
 
 def workspace_git_branches(
-    repository: (
-        str | None
-    ) = None,
-
+    repository: str | None = None,
     timeout_seconds: int = (
         DEFAULT_TIMEOUT_SECONDS
     ),
@@ -953,9 +915,6 @@ def workspace_git_branches(
     str,
     Any,
 ]:
-    """
-    List local branches for one configured repository.
-    """
 
     (
         target,
@@ -1000,11 +959,9 @@ def workspace_git_branches(
         )
     )
 
-    if not (
-        result.get(
-            "ok",
-            False,
-        )
+    if not result.get(
+        "ok",
+        False,
     ):
 
         return (
@@ -1110,10 +1067,7 @@ def workspace_git_branches(
 
 
 def workspace_git_log(
-    repository: (
-        str | None
-    ) = None,
-
+    repository: str | None = None,
     timeout_seconds: int = (
         DEFAULT_TIMEOUT_SECONDS
     ),
@@ -1121,12 +1075,6 @@ def workspace_git_log(
     str,
     Any,
 ]:
-    """
-    Return the latest twenty commits from one configured
-    repository.
-
-    History size and command shape are trusted constants.
-    """
 
     (
         target,
@@ -1173,11 +1121,9 @@ def workspace_git_log(
         )
     )
 
-    if not (
-        result.get(
-            "ok",
-            False,
-        )
+    if not result.get(
+        "ok",
+        False,
     ):
 
         return (
@@ -1207,30 +1153,23 @@ def workspace_git_log(
             )
         )
 
-        commit_hash = (
-            pieces[
-                0
-            ]
-        )
-
-        message = (
-            pieces[
-                1
-            ]
-            if len(
-                pieces
-            )
-            > 1
-            else ""
-        )
-
         commits.append(
             {
                 "hash":
-                    commit_hash,
+                    pieces[
+                        0
+                    ],
 
-                "message":
-                    message,
+                "message": (
+                    pieces[
+                        1
+                    ]
+                    if len(
+                        pieces
+                    )
+                    > 1
+                    else ""
+                ),
             }
         )
 
@@ -1266,25 +1205,15 @@ def workspace_git_log(
 # ============================================================
 
 
-def workspace_git_diff(
-    repository: (
-        str | None
-    ) = None,
-
-    timeout_seconds: int = (
-        DEFAULT_TIMEOUT_SECONDS
-    ),
+def _workspace_git_diff(
+    *,
+    repository: str | None,
+    timeout_seconds: int,
+    staged: bool,
 ) -> dict[
     str,
     Any,
 ]:
-    """
-    Return the bounded current UNSTAGED diff for one configured
-    repository.
-
-    Staged changes are intentionally not included by this
-    capability.
-    """
 
     (
         target,
@@ -1311,18 +1240,42 @@ def workspace_git_diff(
             }
         )
 
+    if staged:
+
+        args = [
+            "diff",
+            "--cached",
+            "--no-ext-diff",
+            "--no-color",
+            "--unified=3",
+        ]
+
+        scope = (
+            "staged"
+        )
+
+    else:
+
+        args = [
+            "diff",
+            "--no-ext-diff",
+            "--no-color",
+            "--unified=3",
+        ]
+
+        scope = (
+            "unstaged"
+        )
+
     result = (
         _run_git(
             target=(
                 target
             ),
 
-            args=[
-                "diff",
-                "--no-ext-diff",
-                "--no-color",
-                "--unified=3",
-            ],
+            args=(
+                args
+            ),
 
             timeout_seconds=(
                 timeout_seconds
@@ -1330,11 +1283,9 @@ def workspace_git_diff(
         )
     )
 
-    if not (
-        result.get(
-            "ok",
-            False,
-        )
+    if not result.get(
+        "ok",
+        False,
     ):
 
         return (
@@ -1355,12 +1306,6 @@ def workspace_git_diff(
         )
     )
 
-    truncated = (
-        _is_truncated(
-            diff
-        )
-    )
-
     return {
         "ok":
             True,
@@ -1372,7 +1317,7 @@ def workspace_git_diff(
             target.name,
 
         "scope":
-            "unstaged",
+            scope,
 
         "diff":
             diff.strip(),
@@ -1383,8 +1328,60 @@ def workspace_git_diff(
             ),
 
         "truncated":
-            truncated,
+            _is_truncated(
+                diff
+            ),
     }
+
+
+def workspace_git_diff(
+    repository: str | None = None,
+    timeout_seconds: int = (
+        DEFAULT_TIMEOUT_SECONDS
+    ),
+) -> dict[
+    str,
+    Any,
+]:
+
+    return (
+        _workspace_git_diff(
+            repository=(
+                repository
+            ),
+
+            timeout_seconds=(
+                timeout_seconds
+            ),
+
+            staged=False,
+        )
+    )
+
+
+def workspace_git_staged_diff(
+    repository: str | None = None,
+    timeout_seconds: int = (
+        DEFAULT_TIMEOUT_SECONDS
+    ),
+) -> dict[
+    str,
+    Any,
+]:
+
+    return (
+        _workspace_git_diff(
+            repository=(
+                repository
+            ),
+
+            timeout_seconds=(
+                timeout_seconds
+            ),
+
+            staged=True,
+        )
+    )
 
 
 # ============================================================
@@ -1393,10 +1390,7 @@ def workspace_git_diff(
 
 
 def workspace_git_changed_files(
-    repository: (
-        str | None
-    ) = None,
-
+    repository: str | None = None,
     timeout_seconds: int = (
         DEFAULT_TIMEOUT_SECONDS
     ),
@@ -1404,18 +1398,6 @@ def workspace_git_changed_files(
     str,
     Any,
 ]:
-    """
-    Return all current changed files from one configured repository.
-
-    Includes:
-        staged
-        unstaged
-        untracked
-        conflicted
-
-    This capability reports working-tree state rather than only
-    `git diff --name-only`.
-    """
 
     (
         target,
@@ -1460,11 +1442,9 @@ def workspace_git_changed_files(
         )
     )
 
-    if not (
-        result.get(
-            "ok",
-            False,
-        )
+    if not result.get(
+        "ok",
+        False,
     ):
 
         return (
@@ -1493,12 +1473,6 @@ def workspace_git_changed_files(
         )
     )
 
-    summary = (
-        _working_tree_summary(
-            changes
-        )
-    )
-
     return {
         "ok":
             True,
@@ -1515,10 +1489,1079 @@ def workspace_git_changed_files(
         "changes":
             changes,
 
-        **summary,
+        **_working_tree_summary(
+            changes
+        ),
 
         "truncated":
             _is_truncated(
                 raw_stdout
             ),
+    }
+
+
+# ============================================================
+# STAGE FILE POLICY
+# ============================================================
+
+
+def _validate_stage_paths(
+    paths: Any,
+) -> tuple[
+    list[str] | None,
+    str | None,
+]:
+
+    if not isinstance(
+        paths,
+        list,
+    ):
+
+        return (
+            None,
+            "paths must be a list of repository-relative files.",
+        )
+
+    if not paths:
+
+        return (
+            None,
+            "At least one file path must be supplied.",
+        )
+
+    if len(
+        paths
+    ) > MAX_STAGE_PATHS:
+
+        return (
+            None,
+            (
+                "Too many Git paths were requested. "
+                f"The maximum is {MAX_STAGE_PATHS}."
+            ),
+        )
+
+    normalized: list[str] = []
+
+    seen: set[str] = set()
+
+    for path in paths:
+
+        if not isinstance(
+            path,
+            str,
+        ):
+
+            return (
+                None,
+                "Every Git path must be a string.",
+            )
+
+        if (
+            not path
+            or path
+            != path.strip()
+        ):
+
+            return (
+                None,
+                (
+                    "Every Git path must be a non-empty "
+                    "exact repository-relative path."
+                ),
+            )
+
+        if len(
+            path
+        ) > MAX_GIT_PATH_CHARS:
+
+            return (
+                None,
+                (
+                    "A requested Git path exceeds the "
+                    "maximum supported length."
+                ),
+            )
+
+        if any(
+            ord(
+                character
+            ) < 32
+            or ord(
+                character
+            ) == 127
+
+            for character
+            in path
+        ):
+
+            return (
+                None,
+                (
+                    "Git paths containing control "
+                    "characters are not permitted."
+                ),
+            )
+
+        if (
+            path.startswith(
+                "/"
+            )
+            or WINDOWS_DRIVE_PREFIX.match(
+                path
+            )
+        ):
+
+            return (
+                None,
+                (
+                    "Git paths must be repository-relative, "
+                    "not absolute."
+                ),
+            )
+
+        # Repository paths are represented canonically with "/".
+        # Backslashes are rejected rather than guessed/translated.
+        if "\\" in path:
+
+            return (
+                None,
+                (
+                    "Git paths must use repository-relative "
+                    "forward-slash notation."
+                ),
+            )
+
+        parts = (
+            path.split(
+                "/"
+            )
+        )
+
+        if any(
+            part
+            in {
+                "",
+                ".",
+                "..",
+            }
+
+            for part
+            in parts
+        ):
+
+            return (
+                None,
+                (
+                    "Git paths may not contain empty, '.', "
+                    "or '..' path components."
+                ),
+            )
+
+        if (
+            parts[
+                0
+            ]
+            == ".git"
+        ):
+
+            return (
+                None,
+                (
+                    "Git internal metadata paths "
+                    "cannot be staged."
+                ),
+            )
+
+        if path in seen:
+
+            return (
+                None,
+                (
+                    "Duplicate Git paths are "
+                    "not permitted."
+                ),
+            )
+
+        seen.add(
+            path
+        )
+
+        normalized.append(
+            path
+        )
+
+    return (
+        normalized,
+        None,
+    )
+
+
+def _validate_stage_request(
+    *,
+    repository: Any,
+    paths: Any,
+) -> tuple[
+    GitRepositoryTarget | None,
+    list[str] | None,
+    str | None,
+]:
+
+    if not isinstance(
+        repository,
+        str,
+    ):
+
+        return (
+            None,
+            None,
+            (
+                "An explicit logical repository "
+                "identifier is required."
+            ),
+        )
+
+    if (
+        not repository
+        or repository
+        != repository.strip()
+    ):
+
+        return (
+            None,
+            None,
+            (
+                "The repository identifier must "
+                "be a non-empty exact value."
+            ),
+        )
+
+    try:
+
+        target = (
+            resolve_git_repository(
+                repository
+            )
+        )
+
+    except ValueError as exc:
+
+        return (
+            None,
+            None,
+            str(
+                exc
+            ),
+        )
+
+    (
+        normalized_paths,
+        path_error,
+    ) = (
+        _validate_stage_paths(
+            paths
+        )
+    )
+
+    if normalized_paths is None:
+
+        return (
+            None,
+            None,
+            path_error,
+        )
+
+    repository_root = (
+        target.path.resolve()
+    )
+
+    for relative_path in (
+        normalized_paths
+    ):
+
+        candidate = (
+            repository_root
+            / Path(
+                *relative_path.split(
+                    "/"
+                )
+            )
+        ).resolve(
+            strict=False
+        )
+
+        if (
+            candidate
+            != repository_root
+            and repository_root
+            not in candidate.parents
+        ):
+
+            return (
+                None,
+                None,
+                (
+                    "A requested Git path escapes "
+                    "the selected repository."
+                ),
+            )
+
+        # `git add directory` recursively stages a whole subtree.
+        #
+        # workspace_git_stage_files deliberately does not have that
+        # authority.
+        if candidate.is_dir():
+
+            return (
+                None,
+                None,
+                (
+                    f"'{relative_path}' is a directory. "
+                    "This capability stages explicit files only."
+                ),
+            )
+
+    return (
+        target,
+        normalized_paths,
+        None,
+    )
+
+
+def evaluate_git_stage_policy(
+    repository: Any,
+    paths: Any,
+) -> dict[
+    str,
+    Any,
+]:
+    """
+    Trusted pre-approval policy.
+
+    This performs no mutation.
+
+    It ensures the approval is created only for:
+        - an explicitly selected configured repository
+        - bounded exact repository-relative file paths
+    """
+
+    (
+        target,
+        normalized_paths,
+        error,
+    ) = (
+        _validate_stage_request(
+            repository=(
+                repository
+            ),
+
+            paths=(
+                paths
+            ),
+        )
+    )
+
+    if (
+        target is None
+        or normalized_paths is None
+    ):
+
+        return {
+            "ok":
+                False,
+
+            "status":
+                "denied",
+
+            "error":
+                (
+                    error
+                    or "Git staging policy denied the request."
+                ),
+        }
+
+    return {
+        "ok":
+            True,
+
+        "status":
+            "allowed",
+
+        "risk":
+            "low",
+
+        "requires_approval":
+            True,
+    }
+
+
+# ============================================================
+# STAGE FILES
+# ============================================================
+
+
+def workspace_git_stage_files(
+    repository: str,
+    paths: list[str],
+    timeout_seconds: int = (
+        DEFAULT_TIMEOUT_SECONDS
+    ),
+) -> dict[
+    str,
+    Any,
+]:
+    """
+    Stage exactly the approved repository-relative file paths.
+
+    The persisted approval arguments are revalidated here because
+    ApprovalManager executes the approved MCP call directly.
+
+    Git pathspec magic is disabled using :(literal).
+    """
+
+    (
+        target,
+        normalized_paths,
+        error,
+    ) = (
+        _validate_stage_request(
+            repository=(
+                repository
+            ),
+
+            paths=(
+                paths
+            ),
+        )
+    )
+
+    if (
+        target is None
+        or normalized_paths is None
+    ):
+
+        return {
+            "ok":
+                False,
+
+            "status":
+                "denied",
+
+            "repository":
+                repository,
+
+            "error":
+                (
+                    error
+                    or "Git staging request was denied."
+                ),
+        }
+
+    literal_pathspecs = [
+        f":(literal){path}"
+
+        for path
+        in normalized_paths
+    ]
+
+    mutation = (
+        _run_git(
+            target=(
+                target
+            ),
+
+            args=[
+                "add",
+                "--",
+                *literal_pathspecs,
+            ],
+
+            timeout_seconds=(
+                timeout_seconds
+            ),
+        )
+    )
+
+    if not mutation.get(
+        "ok",
+        False,
+    ):
+
+        failure = (
+            _process_failure(
+                repository=(
+                    target.name
+                ),
+
+                result=(
+                    mutation
+                ),
+            )
+        )
+
+        failure[
+            "requested_paths"
+        ] = (
+            normalized_paths
+        )
+
+        return (
+            failure
+        )
+
+    # ========================================================
+    # TRUSTED POST-MUTATION VERIFICATION
+    #
+    # If verification itself fails, the mutation still completed
+    # successfully because `git add` returned success.
+    #
+    # Do not falsely report the side effect as failed.
+    # ========================================================
+
+    verification = (
+        _run_git(
+            target=(
+                target
+            ),
+
+            args=[
+                "diff",
+                "--cached",
+                "--name-only",
+                "--",
+                *literal_pathspecs,
+            ],
+
+            timeout_seconds=(
+                timeout_seconds
+            ),
+        )
+    )
+
+    if not verification.get(
+        "ok",
+        False,
+    ):
+
+        verification_failure = (
+            _process_failure(
+                repository=(
+                    target.name
+                ),
+
+                result=(
+                    verification
+                ),
+            )
+        )
+
+        return {
+            "ok":
+                True,
+
+            "status":
+                "success",
+
+            "repository":
+                target.name,
+
+            "requested_paths":
+                normalized_paths,
+
+            "files":
+                [],
+
+            "staged_paths":
+                [],
+
+            "staged_count":
+                0,
+
+            "verification_ok":
+                False,
+
+            "verification_error":
+                verification_failure.get(
+                    "error"
+                ),
+        }
+
+    staged_paths = (
+        _stdout_lines(
+            verification
+        )
+    )
+
+    return {
+        "ok":
+            True,
+
+        "status":
+            "success",
+
+        "repository":
+            target.name,
+
+        "requested_paths":
+            normalized_paths,
+
+        # `files` keeps the result compatible with the generic Git
+        # learning-context extractor.
+        "files":
+            staged_paths,
+
+        "staged_paths":
+            staged_paths,
+
+        "staged_count":
+            len(
+                staged_paths
+            ),
+
+        "verification_ok":
+            True,
+
+        "verification_error":
+            None,
+    }
+
+# ============================================================
+# GOVERNED GIT UNSTAGE
+# ============================================================
+
+
+def _validate_unstage_request(
+    repository: Any,
+    paths: Any,
+):
+    """
+    Reuse the exact bounded repository/path validation used by
+    governed Git staging.
+
+    Staging and unstaging differ in their Git side effect, not in
+    the authority granted over repository identity or file paths.
+    """
+
+    return (
+        _validate_stage_request(
+            repository=repository,
+            paths=paths,
+        )
+    )
+
+
+def evaluate_git_unstage_policy(
+    repository: Any,
+    paths: Any,
+) -> dict[
+    str,
+    Any,
+]:
+    """
+    Trusted pre-approval policy.
+
+    This performs no mutation.
+
+    Approval is created only for an explicitly selected configured
+    repository and bounded exact repository-relative file paths.
+    """
+
+    (
+        target,
+        normalized_paths,
+        error,
+    ) = (
+        _validate_unstage_request(
+            repository=repository,
+            paths=paths,
+        )
+    )
+
+    if (
+        target is None
+        or normalized_paths is None
+    ):
+
+        return {
+            "ok":
+                False,
+
+            "status":
+                "denied",
+
+            "error":
+                (
+                    error
+                    or "Git unstaging policy denied the request."
+                ),
+        }
+
+    return {
+        "ok":
+            True,
+
+        "status":
+            "allowed",
+
+        "risk":
+            "low",
+
+        "requires_approval":
+            True,
+    }
+
+
+def workspace_git_unstage_files(
+    repository: str,
+    paths: list[str],
+    timeout_seconds: int = (
+        DEFAULT_TIMEOUT_SECONDS
+    ),
+) -> dict[
+    str,
+    Any,
+]:
+    """
+    Remove exactly the approved repository-relative file paths
+    from the Git index without modifying working-tree contents.
+
+    The persisted approval arguments are revalidated here because
+    ApprovalManager executes the approved MCP call directly.
+
+    Trusted command:
+
+        git reset -- :(literal)<path> ...
+
+    This is the path-scoped index-reset form only.
+
+    It does NOT:
+        - reset working-tree contents
+        - use --hard
+        - delete files
+        - switch branches
+        - create commits
+        - contact remotes
+
+    Git pathspec magic is disabled using :(literal).
+    """
+
+    (
+        target,
+        normalized_paths,
+        error,
+    ) = (
+        _validate_unstage_request(
+            repository=repository,
+            paths=paths,
+        )
+    )
+
+    if (
+        target is None
+        or normalized_paths is None
+    ):
+
+        return {
+            "ok":
+                False,
+
+            "status":
+                "denied",
+
+            "repository":
+                repository,
+
+            "error":
+                (
+                    error
+                    or "Git unstaging request was denied."
+                ),
+        }
+
+    literal_pathspecs = [
+        f":(literal){path}"
+
+        for path
+        in normalized_paths
+    ]
+
+    # ========================================================
+    # TRUSTED PRE-MUTATION SNAPSHOT
+    #
+    # Record which of the explicitly requested paths are actually
+    # staged immediately before the mutation.
+    #
+    # This gives us an exact postcondition comparison and avoids
+    # claiming that an already-unstaged path was changed.
+    # ========================================================
+
+    before = (
+        _run_git(
+            target=target,
+
+            args=[
+                "diff",
+                "--cached",
+                "--name-only",
+                "--",
+                *literal_pathspecs,
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if not before.get(
+        "ok",
+        False,
+    ):
+
+        failure = (
+            _process_failure(
+                repository=target.name,
+                result=before,
+            )
+        )
+
+        failure[
+            "requested_paths"
+        ] = (
+            normalized_paths
+        )
+
+        return (
+            failure
+        )
+
+    staged_before_paths = (
+        _stdout_lines(
+            before
+        )
+    )
+
+    # Nothing among the exact requested paths is currently staged.
+    # This is a successful no-op, not a mutation failure.
+    if not staged_before_paths:
+
+        return {
+            "ok":
+                True,
+
+            "status":
+                "success",
+
+            "repository":
+                target.name,
+
+            "requested_paths":
+                normalized_paths,
+
+            "files":
+                [],
+
+            "staged_before_paths":
+                [],
+
+            "unstaged_paths":
+                [],
+
+            "unstaged_count":
+                0,
+
+            "remaining_staged_paths":
+                [],
+
+            "mutation_performed":
+                False,
+
+            "verification_ok":
+                True,
+
+            "verification_error":
+                None,
+        }
+
+    # ========================================================
+    # TRUSTED INDEX-ONLY MUTATION
+    # ========================================================
+
+    mutation = (
+        _run_git(
+            target=target,
+
+            args=[
+                "reset",
+                "--",
+                *literal_pathspecs,
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if not mutation.get(
+        "ok",
+        False,
+    ):
+
+        failure = (
+            _process_failure(
+                repository=target.name,
+                result=mutation,
+            )
+        )
+
+        failure[
+            "requested_paths"
+        ] = (
+            normalized_paths
+        )
+
+        failure[
+            "staged_before_paths"
+        ] = (
+            staged_before_paths
+        )
+
+        return (
+            failure
+        )
+
+    # ========================================================
+    # TRUSTED POST-MUTATION VERIFICATION
+    #
+    # If this verification fails, the index mutation has already
+    # happened because the path-scoped reset returned success.
+    #
+    # Do not falsely report that no side effect occurred.
+    # ========================================================
+
+    verification = (
+        _run_git(
+            target=target,
+
+            args=[
+                "diff",
+                "--cached",
+                "--name-only",
+                "--",
+                *literal_pathspecs,
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if not verification.get(
+        "ok",
+        False,
+    ):
+
+        verification_failure = (
+            _process_failure(
+                repository=target.name,
+                result=verification,
+            )
+        )
+
+        return {
+            "ok":
+                True,
+
+            "status":
+                "success",
+
+            "repository":
+                target.name,
+
+            "requested_paths":
+                normalized_paths,
+
+            "files":
+                [],
+
+            "staged_before_paths":
+                staged_before_paths,
+
+            "unstaged_paths":
+                [],
+
+            "unstaged_count":
+                0,
+
+            "remaining_staged_paths":
+                [],
+
+            "mutation_performed":
+                True,
+
+            "verification_ok":
+                False,
+
+            "verification_error":
+                verification_failure.get(
+                    "error"
+                ),
+        }
+
+    remaining_staged_paths = (
+        _stdout_lines(
+            verification
+        )
+    )
+
+    remaining = set(
+        remaining_staged_paths
+    )
+
+    unstaged_paths = [
+        path
+
+        for path
+        in staged_before_paths
+
+        if path not in remaining
+    ]
+
+    return {
+        "ok":
+            True,
+
+        "status":
+            "success",
+
+        "repository":
+            target.name,
+
+        "requested_paths":
+            normalized_paths,
+
+        # Keep this compatible with the generic Git learning-context
+        # extractor. These are the paths whose staged state actually
+        # changed during this execution.
+        "files":
+            unstaged_paths,
+
+        "staged_before_paths":
+            staged_before_paths,
+
+        "unstaged_paths":
+            unstaged_paths,
+
+        "unstaged_count":
+            len(
+                unstaged_paths
+            ),
+
+        "remaining_staged_paths":
+            remaining_staged_paths,
+
+        "mutation_performed":
+            True,
+
+        "verification_ok":
+            True,
+
+        "verification_error":
+            None,
     }

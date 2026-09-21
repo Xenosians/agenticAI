@@ -32,12 +32,6 @@ def gateway_result(
     str,
     Any,
 ]:
-    """
-    Build one stable ToolGateway result.
-
-    decision_code is machine-readable and must remain independent
-    from human-facing error prose.
-    """
 
     return {
         "ok":
@@ -57,12 +51,6 @@ def identifier_appears_in_request(
     identifier: str,
     user_input: str,
 ) -> bool:
-    """
-    Check whether an identifier appears literally in the
-    original user request without accepting partial identifiers.
-
-    Empty identifiers are never valid identifiers.
-    """
 
     if not identifier.strip():
 
@@ -92,6 +80,124 @@ def identifier_appears_in_request(
     )
 
 
+def _grounded_values(
+    *,
+    field_name: str,
+    value: Any,
+) -> tuple[
+    list[str] | None,
+    str | None,
+]:
+    """
+    Normalize one grounded runtime argument.
+
+    Supported forms:
+
+        "jdoe"
+
+        [
+            "src/app.py",
+            "tests/test_app.py",
+        ]
+
+    Lists are exact collections of grounded identifiers.
+
+    Empty lists, non-string members, empty members, and duplicate
+    members fail closed.
+    """
+
+    if isinstance(
+        value,
+        str,
+    ):
+
+        if not value.strip():
+
+            return (
+                None,
+                f"{field_name} must not be empty.",
+            )
+
+        return (
+            [
+                value,
+            ],
+            None,
+        )
+
+    if isinstance(
+        value,
+        list,
+    ):
+
+        if not value:
+
+            return (
+                None,
+                f"{field_name} must not be empty.",
+            )
+
+        normalized: list[str] = []
+
+        seen: set[str] = set()
+
+        for item in value:
+
+            if not isinstance(
+                item,
+                str,
+            ):
+
+                return (
+                    None,
+                    (
+                        f"{field_name} must contain "
+                        "only strings."
+                    ),
+                )
+
+            if not item.strip():
+
+                return (
+                    None,
+                    (
+                        f"{field_name} must not contain "
+                        "empty values."
+                    ),
+                )
+
+            if item in seen:
+
+                return (
+                    None,
+                    (
+                        f"{field_name} must not contain "
+                        "duplicate values."
+                    ),
+                )
+
+            seen.add(
+                item
+            )
+
+            normalized.append(
+                item
+            )
+
+        return (
+            normalized,
+            None,
+        )
+
+    return (
+        None,
+        (
+            f"{field_name} must be a string "
+            "or a list of strings."
+        ),
+    )
+
+
 def validate_grounded_arguments(
     user_input: str,
     arguments: dict[
@@ -106,67 +212,88 @@ def validate_grounded_arguments(
     str | None,
 ]:
     """
-    Verify model-produced identifiers that trusted tool policy
-    declares must originate literally from the user request.
+    Verify model-produced semantic identifiers against the
+    ORIGINAL USER REQUEST.
 
-    A grounded field may be absent when the capability defines it
-    as optional.
+    Grounded values may be:
 
-    When a grounded field is present, however, it must contain a
-    non-empty string and that exact identifier must appear in the
-    original user request.
+        exact scalar string
+
+        exact list of strings
+
+    For list-valued arguments EVERY member must independently
+    appear in the original user request.
+
+    This prevents:
+
+        user asks:
+            stage a.py and b.py
+
+        specialist proposes:
+            ["a.py", "b.py", "secret.py"]
+
+    Missing grounded fields remain allowed here because requiredness
+    belongs to capability policy/schema.
     """
 
     for field_name in (
         grounded_arguments
     ):
 
-        value = arguments.get(
+        if (
             field_name
-        )
-
-        if value is None:
+            not in arguments
+        ):
 
             continue
 
-        if not isinstance(
-            value,
-            str,
-        ):
+        value = (
+            arguments[
+                field_name
+            ]
+        )
+
+        (
+            values,
+            error,
+        ) = (
+            _grounded_values(
+                field_name=(
+                    field_name
+                ),
+
+                value=(
+                    value
+                ),
+            )
+        )
+
+        if values is None:
 
             return (
                 False,
-                (
-                    f"{field_name} "
-                    "must be a string."
-                ),
+                error,
             )
 
-        if not value.strip():
+        for identifier in values:
 
-            return (
-                False,
-                (
-                    f"{field_name} "
-                    "must not be empty."
-                ),
-            )
+            if not (
+                identifier_appears_in_request(
+                    identifier,
+                    user_input,
+                )
+            ):
 
-        if not identifier_appears_in_request(
-            value,
-            user_input,
-        ):
-
-            return (
-                False,
-                (
-                    "The model produced "
-                    f"{field_name} '{value}', "
-                    "but that identifier does "
-                    "not appear exactly in the "
-                    "original request."
-                ),
-            )
+                return (
+                    False,
+                    (
+                        "The model produced "
+                        f"{field_name} value "
+                        f"'{identifier}', but that "
+                        "identifier does not appear "
+                        "exactly in the original request."
+                    ),
+                )
 
     return (
         True,
@@ -175,14 +302,6 @@ def validate_grounded_arguments(
 
 
 class ToolGateway:
-    """
-    Deterministic security boundary between model proposals and
-    executable capabilities.
-
-    Stable machine-readable decision codes are emitted alongside
-    human-readable errors so learning infrastructure can classify
-    outcomes without parsing prose.
-    """
 
     def __init__(
         self,

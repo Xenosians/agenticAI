@@ -31,7 +31,6 @@ from subagents.core.orchestration.orchestrator import (
 
 from subagents.core.orchestration.runtime import (
     AgentRuntime,
-    SPECIALIST_MAX_NEW_TOKENS,
 )
 
 from subagents.core.definitions.types import (
@@ -504,12 +503,12 @@ def test_runtime_captures_exact_pre_generation_provenance(
 
     assert (
         provenance.max_new_tokens
-        == SPECIALIST_MAX_NEW_TOKENS
+        == runtime.max_new_tokens
     )
 
     assert (
         inference.max_new_tokens
-        == SPECIALIST_MAX_NEW_TOKENS
+        == runtime.max_new_tokens
     )
 
     assert (

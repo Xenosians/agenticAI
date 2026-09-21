@@ -8,11 +8,27 @@ from mcp.server import (
 )
 
 from tools.git import (
-    workspace_git_branches as run_git_branches,
-    workspace_git_changed_files as run_git_changed_files,
-    workspace_git_diff as run_git_diff,
-    workspace_git_log as run_git_log,
-    workspace_git_status as run_git_status,
+    workspace_git_branches
+    as run_git_branches,
+
+    workspace_git_changed_files
+    as run_git_changed_files,
+
+    workspace_git_diff
+    as run_git_diff,
+
+    workspace_git_log
+    as run_git_log,
+
+    workspace_git_stage_files
+    as run_git_stage_files,
+
+    workspace_git_staged_diff
+    as run_git_staged_diff,
+
+    workspace_git_status
+    as run_git_status,
+    workspace_git_unstage_files as run_git_unstage_files,
 )
 
 
@@ -22,8 +38,13 @@ class GitStatusChange(
     code: str
     path: str
 
+    staged: bool = False
+    unstaged: bool = False
+    untracked: bool = False
+    conflicted: bool = False
 
-class GitStatusMCPResult(
+
+class GitWorkingTreeResult(
     BaseModel
 ):
     ok: bool
@@ -33,6 +54,66 @@ class GitStatusMCPResult(
         str | None
     ) = None
 
+    scope: (
+        str | None
+    ) = None
+
+    changes: list[
+        GitStatusChange
+    ] = Field(
+        default_factory=list
+    )
+
+    files: list[
+        str
+    ] = Field(
+        default_factory=list
+    )
+
+    count: int = 0
+
+    staged_files: list[
+        str
+    ] = Field(
+        default_factory=list
+    )
+
+    staged_count: int = 0
+
+    unstaged_files: list[
+        str
+    ] = Field(
+        default_factory=list
+    )
+
+    unstaged_count: int = 0
+
+    untracked_files: list[
+        str
+    ] = Field(
+        default_factory=list
+    )
+
+    untracked_count: int = 0
+
+    conflicted_files: list[
+        str
+    ] = Field(
+        default_factory=list
+    )
+
+    conflicted_count: int = 0
+
+    truncated: bool = False
+
+    error: (
+        str | None
+    ) = None
+
+
+class GitStatusMCPResult(
+    GitWorkingTreeResult
+):
     branch: (
         str | None
     ) = None
@@ -48,17 +129,7 @@ class GitStatusMCPResult(
         bool | None
     ) = None
 
-    changes: list[
-        GitStatusChange
-    ] = Field(
-        default_factory=list
-    )
-
     change_count: int = 0
-
-    error: (
-        str | None
-    ) = None
 
 
 class GitBranchItem(
@@ -89,6 +160,7 @@ class GitBranchesMCPResult(
     )
 
     count: int = 0
+    truncated: bool = False
 
     error: (
         str | None
@@ -119,6 +191,7 @@ class GitLogMCPResult(
     )
 
     count: int = 0
+    truncated: bool = False
 
     error: (
         str | None
@@ -135,6 +208,10 @@ class GitDiffMCPResult(
         str | None
     ) = None
 
+    scope: (
+        str | None
+    ) = None
+
     diff: str = ""
 
     has_changes: bool = False
@@ -146,6 +223,12 @@ class GitDiffMCPResult(
 
 
 class GitChangedFilesMCPResult(
+    GitWorkingTreeResult
+):
+    pass
+
+
+class GitStageFilesMCPResult(
     BaseModel
 ):
     ok: bool
@@ -155,13 +238,90 @@ class GitChangedFilesMCPResult(
         str | None
     ) = None
 
+    requested_paths: list[
+        str
+    ] = Field(
+        default_factory=list
+    )
+
     files: list[
         str
     ] = Field(
         default_factory=list
     )
 
-    count: int = 0
+    staged_paths: list[
+        str
+    ] = Field(
+        default_factory=list
+    )
+
+    staged_count: int = 0
+
+    verification_ok: (
+        bool | None
+    ) = None
+
+    verification_error: (
+        str | None
+    ) = None
+
+    error: (
+        str | None
+    ) = None
+
+
+class GitUnstageFilesMCPResult(
+    BaseModel
+):
+    ok: bool
+    status: str
+
+    repository: (
+        str | None
+    ) = None
+
+    requested_paths: list[
+        str
+    ] = Field(
+        default_factory=list
+    )
+
+    files: list[
+        str
+    ] = Field(
+        default_factory=list
+    )
+
+    staged_before_paths: list[
+        str
+    ] = Field(
+        default_factory=list
+    )
+
+    unstaged_paths: list[
+        str
+    ] = Field(
+        default_factory=list
+    )
+
+    unstaged_count: int = 0
+
+    remaining_staged_paths: list[
+        str
+    ] = Field(
+        default_factory=list
+    )
+
+    mutation_performed: bool = False
+
+    verification_ok: (
+        bool | None
+    ) = None
+
+    verification_error: (
+        str | None
+    ) = None
 
     error: (
         str | None
@@ -182,7 +342,9 @@ def register_git_tools(
         return (
             GitStatusMCPResult(
                 **run_git_status(
-                    repository=repository
+                    repository=(
+                        repository
+                    )
                 )
             )
         )
@@ -197,7 +359,9 @@ def register_git_tools(
         return (
             GitBranchesMCPResult(
                 **run_git_branches(
-                    repository=repository
+                    repository=(
+                        repository
+                    )
                 )
             )
         )
@@ -212,7 +376,9 @@ def register_git_tools(
         return (
             GitLogMCPResult(
                 **run_git_log(
-                    repository=repository
+                    repository=(
+                        repository
+                    )
                 )
             )
         )
@@ -227,7 +393,26 @@ def register_git_tools(
         return (
             GitDiffMCPResult(
                 **run_git_diff(
-                    repository=repository
+                    repository=(
+                        repository
+                    )
+                )
+            )
+        )
+
+    @server.tool()
+    def workspace_git_staged_diff(
+        repository: (
+            str | None
+        ) = None,
+    ) -> GitDiffMCPResult:
+
+        return (
+            GitDiffMCPResult(
+                **run_git_staged_diff(
+                    repository=(
+                        repository
+                    )
                 )
             )
         )
@@ -242,7 +427,48 @@ def register_git_tools(
         return (
             GitChangedFilesMCPResult(
                 **run_git_changed_files(
-                    repository=repository
+                    repository=(
+                        repository
+                    )
+                )
+            )
+        )
+
+    @server.tool()
+    def workspace_git_stage_files(
+        repository: str,
+        paths: list[str],
+    ) -> GitStageFilesMCPResult:
+
+        return (
+            GitStageFilesMCPResult(
+                **run_git_stage_files(
+                    repository=(
+                        repository
+                    ),
+
+                    paths=(
+                        paths
+                    ),
+                )
+            )
+        )
+    @server.tool()
+    def workspace_git_unstage_files(
+        repository: str,
+        paths: list[str],
+    ) -> GitUnstageFilesMCPResult:
+
+        return (
+            GitUnstageFilesMCPResult(
+                **run_git_unstage_files(
+                    repository=(
+                        repository
+                    ),
+
+                    paths=(
+                        paths
+                    ),
                 )
             )
         )

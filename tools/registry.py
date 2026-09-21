@@ -277,8 +277,13 @@ TOOLS = {
 
     "workspace_mkdir": {
         "description": (
-            "Create exactly one direct-child directory "
-            "inside the approved developer workspace."
+            "Create exactly one new direct-child DIRECTORY or FOLDER "
+            "inside the approved developer workspace. "
+            "Use this only when the user explicitly asks to create, "
+            "make, or add a directory/folder. "
+            "This capability does NOT perform Git staging, Git add, "
+            "file staging, source-control staging, or any other Git "
+            "operation."
         ),
 
         "risk":

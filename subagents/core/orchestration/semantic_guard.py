@@ -5,6 +5,7 @@ from dataclasses import (
 )
 
 from typing import (
+    Any,
     Callable,
 )
 
@@ -46,31 +47,113 @@ class SemanticGuardDecision:
     ) = None
 
 
+def _runtime_grounded_values(
+    value: Any,
+) -> tuple[
+    list[str] | None,
+    bool,
+]:
+    """
+    Normalize a specialist-proposed grounded value.
+
+    Returns:
+
+        values
+        is_collection
+
+    Exact list values are supported for bounded multi-target
+    operations such as explicit Git file staging.
+    """
+
+    if isinstance(
+        value,
+        str,
+    ):
+
+        if (
+            not value
+            or value
+            != value.strip()
+        ):
+
+            return (
+                None,
+                False,
+            )
+
+        return (
+            [
+                value,
+            ],
+            False,
+        )
+
+    if isinstance(
+        value,
+        list,
+    ):
+
+        if not value:
+
+            return (
+                None,
+                True,
+            )
+
+        values: list[str] = []
+
+        seen: set[str] = set()
+
+        for item in value:
+
+            if not isinstance(
+                item,
+                str,
+            ):
+
+                return (
+                    None,
+                    True,
+                )
+
+            if (
+                not item
+                or item
+                != item.strip()
+            ):
+
+                return (
+                    None,
+                    True,
+                )
+
+            if item in seen:
+
+                return (
+                    None,
+                    True,
+                )
+
+            seen.add(
+                item
+            )
+
+            values.append(
+                item
+            )
+
+        return (
+            values,
+            True,
+        )
+
+    return (
+        None,
+        False,
+    )
+
+
 class SemanticGuard:
-    """
-    Deterministic semantic boundary between specialist generation
-    and ToolGateway.
-
-    This guard contains NO domain-specific capability names and NO
-    domain-specific argument names.
-
-    It evaluates:
-
-        trusted capability identity
-        requested effect
-        allowed / forbidden capability sets
-        semantically grounded argument values
-        clarification state
-
-    ToolGateway remains authoritative for:
-
-        authorization
-        schema validation
-        user-request grounding
-        policy
-        approval
-        provider execution
-    """
 
     def __init__(
         self,
@@ -176,7 +259,7 @@ class SemanticGuard:
             )
 
         # ========================================================
-        # TRUSTED AGENT CAPABILITY BOUNDARY
+        # TRUSTED AGENT BOUNDARY
         # ========================================================
 
         trusted_agent_tools = {
@@ -210,7 +293,7 @@ class SemanticGuard:
             )
 
         # ========================================================
-        # INTENT CAPABILITY BOUNDARY
+        # SEMANTIC CAPABILITY BOUNDARY
         # ========================================================
 
         if (
@@ -297,7 +380,7 @@ class SemanticGuard:
             )
 
         # ========================================================
-        # EFFECT CONSISTENCY
+        # EFFECT
         # ========================================================
 
         if (
@@ -337,13 +420,7 @@ class SemanticGuard:
         )
 
         # ========================================================
-        # EXPLICITLY BOUND ARGUMENTS MUST BE PRESENT
-        #
-        # Only enforce bindings relevant to the selected tool.
-        #
-        # This allows one semantic contract to contain multiple
-        # same-effect candidate tools with different grounded
-        # argument sets.
+        # EXPLICIT BINDINGS MUST BE PRESENT
         # ========================================================
 
         for argument_name in (
@@ -374,12 +451,7 @@ class SemanticGuard:
                 )
 
         # ========================================================
-        # GROUNDED ARGUMENT VALIDATION
-        #
-        # No argument name is hardcoded.
-        #
-        # The registry tells us which arguments carry semantic
-        # target/scope meaning.
+        # GROUNDED ARGUMENTS
         # ========================================================
 
         for argument_name in (
@@ -391,43 +463,32 @@ class SemanticGuard:
                 not in arguments
             ):
 
-                # Requiredness remains ToolGateway/schema policy.
                 continue
 
-            value = (
+            raw_value = (
                 arguments[
                     argument_name
                 ]
             )
 
-            if not isinstance(
-                value,
-                str,
-            ):
-
-                return (
-                    self._deny(
-                        "semantic_grounded_argument_invalid",
-                        (
-                            "A semantically grounded argument "
-                            "must currently be an exact string "
-                            "value."
-                        ),
-                    )
+            (
+                values,
+                is_collection,
+            ) = (
+                _runtime_grounded_values(
+                    raw_value
                 )
+            )
 
-            if (
-                not value
-                or value
-                != value.strip()
-            ):
+            if values is None:
 
                 return (
                     self._deny(
                         "semantic_grounded_argument_invalid",
                         (
                             "A semantically grounded argument "
-                            "must be a non-empty exact value."
+                            "must be a non-empty exact string "
+                            "or exact list of strings."
                         ),
                     )
                 )
@@ -441,9 +502,12 @@ class SemanticGuard:
                 )
             )
 
-            if (
+            if any(
                 value
                 in forbidden_values
+
+                for value
+                in values
             ):
 
                 return (
@@ -451,7 +515,7 @@ class SemanticGuard:
                         "semantic_argument_forbidden",
                         (
                             "The proposed grounded argument "
-                            "matches an explicitly forbidden "
+                            "contains an explicitly forbidden "
                             "semantic target."
                         ),
                     )
@@ -464,15 +528,6 @@ class SemanticGuard:
                     argument_name
                 )
             )
-
-            # ----------------------------------------------------
-            # Every used grounded argument must be semantically
-            # bound.
-            #
-            # This is what prevents a specialist from grabbing some
-            # other identifier merely because it also appeared in
-            # the request.
-            # ----------------------------------------------------
 
             if not allowed_values:
 
@@ -487,20 +542,66 @@ class SemanticGuard:
                     )
                 )
 
-            if (
-                value
-                not in allowed_values
-            ):
+            if is_collection:
 
-                return (
-                    self._deny(
-                        "semantic_argument_not_allowed",
-                        (
-                            "The proposed grounded argument does "
-                            "not match the semantic target."
-                        ),
+                # --------------------------------------------
+                # EXACT COLLECTION SEMANTICS
+                #
+                # User:
+                #     stage a.py and b.py
+                #
+                # Hub:
+                #     paths = [a.py, b.py]
+                #
+                # Specialist must propose exactly that set.
+                #
+                # Neither:
+                #     [a.py]
+                #
+                # nor:
+                #     [a.py, b.py, c.py]
+                #
+                # is acceptable.
+                # --------------------------------------------
+
+                if (
+                    set(
+                        values
                     )
-                )
+                    != set(
+                        allowed_values
+                    )
+                ):
+
+                    return (
+                        self._deny(
+                            "semantic_argument_not_allowed",
+                            (
+                                "The proposed grounded argument "
+                                "collection does not exactly "
+                                "match the semantic targets."
+                            ),
+                        )
+                    )
+
+            else:
+
+                if (
+                    values[
+                        0
+                    ]
+                    not in allowed_values
+                ):
+
+                    return (
+                        self._deny(
+                            "semantic_argument_not_allowed",
+                            (
+                                "The proposed grounded argument "
+                                "does not match the semantic target."
+                            ),
+                        )
+                    )
 
         return (
             self._allow()

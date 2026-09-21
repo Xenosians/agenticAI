@@ -64,12 +64,6 @@ def format_git_status_result(
         )
     )
 
-    clean = (
-        result.get(
-            "clean"
-        )
-    )
-
     branch_text = (
         branch
         if isinstance(
@@ -79,7 +73,12 @@ def format_git_status_result(
         else "unknown"
     )
 
-    if clean is True:
+    if (
+        result.get(
+            "clean"
+        )
+        is True
+    ):
 
         return (
             f"{repository} Git status:\n"
@@ -90,16 +89,11 @@ def format_git_status_result(
     return (
         f"{repository} Git status:\n"
         f"- Branch: {branch_text}\n"
-        f"- Changed files: "
-        f"{result.get('count', 0)}\n"
-        f"- Staged: "
-        f"{result.get('staged_count', 0)}\n"
-        f"- Unstaged: "
-        f"{result.get('unstaged_count', 0)}\n"
-        f"- Untracked: "
-        f"{result.get('untracked_count', 0)}\n"
-        f"- Conflicted: "
-        f"{result.get('conflicted_count', 0)}"
+        f"- Changed files: {result.get('count', 0)}\n"
+        f"- Staged: {result.get('staged_count', 0)}\n"
+        f"- Unstaged: {result.get('unstaged_count', 0)}\n"
+        f"- Untracked: {result.get('untracked_count', 0)}\n"
+        f"- Conflicted: {result.get('conflicted_count', 0)}"
     )
 
 
@@ -119,22 +113,20 @@ def build_git_status_card(
         )
     )
 
-    raw_changes = (
+    changes = (
         result.get(
             "changes"
         )
     )
 
-    changes = (
-        raw_changes
-        if isinstance(
-            raw_changes,
-            list,
-        )
-        else []
-    )
+    if not isinstance(
+        changes,
+        list,
+    ):
 
-    items = []
+        changes = []
+
+    items: list[str] = []
 
     for change in changes:
 
@@ -144,12 +136,6 @@ def build_git_status_card(
         ):
 
             continue
-
-        code = (
-            change.get(
-                "code"
-            )
-        )
 
         path = (
             change.get(
@@ -164,7 +150,11 @@ def build_git_status_card(
 
             continue
 
-        rendered = path
+        code = (
+            change.get(
+                "code"
+            )
+        )
 
         if (
             isinstance(
@@ -174,13 +164,15 @@ def build_git_status_card(
             and code.strip()
         ):
 
-            rendered = (
+            items.append(
                 f"{code} {path}"
             )
 
-        items.append(
-            rendered
-        )
+        else:
+
+            items.append(
+                path
+            )
 
     sections = []
 
@@ -188,13 +180,8 @@ def build_git_status_card(
 
         sections.append(
             list_section(
-                title=(
-                    "Working tree changes"
-                ),
-
-                items=(
-                    items
-                ),
+                title="Working tree changes",
+                items=items,
             )
         )
 
@@ -340,14 +327,7 @@ def format_git_branches_result(
             f"returned for {repository}."
         )
 
-    if not branches:
-
-        return (
-            f"No local Git branches were "
-            f"returned for {repository}."
-        )
-
-    lines = []
+    lines: list[str] = []
 
     for branch in branches:
 
@@ -371,22 +351,25 @@ def format_git_branches_result(
 
             continue
 
-        if (
-            branch.get(
+        suffix = (
+            " (current)"
+            if branch.get(
                 "current"
             )
             is True
-        ):
+            else ""
+        )
 
-            lines.append(
-                f"- {name} (current)"
-            )
+        lines.append(
+            f"- {name}{suffix}"
+        )
 
-        else:
+    if not lines:
 
-            lines.append(
-                f"- {name}"
-            )
+        return (
+            f"No local Git branches were "
+            f"returned for {repository}."
+        )
 
     return (
         f"{repository} local Git branches:\n"
@@ -425,7 +408,7 @@ def build_git_branches_card(
 
         branches = []
 
-    items = []
+    items: list[str] = []
 
     for branch in branches:
 
@@ -456,15 +439,13 @@ def build_git_branches_card(
             is True
         ):
 
-            items.append(
+            name = (
                 f"{name} (current)"
             )
 
-        else:
-
-            items.append(
-                name
-            )
+        items.append(
+            name
+        )
 
     sections = []
 
@@ -522,7 +503,9 @@ def build_git_branches_card(
                 ),
             ],
 
-            sections=sections,
+            sections=(
+                sections
+            ),
         )
     )
 
@@ -561,14 +544,7 @@ def format_git_log_result(
             f"returned for {repository}."
         )
 
-    if not commits:
-
-        return (
-            f"No Git history was returned "
-            f"for {repository}."
-        )
-
-    lines = []
+    lines: list[str] = []
 
     for commit in commits:
 
@@ -585,18 +561,18 @@ def format_git_log_result(
             )
         )
 
-        message = (
-            commit.get(
-                "message"
-            )
-        )
-
         if not isinstance(
             commit_hash,
             str,
         ):
 
             continue
+
+        message = (
+            commit.get(
+                "message"
+            )
+        )
 
         if isinstance(
             message,
@@ -612,6 +588,13 @@ def format_git_log_result(
             lines.append(
                 f"- {commit_hash}"
             )
+
+    if not lines:
+
+        return (
+            f"No Git history was returned "
+            f"for {repository}."
+        )
 
     return (
         f"Recent commits in {repository}:\n"
@@ -650,7 +633,7 @@ def build_git_log_card(
 
         commits = []
 
-    items = []
+    items: list[str] = []
 
     for commit in commits:
 
@@ -667,12 +650,6 @@ def build_git_log_card(
             )
         )
 
-        message = (
-            commit.get(
-                "message"
-            )
-        )
-
         if not isinstance(
             commit_hash,
             str,
@@ -680,8 +657,10 @@ def build_git_log_card(
 
             continue
 
-        rendered = (
-            commit_hash
+        message = (
+            commit.get(
+                "message"
+            )
         )
 
         if (
@@ -692,13 +671,15 @@ def build_git_log_card(
             and message.strip()
         ):
 
-            rendered += (
-                f" — {message.strip()}"
+            items.append(
+                f"{commit_hash} — {message.strip()}"
             )
 
-        items.append(
-            rendered
-        )
+        else:
+
+            items.append(
+                commit_hash
+            )
 
     sections = []
 
@@ -749,21 +730,25 @@ def build_git_log_card(
                 ),
             ],
 
-            sections=sections,
+            sections=(
+                sections
+            ),
         )
     )
 
 
 # ============================================================
-# DIFF
+# DIFF HELPERS
 # ============================================================
 
 
-def format_git_diff_result(
+def _format_diff_result(
     result: dict[
         str,
         Any,
     ],
+    *,
+    scope: str,
 ) -> str:
 
     repository = (
@@ -784,29 +769,33 @@ def format_git_diff_result(
     ):
 
         return (
-            f"Git diff completed for {repository}, "
-            "but no valid diff text was returned."
+            f"{scope.capitalize()} Git diff completed for "
+            f"{repository}, but no valid diff text was returned."
         )
 
     if not diff.strip():
 
         return (
-            f"There are no unstaged Git changes "
+            f"There are no {scope} Git changes "
             f"in {repository}."
         )
 
     return (
-        f"Current unstaged Git diff for "
+        f"Current {scope} Git diff for "
         f"{repository}:\n\n"
         f"{diff}"
     )
 
 
-def build_git_diff_card(
+def _build_diff_card(
     result: dict[
         str,
         Any,
     ],
+    *,
+    kind: str,
+    title_suffix: str,
+    section_title: str,
 ) -> dict[
     str,
     Any,
@@ -836,7 +825,9 @@ def build_git_diff_card(
 
         sections.append(
             text_section(
-                title="Diff",
+                title=(
+                    section_title
+                ),
 
                 content=(
                     diff
@@ -848,10 +839,12 @@ def build_git_diff_card(
 
     return (
         build_result_card(
-            kind="git-diff",
+            kind=(
+                kind
+            ),
 
             title=(
-                f"{repository} Git diff"
+                f"{repository} {title_suffix}"
             ),
 
             status=(
@@ -891,7 +884,95 @@ def build_git_diff_card(
                 ),
             ],
 
-            sections=sections,
+            sections=(
+                sections
+            ),
+        )
+    )
+
+
+# ============================================================
+# UNSTAGED DIFF
+# ============================================================
+
+
+def format_git_diff_result(
+    result: dict[
+        str,
+        Any,
+    ],
+) -> str:
+
+    return (
+        _format_diff_result(
+            result,
+            scope="unstaged",
+        )
+    )
+
+
+def build_git_diff_card(
+    result: dict[
+        str,
+        Any,
+    ],
+) -> dict[
+    str,
+    Any,
+]:
+
+    return (
+        _build_diff_card(
+            result,
+
+            kind="git-diff",
+
+            title_suffix="Git diff",
+
+            section_title="Diff",
+        )
+    )
+
+
+# ============================================================
+# STAGED DIFF
+# ============================================================
+
+
+def format_git_staged_diff_result(
+    result: dict[
+        str,
+        Any,
+    ],
+) -> str:
+
+    return (
+        _format_diff_result(
+            result,
+            scope="staged",
+        )
+    )
+
+
+def build_git_staged_diff_card(
+    result: dict[
+        str,
+        Any,
+    ],
+) -> dict[
+    str,
+    Any,
+]:
+
+    return (
+        _build_diff_card(
+            result,
+
+            kind="git-staged-diff",
+
+            title_suffix="staged Git diff",
+
+            section_title="Staged diff",
         )
     )
 
@@ -930,7 +1011,19 @@ def format_git_changed_files_result(
             f"returned for {repository}."
         )
 
-    if not files:
+    valid_files = [
+        path
+
+        for path
+        in files
+
+        if isinstance(
+            path,
+            str,
+        )
+    ]
+
+    if not valid_files:
 
         return (
             f"There are no current changed files "
@@ -939,31 +1032,21 @@ def format_git_changed_files_result(
 
     lines = [
         f"Changed files in {repository}:",
+        *[
+            f"- {path}"
+
+            for path
+            in valid_files
+        ],
+        "",
+        (
+            "Summary: "
+            f"staged={result.get('staged_count', 0)}, "
+            f"unstaged={result.get('unstaged_count', 0)}, "
+            f"untracked={result.get('untracked_count', 0)}, "
+            f"conflicted={result.get('conflicted_count', 0)}"
+        ),
     ]
-
-    for path in files:
-
-        if isinstance(
-            path,
-            str,
-        ):
-
-            lines.append(
-                f"- {path}"
-            )
-
-    lines.extend(
-        [
-            "",
-            (
-                "Summary: "
-                f"staged={result.get('staged_count', 0)}, "
-                f"unstaged={result.get('unstaged_count', 0)}, "
-                f"untracked={result.get('untracked_count', 0)}, "
-                f"conflicted={result.get('conflicted_count', 0)}"
-            ),
-        ]
-    )
 
     return (
         "\n".join(
@@ -1100,6 +1183,151 @@ def build_git_changed_files_card(
                 ),
             ],
 
-            sections=sections,
+            sections=(
+                sections
+            ),
         )
+    )
+
+# ============================================================
+# UNSTAGE FILES
+# ============================================================
+
+
+def format_git_unstage_files_result(
+    result: dict[
+        str,
+        Any,
+    ],
+) -> str:
+
+    repository = (
+        _repository_name(
+            result
+        )
+    )
+
+    if (
+        result.get(
+            "verification_ok"
+        )
+        is False
+    ):
+
+        return (
+            f"Git unstaging completed for {repository}, "
+            "but the final staged-state verification failed."
+        )
+
+    unstaged_paths = (
+        result.get(
+            "unstaged_paths"
+        )
+    )
+
+    if not isinstance(
+        unstaged_paths,
+        list,
+    ):
+
+        unstaged_paths = []
+
+    if not unstaged_paths:
+
+        return (
+            f"None of the explicitly requested files "
+            f"were staged in {repository}; no index "
+            "mutation was required."
+        )
+
+    lines = [
+        (
+            f"Unstaged {len(unstaged_paths)} "
+            f"explicitly requested file(s) in "
+            f"{repository}:"
+        ),
+    ]
+
+    for path in unstaged_paths:
+
+        if isinstance(
+            path,
+            str,
+        ):
+
+            lines.append(
+                f"- {path}"
+            )
+
+    return (
+        "\n".join(
+            lines
+        )
+    )
+
+
+def format_git_unstage_files_approval(
+    arguments: dict[
+        str,
+        Any,
+    ],
+) -> str:
+
+    repository = (
+        arguments.get(
+            "repository"
+        )
+    )
+
+    paths = (
+        arguments.get(
+            "paths"
+        )
+    )
+
+    repository_text = (
+        repository
+
+        if (
+            isinstance(
+                repository,
+                str,
+            )
+            and repository.strip()
+        )
+
+        else "repository"
+    )
+
+    valid_paths = [
+        path
+
+        for path
+        in (
+            paths
+            if isinstance(
+                paths,
+                list,
+            )
+            else []
+        )
+
+        if isinstance(
+            path,
+            str,
+        )
+    ]
+
+    rendered_paths = (
+        ", ".join(
+            valid_paths
+        )
+        if valid_paths
+        else "no valid paths"
+    )
+
+    return (
+        f"Unstaging {len(valid_paths)} explicitly requested "
+        f"file(s) in {repository_text} requires approval: "
+        f"{rendered_paths}."
     )

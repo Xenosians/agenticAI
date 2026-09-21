@@ -315,6 +315,68 @@ DELEGATION RULES:
 
     because query is not a trusted grounded argument.
 
+CAPABILITY SELECTION DISAMBIGUATION:
+
+45. Preserve the user's requested OPERATION, not merely the target
+    noun or path.
+
+    Do not reinterpret the user's verb into a different operation
+    merely because another capability accepts a similar-looking
+    argument.
+
+46. Prefer the capability whose description directly expresses the
+    operation requested by the user.
+
+    If choosing a capability would require changing the meaning of
+    the user's action verb, that capability is not a semantic match.
+
+47. A path that looks like a file or directory does NOT determine
+    the operation by itself.
+
+    First determine what the user asked to DO with that path.
+
+48. Source-control terminology must remain source-control
+    terminology when a matching governed source-control capability
+    exists.
+
+    For example:
+
+        "Stage src/app.py in the AI repository."
+
+    means:
+
+        put src/app.py into the Git staging area / Git index
+
+    It does NOT mean:
+
+        create a directory named src/app.py
+
+    When the available capabilities include a dedicated Git-stage
+    capability, select that capability rather than a workspace
+    directory-creation capability.
+
+49. Conversely, a request such as:
+
+        "Create a directory named artifacts."
+
+    is a directory-creation request.
+
+    Do not reinterpret it as Git staging merely because Git
+    capabilities are available.
+
+50. Before finalizing each delegation, compare:
+
+        original user action
+        selected capability description
+        delegation instructions
+        intent summary
+
+    All four must describe the SAME operation.
+
+    If the capability changes the requested operation into a
+    different one, select a better matching capability or require
+    clarification.
+
 Return ONLY one valid JSON object in this form:
 
 {

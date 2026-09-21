@@ -1418,6 +1418,400 @@ class ContinualLearningRuntimeHooks:
             )
         )
 
+    # ========================================================
+    # APPROVED MUTATION EXECUTION EVIDENCE
+    # ========================================================
+
+    def record_approval_execution(
+        self,
+        *,
+        approval: dict[
+            str,
+            Any,
+        ],
+        provider_result: (
+            dict[
+                str,
+                Any,
+            ]
+            | None
+        ),
+        lineage: dict[
+            str,
+            Any,
+        ],
+    ) -> list[
+        StructuredContextRecord
+    ]:
+        """
+        Record the ACTUAL execution outcome of one previously
+        approved mutation.
+
+        The original model proposal already exists in a durable
+        trajectory.
+
+        This method adds post-approval execution evidence linked to
+        that exact trajectory/task/job.
+
+        It never grants authority and never executes providers.
+        """
+
+        if not isinstance(
+            approval,
+            dict,
+        ):
+
+            return []
+
+        if not isinstance(
+            lineage,
+            dict,
+        ):
+
+            return []
+
+        approval_id = (
+            _string(
+                approval.get(
+                    "id"
+                )
+            )
+        )
+
+        tool_name = (
+            _string(
+                approval.get(
+                    "tool"
+                )
+            )
+        )
+
+        trajectory_id = (
+            _string(
+                lineage.get(
+                    "trajectory_id"
+                )
+            )
+        )
+
+        task_id = (
+            _string(
+                lineage.get(
+                    "task_id"
+                )
+            )
+        )
+
+        job_id = (
+            _string(
+                lineage.get(
+                    "job_id"
+                )
+            )
+        )
+
+        original_request = (
+            _string(
+                lineage.get(
+                    "user_request"
+                )
+            )
+        )
+
+        if (
+            approval_id is None
+            or tool_name is None
+            or trajectory_id is None
+            or task_id is None
+            or job_id is None
+            or original_request is None
+        ):
+
+            # Strict lineage: no orphan execution evidence.
+            return []
+
+        arguments = (
+            _dict(
+                approval.get(
+                    "arguments"
+                )
+            )
+            or {}
+        )
+
+        approval_status = (
+            _string(
+                approval.get(
+                    "status"
+                )
+            )
+        )
+
+        risk = (
+            _string(
+                approval.get(
+                    "risk"
+                )
+            )
+        )
+
+        approval_outcome: dict[
+            str,
+            Any,
+        ] = {
+            "approval_id":
+                approval_id,
+
+            "status":
+                approval_status,
+
+            "risk":
+                risk,
+
+            "replayed":
+                False,
+        }
+
+        if (
+            provider_result
+            is not None
+        ):
+
+            provider_ok = (
+                provider_result.get(
+                    "ok"
+                )
+            )
+
+            provider_status = (
+                _string(
+                    provider_result.get(
+                        "status"
+                    )
+                )
+            )
+
+            if isinstance(
+                provider_ok,
+                bool,
+            ):
+
+                approval_outcome[
+                    "provider_ok"
+                ] = (
+                    provider_ok
+                )
+
+            if provider_status is not None:
+
+                approval_outcome[
+                    "provider_status"
+                ] = (
+                    provider_status
+                )
+
+        records: list[
+            StructuredContextRecord
+        ] = []
+
+        # ----------------------------------------------------
+        # Generic actual approval-execution evidence.
+        #
+        # This is NOT a second gateway decision.
+        # ----------------------------------------------------
+
+        _append_record(
+            records,
+
+            record_tool_context(
+                self.recorder,
+
+                subject=(
+                    f"approval-execution:{tool_name}"
+                ),
+
+                approval_outcomes=[
+                    approval_outcome,
+                ],
+
+                trusted_provider_results=(
+                    [
+                        dict(
+                            provider_result
+                        )
+                    ]
+                    if provider_result
+                    is not None
+                    else []
+                ),
+
+                trajectory_id=(
+                    trajectory_id
+                ),
+
+                task_id=(
+                    task_id
+                ),
+
+                job_id=(
+                    job_id
+                ),
+
+                source_tool=(
+                    tool_name
+                ),
+            ),
+        )
+
+        # ----------------------------------------------------
+        # Domain-specific trusted-provider context.
+        # ----------------------------------------------------
+
+        if provider_result is None:
+
+            return records
+
+        task_goal = (
+            _string(
+                lineage.get(
+                    "task_instructions"
+                )
+            )
+        )
+
+        if (
+            tool_name.startswith(
+                "workspace_git_"
+            )
+        ):
+
+            _append_record(
+                records,
+
+                _record_git_result(
+                    recorder=(
+                        self.recorder
+                    ),
+
+                    tool_name=(
+                        tool_name
+                    ),
+
+                    arguments=(
+                        arguments
+                    ),
+
+                    result=(
+                        provider_result
+                    ),
+
+                    task_goal=(
+                        task_goal
+                    ),
+
+                    previous_results=[],
+
+                    trajectory_id=(
+                        trajectory_id
+                    ),
+
+                    task_id=(
+                        task_id
+                    ),
+
+                    job_id=(
+                        job_id
+                    ),
+                ),
+            )
+
+        elif (
+            tool_name.startswith(
+                "ticket_"
+            )
+        ):
+
+            _append_record(
+                records,
+
+                _record_jira_result(
+                    recorder=(
+                        self.recorder
+                    ),
+
+                    tool_name=(
+                        tool_name
+                    ),
+
+                    arguments=(
+                        arguments
+                    ),
+
+                    result=(
+                        provider_result
+                    ),
+
+                    original_request=(
+                        original_request
+                    ),
+
+                    trajectory_id=(
+                        trajectory_id
+                    ),
+
+                    task_id=(
+                        task_id
+                    ),
+
+                    job_id=(
+                        job_id
+                    ),
+                ),
+            )
+
+        else:
+
+            _append_record(
+                records,
+
+                _record_shell_result(
+                    recorder=(
+                        self.recorder
+                    ),
+
+                    tool_name=(
+                        tool_name
+                    ),
+
+                    arguments=(
+                        arguments
+                    ),
+
+                    result=(
+                        provider_result
+                    ),
+
+                    task_goal=(
+                        task_goal
+                    ),
+
+                    trajectory_id=(
+                        trajectory_id
+                    ),
+
+                    task_id=(
+                        task_id
+                    ),
+
+                    job_id=(
+                        job_id
+                    ),
+                ),
+            )
+
+        return records
+
+
     def record_git(
         self,
         **kwargs,
