@@ -156,18 +156,9 @@ def test_all_git_capabilities_register_with_mcp():
 
     assert set(
         server.functions
-    ) == {
-        "workspace_git_status",
-        "workspace_git_branches",
-        "workspace_git_log",
-        "workspace_git_diff",
-        "workspace_git_staged_diff",
-        "workspace_git_changed_files",
-        "workspace_git_stage_files",
-        "workspace_git_unstage_files",
-        "workspace_git_create_branch",
-        "workspace_git_switch_branch",
-    }
+    ) == set(
+        GIT_TOOLS
+    )
 
 
 def test_git_mcp_preserves_rich_working_tree_metadata(

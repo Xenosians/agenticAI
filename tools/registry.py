@@ -15,6 +15,10 @@ from tools.access.catalog import (
     ACCESS_TOOLS,
 )
 
+from tools.atlassian.catalog import (
+    ATLASSIAN_TOOLS,
+)
+
 from tools.assets.catalog import (
     ASSET_TOOLS,
 )
@@ -26,6 +30,11 @@ from tools.developer.catalog import (
 from tools.git.catalog import (
     GIT_TOOLS,
 )
+
+from tools.jira.catalog import (
+    JIRA_TOOLS,
+)
+
 
 from tools.knowledge.catalog import (
     KNOWLEDGE_TOOLS,
@@ -474,6 +483,10 @@ TOOLS.update(
 )
 
 TOOLS.update(
+    ATLASSIAN_TOOLS
+)
+
+TOOLS.update(
     ASSET_TOOLS
 )
 
@@ -487,6 +500,11 @@ TOOLS.update(
 
 TOOLS.update(
     KNOWLEDGE_TOOLS
+)
+
+
+TOOLS.update(
+    JIRA_TOOLS
 )
 
 TOOLS.update(

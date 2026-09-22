@@ -46,6 +46,7 @@ def test_role_prompts_do_not_hardcode_capability_names():
         "ticket-specialist",
         "account-specialist",
         "access-specialist",
+        "jira-specialist",
     ]
 
     for name in names:

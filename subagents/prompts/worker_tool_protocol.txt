@@ -159,6 +159,17 @@ SEMANTIC ARGUMENT RULES:
     identifiers and values from the original user request rather than
     interpreting, expanding, renaming, or replacing them.
 
+11. When exact semantic target context is supplied by the routing
+    stage, grounded argument values MUST be copied exactly from those
+    bindings.
+
+12. Never replace an explicit grounded value with a descriptive
+    placeholder, configuration-oriented name, inferred internal name,
+    alias, normalized phrase, or symbolic stand-in.
+
+13. If the user supplied a concrete value, output that concrete value.
+    Do not describe what the value represents.
+
 CAPABILITY RULES:
 
 1. Use only exact capability names from AVAILABLE CAPABILITIES.

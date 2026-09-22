@@ -552,6 +552,23 @@ class Settings(
     )
 
     # ============================================================
+    # ATLASSIAN ADMIN FOUNDATION
+    # ============================================================
+
+    atlassian_admin_api_key: (
+        str | None
+    ) = None
+
+    atlassian_org_id: (
+        str | None
+    ) = None
+
+    atlassian_admin_http_timeout_seconds: float = Field(
+        default=10.0,
+        gt=0,
+    )
+
+    # ============================================================
     # LDAP / ACTIVE DIRECTORY
     # ============================================================
 

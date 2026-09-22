@@ -14,6 +14,10 @@ from config import (
     Settings,
 )
 
+from services.atlassian import (
+    build_atlassian_admin_service,
+)
+
 from services.assets import (
     AssetMutationService,
     AssetService,
@@ -29,6 +33,12 @@ from services.directory import (
     build_account_lifecycle_service,
     build_directory_service,
 )
+
+from services.jira import (
+    build_jira_project_mutation_service,
+    build_jira_project_read_service,
+)
+
 
 from services.knowledge import (
     KnowledgeService,
@@ -50,6 +60,10 @@ from tools.access.mcp import (
     register_access_mutation_tools,
 )
 
+from tools.atlassian.mcp import (
+    register_atlassian_tools,
+)
+
 from tools.account.mcp import (
     register_account_lifecycle_tools,
 )
@@ -65,6 +79,11 @@ from tools.developer.mcp import (
 from tools.git.mcp import (
     register_git_tools,
 )
+
+from tools.jira.mcp import (
+    register_jira_project_tools,
+)
+
 
 from tools.knowledge.mcp import (
     register_knowledge_tools,
@@ -305,6 +324,18 @@ def create_mcp_server(
         )
     )
 
+    jira_project_service = (
+        build_jira_project_read_service(
+            runtime_settings
+        )
+    )
+
+    jira_project_mutation_service = (
+        build_jira_project_mutation_service(
+            runtime_settings
+        )
+    )
+
     ticket_service = (
         ticketing
         if ticketing is not None
@@ -399,6 +430,17 @@ def create_mcp_server(
                 )
             )
         )
+
+    # ============================================================
+    # ATLASSIAN ADMIN — READ ONLY
+    # ============================================================
+
+    register_atlassian_tools(
+        server,
+        build_atlassian_admin_service(
+            runtime_settings
+        ),
+    )
 
     # ============================================================
     # ASSET / DEVICE INVENTORY
@@ -553,6 +595,16 @@ def create_mcp_server(
 
     register_git_tools(
         server
+    )
+
+    # ============================================================
+    # JIRA PROJECT ADMINISTRATION — READ ONLY
+    # ============================================================
+
+    register_jira_project_tools(
+        server,
+        jira_project_service,
+        jira_project_mutation_service,
     )
 
     # ============================================================

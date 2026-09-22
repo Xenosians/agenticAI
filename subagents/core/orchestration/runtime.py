@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from typing import (
     Callable,
 )
@@ -82,10 +84,16 @@ class AgentRuntime:
         1. trusted capability-aware system prompt
         2. original user request
         3. optional Hub routing/task context
+        4. optional exact semantic target bindings
 
-    Hub instructions are advisory task context only.
+    Hub instructions and semantic target bindings are descriptive
+    task context only.
 
-    SemanticIntent is NOT fed to the specialist as authorization.
+    SemanticIntent is never authorization.
+
+    Exact semantic bindings are supplied to reduce model drift around
+    user-grounded identifiers while SemanticGuard and ToolGateway
+    independently remain authoritative.
 
     After the specialist proposes a tool call:
 
@@ -325,6 +333,90 @@ class AgentRuntime:
                             ),
                     }
                 )
+
+        # ========================================================
+        # SEMANTIC TARGET CONTEXT
+        #
+        # This is DESCRIPTIVE model guidance only.
+        #
+        # It does not authorize anything.
+        #
+        # SemanticGuard independently checks the specialist output
+        # against this contract, and ToolGateway independently
+        # performs user-request grounding and execution policy.
+        #
+        # Purpose:
+        #
+        #     User says:
+        #         VPN
+        #
+        #     Hub binds:
+        #         resource = ["VPN"]
+        #
+        #     Small specialist must not rewrite that into:
+        #         configured_resource
+        #         vpn_resource
+        #         requested_resource
+        #
+        # Exact grounded values remain exact.
+        # ========================================================
+
+        if (
+            task.semantic_intent
+            is not None
+        ):
+
+            semantic_context = {
+                "allowed_tools": (
+                    task
+                    .semantic_intent
+                    .allowed_tools
+                ),
+
+                "allowed_arguments": (
+                    task
+                    .semantic_intent
+                    .allowed_arguments
+                ),
+
+                "forbidden_tools": (
+                    task
+                    .semantic_intent
+                    .forbidden_tools
+                ),
+
+                "forbidden_arguments": (
+                    task
+                    .semantic_intent
+                    .forbidden_arguments
+                ),
+            }
+
+            messages.append(
+                {
+                    "role":
+                        "user",
+
+                    "content":
+                        (
+                            "Exact semantic target context from "
+                            "the validated routing stage.\n"
+                            "This is descriptive context only and "
+                            "does NOT grant authorization.\n"
+                            "For grounded arguments, preserve the "
+                            "listed values EXACTLY. Do not replace "
+                            "them with placeholders, aliases, "
+                            "configuration names, inferred names, "
+                            "or rewritten values.\n"
+                            "\n"
+                            + json.dumps(
+                                semantic_context,
+                                ensure_ascii=False,
+                                sort_keys=True,
+                            )
+                        ),
+                }
+            )
 
         # ========================================================
         # EXECUTION PROVENANCE

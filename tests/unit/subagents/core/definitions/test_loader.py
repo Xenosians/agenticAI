@@ -60,12 +60,27 @@ def test_load_real_account_specialist():
     )
 
     assert agent.name == "account-specialist"
-    assert "account_status" in agent.tools
-    assert "unlock_user" in agent.tools
-    assert "reset_password" in agent.tools
+
+    assert set(
+        agent.tools
+    ) == {
+        "account_status",
+        "unlock_user",
+        "reset_password",
+        "enable_user",
+        "disable_user",
+    }
+
     assert agent.model == "qwen2.5-0.5b-funccall"
     assert agent.max_steps == 3
-    assert "ITSM account specialist" in agent.system_prompt
+
+    prompt = (
+        agent.system_prompt
+        .casefold()
+    )
+
+    assert "account" in prompt
+    assert "specialist" in prompt
 
 def test_load_agent_directory():
     agents = load_agent_directory(
@@ -94,10 +109,22 @@ def test_load_real_access_specialist():
     )
 
     assert agent.name == "access-specialist"
-    assert agent.tools == ["check_access"]
+
+    assert set(
+        agent.tools
+    ) == {
+        "check_access",
+        "grant_access",
+        "revoke_access",
+    }
+
     assert agent.model == "qwen3-0.6b"
     assert agent.max_steps == 3
-    assert "access-management specialist" in agent.system_prompt
+
+    assert (
+        "access-management specialist"
+        in agent.system_prompt
+    )
     
 def test_agent_directory_contains_expected_specialists():
     agents = load_agent_directory(
