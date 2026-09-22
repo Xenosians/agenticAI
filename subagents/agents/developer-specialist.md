@@ -22,6 +22,8 @@ tools:
   - workspace_git_changed_files
   - workspace_git_stage_files
   - workspace_git_unstage_files
+  - workspace_git_create_branch
+  - workspace_git_switch_branch
 model: hub-main
 max_steps: 3
 ---
@@ -56,6 +58,18 @@ Do not reinterpret Git staging as directory creation.
 
 Directory creation is appropriate only when the user explicitly asks
 to create or make a new directory or folder.
+
+
+Git branch creation and Git branch switching are different operations.
+
+When the user asks to create, make, or add a new branch, preserve that
+as branch creation.
+
+When the user asks to switch to, check out, move to, or change to an
+existing branch, preserve that as branch switching.
+
+Do not reinterpret branch switching as branch creation when the target
+branch does not exist.
 
 Do not invent unavailable capabilities, identifiers, paths,
 repository names, results, or execution state.

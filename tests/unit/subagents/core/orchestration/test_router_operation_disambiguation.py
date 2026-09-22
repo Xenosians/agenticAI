@@ -176,3 +176,65 @@ def test_hub_prompt_requires_operation_preservation():
         "Create a directory named artifacts."
         in prompt
     )
+
+
+def test_conditional_workflow_prompt_forbids_synthesized_preflight_reads():
+
+    prompt = (
+        load_prompt(
+            "hub_conditional_workflow.txt"
+        )
+    )
+
+    assert (
+        "DO NOT SYNTHESIZE PREFLIGHT WORKFLOWS"
+        in prompt
+    )
+
+    assert (
+        "Do NOT invent a read-before-mutation workflow"
+        in prompt
+    )
+
+    assert (
+        "Did the USER explicitly request a result-dependent sequence?"
+        in prompt
+    )
+
+    assert (
+        "Switch the AI repository to feature/test."
+        in prompt
+    )
+
+
+def test_git_switch_description_owns_trusted_preconditions():
+
+    tool = (
+        get_tool(
+            "workspace_git_switch_branch"
+        )
+    )
+
+    assert tool is not None
+
+    description = (
+        tool[
+            "description"
+        ]
+        .lower()
+    )
+
+    assert (
+        "select this mutation capability directly"
+        in description
+    )
+
+    assert (
+        "trusted policy validates local branch existence"
+        in description
+    )
+
+    assert (
+        "without a separate read delegation"
+        in description
+    )

@@ -111,6 +111,9 @@ class LLMRouter:
 
     def _build_system_prompt(
         self,
+        *,
+        repair_mode: bool = False,
+        include_workflow_protocol: bool = True,
     ) -> str:
 
         specialists = [
@@ -144,13 +147,37 @@ class LLMRouter:
             )
         )
 
-        return (
+        system_prompt = (
             base_template.replace(
                 "{{SPECIALISTS_JSON}}",
                 specialists_json,
             )
-            + "\n\n"
-            + workflow_template
+        )
+
+        if include_workflow_protocol:
+
+            system_prompt = (
+                system_prompt
+                + "\n\n"
+                + workflow_template
+            )
+
+        if repair_mode:
+
+            repair_template = (
+                load_prompt(
+                    "hub_router_repair.txt"
+                )
+            )
+
+            system_prompt = (
+                system_prompt
+                + "\n\n"
+                + repair_template
+            )
+
+        return (
+            system_prompt
         )
 
     def _contract_error(
@@ -166,9 +193,134 @@ class LLMRouter:
                 )
             )
 
+    @staticmethod
+    def _request_may_be_result_dependent(
+        user_request: str,
+    ) -> bool:
+        """
+        Conservatively detect explicit result-dependent language.
+
+        This does NOT authorize anything.
+
+        It controls only whether the repair prompt retains the
+        conditional-workflow grammar.
+
+        False positives are intentionally acceptable because they
+        merely keep the more general prompt.
+        """
+
+        normalized = (
+            " "
+            + " ".join(
+                user_request
+                .casefold()
+                .split()
+            )
+            + " "
+        )
+
+        cues = (
+            " if ",
+            " only if ",
+            " when ",
+            " whenever ",
+            " unless ",
+            " provided that ",
+            " providing that ",
+            " as long as ",
+            " depending on ",
+            " once ",
+            " otherwise ",
+            " if not ",
+            " after ",
+            " before ",
+
+            # Common Indonesian conditional / sequencing cues.
+            " jika ",
+            " kalau ",
+            " bila ",
+            " apabila ",
+            " hanya jika ",
+            " setelah ",
+            " sebelum ",
+        )
+
+        return any(
+            cue in normalized
+
+            for cue
+            in cues
+        )
+
+
+    async def route_with_repair(
+        self,
+        user_request: str,
+    ) -> list[
+        SpecialistRequest
+    ]:
+
+        try:
+
+            return (
+                await self.route(
+                    user_request
+                )
+            )
+
+        except RoutingContractError as exc:
+
+            if not self.strict_contract:
+
+                raise
+
+            print(
+                "[ROUTER] Trusted contract rejected "
+                "normal plan; attempting one bounded "
+                f"repair generation error={exc}"
+            )
+
+            may_be_result_dependent = (
+                self
+                ._request_may_be_result_dependent(
+                    user_request
+                )
+            )
+
+            print(
+                "[ROUTER] Repair prompt "
+                f"conditional_protocol="
+                f"{may_be_result_dependent}"
+            )
+
+            return (
+                await self.route(
+                    user_request,
+
+                    repair_mode=True,
+
+                    include_workflow_protocol=(
+                        may_be_result_dependent
+                    ),
+
+                    repair_error=(
+                        str(
+                            exc
+                        )
+                    ),
+                )
+            )
+
+
     async def route(
         self,
         user_request: str,
+        *,
+        repair_mode: bool = False,
+        include_workflow_protocol: bool = True,
+        repair_error: (
+            str | None
+        ) = None,
     ) -> list[
         SpecialistRequest
     ]:
@@ -179,7 +331,15 @@ class LLMRouter:
                     "system",
 
                 "content":
-                    self._build_system_prompt(),
+                    self._build_system_prompt(
+                        repair_mode=(
+                            repair_mode
+                        ),
+
+                        include_workflow_protocol=(
+                            include_workflow_protocol
+                        ),
+                    ),
             },
 
             {
@@ -190,6 +350,33 @@ class LLMRouter:
                     user_request,
             },
         ]
+
+        if (
+            repair_mode
+            and isinstance(
+                repair_error,
+                str,
+            )
+            and repair_error.strip()
+        ):
+
+            messages.append(
+                {
+                    "role":
+                        "user",
+
+                    "content":
+                        (
+                            "TRUSTED VALIDATION FEEDBACK:\n"
+                            + repair_error.strip()
+                            + "\n\n"
+                            "Recompute the routing plan from the "
+                            "original request. Do not repeat the "
+                            "rejected contract structure. Do not "
+                            "invent replacement condition fields."
+                        ),
+                }
+            )
 
         response = (
             await self.inference.generate(
@@ -214,6 +401,8 @@ class LLMRouter:
 
         print(
             "\n===== HUB ROUTER ====="
+            f"\nMODE: "
+            f"{'repair' if repair_mode else 'normal'}"
             f"\nUSER: {user_request}"
             f"\nRAW: {response}"
             "\n======================"

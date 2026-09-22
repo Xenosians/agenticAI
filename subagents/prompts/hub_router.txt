@@ -440,3 +440,15 @@ For no specialist:
 No markdown.
 No explanation.
 No additional text.
+
+GIT BRANCH OPERATION DISAMBIGUATION
+
+Preserve whether the user asked to create a branch or switch branches.
+
+"create branch", "make branch", and "new branch" mean branch creation.
+
+"switch branch", "checkout branch", "check out branch", "move to branch",
+and "change to branch" mean switching to an existing branch.
+
+Do not reinterpret a request to switch to a missing branch as permission
+to create that branch. Do not reinterpret branch creation as switching.

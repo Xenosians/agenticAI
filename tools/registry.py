@@ -276,59 +276,59 @@ TOOLS = {
     # ============================================================
 
     "workspace_mkdir": {
-        "description": (
-            "Create exactly one new direct-child DIRECTORY or FOLDER "
-            "inside the approved developer workspace. "
-            "Use this only when the user explicitly asks to create, "
-            "make, or add a directory/folder. "
-            "This capability does NOT perform Git staging, Git add, "
-            "file staging, source-control staging, or any other Git "
-            "operation."
-        ),
+    "description": (
+        "Create exactly one new direct-child DIRECTORY or FOLDER "
+        "inside the approved developer workspace. "
+        "Use this only when the user explicitly asks to create, "
+        "make, or add a directory/folder. "
+        "This capability does NOT perform Git staging, Git add, "
+        "file staging, source-control staging, or any other Git "
+        "operation."
+    ),
 
-        "risk":
-            "low",
+    "risk":
+        "low",
 
-        "requires_approval":
-            True,
+    "requires_approval":
+        True,
 
-        "grounded_arguments": [
-            "directory_name",
-        ],
+    "grounded_arguments": [
+        "directory_name",
+    ],
 
-        "parameters": {
-            "directory_name": {
-                "type":
-                    "str",
+    "parameters": {
+        "directory_name": {
+            "type":
+                "str",
 
-                "description": (
-                    "Exact directory name explicitly "
-                    "requested by the user."
-                ),
-            },
-
-            "cwd": {
-                "type":
-                    "str",
-
-                "description": (
-                    "Optional working directory inside "
-                    "the approved workspace."
-                ),
-            },
-
-            "timeout_seconds": {
-                "type":
-                    "int",
-
-                "description": (
-                    "Execution timeout from 1 to 30 seconds."
-                ),
-            },
+            "description": (
+                "Exact new directory/folder name explicitly "
+                "requested by the user."
+            ),
         },
 
-        "approval_formatter":
-            format_generic_approval,
+        "cwd": {
+            "type":
+                "str",
+
+            "description": (
+                "Optional working directory inside "
+                "the approved workspace."
+            ),
+        },
+
+        "timeout_seconds": {
+            "type":
+                "int",
+
+            "description": (
+                "Execution timeout from 1 to 30 seconds."
+            ),
+        },
+    },
+
+    "approval_formatter":
+        format_generic_approval,
     },
 
     "workspace_read_text": {

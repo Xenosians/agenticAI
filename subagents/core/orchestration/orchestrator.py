@@ -291,11 +291,31 @@ class Orchestrator:
 
         try:
 
-            delegations = (
-                await self.router.route(
-                    user_request
+            route_with_repair = (
+                getattr(
+                    self.router,
+                    "route_with_repair",
+                    None,
                 )
             )
+
+            if callable(
+                route_with_repair
+            ):
+
+                delegations = (
+                    await route_with_repair(
+                        user_request
+                    )
+                )
+
+            else:
+
+                delegations = (
+                    await self.router.route(
+                        user_request
+                    )
+                )
 
         except RoutingContractError as exc:
 

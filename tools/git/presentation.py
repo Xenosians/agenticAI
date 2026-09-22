@@ -1331,3 +1331,278 @@ def format_git_unstage_files_approval(
         f"file(s) in {repository_text} requires approval: "
         f"{rendered_paths}."
     )
+
+
+# ============================================================
+# CREATE BRANCH
+# ============================================================
+
+
+def format_git_create_branch_result(
+    result: dict[
+        str,
+        Any,
+    ],
+) -> str:
+
+    repository = (
+        _repository_name(
+            result
+        )
+    )
+
+    branch_name = (
+        result.get(
+            "created_branch"
+        )
+    )
+
+    if not isinstance(
+        branch_name,
+        str,
+    ):
+
+        branch_name = (
+            result.get(
+                "requested_branch"
+            )
+        )
+
+    if not isinstance(
+        branch_name,
+        str,
+    ):
+
+        branch_name = "requested branch"
+
+    if (
+        result.get(
+            "verification_ok"
+        )
+        is False
+    ):
+
+        return (
+            f"Local Git branch creation completed in "
+            f"{repository} for {branch_name}, but final "
+            "reference verification failed."
+        )
+
+    created_from = (
+        result.get(
+            "created_from"
+        )
+    )
+
+    commit_text = (
+        created_from[
+            :12
+        ]
+
+        if (
+            isinstance(
+                created_from,
+                str,
+            )
+            and created_from
+        )
+
+        else "current HEAD"
+    )
+
+    return (
+        f"Created local Git branch {branch_name} in "
+        f"{repository} from {commit_text}. "
+        "The current branch was not switched."
+    )
+
+
+def format_git_create_branch_approval(
+    arguments: dict[
+        str,
+        Any,
+    ],
+) -> str:
+
+    repository = (
+        arguments.get(
+            "repository"
+        )
+    )
+
+    branch_name = (
+        arguments.get(
+            "branch_name"
+        )
+    )
+
+    repository_text = (
+        repository
+
+        if (
+            isinstance(
+                repository,
+                str,
+            )
+            and repository.strip()
+        )
+
+        else "repository"
+    )
+
+    branch_text = (
+        branch_name
+
+        if (
+            isinstance(
+                branch_name,
+                str,
+            )
+            and branch_name
+        )
+
+        else "requested branch"
+    )
+
+    return (
+        f"Creating local Git branch {branch_text} in "
+        f"{repository_text} from the current HEAD requires "
+        "approval. This does not switch branches."
+    )
+
+
+# ============================================================
+# SWITCH BRANCH
+# ============================================================
+
+
+def format_git_switch_branch_result(
+    result: dict[
+        str,
+        Any,
+    ],
+) -> str:
+
+    repository = (
+        _repository_name(
+            result
+        )
+    )
+
+    branch_name = (
+        result.get(
+            "current_branch"
+        )
+    )
+
+    if not isinstance(
+        branch_name,
+        str,
+    ):
+
+        branch_name = (
+            result.get(
+                "requested_branch"
+            )
+        )
+
+    if not isinstance(
+        branch_name,
+        str,
+    ):
+
+        branch_name = "requested branch"
+
+    if (
+        result.get(
+            "mutation_performed"
+        )
+        is False
+    ):
+
+        return (
+            f"{repository} is already on local Git branch "
+            f"{branch_name}; no branch switch was required."
+        )
+
+    if (
+        result.get(
+            "verification_ok"
+        )
+        is False
+    ):
+
+        return (
+            f"Git switched branches in {repository}, but "
+            "the final branch/worktree verification failed."
+        )
+
+    previous = (
+        result.get(
+            "previous_branch"
+        )
+    )
+
+    previous_text = (
+        previous
+        if isinstance(
+            previous,
+            str,
+        )
+        else "the previous HEAD"
+    )
+
+    return (
+        f"Switched {repository} from {previous_text} to local "
+        f"Git branch {branch_name}. The working tree remained clean."
+    )
+
+
+def format_git_switch_branch_approval(
+    arguments: dict[
+        str,
+        Any,
+    ],
+) -> str:
+
+    repository = (
+        arguments.get(
+            "repository"
+        )
+    )
+
+    branch_name = (
+        arguments.get(
+            "branch_name"
+        )
+    )
+
+    repository_text = (
+        repository
+        if (
+            isinstance(
+                repository,
+                str,
+            )
+            and repository.strip()
+        )
+        else "repository"
+    )
+
+    branch_text = (
+        branch_name
+        if (
+            isinstance(
+                branch_name,
+                str,
+            )
+            and branch_name
+        )
+        else "requested branch"
+    )
+
+    return (
+        f"Switching {repository_text} to existing local Git "
+        f"branch {branch_text} requires approval. The operation "
+        "is allowed only when the working tree is completely clean."
+    )

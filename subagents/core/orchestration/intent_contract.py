@@ -283,8 +283,8 @@ def trusted_bounded_argument_values(
 
     Example:
 
-        workspace_git_status
-            repository -> ["ai", "backend", "frontend"]
+        configured capability
+            target -> ["alpha", "beta", "gamma"]
 
     This information may be used to canonicalize a Hub semantic
     contract.

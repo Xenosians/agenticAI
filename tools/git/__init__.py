@@ -2565,3 +2565,1603 @@ def workspace_git_unstage_files(
         "verification_error":
             None,
     }
+
+
+# ============================================================
+# GOVERNED GIT BRANCH CREATION
+# ============================================================
+
+MAX_GIT_BRANCH_CHARS = 255
+
+
+def _validate_create_branch_request(
+    repository: Any,
+    branch_name: Any,
+    timeout_seconds: int = (
+        DEFAULT_TIMEOUT_SECONDS
+    ),
+):
+    """
+    Validate one exact local branch-creation request.
+
+    This performs no mutation.
+
+    Branch syntax is delegated to Git's trusted ref validator.
+    The user/model cannot select the validation command shape.
+
+    The branch will be created from the repository's current HEAD.
+    """
+
+    (
+        target,
+        target_error,
+    ) = (
+        _resolve_target(
+            repository
+        )
+    )
+
+    if target is None:
+
+        error = (
+            target_error.get(
+                "error"
+            )
+            if isinstance(
+                target_error,
+                dict,
+            )
+            else None
+        )
+
+        return (
+            None,
+            None,
+            None,
+            (
+                error
+                or "Git repository resolution failed."
+            ),
+        )
+
+    if not isinstance(
+        branch_name,
+        str,
+    ):
+
+        return (
+            None,
+            None,
+            None,
+            "Git branch name must be a string.",
+        )
+
+    if not branch_name:
+
+        return (
+            None,
+            None,
+            None,
+            "Git branch name cannot be empty.",
+        )
+
+    # Do not silently normalize user/model input.
+    if (
+        branch_name
+        != branch_name.strip()
+    ):
+
+        return (
+            None,
+            None,
+            None,
+            (
+                "Git branch name must not contain "
+                "leading or trailing whitespace."
+            ),
+        )
+
+    if (
+        len(
+            branch_name
+        )
+        > MAX_GIT_BRANCH_CHARS
+    ):
+
+        return (
+            None,
+            None,
+            None,
+            (
+                "Git branch name exceeds the "
+                f"{MAX_GIT_BRANCH_CHARS}-character limit."
+            ),
+        )
+
+    if branch_name.startswith(
+        "-"
+    ):
+
+        return (
+            None,
+            None,
+            None,
+            "Git branch name must not begin with '-'.",
+        )
+
+    if "@{" in branch_name:
+
+        return (
+            None,
+            None,
+            None,
+            (
+                "Git branch name must not contain "
+                "reflog-selection syntax."
+            ),
+        )
+
+    if any(
+        ord(character) < 32
+        or ord(character) == 127
+
+        for character
+        in branch_name
+    ):
+
+        return (
+            None,
+            None,
+            None,
+            "Git branch name contains control characters.",
+        )
+
+    # ========================================================
+    # TRUSTED GIT BRANCH-NAME VALIDATION
+    #
+    # --branch applies Git's real branch-name rules.
+    #
+    # We additionally require Git to return the exact supplied
+    # value so special branch expressions cannot be expanded into
+    # some different branch name.
+    # ========================================================
+
+    branch_validation = (
+        _run_git(
+            target=target,
+
+            args=[
+                "check-ref-format",
+                "--branch",
+                branch_name,
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if not branch_validation.get(
+        "ok",
+        False,
+    ):
+
+        return (
+            None,
+            None,
+            None,
+            "Git branch name is not valid.",
+        )
+
+    validated_lines = (
+        _stdout_lines(
+            branch_validation
+        )
+    )
+
+    if (
+        len(
+            validated_lines
+        )
+        != 1
+        or validated_lines[
+            0
+        ]
+        != branch_name
+    ):
+
+        return (
+            None,
+            None,
+            None,
+            (
+                "Git branch name must resolve to exactly "
+                "the explicitly requested value."
+            ),
+        )
+
+    # ========================================================
+    # CURRENT START POINT
+    #
+    # Branch creation is intentionally bounded to current HEAD.
+    # The model cannot choose an arbitrary commit.
+    # ========================================================
+
+    head_result = (
+        _run_git(
+            target=target,
+
+            args=[
+                "rev-parse",
+                "--verify",
+                "HEAD",
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if not head_result.get(
+        "ok",
+        False,
+    ):
+
+        return (
+            None,
+            None,
+            None,
+            (
+                "Git branch creation requires a repository "
+                "with a committed HEAD."
+            ),
+        )
+
+    head_lines = (
+        _stdout_lines(
+            head_result
+        )
+    )
+
+    if (
+        len(
+            head_lines
+        )
+        != 1
+    ):
+
+        return (
+            None,
+            None,
+            None,
+            "Could not resolve the current Git HEAD.",
+        )
+
+    base_commit = (
+        head_lines[
+            0
+        ].strip()
+    )
+
+    if not base_commit:
+
+        return (
+            None,
+            None,
+            None,
+            "Could not resolve the current Git HEAD.",
+        )
+
+    ref_name = (
+        f"refs/heads/{branch_name}"
+    )
+
+    # ========================================================
+    # EXISTENCE CHECK
+    #
+    # show-ref:
+    #   0 -> ref exists
+    #   1 -> ref does not exist
+    #
+    # Any other result fails closed.
+    # ========================================================
+
+    existing = (
+        _run_git(
+            target=target,
+
+            args=[
+                "show-ref",
+                "--verify",
+                "--quiet",
+                ref_name,
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if existing.get(
+        "ok",
+        False,
+    ):
+
+        return (
+            None,
+            None,
+            None,
+            (
+                f"Local Git branch '{branch_name}' "
+                "already exists."
+            ),
+        )
+
+    if (
+        existing.get(
+            "exit_code"
+        )
+        != 1
+    ):
+
+        return (
+            None,
+            None,
+            None,
+            (
+                "Could not safely determine whether "
+                "the requested Git branch already exists."
+            ),
+        )
+
+    return (
+        target,
+        branch_name,
+        base_commit,
+        None,
+    )
+
+
+def evaluate_git_create_branch_policy(
+    repository: Any,
+    branch_name: Any,
+) -> dict[
+    str,
+    Any,
+]:
+    """
+    Trusted pre-approval policy.
+
+    No Git reference is created here.
+    """
+
+    (
+        target,
+        normalized_branch,
+        base_commit,
+        error,
+    ) = (
+        _validate_create_branch_request(
+            repository=repository,
+            branch_name=branch_name,
+        )
+    )
+
+    if (
+        target is None
+        or normalized_branch is None
+        or base_commit is None
+    ):
+
+        return {
+            "ok":
+                False,
+
+            "status":
+                "denied",
+
+            "error":
+                (
+                    error
+                    or "Git branch creation policy denied the request."
+                ),
+        }
+
+    return {
+        "ok":
+            True,
+
+        "status":
+            "allowed",
+
+        "risk":
+            "low",
+
+        "requires_approval":
+            True,
+    }
+
+
+def workspace_git_create_branch(
+    repository: str,
+    branch_name: str,
+    timeout_seconds: int = (
+        DEFAULT_TIMEOUT_SECONDS
+    ),
+) -> dict[
+    str,
+    Any,
+]:
+    """
+    Create exactly one approved local Git branch from current HEAD.
+
+    Approval arguments are revalidated immediately before mutation.
+
+    The branch is created without checking it out.
+
+    The model controls only:
+        repository logical identifier
+        exact branch name
+
+    Trusted code controls:
+        Git executable
+        validation
+        start point
+        command shape
+        verification
+    """
+
+    (
+        target,
+        normalized_branch,
+        base_commit,
+        error,
+    ) = (
+        _validate_create_branch_request(
+            repository=repository,
+            branch_name=branch_name,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if (
+        target is None
+        or normalized_branch is None
+        or base_commit is None
+    ):
+
+        return {
+            "ok":
+                False,
+
+            "status":
+                "denied",
+
+            "repository":
+                repository,
+
+            "requested_branch":
+                branch_name,
+
+            "error":
+                (
+                    error
+                    or "Git branch creation request was denied."
+                ),
+        }
+
+    # ========================================================
+    # TRUSTED MUTATION
+    #
+    # Explicitly supply the already captured trusted HEAD commit.
+    #
+    # The branch name has passed Git's branch-name validator and
+    # names beginning with '-' are rejected before this point.
+    #
+    # `git branch` refuses to overwrite an existing local branch.
+    # ========================================================
+
+    mutation = (
+        _run_git(
+            target=target,
+
+            args=[
+                "branch",
+                normalized_branch,
+                base_commit,
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if not mutation.get(
+        "ok",
+        False,
+    ):
+
+        failure = (
+            _process_failure(
+                repository=target.name,
+                result=mutation,
+            )
+        )
+
+        failure[
+            "requested_branch"
+        ] = (
+            normalized_branch
+        )
+
+        failure[
+            "created_from"
+        ] = (
+            base_commit
+        )
+
+        return (
+            failure
+        )
+
+    # ========================================================
+    # TRUSTED POST-MUTATION VERIFICATION
+    #
+    # Mutation already happened if `git branch` succeeded.
+    # A failed verification must therefore not be reported as
+    # "no mutation".
+    # ========================================================
+
+    ref_name = (
+        f"refs/heads/{normalized_branch}"
+    )
+
+    verification = (
+        _run_git(
+            target=target,
+
+            args=[
+                "rev-parse",
+                "--verify",
+                ref_name,
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if not verification.get(
+        "ok",
+        False,
+    ):
+
+        verification_failure = (
+            _process_failure(
+                repository=target.name,
+                result=verification,
+            )
+        )
+
+        return {
+            "ok":
+                True,
+
+            "status":
+                "success",
+
+            "repository":
+                target.name,
+
+            "requested_branch":
+                normalized_branch,
+
+            "created_branch":
+                normalized_branch,
+
+            "created_from":
+                base_commit,
+
+            "created_commit":
+                None,
+
+            "files":
+                [],
+
+            "verification_ok":
+                False,
+
+            "verification_error":
+                verification_failure.get(
+                    "error"
+                ),
+        }
+
+    verification_lines = (
+        _stdout_lines(
+            verification
+        )
+    )
+
+    created_commit = (
+        verification_lines[
+            0
+        ].strip()
+
+        if (
+            len(
+                verification_lines
+            )
+            == 1
+        )
+
+        else None
+    )
+
+    if (
+        created_commit
+        != base_commit
+    ):
+
+        return {
+            "ok":
+                True,
+
+            "status":
+                "success",
+
+            "repository":
+                target.name,
+
+            "requested_branch":
+                normalized_branch,
+
+            "created_branch":
+                normalized_branch,
+
+            "created_from":
+                base_commit,
+
+            "created_commit":
+                created_commit,
+
+            "files":
+                [],
+
+            "verification_ok":
+                False,
+
+            "verification_error":
+                (
+                    "Created branch does not point to the "
+                    "trusted pre-mutation HEAD commit."
+                ),
+        }
+
+    return {
+        "ok":
+            True,
+
+        "status":
+            "success",
+
+        "repository":
+            target.name,
+
+        "requested_branch":
+            normalized_branch,
+
+        "created_branch":
+            normalized_branch,
+
+        "created_from":
+            base_commit,
+
+        "created_commit":
+            created_commit,
+
+        # Keep generic Git learning extraction compatible.
+        "files":
+            [],
+
+        "verification_ok":
+            True,
+
+        "verification_error":
+            None,
+    }
+
+
+# ============================================================
+# GOVERNED GIT BRANCH SWITCHING
+# ============================================================
+
+
+def _validate_switch_branch_request(
+    repository: Any,
+    branch_name: Any,
+    timeout_seconds: int = (
+        DEFAULT_TIMEOUT_SECONDS
+    ),
+):
+    """
+    Validate switching to one exact existing local Git branch.
+
+    This performs no mutation.
+
+    Safety contract:
+        - exact configured repository
+        - exact Git-valid branch name
+        - branch must already exist locally
+        - working tree must be completely clean
+        - no remote branch guessing
+        - no branch creation
+    """
+
+    (
+        target,
+        target_error,
+    ) = (
+        _resolve_target(
+            repository
+        )
+    )
+
+    if target is None:
+
+        error = (
+            target_error.get(
+                "error"
+            )
+            if isinstance(
+                target_error,
+                dict,
+            )
+            else None
+        )
+
+        return (
+            None,
+            None,
+            None,
+            (
+                error
+                or "Git repository resolution failed."
+            ),
+        )
+
+    if not isinstance(
+        branch_name,
+        str,
+    ):
+
+        return (
+            None,
+            None,
+            None,
+            "Git branch name must be a string.",
+        )
+
+    if not branch_name:
+
+        return (
+            None,
+            None,
+            None,
+            "Git branch name cannot be empty.",
+        )
+
+    if (
+        branch_name
+        != branch_name.strip()
+    ):
+
+        return (
+            None,
+            None,
+            None,
+            (
+                "Git branch name must not contain "
+                "leading or trailing whitespace."
+            ),
+        )
+
+    if (
+        len(
+            branch_name
+        )
+        > MAX_GIT_BRANCH_CHARS
+    ):
+
+        return (
+            None,
+            None,
+            None,
+            (
+                "Git branch name exceeds the "
+                f"{MAX_GIT_BRANCH_CHARS}-character limit."
+            ),
+        )
+
+    if branch_name.startswith(
+        "-"
+    ):
+
+        return (
+            None,
+            None,
+            None,
+            "Git branch name must not begin with '-'.",
+        )
+
+    if "@{" in branch_name:
+
+        return (
+            None,
+            None,
+            None,
+            (
+                "Git branch name must not contain "
+                "reflog-selection syntax."
+            ),
+        )
+
+    if any(
+        ord(character) < 32
+        or ord(character) == 127
+
+        for character
+        in branch_name
+    ):
+
+        return (
+            None,
+            None,
+            None,
+            "Git branch name contains control characters.",
+        )
+
+    # ========================================================
+    # TRUSTED BRANCH-NAME VALIDATION
+    # ========================================================
+
+    validation = (
+        _run_git(
+            target=target,
+
+            args=[
+                "check-ref-format",
+                "--branch",
+                branch_name,
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if not validation.get(
+        "ok",
+        False,
+    ):
+
+        return (
+            None,
+            None,
+            None,
+            "Git branch name is not valid.",
+        )
+
+    validated_lines = (
+        _stdout_lines(
+            validation
+        )
+    )
+
+    if (
+        len(
+            validated_lines
+        )
+        != 1
+        or validated_lines[
+            0
+        ]
+        != branch_name
+    ):
+
+        return (
+            None,
+            None,
+            None,
+            (
+                "Git branch name must resolve to exactly "
+                "the explicitly requested value."
+            ),
+        )
+
+    # ========================================================
+    # REQUIRE EXISTING LOCAL BRANCH
+    # ========================================================
+
+    local_ref = (
+        f"refs/heads/{branch_name}"
+    )
+
+    exists = (
+        _run_git(
+            target=target,
+
+            args=[
+                "show-ref",
+                "--verify",
+                "--quiet",
+                local_ref,
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if not exists.get(
+        "ok",
+        False,
+    ):
+
+        if (
+            exists.get(
+                "exit_code"
+            )
+            == 1
+        ):
+
+            return (
+                None,
+                None,
+                None,
+                (
+                    f"Local Git branch '{branch_name}' "
+                    "does not exist."
+                ),
+            )
+
+        return (
+            None,
+            None,
+            None,
+            (
+                "Could not safely verify the requested "
+                "local Git branch."
+            ),
+        )
+
+    # ========================================================
+    # CURRENT BRANCH
+    # ========================================================
+
+    current = (
+        _run_git(
+            target=target,
+
+            args=[
+                "symbolic-ref",
+                "--quiet",
+                "--short",
+                "HEAD",
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    current_branch = None
+
+    if current.get(
+        "ok",
+        False,
+    ):
+
+        current_lines = (
+            _stdout_lines(
+                current
+            )
+        )
+
+        if (
+            len(
+                current_lines
+            )
+            == 1
+        ):
+
+            current_branch = (
+                current_lines[
+                    0
+                ].strip()
+            )
+
+    elif (
+        current.get(
+            "exit_code"
+        )
+        != 1
+    ):
+
+        return (
+            None,
+            None,
+            None,
+            (
+                "Could not safely determine the current "
+                "Git branch state."
+            ),
+        )
+
+    # ========================================================
+    # CLEAN-WORKTREE PRECONDITION
+    #
+    # Includes tracked modifications and untracked files.
+    #
+    # We intentionally do not allow Git to carry dirty state
+    # across branches in this capability.
+    # ========================================================
+
+    working_tree = (
+        _run_git(
+            target=target,
+
+            args=[
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=all",
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if not working_tree.get(
+        "ok",
+        False,
+    ):
+
+        return (
+            None,
+            None,
+            None,
+            (
+                "Could not safely inspect the Git "
+                "working tree before switching branches."
+            ),
+        )
+
+    if (
+        _stdout_lines(
+            working_tree
+        )
+    ):
+
+        return (
+            None,
+            None,
+            None,
+            (
+                "Git branch switching requires a completely "
+                "clean working tree. Commit, stash, or otherwise "
+                "resolve staged, unstaged, and untracked changes "
+                "before switching branches."
+            ),
+        )
+
+    return (
+        target,
+        branch_name,
+        current_branch,
+        None,
+    )
+
+
+def evaluate_git_switch_branch_policy(
+    repository: Any,
+    branch_name: Any,
+) -> dict[
+    str,
+    Any,
+]:
+    """
+    Trusted pre-approval policy.
+
+    This performs no branch switch.
+    """
+
+    (
+        target,
+        normalized_branch,
+        current_branch,
+        error,
+    ) = (
+        _validate_switch_branch_request(
+            repository=repository,
+            branch_name=branch_name,
+        )
+    )
+
+    if (
+        target is None
+        or normalized_branch is None
+    ):
+
+        return {
+            "ok":
+                False,
+
+            "status":
+                "denied",
+
+            "error":
+                (
+                    error
+                    or "Git branch-switch policy denied the request."
+                ),
+        }
+
+    return {
+        "ok":
+            True,
+
+        "status":
+            "allowed",
+
+        "risk":
+            "low",
+
+        "requires_approval":
+            True,
+    }
+
+
+def workspace_git_switch_branch(
+    repository: str,
+    branch_name: str,
+    timeout_seconds: int = (
+        DEFAULT_TIMEOUT_SECONDS
+    ),
+) -> dict[
+    str,
+    Any,
+]:
+    """
+    Switch to exactly one approved existing local Git branch.
+
+    Approval arguments and the clean-worktree precondition are
+    revalidated immediately before mutation.
+
+    Trusted command:
+
+        git switch --no-guess <exact-local-branch>
+
+    This capability does NOT:
+        - create branches
+        - guess remote tracking branches
+        - discard working-tree changes
+        - stash changes
+        - commit changes
+        - fetch, pull, or push
+    """
+
+    (
+        target,
+        normalized_branch,
+        previous_branch,
+        error,
+    ) = (
+        _validate_switch_branch_request(
+            repository=repository,
+            branch_name=branch_name,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if (
+        target is None
+        or normalized_branch is None
+    ):
+
+        return {
+            "ok":
+                False,
+
+            "status":
+                "denied",
+
+            "repository":
+                repository,
+
+            "requested_branch":
+                branch_name,
+
+            "error":
+                (
+                    error
+                    or "Git branch-switch request was denied."
+                ),
+        }
+
+    # Already on the requested branch.
+    #
+    # Approval may have been created earlier, but execution is a
+    # truthful no-op rather than issuing an unnecessary mutation.
+    if (
+        previous_branch
+        == normalized_branch
+    ):
+
+        return {
+            "ok":
+                True,
+
+            "status":
+                "success",
+
+            "repository":
+                target.name,
+
+            "requested_branch":
+                normalized_branch,
+
+            "previous_branch":
+                previous_branch,
+
+            "current_branch":
+                previous_branch,
+
+            "switched_branch":
+                normalized_branch,
+
+            "switched_to_commit":
+                None,
+
+            "mutation_performed":
+                False,
+
+            "files":
+                [],
+
+            "verification_ok":
+                True,
+
+            "verification_error":
+                None,
+        }
+
+    # ========================================================
+    # TRUSTED MUTATION
+    #
+    # --no-guess prevents Git from creating a local tracking
+    # branch from a similarly named remote branch.
+    # ========================================================
+
+    mutation = (
+        _run_git(
+            target=target,
+
+            args=[
+                "switch",
+                "--no-guess",
+                normalized_branch,
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if not mutation.get(
+        "ok",
+        False,
+    ):
+
+        failure = (
+            _process_failure(
+                repository=target.name,
+                result=mutation,
+            )
+        )
+
+        failure[
+            "requested_branch"
+        ] = (
+            normalized_branch
+        )
+
+        failure[
+            "previous_branch"
+        ] = (
+            previous_branch
+        )
+
+        return (
+            failure
+        )
+
+    # ========================================================
+    # TRUSTED POST-MUTATION VERIFICATION
+    # ========================================================
+
+    current = (
+        _run_git(
+            target=target,
+
+            args=[
+                "symbolic-ref",
+                "--quiet",
+                "--short",
+                "HEAD",
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if not current.get(
+        "ok",
+        False,
+    ):
+
+        verification_failure = (
+            _process_failure(
+                repository=target.name,
+                result=current,
+            )
+        )
+
+        return {
+            "ok":
+                True,
+
+            "status":
+                "success",
+
+            "repository":
+                target.name,
+
+            "requested_branch":
+                normalized_branch,
+
+            "previous_branch":
+                previous_branch,
+
+            "current_branch":
+                None,
+
+            "switched_branch":
+                normalized_branch,
+
+            "switched_to_commit":
+                None,
+
+            "mutation_performed":
+                True,
+
+            "files":
+                [],
+
+            "verification_ok":
+                False,
+
+            "verification_error":
+                verification_failure.get(
+                    "error"
+                ),
+        }
+
+    current_lines = (
+        _stdout_lines(
+            current
+        )
+    )
+
+    current_branch = (
+        current_lines[
+            0
+        ].strip()
+
+        if (
+            len(
+                current_lines
+            )
+            == 1
+        )
+
+        else None
+    )
+
+    head_result = (
+        _run_git(
+            target=target,
+
+            args=[
+                "rev-parse",
+                "--verify",
+                "HEAD",
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    ref_result = (
+        _run_git(
+            target=target,
+
+            args=[
+                "rev-parse",
+                "--verify",
+                f"refs/heads/{normalized_branch}",
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    final_status = (
+        _run_git(
+            target=target,
+
+            args=[
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=all",
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    head_lines = (
+        _stdout_lines(
+            head_result
+        )
+        if head_result.get(
+            "ok",
+            False,
+        )
+        else []
+    )
+
+    ref_lines = (
+        _stdout_lines(
+            ref_result
+        )
+        if ref_result.get(
+            "ok",
+            False,
+        )
+        else []
+    )
+
+    final_changes = (
+        _stdout_lines(
+            final_status
+        )
+        if final_status.get(
+            "ok",
+            False,
+        )
+        else [
+            "<verification unavailable>"
+        ]
+    )
+
+    head_commit = (
+        head_lines[
+            0
+        ].strip()
+
+        if (
+            len(
+                head_lines
+            )
+            == 1
+        )
+
+        else None
+    )
+
+    branch_commit = (
+        ref_lines[
+            0
+        ].strip()
+
+        if (
+            len(
+                ref_lines
+            )
+            == 1
+        )
+
+        else None
+    )
+
+    verification_ok = (
+        current_branch
+        == normalized_branch
+
+        and head_commit is not None
+
+        and branch_commit is not None
+
+        and head_commit
+        == branch_commit
+
+        and not final_changes
+    )
+
+    verification_error = None
+
+    if not verification_ok:
+
+        problems = []
+
+        if (
+            current_branch
+            != normalized_branch
+        ):
+
+            problems.append(
+                "current branch does not match the requested branch"
+            )
+
+        if (
+            head_commit is None
+            or branch_commit is None
+            or head_commit
+            != branch_commit
+        ):
+
+            problems.append(
+                "HEAD does not match the requested local branch ref"
+            )
+
+        if final_changes:
+
+            problems.append(
+                "working tree is no longer clean after the switch"
+            )
+
+        verification_error = (
+            "; ".join(
+                problems
+            )
+            or "Git branch-switch verification failed."
+        )
+
+    return {
+        "ok":
+            True,
+
+        "status":
+            "success",
+
+        "repository":
+            target.name,
+
+        "requested_branch":
+            normalized_branch,
+
+        "previous_branch":
+            previous_branch,
+
+        "current_branch":
+            current_branch,
+
+        "switched_branch":
+            normalized_branch,
+
+        "switched_to_commit":
+            head_commit,
+
+        "mutation_performed":
+            True,
+
+        "files":
+            [],
+
+        "verification_ok":
+            verification_ok,
+
+        "verification_error":
+            verification_error,
+    }

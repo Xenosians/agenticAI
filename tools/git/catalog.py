@@ -2,11 +2,17 @@ from __future__ import annotations
 
 from tools.git import (
     evaluate_git_unstage_policy,
+    evaluate_git_create_branch_policy,
+    evaluate_git_switch_branch_policy,
 )
 
 from tools.git.presentation import (
     format_git_unstage_files_approval,
     format_git_unstage_files_result,
+    format_git_create_branch_result,
+    format_git_create_branch_approval,
+    format_git_switch_branch_result,
+    format_git_switch_branch_approval,
 )
 
 from typing import (
@@ -540,4 +546,127 @@ GIT_TOOLS[
 
     "approval_formatter":
         format_git_unstage_files_approval,
+}
+
+
+# ============================================================
+# GOVERNED GIT MUTATION — CREATE LOCAL BRANCH
+# ============================================================
+
+GIT_TOOLS[
+    "workspace_git_create_branch"
+] = {
+    "description": (
+        "CREATE one new LOCAL GIT BRANCH with an exact explicitly "
+        "requested branch name in one configured Git repository. "
+        "The branch starts at the repository's current HEAD. "
+        "Use this when the user explicitly asks to create or make "
+        "a Git branch. This creates the local branch reference only "
+        "and requires approval. It does NOT create a directory, "
+        "switch or check out the new branch, modify files, stage "
+        "files, commit changes, pull, push, or modify remote state."
+    ),
+
+    "risk":
+        "low",
+
+    "requires_approval":
+        True,
+
+    "policy_resolver":
+        evaluate_git_create_branch_policy,
+
+    "grounded_arguments": [
+        "repository",
+        "branch_name",
+    ],
+
+    "parameters": {
+        "repository":
+            REPOSITORY_PARAMETER,
+
+        "branch_name": {
+            "type":
+                "str",
+
+            "description": (
+                "Exact local Git branch name explicitly supplied "
+                "by the user. Do not invent, normalize, rewrite, "
+                "shorten, expand, or otherwise alter the name."
+            ),
+        },
+    },
+
+    "argument_values_resolver":
+        resolve_git_argument_values,
+
+    "result_formatter":
+        format_git_create_branch_result,
+
+    "approval_formatter":
+        format_git_create_branch_approval,
+}
+
+
+# ============================================================
+# GOVERNED GIT MUTATION — SWITCH LOCAL BRANCH
+# ============================================================
+
+GIT_TOOLS[
+    "workspace_git_switch_branch"
+] = {
+    "description": (
+        "SWITCH or CHECK OUT one existing LOCAL Git branch with "
+        "an exact explicitly requested branch name in one "
+        "configured Git repository. Use this when the user asks "
+        "to switch to, check out, move to, or change to an "
+        "already-existing local branch. Select this mutation "
+        "capability directly for an explicit switch request; "
+        "trusted policy validates local branch existence and the "
+        "clean-working-tree precondition without a separate read "
+        "delegation. The working tree must be completely clean. "
+        "This requires approval. It does NOT "
+        "create a branch, guess or create a remote-tracking branch, "
+        "discard changes, stash changes, stage files, commit, fetch, "
+        "pull, push, or modify remote state."
+    ),
+
+    "risk":
+        "low",
+
+    "requires_approval":
+        True,
+
+    "policy_resolver":
+        evaluate_git_switch_branch_policy,
+
+    "grounded_arguments": [
+        "repository",
+        "branch_name",
+    ],
+
+    "parameters": {
+        "repository":
+            REPOSITORY_PARAMETER,
+
+        "branch_name": {
+            "type":
+                "str",
+
+            "description": (
+                "Exact existing local Git branch name explicitly "
+                "supplied by the user. Do not invent, normalize, "
+                "rewrite, shorten, expand, or otherwise alter it."
+            ),
+        },
+    },
+
+    "argument_values_resolver":
+        resolve_git_argument_values,
+
+    "result_formatter":
+        format_git_switch_branch_result,
+
+    "approval_formatter":
+        format_git_switch_branch_approval,
 }

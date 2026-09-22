@@ -54,6 +54,8 @@ def test_git_catalog_exposes_repository_argument():
         "workspace_git_changed_files",
         "workspace_git_stage_files",
         "workspace_git_unstage_files",
+        "workspace_git_create_branch",
+        "workspace_git_switch_branch",
     ):
 
         tool = (
@@ -163,6 +165,8 @@ def test_all_git_capabilities_register_with_mcp():
         "workspace_git_changed_files",
         "workspace_git_stage_files",
         "workspace_git_unstage_files",
+        "workspace_git_create_branch",
+        "workspace_git_switch_branch",
     }
 
 

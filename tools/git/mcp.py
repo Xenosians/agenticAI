@@ -14,6 +14,9 @@ from tools.git import (
     workspace_git_changed_files
     as run_git_changed_files,
 
+    workspace_git_create_branch
+    as run_git_create_branch,
+
     workspace_git_diff
     as run_git_diff,
 
@@ -28,7 +31,12 @@ from tools.git import (
 
     workspace_git_status
     as run_git_status,
-    workspace_git_unstage_files as run_git_unstage_files,
+
+    workspace_git_switch_branch
+    as run_git_switch_branch,
+
+    workspace_git_unstage_files
+    as run_git_unstage_files,
 )
 
 
@@ -271,6 +279,51 @@ class GitStageFilesMCPResult(
     ) = None
 
 
+class GitCreateBranchMCPResult(
+    BaseModel
+):
+    ok: bool
+    status: str
+
+    repository: (
+        str | None
+    ) = None
+
+    requested_branch: (
+        str | None
+    ) = None
+
+    created_branch: (
+        str | None
+    ) = None
+
+    created_from: (
+        str | None
+    ) = None
+
+    created_commit: (
+        str | None
+    ) = None
+
+    files: list[
+        str
+    ] = Field(
+        default_factory=list
+    )
+
+    verification_ok: (
+        bool | None
+    ) = None
+
+    verification_error: (
+        str | None
+    ) = None
+
+    error: (
+        str | None
+    ) = None
+
+
 class GitUnstageFilesMCPResult(
     BaseModel
 ):
@@ -328,6 +381,57 @@ class GitUnstageFilesMCPResult(
     ) = None
 
 
+class GitSwitchBranchMCPResult(
+    BaseModel
+):
+    ok: bool
+    status: str
+
+    repository: (
+        str | None
+    ) = None
+
+    requested_branch: (
+        str | None
+    ) = None
+
+    previous_branch: (
+        str | None
+    ) = None
+
+    current_branch: (
+        str | None
+    ) = None
+
+    switched_branch: (
+        str | None
+    ) = None
+
+    switched_to_commit: (
+        str | None
+    ) = None
+
+    mutation_performed: bool = False
+
+    files: list[
+        str
+    ] = Field(
+        default_factory=list
+    )
+
+    verification_ok: (
+        bool | None
+    ) = None
+
+    verification_error: (
+        str | None
+    ) = None
+
+    error: (
+        str | None
+    ) = None
+
+
 def register_git_tools(
     server: MCPServer,
 ) -> None:
@@ -342,9 +446,7 @@ def register_git_tools(
         return (
             GitStatusMCPResult(
                 **run_git_status(
-                    repository=(
-                        repository
-                    )
+                    repository=repository
                 )
             )
         )
@@ -359,9 +461,7 @@ def register_git_tools(
         return (
             GitBranchesMCPResult(
                 **run_git_branches(
-                    repository=(
-                        repository
-                    )
+                    repository=repository
                 )
             )
         )
@@ -376,9 +476,7 @@ def register_git_tools(
         return (
             GitLogMCPResult(
                 **run_git_log(
-                    repository=(
-                        repository
-                    )
+                    repository=repository
                 )
             )
         )
@@ -393,9 +491,7 @@ def register_git_tools(
         return (
             GitDiffMCPResult(
                 **run_git_diff(
-                    repository=(
-                        repository
-                    )
+                    repository=repository
                 )
             )
         )
@@ -410,9 +506,7 @@ def register_git_tools(
         return (
             GitDiffMCPResult(
                 **run_git_staged_diff(
-                    repository=(
-                        repository
-                    )
+                    repository=repository
                 )
             )
         )
@@ -427,9 +521,7 @@ def register_git_tools(
         return (
             GitChangedFilesMCPResult(
                 **run_git_changed_files(
-                    repository=(
-                        repository
-                    )
+                    repository=repository
                 )
             )
         )
@@ -443,16 +535,12 @@ def register_git_tools(
         return (
             GitStageFilesMCPResult(
                 **run_git_stage_files(
-                    repository=(
-                        repository
-                    ),
-
-                    paths=(
-                        paths
-                    ),
+                    repository=repository,
+                    paths=paths,
                 )
             )
         )
+
     @server.tool()
     def workspace_git_unstage_files(
         repository: str,
@@ -462,13 +550,38 @@ def register_git_tools(
         return (
             GitUnstageFilesMCPResult(
                 **run_git_unstage_files(
-                    repository=(
-                        repository
-                    ),
+                    repository=repository,
+                    paths=paths,
+                )
+            )
+        )
 
-                    paths=(
-                        paths
-                    ),
+    @server.tool()
+    def workspace_git_create_branch(
+        repository: str,
+        branch_name: str,
+    ) -> GitCreateBranchMCPResult:
+
+        return (
+            GitCreateBranchMCPResult(
+                **run_git_create_branch(
+                    repository=repository,
+                    branch_name=branch_name,
+                )
+            )
+        )
+
+    @server.tool()
+    def workspace_git_switch_branch(
+        repository: str,
+        branch_name: str,
+    ) -> GitSwitchBranchMCPResult:
+
+        return (
+            GitSwitchBranchMCPResult(
+                **run_git_switch_branch(
+                    repository=repository,
+                    branch_name=branch_name,
                 )
             )
         )
