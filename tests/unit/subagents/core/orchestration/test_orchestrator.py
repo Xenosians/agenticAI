@@ -539,3 +539,111 @@ def test_orchestrator_falls_back_if_main_synthesis_fails():
             "and is not locked."
         )
     )
+
+
+def test_orchestrator_preserves_governed_denial_as_denied():
+
+    router = (
+        FakeRouter()
+    )
+
+    class DeniedRuntime:
+
+        async def run(
+            self,
+            task,
+        ):
+
+            return (
+                AgentResult(
+                    task_id=(
+                        task.task_id
+                    ),
+
+                    agent_name=(
+                        task.agent_name
+                    ),
+
+                    status="denied",
+
+                    proposed_tool=(
+                        "example_mutation"
+                    ),
+
+                    proposed_arguments={
+                        "target":
+                            "example"
+                    },
+
+                    outcome_code=(
+                        "policy_denied"
+                    ),
+
+                    error=(
+                        "Trusted policy denied the operation."
+                    ),
+                )
+            )
+
+    primary_assistant = (
+        FakePrimaryAssistant()
+    )
+
+    (
+        orchestrator,
+        _router,
+        _runtime,
+        _primary_assistant,
+    ) = (
+        build_orchestrator(
+            router=(
+                router
+            ),
+
+            runtime=(
+                DeniedRuntime()
+            ),
+
+            primary_assistant=(
+                primary_assistant
+            ),
+        )
+    )
+
+    result = (
+        asyncio.run(
+            orchestrator.run(
+                "Perform the requested governed mutation."
+            )
+        )
+    )
+
+    assert (
+        result.status
+        == "denied"
+    )
+
+    assert (
+        result.results[
+            0
+        ].status
+        == "denied"
+    )
+
+    assert (
+        result.results[
+            0
+        ].outcome_code
+        == "policy_denied"
+    )
+
+    assert (
+        result.answer
+        == "Trusted policy denied the operation."
+    )
+
+    assert (
+        primary_assistant
+        .synthesis_calls
+        == []
+    )

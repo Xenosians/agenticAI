@@ -4165,3 +4165,1643 @@ def workspace_git_switch_branch(
         "verification_error":
             verification_error,
     }
+
+
+# ============================================================
+# GOVERNED GIT STAGE ALL
+# ============================================================
+
+
+def _git_mutation_worktree_state(
+    *,
+    target: GitRepositoryTarget,
+    timeout_seconds: int,
+) -> tuple[
+    list[
+        dict[
+            str,
+            Any,
+        ]
+    ] | None,
+    str | None,
+]:
+    """
+    Read the complete non-ignored working-tree/index state used by
+    governed Git mutations.
+
+    This performs no mutation.
+    """
+
+    result = (
+        _run_git(
+            target=target,
+
+            args=[
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=all",
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if not result.get(
+        "ok",
+        False,
+    ):
+
+        failure = (
+            _process_failure(
+                repository=target.name,
+                result=result,
+            )
+        )
+
+        return (
+            None,
+            failure.get(
+                "error"
+            ),
+        )
+
+    return (
+        _parse_status_changes(
+            _stdout_lines(
+                result
+            )
+        ),
+        None,
+    )
+
+
+def evaluate_git_stage_all_policy(
+    repository: Any,
+) -> dict[
+    str,
+    Any,
+]:
+    """
+    Trusted pre-approval policy for staging the entire current
+    repository worktree.
+
+    Authority is deliberately bounded to:
+        - one configured logical repository
+        - Git's complete current non-ignored worktree
+        - index mutation only
+
+    Conflicted repositories fail closed.
+
+    A repository whose unstaged/untracked state is already empty is
+    a no-op and does not require approval.
+    """
+
+    (
+        target,
+        target_error,
+    ) = (
+        _resolve_target(
+            repository
+        )
+    )
+
+    if target is None:
+
+        return {
+            "ok":
+                False,
+
+            "status":
+                "denied",
+
+            "error": (
+                target_error.get(
+                    "error"
+                )
+                if isinstance(
+                    target_error,
+                    dict,
+                )
+                else (
+                    "Git repository resolution failed."
+                )
+            ),
+        }
+
+    (
+        changes,
+        error,
+    ) = (
+        _git_mutation_worktree_state(
+            target=target,
+            timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
+        )
+    )
+
+    if changes is None:
+
+        return {
+            "ok":
+                False,
+
+            "status":
+                "denied",
+
+            "error": (
+                error
+                or (
+                    "Could not safely inspect the Git "
+                    "working tree."
+                )
+            ),
+        }
+
+    summary = (
+        _working_tree_summary(
+            changes
+        )
+    )
+
+    if (
+        summary[
+            "conflicted_count"
+        ]
+        > 0
+    ):
+
+        return {
+            "ok":
+                False,
+
+            "status":
+                "denied",
+
+            "error": (
+                "Git stage-all is not allowed while the "
+                "repository contains conflicted paths."
+            ),
+        }
+
+    needs_staging = (
+        summary[
+            "unstaged_count"
+        ]
+        > 0
+
+        or summary[
+            "untracked_count"
+        ]
+        > 0
+    )
+
+    return {
+        "ok":
+            True,
+
+        "status":
+            "allowed",
+
+        "risk":
+            "low",
+
+        "requires_approval":
+            needs_staging,
+    }
+
+
+def workspace_git_stage_all(
+    repository: str,
+    timeout_seconds: int = (
+        DEFAULT_TIMEOUT_SECONDS
+    ),
+) -> dict[
+    str,
+    Any,
+]:
+    """
+    Stage all current non-ignored changes in one approved logical
+    repository.
+
+    Trusted mutation:
+
+        git add -A
+
+    The model cannot provide pathspecs or Git flags.
+
+    This capability stages:
+        - tracked modifications
+        - tracked deletions
+        - untracked files
+
+    It does NOT:
+        - commit
+        - push
+        - switch branches
+        - contact remotes
+        - resolve merge conflicts
+    """
+
+    (
+        target,
+        target_error,
+    ) = (
+        _resolve_target(
+            repository
+        )
+    )
+
+    if target is None:
+
+        return (
+            target_error
+            or {
+                "ok":
+                    False,
+
+                "status":
+                    "denied",
+
+                "repository":
+                    repository,
+
+                "error":
+                    "Git repository resolution failed.",
+            }
+        )
+
+    # ========================================================
+    # REVALIDATE IMMEDIATELY BEFORE MUTATION
+    # ========================================================
+
+    (
+        before_changes,
+        before_error,
+    ) = (
+        _git_mutation_worktree_state(
+            target=target,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if before_changes is None:
+
+        return {
+            "ok":
+                False,
+
+            "status":
+                "denied",
+
+            "repository":
+                target.name,
+
+            "error": (
+                before_error
+                or (
+                    "Could not safely inspect the Git "
+                    "working tree."
+                )
+            ),
+        }
+
+    before_summary = (
+        _working_tree_summary(
+            before_changes
+        )
+    )
+
+    if (
+        before_summary[
+            "conflicted_count"
+        ]
+        > 0
+    ):
+
+        return {
+            "ok":
+                False,
+
+            "status":
+                "denied",
+
+            "repository":
+                target.name,
+
+            "error": (
+                "Git stage-all is not allowed while the "
+                "repository contains conflicted paths."
+            ),
+        }
+
+    needs_staging = (
+        before_summary[
+            "unstaged_count"
+        ]
+        > 0
+
+        or before_summary[
+            "untracked_count"
+        ]
+        > 0
+    )
+
+    # Already fully staged / clean.
+    if not needs_staging:
+
+        return {
+            "ok":
+                True,
+
+            "status":
+                "success",
+
+            "repository":
+                target.name,
+
+            "files":
+                before_summary[
+                    "staged_files"
+                ],
+
+            "staged_paths":
+                before_summary[
+                    "staged_files"
+                ],
+
+            "staged_count":
+                before_summary[
+                    "staged_count"
+                ],
+
+            "mutation_performed":
+                False,
+
+            "verification_ok":
+                True,
+
+            "verification_error":
+                None,
+        }
+
+    # ========================================================
+    # TRUSTED INDEX MUTATION
+    # ========================================================
+
+    mutation = (
+        _run_git(
+            target=target,
+
+            args=[
+                "add",
+                "-A",
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if not mutation.get(
+        "ok",
+        False,
+    ):
+
+        return (
+            _process_failure(
+                repository=target.name,
+                result=mutation,
+            )
+        )
+
+    # ========================================================
+    # TRUSTED POST-MUTATION VERIFICATION
+    #
+    # The index mutation has already happened if `git add -A`
+    # returned success.
+    #
+    # Verification failure must therefore preserve side-effect
+    # truth.
+    # ========================================================
+
+    (
+        after_changes,
+        after_error,
+    ) = (
+        _git_mutation_worktree_state(
+            target=target,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if after_changes is None:
+
+        return {
+            "ok":
+                True,
+
+            "status":
+                "success",
+
+            "repository":
+                target.name,
+
+            "files":
+                [],
+
+            "staged_paths":
+                [],
+
+            "staged_count":
+                0,
+
+            "mutation_performed":
+                True,
+
+            "verification_ok":
+                False,
+
+            "verification_error": (
+                after_error
+                or (
+                    "Post-staging working-tree "
+                    "verification failed."
+                )
+            ),
+        }
+
+    after_summary = (
+        _working_tree_summary(
+            after_changes
+        )
+    )
+
+    verification_ok = (
+        after_summary[
+            "unstaged_count"
+        ]
+        == 0
+
+        and after_summary[
+            "untracked_count"
+        ]
+        == 0
+
+        and after_summary[
+            "conflicted_count"
+        ]
+        == 0
+    )
+
+    verification_error = None
+
+    if not verification_ok:
+
+        verification_error = (
+            "Git stage-all completed, but unstaged, "
+            "untracked, or conflicted paths remain."
+        )
+
+    return {
+        "ok":
+            True,
+
+        "status":
+            "success",
+
+        "repository":
+            target.name,
+
+        "files":
+            after_summary[
+                "staged_files"
+            ],
+
+        "staged_paths":
+            after_summary[
+                "staged_files"
+            ],
+
+        "staged_count":
+            after_summary[
+                "staged_count"
+            ],
+
+        "mutation_performed":
+            True,
+
+        "verification_ok":
+            verification_ok,
+
+        "verification_error":
+            verification_error,
+    }
+
+
+# ============================================================
+# GOVERNED GIT COMMIT
+# ============================================================
+
+MAX_GIT_COMMIT_MESSAGE_CHARS = 500
+
+
+def _validate_git_commit_message(
+    commit_message: Any,
+) -> tuple[
+    str | None,
+    str | None,
+]:
+    """
+    Validate one exact user-grounded commit message.
+
+    v1 deliberately supports a single-line message only.
+
+    No normalization or generated fallback message is permitted.
+    """
+
+    if not isinstance(
+        commit_message,
+        str,
+    ):
+
+        return (
+            None,
+            "Git commit message must be a string.",
+        )
+
+    if not commit_message:
+
+        return (
+            None,
+            "Git commit message cannot be empty.",
+        )
+
+    if (
+        commit_message
+        != commit_message.strip()
+    ):
+
+        return (
+            None,
+            (
+                "Git commit message must not contain "
+                "leading or trailing whitespace."
+            ),
+        )
+
+    if (
+        len(
+            commit_message
+        )
+        > MAX_GIT_COMMIT_MESSAGE_CHARS
+    ):
+
+        return (
+            None,
+            (
+                "Git commit message exceeds the "
+                f"{MAX_GIT_COMMIT_MESSAGE_CHARS}-character limit."
+            ),
+        )
+
+    if any(
+        character in {
+            "\n",
+            "\r",
+            "\x00",
+        }
+
+        or (
+            ord(
+                character
+            )
+            < 32
+            and character
+            != "\t"
+        )
+
+        or ord(
+            character
+        )
+        == 127
+
+        for character
+        in commit_message
+    ):
+
+        return (
+            None,
+            (
+                "Git commit message contains unsupported "
+                "control characters."
+            ),
+        )
+
+    return (
+        commit_message,
+        None,
+    )
+
+
+def _git_internal_path(
+    *,
+    target: GitRepositoryTarget,
+    name: str,
+    timeout_seconds: int,
+) -> tuple[
+    Path | None,
+    str | None,
+]:
+    """
+    Resolve one Git-controlled internal path.
+
+    The path is obtained from the trusted Git executable, not from
+    model input.
+    """
+
+    result = (
+        _run_git(
+            target=target,
+
+            args=[
+                "rev-parse",
+                "--git-path",
+                name,
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if not result.get(
+        "ok",
+        False,
+    ):
+
+        failure = (
+            _process_failure(
+                repository=target.name,
+                result=result,
+            )
+        )
+
+        return (
+            None,
+            failure.get(
+                "error"
+            ),
+        )
+
+    lines = (
+        _stdout_lines(
+            result
+        )
+    )
+
+    if len(
+        lines
+    ) != 1:
+
+        return (
+            None,
+            (
+                "Could not safely resolve Git internal "
+                f"state path '{name}'."
+            ),
+        )
+
+    raw_path = (
+        lines[
+            0
+        ].strip()
+    )
+
+    if not raw_path:
+
+        return (
+            None,
+            (
+                "Could not safely resolve Git internal "
+                f"state path '{name}'."
+            ),
+        )
+
+    candidate = (
+        Path(
+            raw_path
+        )
+    )
+
+    if not candidate.is_absolute():
+
+        candidate = (
+            target.path
+            / candidate
+        )
+
+    return (
+        candidate.resolve(
+            strict=False
+        ),
+        None,
+    )
+
+
+def _git_operation_in_progress(
+    *,
+    target: GitRepositoryTarget,
+    timeout_seconds: int,
+) -> tuple[
+    str | None,
+    str | None,
+]:
+    """
+    Detect Git states in which an ordinary governed commit must not
+    operate.
+
+    These are execution states, not model-controlled arguments.
+    """
+
+    markers = {
+        "MERGE_HEAD":
+            "merge",
+
+        "CHERRY_PICK_HEAD":
+            "cherry-pick",
+
+        "REVERT_HEAD":
+            "revert",
+
+        "REBASE_HEAD":
+            "rebase",
+
+        "rebase-merge":
+            "rebase",
+
+        "rebase-apply":
+            "rebase",
+
+        "sequencer":
+            "sequencer",
+
+        "BISECT_LOG":
+            "bisect",
+    }
+
+    for (
+        marker,
+        operation,
+    ) in markers.items():
+
+        (
+            internal_path,
+            error,
+        ) = (
+            _git_internal_path(
+                target=target,
+                name=marker,
+                timeout_seconds=timeout_seconds,
+            )
+        )
+
+        if internal_path is None:
+
+            return (
+                None,
+                error
+                or (
+                    "Could not safely inspect Git "
+                    "operation state."
+                ),
+            )
+
+        if internal_path.exists():
+
+            return (
+                operation,
+                None,
+            )
+
+    return (
+        None,
+        None,
+    )
+
+
+def _git_staged_paths(
+    *,
+    target: GitRepositoryTarget,
+    timeout_seconds: int,
+) -> tuple[
+    list[str] | None,
+    str | None,
+]:
+    """
+    Return current staged paths without mutating the repository.
+    """
+
+    result = (
+        _run_git(
+            target=target,
+
+            args=[
+                "diff",
+                "--cached",
+                "--name-only",
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if not result.get(
+        "ok",
+        False,
+    ):
+
+        failure = (
+            _process_failure(
+                repository=target.name,
+                result=result,
+            )
+        )
+
+        return (
+            None,
+            failure.get(
+                "error"
+            ),
+        )
+
+    return (
+        _stdout_lines(
+            result
+        ),
+        None,
+    )
+
+
+def _validate_git_commit_request(
+    *,
+    repository: Any,
+    commit_message: Any,
+    timeout_seconds: int = (
+        DEFAULT_TIMEOUT_SECONDS
+    ),
+) -> tuple[
+    GitRepositoryTarget | None,
+    str | None,
+    str | None,
+    list[str] | None,
+    str | None,
+]:
+    """
+    Validate one ordinary governed Git commit request.
+
+    This performs no mutation.
+    """
+
+    (
+        target,
+        target_error,
+    ) = (
+        _resolve_target(
+            repository
+        )
+    )
+
+    if target is None:
+
+        error = (
+            target_error.get(
+                "error"
+            )
+            if isinstance(
+                target_error,
+                dict,
+            )
+            else None
+        )
+
+        return (
+            None,
+            None,
+            None,
+            None,
+            (
+                error
+                or "Git repository resolution failed."
+            ),
+        )
+
+    (
+        normalized_message,
+        message_error,
+    ) = (
+        _validate_git_commit_message(
+            commit_message
+        )
+    )
+
+    if normalized_message is None:
+
+        return (
+            None,
+            None,
+            None,
+            None,
+            message_error,
+        )
+
+    # ========================================================
+    # WORKTREE / CONFLICT STATE
+    # ========================================================
+
+    (
+        changes,
+        state_error,
+    ) = (
+        _git_mutation_worktree_state(
+            target=target,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if changes is None:
+
+        return (
+            None,
+            None,
+            None,
+            None,
+            (
+                state_error
+                or (
+                    "Could not safely inspect the Git "
+                    "working tree."
+                )
+            ),
+        )
+
+    summary = (
+        _working_tree_summary(
+            changes
+        )
+    )
+
+    if (
+        summary[
+            "conflicted_count"
+        ]
+        > 0
+    ):
+
+        return (
+            None,
+            None,
+            None,
+            None,
+            (
+                "Git commit is not allowed while the "
+                "repository contains conflicted paths."
+            ),
+        )
+
+    # ========================================================
+    # NO SPECIAL GIT OPERATION IN PROGRESS
+    # ========================================================
+
+    (
+        operation,
+        operation_error,
+    ) = (
+        _git_operation_in_progress(
+            target=target,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if operation_error is not None:
+
+        return (
+            None,
+            None,
+            None,
+            None,
+            operation_error,
+        )
+
+    if operation is not None:
+
+        return (
+            None,
+            None,
+            None,
+            None,
+            (
+                "Ordinary governed Git commit is not allowed "
+                f"while a {operation} operation is in progress."
+            ),
+        )
+
+    # ========================================================
+    # REQUIRE AN EXISTING COMMITTED HEAD
+    # ========================================================
+
+    head_result = (
+        _run_git(
+            target=target,
+
+            args=[
+                "rev-parse",
+                "--verify",
+                "HEAD",
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if not head_result.get(
+        "ok",
+        False,
+    ):
+
+        return (
+            None,
+            None,
+            None,
+            None,
+            (
+                "Governed Git commit currently requires "
+                "an existing committed HEAD."
+            ),
+        )
+
+    head_lines = (
+        _stdout_lines(
+            head_result
+        )
+    )
+
+    if len(
+        head_lines
+    ) != 1:
+
+        return (
+            None,
+            None,
+            None,
+            None,
+            "Could not safely resolve current Git HEAD.",
+        )
+
+    before_head = (
+        head_lines[
+            0
+        ].strip()
+    )
+
+    if not before_head:
+
+        return (
+            None,
+            None,
+            None,
+            None,
+            "Could not safely resolve current Git HEAD.",
+        )
+
+    # ========================================================
+    # REQUIRE STAGED CONTENT
+    # ========================================================
+
+    (
+        staged_paths,
+        staged_error,
+    ) = (
+        _git_staged_paths(
+            target=target,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if staged_paths is None:
+
+        return (
+            None,
+            None,
+            None,
+            None,
+            (
+                staged_error
+                or (
+                    "Could not safely inspect staged "
+                    "Git changes."
+                )
+            ),
+        )
+
+    if not staged_paths:
+
+        return (
+            None,
+            None,
+            None,
+            None,
+            (
+                "Git commit requires at least one staged "
+                "change. This capability does not stage "
+                "files automatically."
+            ),
+        )
+
+    # ========================================================
+    # REQUIRE USABLE AUTHOR / COMMITTER IDENTITY
+    # ========================================================
+
+    for identity_kind in (
+        "GIT_AUTHOR_IDENT",
+        "GIT_COMMITTER_IDENT",
+    ):
+
+        identity_result = (
+            _run_git(
+                target=target,
+
+                args=[
+                    "var",
+                    identity_kind,
+                ],
+
+                timeout_seconds=timeout_seconds,
+            )
+        )
+
+        if not identity_result.get(
+            "ok",
+            False,
+        ):
+
+            return (
+                None,
+                None,
+                None,
+                None,
+                (
+                    "Git commit identity is not configured "
+                    "for this repository/runtime."
+                ),
+            )
+
+    return (
+        target,
+        normalized_message,
+        before_head,
+        staged_paths,
+        None,
+    )
+
+
+def evaluate_git_commit_policy(
+    repository: Any,
+    commit_message: Any,
+) -> dict[
+    str,
+    Any,
+]:
+    """
+    Trusted pre-approval policy for one ordinary local commit.
+    """
+
+    (
+        target,
+        normalized_message,
+        before_head,
+        staged_paths,
+        error,
+    ) = (
+        _validate_git_commit_request(
+            repository=repository,
+            commit_message=commit_message,
+        )
+    )
+
+    if (
+        target is None
+        or normalized_message is None
+        or before_head is None
+        or staged_paths is None
+    ):
+
+        return {
+            "ok":
+                False,
+
+            "status":
+                "denied",
+
+            "error": (
+                error
+                or "Git commit policy denied the request."
+            ),
+        }
+
+    return {
+        "ok":
+            True,
+
+        "status":
+            "allowed",
+
+        "risk":
+            "medium",
+
+        "requires_approval":
+            True,
+    }
+
+
+def workspace_git_commit(
+    repository: str,
+    commit_message: str,
+    timeout_seconds: int = (
+        DEFAULT_TIMEOUT_SECONDS
+    ),
+) -> dict[
+    str,
+    Any,
+]:
+    """
+    Commit exactly the already-staged repository state.
+
+    This capability never stages automatically.
+
+    Trusted mutation:
+
+        git
+          -c core.hooksPath=/dev/null
+          commit
+          --no-gpg-sign
+          -m <exact-message>
+
+    The trusted command shape prevents:
+        - repository-controlled hooks from running
+        - configured commit signing from invoking external signing
+          processes
+        - model-controlled Git flags
+        - editor invocation
+    """
+
+    (
+        target,
+        normalized_message,
+        before_head,
+        staged_paths,
+        error,
+    ) = (
+        _validate_git_commit_request(
+            repository=repository,
+            commit_message=commit_message,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if (
+        target is None
+        or normalized_message is None
+        or before_head is None
+        or staged_paths is None
+    ):
+
+        return {
+            "ok":
+                False,
+
+            "status":
+                "denied",
+
+            "repository":
+                repository,
+
+            "commit_message":
+                commit_message,
+
+            "mutation_performed":
+                False,
+
+            "verification_ok":
+                None,
+
+            "verification_error":
+                None,
+
+            "error": (
+                error
+                or "Git commit request was denied."
+            ),
+        }
+
+    # ========================================================
+    # TRUSTED COMMIT MUTATION
+    # ========================================================
+
+    mutation = (
+        _run_git(
+            target=target,
+
+            args=[
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "--no-gpg-sign",
+                "-m",
+                normalized_message,
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if not mutation.get(
+        "ok",
+        False,
+    ):
+
+        failure = (
+            _process_failure(
+                repository=target.name,
+                result=mutation,
+            )
+        )
+
+        failure[
+            "previous_commit"
+        ] = (
+            before_head
+        )
+
+        failure[
+            "commit_message"
+        ] = (
+            normalized_message
+        )
+
+        failure[
+            "committed_paths"
+        ] = (
+            staged_paths
+        )
+
+        return (
+            failure
+        )
+
+    # ========================================================
+    # POST-MUTATION VERIFICATION
+    #
+    # If `git commit` succeeded, the repository history has
+    # already changed. Verification failure must preserve that
+    # side-effect truth.
+    # ========================================================
+
+    head_result = (
+        _run_git(
+            target=target,
+
+            args=[
+                "rev-parse",
+                "--verify",
+                "HEAD",
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    parent_result = (
+        _run_git(
+            target=target,
+
+            args=[
+                "rev-list",
+                "--parents",
+                "-n",
+                "1",
+                "HEAD",
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    message_result = (
+        _run_git(
+            target=target,
+
+            args=[
+                "log",
+                "-1",
+                "--format=%B",
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    (
+        staged_after,
+        staged_after_error,
+    ) = (
+        _git_staged_paths(
+            target=target,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    head_lines = (
+        _stdout_lines(
+            head_result
+        )
+        if head_result.get(
+            "ok",
+            False,
+        )
+        else []
+    )
+
+    new_head = (
+        head_lines[
+            0
+        ].strip()
+
+        if len(
+            head_lines
+        ) == 1
+
+        else None
+    )
+
+    parent_lines = (
+        _stdout_lines(
+            parent_result
+        )
+        if parent_result.get(
+            "ok",
+            False,
+        )
+        else []
+    )
+
+    commit_parent_ok = False
+
+    if len(
+        parent_lines
+    ) == 1:
+
+        pieces = (
+            parent_lines[
+                0
+            ].split()
+        )
+
+        commit_parent_ok = (
+            len(
+                pieces
+            )
+            == 2
+
+            and new_head is not None
+
+            and pieces[
+                0
+            ]
+            == new_head
+
+            and pieces[
+                1
+            ]
+            == before_head
+        )
+
+    committed_message = None
+
+    if message_result.get(
+        "ok",
+        False,
+    ):
+
+        committed_message = (
+            _stdout(
+                message_result
+            )
+            .rstrip(
+                "\r\n"
+            )
+        )
+
+    verification_ok = (
+        new_head is not None
+
+        and new_head
+        != before_head
+
+        and commit_parent_ok
+
+        and committed_message
+        == normalized_message
+
+        and staged_after
+        == []
+    )
+
+    problems: list[str] = []
+
+    if new_head is None:
+
+        problems.append(
+            "new HEAD could not be verified"
+        )
+
+    elif new_head == before_head:
+
+        problems.append(
+            "HEAD did not advance"
+        )
+
+    if not commit_parent_ok:
+
+        problems.append(
+            "new commit parent does not match "
+            "the trusted pre-commit HEAD"
+        )
+
+    if (
+        committed_message
+        != normalized_message
+    ):
+
+        problems.append(
+            "committed message does not match "
+            "the approved message"
+        )
+
+    if staged_after is None:
+
+        problems.append(
+            staged_after_error
+            or "staged-state verification failed"
+        )
+
+    elif staged_after:
+
+        problems.append(
+            "staged changes remain after commit"
+        )
+
+    verification_error = (
+        "; ".join(
+            problems
+        )
+        if problems
+        else None
+    )
+
+    return {
+        "ok":
+            True,
+
+        "status":
+            "success",
+
+        "repository":
+            target.name,
+
+        "previous_commit":
+            before_head,
+
+        "commit":
+            new_head,
+
+        "commit_message":
+            normalized_message,
+
+        "committed_paths":
+            staged_paths,
+
+        "committed_count":
+            len(
+                staged_paths
+            ),
+
+        # Generic Git learning-context compatibility.
+        "files":
+            staged_paths,
+
+        "mutation_performed":
+            True,
+
+        "verification_ok":
+            verification_ok,
+
+        "verification_error":
+            verification_error,
+    }

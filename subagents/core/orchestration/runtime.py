@@ -835,6 +835,21 @@ class AgentRuntime:
                 )
             )
 
+            approval_arguments = (
+                gateway_result.get(
+                    "approval_arguments"
+                )
+            )
+
+            if not isinstance(
+                approval_arguments,
+                dict,
+            ):
+
+                approval_arguments = (
+                    arguments
+                )
+
             return (
                 AgentResult(
                     task_id=(
@@ -869,7 +884,7 @@ class AgentRuntime:
                     answer=(
                         format_approval_required(
                             tool_name,
-                            arguments,
+                            approval_arguments,
                             approval_id,
                         )
                     ),
@@ -887,6 +902,35 @@ class AgentRuntime:
             )
         ):
 
+            gateway_status = (
+                gateway_result.get(
+                    "status"
+                )
+            )
+
+            if (
+                gateway_status
+                == "denied"
+            ):
+
+                result_status = (
+                    "denied"
+                )
+
+                fallback_outcome_code = (
+                    "tool_execution_denied"
+                )
+
+            else:
+
+                result_status = (
+                    "error"
+                )
+
+                fallback_outcome_code = (
+                    "tool_execution_error"
+                )
+
             error = (
                 gateway_result.get(
                     "error",
@@ -900,6 +944,7 @@ class AgentRuntime:
                 f"agent='{agent.name}' "
                 f"tool='{tool_name}' "
                 f"decision={decision_code} "
+                f"status={result_status} "
                 f"error={error}"
             )
 
@@ -913,7 +958,9 @@ class AgentRuntime:
                         task.agent_name
                     ),
 
-                    status="error",
+                    status=(
+                        result_status
+                    ),
 
                     proposed_tool=(
                         tool_name
@@ -925,7 +972,7 @@ class AgentRuntime:
 
                     outcome_code=(
                         decision_code
-                        or "tool_execution_error"
+                        or fallback_outcome_code
                     ),
 
                     error=(

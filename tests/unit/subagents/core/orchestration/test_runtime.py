@@ -590,37 +590,52 @@ def test_runtime_returns_gateway_error():
     ) = build_runtime()
 
     gateway.result = {
-        "ok": False,
-        "status": "denied",
-        "error": (
-            "Execution denied."
-        ),
+        "ok":
+            False,
+
+        "status":
+            "denied",
+
+        "decision_code":
+            "tool_execution_denied",
+
+        "error":
+            "Execution denied.",
     }
 
     task = AgentTask(
         task_id="task-008",
+
         agent_name=(
             "account-specialist"
         ),
+
         user_request=(
             "Is jdoe locked?"
         ),
     )
 
-    result = asyncio.run(
-        runtime.run(
-            task
+    result = (
+        asyncio.run(
+            runtime.run(
+                task
+            )
         )
     )
 
     assert (
         result.status
-        == "error"
+        == "denied"
     )
 
     assert (
         result.proposed_tool
         == "account_status"
+    )
+
+    assert (
+        result.outcome_code
+        == "tool_execution_denied"
     )
 
     assert (

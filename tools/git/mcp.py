@@ -17,6 +17,9 @@ from tools.git import (
     workspace_git_create_branch
     as run_git_create_branch,
 
+    workspace_git_commit
+    as run_git_commit,
+
     workspace_git_diff
     as run_git_diff,
 
@@ -25,6 +28,9 @@ from tools.git import (
 
     workspace_git_stage_files
     as run_git_stage_files,
+
+    workspace_git_stage_all
+    as run_git_stage_all,
 
     workspace_git_staged_diff
     as run_git_staged_diff,
@@ -265,6 +271,96 @@ class GitStageFilesMCPResult(
     )
 
     staged_count: int = 0
+
+    verification_ok: (
+        bool | None
+    ) = None
+
+    verification_error: (
+        str | None
+    ) = None
+
+    error: (
+        str | None
+    ) = None
+
+
+class GitStageAllMCPResult(
+    BaseModel
+):
+    ok: bool
+    status: str
+
+    repository: (
+        str | None
+    ) = None
+
+    files: list[
+        str
+    ] = Field(
+        default_factory=list
+    )
+
+    staged_paths: list[
+        str
+    ] = Field(
+        default_factory=list
+    )
+
+    staged_count: int = 0
+
+    mutation_performed: bool = False
+
+    verification_ok: (
+        bool | None
+    ) = None
+
+    verification_error: (
+        str | None
+    ) = None
+
+    error: (
+        str | None
+    ) = None
+
+
+class GitCommitMCPResult(
+    BaseModel
+):
+    ok: bool
+    status: str
+
+    repository: (
+        str | None
+    ) = None
+
+    previous_commit: (
+        str | None
+    ) = None
+
+    commit: (
+        str | None
+    ) = None
+
+    commit_message: (
+        str | None
+    ) = None
+
+    committed_paths: list[
+        str
+    ] = Field(
+        default_factory=list
+    )
+
+    committed_count: int = 0
+
+    files: list[
+        str
+    ] = Field(
+        default_factory=list
+    )
+
+    mutation_performed: bool = False
 
     verification_ok: (
         bool | None
@@ -582,6 +678,34 @@ def register_git_tools(
                 **run_git_switch_branch(
                     repository=repository,
                     branch_name=branch_name,
+                )
+            )
+        )
+
+    @server.tool()
+    def workspace_git_stage_all(
+        repository: str,
+    ) -> GitStageAllMCPResult:
+
+        return (
+            GitStageAllMCPResult(
+                **run_git_stage_all(
+                    repository=repository,
+                )
+            )
+        )
+
+    @server.tool()
+    def workspace_git_commit(
+        repository: str,
+        commit_message: str,
+    ) -> GitCommitMCPResult:
+
+        return (
+            GitCommitMCPResult(
+                **run_git_commit(
+                    repository=repository,
+                    commit_message=commit_message,
                 )
             )
         )

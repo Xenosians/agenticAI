@@ -642,3 +642,463 @@ def test_missing_optional_grounded_argument_is_not_forced(
         error
         is None
     )
+
+
+def test_policy_may_bind_declared_trusted_execution_arguments():
+
+    captured_approvals = []
+
+    def create_approval(
+        tool_name,
+        arguments,
+        risk=None,
+    ):
+
+        captured_approvals.append(
+            {
+                "tool":
+                    tool_name,
+
+                "arguments":
+                    arguments,
+
+                "risk":
+                    risk,
+            }
+        )
+
+        return {
+            "id":
+                "approval-bound",
+
+            "tool":
+                tool_name,
+
+            "arguments":
+                arguments,
+
+            "risk":
+                risk,
+        }
+
+    def lookup(
+        name,
+    ):
+
+        if (
+            name
+            != "bound_mutation"
+        ):
+
+            return None
+
+        return {
+            "risk":
+                "high",
+
+            "requires_approval":
+                True,
+
+            "grounded_arguments": [
+                "target",
+            ],
+
+            "trusted_policy_arguments": [
+                "expected_version",
+            ],
+
+            "policy_resolver":
+                lambda target: {
+                    "ok":
+                        True,
+
+                    "status":
+                        "allowed",
+
+                    "risk":
+                        "high",
+
+                    "requires_approval":
+                        True,
+
+                    "execution_arguments": {
+                        "target":
+                            target,
+
+                        "expected_version":
+                            "version-001",
+                    },
+                },
+        }
+
+    agent = (
+        AgentDefinition(
+            name="test-agent",
+            description="test",
+            tools=[
+                "bound_mutation",
+            ],
+            model="test-model",
+        )
+    )
+
+    mcp = (
+        FakeMCP()
+    )
+
+    gateway = (
+        ToolGateway(
+            tool_lookup=(
+                lookup
+            ),
+
+            approval_creator=(
+                create_approval
+            ),
+
+            mcp=(
+                mcp
+            ),
+        )
+    )
+
+    result = (
+        asyncio.run(
+            gateway.execute(
+                agent=(
+                    agent
+                ),
+
+                user_input=(
+                    "Change alpha."
+                ),
+
+                tool_name=(
+                    "bound_mutation"
+                ),
+
+                arguments={
+                    "target":
+                        "alpha",
+                },
+            )
+        )
+    )
+
+    assert (
+        result[
+            "status"
+        ]
+        == "approval_required"
+    )
+
+    assert (
+        result[
+            "approval_arguments"
+        ]
+        == {
+            "target":
+                "alpha",
+
+            "expected_version":
+                "version-001",
+        }
+    )
+
+    assert (
+        captured_approvals
+        == [
+            {
+                "tool":
+                    "bound_mutation",
+
+                "arguments": {
+                    "target":
+                        "alpha",
+
+                    "expected_version":
+                        "version-001",
+                },
+
+                "risk":
+                    "high",
+            }
+        ]
+    )
+
+    assert (
+        mcp.calls
+        == []
+    )
+
+
+def test_policy_cannot_change_original_execution_argument():
+
+    def lookup(
+        name,
+    ):
+
+        if (
+            name
+            != "bound_mutation"
+        ):
+
+            return None
+
+        return {
+            "risk":
+                "high",
+
+            "requires_approval":
+                True,
+
+            "grounded_arguments": [
+                "target",
+            ],
+
+            "trusted_policy_arguments": [
+                "expected_version",
+            ],
+
+            "policy_resolver":
+                lambda target: {
+                    "ok":
+                        True,
+
+                    "status":
+                        "allowed",
+
+                    "risk":
+                        "high",
+
+                    "requires_approval":
+                        True,
+
+                    "execution_arguments": {
+                        "target":
+                            "different-target",
+
+                        "expected_version":
+                            "version-001",
+                    },
+                },
+        }
+
+    agent = (
+        AgentDefinition(
+            name="test-agent",
+            description="test",
+            tools=[
+                "bound_mutation",
+            ],
+            model="test-model",
+        )
+    )
+
+    mcp = (
+        FakeMCP()
+    )
+
+    gateway = (
+        ToolGateway(
+            tool_lookup=(
+                lookup
+            ),
+
+            approval_creator=(
+                fake_create_approval
+            ),
+
+            mcp=(
+                mcp
+            ),
+        )
+    )
+
+    result = (
+        asyncio.run(
+            gateway.execute(
+                agent=(
+                    agent
+                ),
+
+                user_input=(
+                    "Change alpha."
+                ),
+
+                tool_name=(
+                    "bound_mutation"
+                ),
+
+                arguments={
+                    "target":
+                        "alpha",
+                },
+            )
+        )
+    )
+
+    assert (
+        result[
+            "ok"
+        ]
+        is False
+    )
+
+    assert (
+        result[
+            "status"
+        ]
+        == "error"
+    )
+
+    assert (
+        result[
+            "decision_code"
+        ]
+        == "policy_execution_arguments_invalid"
+    )
+
+    assert (
+        "changed original argument"
+        in result[
+            "error"
+        ]
+    )
+
+    assert (
+        mcp.calls
+        == []
+    )
+
+
+def test_policy_cannot_add_undeclared_execution_argument():
+
+    def lookup(
+        name,
+    ):
+
+        if (
+            name
+            != "bound_mutation"
+        ):
+
+            return None
+
+        return {
+            "risk":
+                "high",
+
+            "requires_approval":
+                True,
+
+            "grounded_arguments": [
+                "target",
+            ],
+
+            "trusted_policy_arguments":
+                [],
+
+            "policy_resolver":
+                lambda target: {
+                    "ok":
+                        True,
+
+                    "status":
+                        "allowed",
+
+                    "risk":
+                        "high",
+
+                    "requires_approval":
+                        True,
+
+                    "execution_arguments": {
+                        "target":
+                            target,
+
+                        "unexpected_snapshot":
+                            "nope",
+                    },
+                },
+        }
+
+    agent = (
+        AgentDefinition(
+            name="test-agent",
+            description="test",
+            tools=[
+                "bound_mutation",
+            ],
+            model="test-model",
+        )
+    )
+
+    mcp = (
+        FakeMCP()
+    )
+
+    gateway = (
+        ToolGateway(
+            tool_lookup=(
+                lookup
+            ),
+
+            approval_creator=(
+                fake_create_approval
+            ),
+
+            mcp=(
+                mcp
+            ),
+        )
+    )
+
+    result = (
+        asyncio.run(
+            gateway.execute(
+                agent=(
+                    agent
+                ),
+
+                user_input=(
+                    "Change alpha."
+                ),
+
+                tool_name=(
+                    "bound_mutation"
+                ),
+
+                arguments={
+                    "target":
+                        "alpha",
+                },
+            )
+        )
+    )
+
+    assert (
+        result[
+            "ok"
+        ]
+        is False
+    )
+
+    assert (
+        result[
+            "decision_code"
+        ]
+        == "policy_execution_arguments_invalid"
+    )
+
+    assert (
+        "undeclared trusted execution arguments"
+        in result[
+            "error"
+        ]
+    )
+
+    assert (
+        mcp.calls
+        == []
+    )

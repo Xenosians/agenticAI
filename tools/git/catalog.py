@@ -4,6 +4,8 @@ from tools.git import (
     evaluate_git_unstage_policy,
     evaluate_git_create_branch_policy,
     evaluate_git_switch_branch_policy,
+    evaluate_git_commit_policy,
+    evaluate_git_stage_all_policy,
 )
 
 from tools.git.presentation import (
@@ -681,4 +683,330 @@ GIT_TOOLS[
 
     "approval_formatter":
         format_git_switch_branch_approval,
+}
+
+
+# ============================================================
+# GOVERNED GIT MUTATION — STAGE ALL
+# ============================================================
+
+
+def format_git_stage_all_approval(
+    arguments: dict[
+        str,
+        Any,
+    ],
+) -> str:
+
+    repository = (
+        arguments.get(
+            "repository"
+        )
+    )
+
+    repository_text = (
+        repository
+        if (
+            isinstance(
+                repository,
+                str,
+            )
+            and repository.strip()
+        )
+        else "repository"
+    )
+
+    return (
+        f"Staging ALL current non-ignored changes in "
+        f"{repository_text} requires approval. "
+        "This includes tracked edits, tracked deletions, "
+        "and untracked files. It does not commit or push."
+    )
+
+
+def format_git_stage_all_result(
+    result: dict[
+        str,
+        Any,
+    ],
+) -> str:
+
+    repository = (
+        result.get(
+            "repository"
+        )
+    )
+
+    if not isinstance(
+        repository,
+        str,
+    ):
+
+        repository = "repository"
+
+    staged_count = (
+        result.get(
+            "staged_count",
+            0,
+        )
+    )
+
+    if (
+        result.get(
+            "mutation_performed"
+        )
+        is False
+    ):
+
+        return (
+            f"{repository} already had no unstaged or "
+            "untracked changes requiring staging."
+        )
+
+    if (
+        result.get(
+            "verification_ok"
+        )
+        is False
+    ):
+
+        return (
+            f"Git stage-all ran in {repository}, but "
+            "post-staging verification was incomplete."
+        )
+
+    return (
+        f"Staged all current non-ignored changes in "
+        f"{repository}. Staged files: {staged_count}."
+    )
+
+
+GIT_TOOLS[
+    "workspace_git_stage_all"
+] = {
+    "description": (
+        "STAGE ALL current non-ignored Git working-tree changes "
+        "in one configured repository, equivalent to governed "
+        "`git add -A`. Use this only when the user explicitly asks "
+        "to stage all changes, add everything, add all current "
+        "changes, or prepare the entire current worktree for a "
+        "commit. This includes tracked modifications, tracked "
+        "deletions, and untracked files. It modifies only the Git "
+        "index. It does NOT commit, push, switch branches, discard "
+        "changes, or modify remote state."
+    ),
+
+    "risk":
+        "low",
+
+    "requires_approval":
+        True,
+
+    "policy_owns_preconditions":
+        True,
+
+    "policy_resolver":
+        evaluate_git_stage_all_policy,
+
+    "grounded_arguments": [
+        "repository",
+    ],
+
+    "parameters": {
+        "repository":
+            REPOSITORY_PARAMETER,
+    },
+
+    "argument_values_resolver":
+        resolve_git_argument_values,
+
+    "result_formatter":
+        format_git_stage_all_result,
+
+    "approval_formatter":
+        format_git_stage_all_approval,
+}
+
+
+# ============================================================
+# GOVERNED GIT MUTATION — COMMIT STAGED CHANGES
+# ============================================================
+
+
+def format_git_commit_approval(
+    arguments: dict[
+        str,
+        Any,
+    ],
+) -> str:
+
+    repository = (
+        arguments.get(
+            "repository"
+        )
+    )
+
+    commit_message = (
+        arguments.get(
+            "commit_message"
+        )
+    )
+
+    repository_text = (
+        repository
+
+        if (
+            isinstance(
+                repository,
+                str,
+            )
+            and repository.strip()
+        )
+
+        else "repository"
+    )
+
+    message_text = (
+        commit_message
+
+        if (
+            isinstance(
+                commit_message,
+                str,
+            )
+            and commit_message
+        )
+
+        else "the supplied message"
+    )
+
+    return (
+        f"Committing the currently staged changes in "
+        f"{repository_text} requires approval. "
+        f"Commit message: {message_text!r}. "
+        "This does not stage additional files or push."
+    )
+
+
+def format_git_commit_result(
+    result: dict[
+        str,
+        Any,
+    ],
+) -> str:
+
+    repository = (
+        result.get(
+            "repository"
+        )
+    )
+
+    if not isinstance(
+        repository,
+        str,
+    ):
+
+        repository = "repository"
+
+    commit = (
+        result.get(
+            "commit"
+        )
+    )
+
+    commit_text = (
+        commit[
+            :12
+        ]
+
+        if (
+            isinstance(
+                commit,
+                str,
+            )
+            and commit
+        )
+
+        else "unknown commit"
+    )
+
+    count = (
+        result.get(
+            "committed_count",
+            0,
+        )
+    )
+
+    if (
+        result.get(
+            "verification_ok"
+        )
+        is False
+    ):
+
+        return (
+            f"Git commit completed in {repository}, but "
+            "post-commit verification was incomplete."
+        )
+
+    return (
+        f"Committed {count} staged file(s) in "
+        f"{repository} as {commit_text}."
+    )
+
+
+GIT_TOOLS[
+    "workspace_git_commit"
+] = {
+    "description": (
+        "COMMIT the CURRENTLY STAGED Git changes in one configured "
+        "repository using one exact explicitly supplied commit "
+        "message. Use this when the user explicitly asks to commit "
+        "changes that are already staged. This capability does NOT "
+        "stage additional files, amend an existing commit, create "
+        "merge commits, run repository hooks, sign the commit, push, "
+        "fetch, pull, or switch branches."
+    ),
+
+    "risk":
+        "medium",
+
+    "requires_approval":
+        True,
+
+    "policy_owns_preconditions":
+        True,
+
+    "policy_resolver":
+        evaluate_git_commit_policy,
+
+    "grounded_arguments": [
+        "repository",
+        "commit_message",
+    ],
+
+    "parameters": {
+        "repository":
+            REPOSITORY_PARAMETER,
+
+        "commit_message": {
+            "type":
+                "str",
+
+            "description": (
+                "Exact single-line commit message explicitly "
+                "supplied by the user. Do not invent, summarize, "
+                "rewrite, normalize, or generate a message."
+            ),
+        },
+    },
+
+    "argument_values_resolver":
+        resolve_git_argument_values,
+
+    "result_formatter":
+        format_git_commit_result,
+
+    "approval_formatter":
+        format_git_commit_approval,
 }

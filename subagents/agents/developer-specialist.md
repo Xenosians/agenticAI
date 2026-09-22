@@ -21,6 +21,8 @@ tools:
   - workspace_git_staged_diff
   - workspace_git_changed_files
   - workspace_git_stage_files
+  - workspace_git_stage_all
+  - workspace_git_commit
   - workspace_git_unstage_files
   - workspace_git_create_branch
   - workspace_git_switch_branch

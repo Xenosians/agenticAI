@@ -301,6 +301,249 @@ def validate_grounded_arguments(
     )
 
 
+def resolve_policy_execution_arguments(
+    *,
+    tool_name: str,
+    tool: dict[
+        str,
+        Any,
+    ],
+    original_arguments: dict[
+        str,
+        Any,
+    ],
+    policy_result: dict[
+        str,
+        Any,
+    ],
+) -> tuple[
+    dict[
+        str,
+        Any,
+    ] | None,
+    str | None,
+]:
+    """
+    Resolve optional trusted policy-derived execution arguments.
+
+    Purpose:
+
+        Model / user arguments
+            remain exact and immutable.
+
+        Trusted policy
+            may bind additional execution-state facts needed to
+            make an approval exact and replay-safe.
+
+    Example classes of trusted bound state:
+
+        expected version
+        expected branch
+        expected commit
+        expected upstream
+
+    Policy may NEVER:
+        - remove a model argument;
+        - change a model argument;
+        - add undeclared hidden arguments.
+
+    Additional trusted arguments must be explicitly declared by the
+    capability through:
+
+        trusted_policy_arguments = [...]
+
+    These arguments are not part of the model-facing parameter
+    schema unless separately declared there.
+    """
+
+    resolved = (
+        policy_result.get(
+            "execution_arguments"
+        )
+    )
+
+    if resolved is None:
+
+        return (
+            dict(
+                original_arguments
+            ),
+            None,
+        )
+
+    if not isinstance(
+        resolved,
+        dict,
+    ):
+
+        return (
+            None,
+            (
+                f"Capability '{tool_name}' policy returned "
+                "invalid execution_arguments."
+            ),
+        )
+
+    trusted_policy_arguments = (
+        tool.get(
+            "trusted_policy_arguments",
+            [],
+        )
+    )
+
+    if not isinstance(
+        trusted_policy_arguments,
+        list,
+    ):
+
+        return (
+            None,
+            (
+                f"Capability '{tool_name}' has invalid "
+                "trusted_policy_arguments metadata."
+            ),
+        )
+
+    trusted_names: set[str] = set()
+
+    for item in trusted_policy_arguments:
+
+        if (
+            not isinstance(
+                item,
+                str,
+            )
+            or not item.strip()
+        ):
+
+            return (
+                None,
+                (
+                    f"Capability '{tool_name}' has invalid "
+                    "trusted policy argument metadata."
+                ),
+            )
+
+        name = (
+            item.strip()
+        )
+
+        if name in trusted_names:
+
+            return (
+                None,
+                (
+                    f"Capability '{tool_name}' contains duplicate "
+                    f"trusted policy argument '{name}'."
+                ),
+            )
+
+        trusted_names.add(
+            name
+        )
+
+    # --------------------------------------------------------
+    # All keys must themselves be valid structured names.
+    # --------------------------------------------------------
+
+    for key in resolved:
+
+        if (
+            not isinstance(
+                key,
+                str,
+            )
+            or not key.strip()
+        ):
+
+            return (
+                None,
+                (
+                    f"Capability '{tool_name}' policy returned "
+                    "an invalid execution argument name."
+                ),
+            )
+
+    # --------------------------------------------------------
+    # Model/user-controlled arguments are immutable.
+    # --------------------------------------------------------
+
+    for (
+        argument_name,
+        original_value,
+    ) in original_arguments.items():
+
+        if (
+            argument_name
+            not in resolved
+        ):
+
+            return (
+                None,
+                (
+                    f"Capability '{tool_name}' policy execution "
+                    f"arguments removed original argument "
+                    f"'{argument_name}'."
+                ),
+            )
+
+        if (
+            resolved[
+                argument_name
+            ]
+            != original_value
+        ):
+
+            return (
+                None,
+                (
+                    f"Capability '{tool_name}' policy execution "
+                    f"arguments changed original argument "
+                    f"'{argument_name}'."
+                ),
+            )
+
+    # --------------------------------------------------------
+    # Only explicitly trusted hidden arguments may be added.
+    # --------------------------------------------------------
+
+    added_names = (
+        set(
+            resolved.keys()
+        )
+        - set(
+            original_arguments.keys()
+        )
+    )
+
+    unexpected_added = (
+        added_names
+        - trusted_names
+    )
+
+    if unexpected_added:
+
+        return (
+            None,
+            (
+                f"Capability '{tool_name}' policy added "
+                "undeclared trusted execution arguments: "
+                + ", ".join(
+                    sorted(
+                        unexpected_added
+                    )
+                )
+            ),
+        )
+
+    return (
+        dict(
+            resolved
+        ),
+        None,
+    )
+
+
 class ToolGateway:
 
     def __init__(
@@ -489,6 +732,12 @@ class ToolGateway:
             )
         )
 
+        execution_arguments = (
+            dict(
+                arguments
+            )
+        )
+
         if (
             policy_resolver
             is not None
@@ -578,6 +827,49 @@ class ToolGateway:
                     ),
                 )
 
+            (
+                execution_arguments,
+                execution_arguments_error,
+            ) = (
+                resolve_policy_execution_arguments(
+                    tool_name=(
+                        tool_name
+                    ),
+
+                    tool=(
+                        tool
+                    ),
+
+                    original_arguments=(
+                        arguments
+                    ),
+
+                    policy_result=(
+                        policy_result
+                    ),
+                )
+            )
+
+            if execution_arguments is None:
+
+                return gateway_result(
+                    ok=False,
+
+                    status="error",
+
+                    decision_code=(
+                        "policy_execution_arguments_invalid"
+                    ),
+
+                    error=(
+                        execution_arguments_error
+                        or (
+                            "Trusted policy returned invalid "
+                            "execution arguments."
+                        )
+                    ),
+                )
+
             effective_risk = (
                 policy_result.get(
                     "risk"
@@ -633,7 +925,7 @@ class ToolGateway:
             approval = (
                 self.approval_creator(
                     tool_name,
-                    arguments,
+                    execution_arguments,
                     risk=(
                         effective_risk
                     ),
@@ -659,6 +951,10 @@ class ToolGateway:
                         "id"
                     ]
                 ),
+
+                approval_arguments=(
+                    execution_arguments
+                ),
             )
 
         # ========================================================
@@ -668,7 +964,7 @@ class ToolGateway:
         result = (
             await self.mcp.call_tool(
                 tool_name,
-                arguments,
+                execution_arguments,
             )
         )
 

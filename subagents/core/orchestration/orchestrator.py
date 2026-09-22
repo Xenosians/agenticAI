@@ -734,6 +734,22 @@ class Orchestrator:
                 )
             )
 
+        elif (
+            "denied"
+            in statuses
+        ):
+
+            overall_status = (
+                "denied"
+            )
+
+            answer = (
+                self
+                ._compose_deterministic_answer(
+                    results
+                )
+            )
+
         else:
 
             overall_status = (
