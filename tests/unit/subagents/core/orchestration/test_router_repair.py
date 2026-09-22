@@ -16,6 +16,11 @@ from subagents.core.orchestration.router import (
 )
 
 
+from subagents.prompts.prompt_loader import (
+    load_prompt,
+)
+
+
 class SequencedInference:
 
     def __init__(
@@ -552,50 +557,46 @@ def test_direct_repair_omits_conditional_protocol_and_gets_validator_feedback():
     )
 
 
-def test_explicit_condition_request_keeps_conditional_protocol():
+def test_repair_prompt_is_generic_but_preserves_conditional_semantics():
 
-    (
-        router,
-        _inference,
-    ) = (
-        _router(
-            [
-                VALID_DIRECT_SWITCH,
-            ]
+    prompt = (
+        load_prompt(
+            "hub_router_repair.txt"
         )
     )
 
     assert (
-        router
-        ._request_may_be_result_dependent(
-            (
-                "If the branch exists, switch the AI "
-                "repository to test/agentic-git-smoke."
-            )
-        )
-        is True
+        "policy_owns_preconditions"
+        in prompt
     )
 
     assert (
-        router
-        ._request_may_be_result_dependent(
-            (
-                "Switch the AI repository to "
-                "test/agentic-git-smoke."
-            )
-        )
-        is False
-    )
-
-    repair_prompt = (
-        router
-        ._build_system_prompt(
-            repair_mode=True,
-            include_workflow_protocol=True,
-        )
+        "explicitly makes one operation depend"
+        in prompt
     )
 
     assert (
-        "CONDITIONAL WORKFLOW PROTOCOL"
-        in repair_prompt
+        "keep the mutation conditional"
+        in prompt
+    )
+
+    assert (
+        "Never repair an invalid conditional workflow "
+        "by silently converting"
+        in prompt
+    )
+
+    assert (
+        "workspace_git_"
+        not in prompt
+    )
+
+    assert (
+        "AI repository"
+        not in prompt
+    )
+
+    assert (
+        "Git branch"
+        not in prompt
     )

@@ -443,7 +443,10 @@ GIT_TOOLS = {
     "requires_approval":
         True,
 
-    "policy_resolver":
+    "policy_owns_preconditions":
+        True,
+
+"policy_resolver":
         evaluate_git_stage_policy,
 
     "grounded_arguments": [
@@ -504,7 +507,10 @@ GIT_TOOLS[
     "requires_approval":
         True,
 
-    "policy_resolver":
+    "policy_owns_preconditions":
+        True,
+
+"policy_resolver":
         evaluate_git_unstage_policy,
 
     "grounded_arguments": [
@@ -573,7 +579,10 @@ GIT_TOOLS[
     "requires_approval":
         True,
 
-    "policy_resolver":
+    "policy_owns_preconditions":
+        True,
+
+"policy_resolver":
         evaluate_git_create_branch_policy,
 
     "grounded_arguments": [
@@ -637,7 +646,10 @@ GIT_TOOLS[
     "requires_approval":
         True,
 
-    "policy_resolver":
+    "policy_owns_preconditions":
+        True,
+
+"policy_resolver":
         evaluate_git_switch_branch_policy,
 
     "grounded_arguments": [

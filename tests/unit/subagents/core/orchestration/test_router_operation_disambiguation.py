@@ -1,3 +1,7 @@
+from pathlib import (
+    Path,
+)
+
 from subagents.core.definitions.loader import (
     load_agent_definition,
 )
@@ -11,6 +15,7 @@ from subagents.prompts.prompt_loader import (
 )
 
 from tools.registry import (
+    TOOLS,
     get_tool,
 )
 
@@ -23,10 +28,7 @@ def test_workspace_mkdir_explicitly_excludes_git_staging():
         )
     )
 
-    assert (
-        tool
-        is not None
-    )
+    assert tool is not None
 
     description = (
         tool[
@@ -56,10 +58,7 @@ def test_git_stage_capability_explicitly_describes_git_index_operation():
         )
     )
 
-    assert (
-        tool
-        is not None
-    )
+    assert tool is not None
 
     description = (
         tool[
@@ -84,7 +83,7 @@ def test_git_stage_capability_explicitly_describes_git_index_operation():
     )
 
 
-def test_developer_router_spec_contains_both_contrastive_capabilities():
+def test_developer_router_spec_contains_contrastive_capabilities():
 
     agent = (
         load_agent_definition(
@@ -120,36 +119,35 @@ def test_developer_router_spec_contains_both_contrastive_capabilities():
         in capabilities
     )
 
-    mkdir_description = (
-        capabilities[
-            "workspace_mkdir"
-        ][
-            "description"
-        ]
-        .lower()
-    )
-
-    stage_description = (
-        capabilities[
-            "workspace_git_stage_files"
-        ][
-            "description"
-        ]
-        .lower()
+    assert (
+        "workspace_git_switch_branch"
+        in capabilities
     )
 
     assert (
-        "directory"
-        in mkdir_description
+        capabilities[
+            "workspace_git_switch_branch"
+        ][
+            "intent_metadata"
+        ][
+            "policy_owns_preconditions"
+        ]
+        is True
     )
 
     assert (
-        "git stage"
-        in stage_description
+        capabilities[
+            "workspace_git_branches"
+        ][
+            "intent_metadata"
+        ][
+            "policy_owns_preconditions"
+        ]
+        is False
     )
 
 
-def test_hub_prompt_requires_operation_preservation():
+def test_hub_prompt_uses_generic_operation_preservation():
 
     prompt = (
         load_prompt(
@@ -157,84 +155,133 @@ def test_hub_prompt_requires_operation_preservation():
         )
     )
 
-    assert (
-        "CAPABILITY SELECTION DISAMBIGUATION"
-        in prompt
+    normalized_prompt = (
+        " ".join(
+            prompt.split()
+        )
     )
 
     assert (
         "Preserve the user's requested OPERATION"
-        in prompt
+        in normalized_prompt
     )
 
     assert (
-        "Stage src/app.py in the AI repository."
-        in prompt
+        "policy_owns_preconditions"
+        in normalized_prompt
     )
 
     assert (
-        "Create a directory named artifacts."
-        in prompt
+        "do NOT add a read delegation"
+        in normalized_prompt
+    )
+
+    assert (
+        "Never turn an unconditional user request "
+        "into a conditional workflow."
+        in normalized_prompt
     )
 
 
-def test_conditional_workflow_prompt_forbids_synthesized_preflight_reads():
+def test_generic_hub_templates_do_not_hardcode_registered_capability_names():
 
-    prompt = (
+    templates = [
+        load_prompt(
+            "hub_router.txt"
+        ),
+
         load_prompt(
             "hub_conditional_workflow.txt"
-        )
-    )
+        ),
 
-    assert (
-        "DO NOT SYNTHESIZE PREFLIGHT WORKFLOWS"
-        in prompt
-    )
+        load_prompt(
+            "hub_router_repair.txt"
+        ),
+    ]
 
-    assert (
-        "Do NOT invent a read-before-mutation workflow"
-        in prompt
-    )
+    for template in templates:
 
-    assert (
-        "Did the USER explicitly request a result-dependent sequence?"
-        in prompt
-    )
+        for tool_name in TOOLS:
 
-    assert (
-        "Switch the AI repository to feature/test."
-        in prompt
-    )
+            assert (
+                tool_name
+                not in template
+            ), (
+                "Generic Hub prompt hardcodes registered "
+                f"capability '{tool_name}'."
+            )
 
 
-def test_git_switch_description_owns_trusted_preconditions():
+def test_generic_hub_templates_do_not_embed_domain_examples():
 
-    tool = (
-        get_tool(
-            "workspace_git_switch_branch"
-        )
-    )
+    templates = "\n".join(
+        [
+            load_prompt(
+                "hub_router.txt"
+            ),
 
-    assert tool is not None
+            load_prompt(
+                "hub_conditional_workflow.txt"
+            ),
 
-    description = (
-        tool[
-            "description"
+            load_prompt(
+                "hub_router_repair.txt"
+            ),
         ]
-        .lower()
     )
 
-    assert (
-        "select this mutation capability directly"
-        in description
-    )
+    forbidden_examples = [
+        "AI repository",
+        "VPN",
+        "src/app.py",
+        "test/agentic-git-smoke",
+        "Git branch",
+        "Git staging",
+    ]
 
-    assert (
-        "trusted policy validates local branch existence"
-        in description
-    )
+    for value in forbidden_examples:
 
-    assert (
-        "without a separate read delegation"
-        in description
-    )
+        assert (
+            value
+            not in templates
+        ), (
+            "Generic Hub prompt contains domain-specific "
+            f"example '{value}'."
+        )
+
+
+def test_generic_orchestration_runtime_does_not_hardcode_capability_names():
+
+    paths = [
+        Path(
+            "subagents/core/orchestration/router.py"
+        ),
+        Path(
+            "subagents/core/orchestration/orchestrator.py"
+        ),
+        Path(
+            "subagents/core/orchestration/semantic_guard.py"
+        ),
+        Path(
+            "subagents/core/orchestration/condition_contract.py"
+        ),
+        Path(
+            "subagents/core/orchestration/intent_contract.py"
+        ),
+    ]
+
+    for path in paths:
+
+        source = path.read_text(
+            encoding="utf-8"
+        )
+
+        for tool_name in TOOLS:
+
+            assert (
+                tool_name
+                not in source
+            ), (
+                f"{path} hardcodes capability "
+                f"'{tool_name}'."
+            )

@@ -266,6 +266,41 @@ def trusted_requires_approval(
     return value
 
 
+def trusted_policy_owns_preconditions(
+    *,
+    tool_name: str,
+    tool: dict,
+) -> bool:
+    """
+    Read generic model-facing metadata describing ownership of
+    capability execution preconditions.
+
+    This is descriptive routing metadata only.
+
+    It does not authorize execution and does not bypass trusted
+    policy evaluation.
+    """
+
+    value = (
+        tool.get(
+            "policy_owns_preconditions",
+            False,
+        )
+    )
+
+    if not isinstance(
+        value,
+        bool,
+    ):
+
+        raise ValueError(
+            f"Capability '{tool_name}' has invalid "
+            "policy_owns_preconditions metadata."
+        )
+
+    return value
+
+
 def trusted_bounded_argument_values(
     *,
     tool_name: str,
@@ -547,6 +582,17 @@ def build_router_semantic_agent_spec(
 
             "requires_approval":
                 trusted_requires_approval(
+                    tool_name=(
+                        tool_name
+                    ),
+
+                    tool=(
+                        tool
+                    ),
+                ),
+
+            "policy_owns_preconditions":
+                trusted_policy_owns_preconditions(
                     tool_name=(
                         tool_name
                     ),

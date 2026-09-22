@@ -314,6 +314,12 @@ def test_router_prompt_contains_generic_trusted_intent_metadata(
         in prompt
     )
 
+
+    assert (
+        '"policy_owns_preconditions"'
+        in prompt
+    )
+
     assert (
         '"user_id"'
         in prompt

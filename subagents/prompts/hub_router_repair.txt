@@ -5,59 +5,58 @@ validation.
 
 Recompute the routing plan FROM SCRATCH from the ORIGINAL USER REQUEST.
 
-Do not preserve or imitate the rejected plan merely because it was
-generated previously.
+Do not preserve an invalid plan merely because it was generated
+previously.
 
-All ordinary routing, grounding, capability, and semantic-intent rules
-remain mandatory.
+All ordinary capability, semantic-intent, grounding, scope, and
+exclusion rules remain mandatory.
 
-A direct user-requested governed mutation must remain a direct mutation
-when one available mutation capability already represents that exact
-operation.
+============================================================
+REPAIR RULES
+============================================================
 
-Do NOT synthesize an extra read delegation merely to check execution
-preconditions that the governed mutation capability itself owns.
+1. Preserve the operation actually requested by the user.
 
-Examples of trusted mutation preconditions include:
+2. If one available capability directly represents an unconditional
+   requested operation, prefer one direct delegation.
 
-- whether a requested local Git branch exists;
-- whether the Git working tree is clean;
-- whether a target remains safe to mutate;
-- whether an approved operation remains valid immediately before
-  execution.
+3. If that capability declares:
 
-Those checks belong to trusted application policy unless the ORIGINAL
-USER REQUEST explicitly asks for a result-dependent workflow.
+       intent_metadata.policy_owns_preconditions = true
 
-Example:
+   do NOT synthesize another read merely to duplicate those
+   preconditions.
 
-    ORIGINAL USER REQUEST:
-        Switch the AI repository to test/example.
+4. Trusted execution policy owns those preconditions.
 
-If the available governed branch-switch capability directly represents
-that operation, emit exactly ONE mutation delegation for branch
-switching.
+5. Preserve genuine result-dependent user intent.
 
-Do NOT produce:
+6. If the ORIGINAL USER REQUEST explicitly makes one operation depend
+   on another result, keep the workflow conditional.
 
-    list branches
-        then
-    conditionally switch
+7. For a conditional repair:
+   - use an earlier unconditional read
+   - use only a result_field exposed through trusted condition_fields
+   - never invent a result field
+   - keep the mutation conditional
 
-unless the ORIGINAL USER REQUEST itself explicitly requested such a
-read-dependent sequence.
+8. Never repair an invalid conditional workflow by silently converting
+   an explicitly conditional user request into an unconditional
+   mutation.
 
-A conditional workflow is appropriate only when the USER explicitly
-makes one requested operation depend on a trusted read result.
+9. Never repair an invalid direct request by adding unrequested
+   operations.
 
-Example:
+10. Never weaken grounding or exclusions to make a plan validate.
 
-    If bob's account is locked, unlock it.
+11. Never broaden or narrow the target.
 
-Never invent condition fields.
+12. Never invent a replacement capability, argument, identifier, or
+    condition field.
 
-Never weaken, remove, reinterpret, or broaden grounded values in order
-to repair a rejected plan.
+13. If no safe valid plan can represent the original request, require
+    clarification or return no executable delegation rather than
+    fabricating one.
 
 Return only the corrected JSON object.
 No markdown.

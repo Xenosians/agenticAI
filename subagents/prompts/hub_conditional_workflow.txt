@@ -1,301 +1,128 @@
-CONDITIONAL WORKFLOW PROTOCOL:
+CONDITIONAL WORKFLOW PROTOCOL
 
-This section defines the ONLY valid representation for a
-result-dependent follow-up operation.
+A conditional workflow is valid ONLY when the ORIGINAL USER REQUEST
+explicitly makes one requested operation depend on the trusted result
+of another requested operation.
 
-A request such as:
+Do NOT synthesize a read-before-mutation sequence merely to check
+capability execution preconditions.
 
-    perform a read,
-    then perform a mutation only if the trusted read result
-    satisfies a condition
+If a directly matching mutation capability declares:
 
-MUST be represented as TWO delegations.
+    intent_metadata.policy_owns_preconditions = true
 
-The FIRST delegation is the unconditional READ.
+trusted application policy owns those preconditions.
 
-The SECOND delegation is the conditional MUTATION.
-
-The condition belongs ONLY to the SECOND delegation.
+For a direct mutation request, select that mutation capability directly.
 
 ============================================================
-REQUIRED SHAPE
+VALID CONDITIONAL SHAPE
 ============================================================
 
-The valid shape is:
+A genuine result-dependent workflow contains:
+
+1. one unconditional READ delegation
+
+2. one conditional MUTATION delegation
+
+The mutation delegation contains a sibling "when" object:
 
 {
-  "delegations": [
-    {
-      "agent": "specialist-name",
-      "instructions": "perform the read operation",
-      "intent": {
-        "summary": "read operation",
-        "effect": "read",
-        "allowed_tools": [
-          "exact_read_capability"
-        ],
-        "forbidden_tools": [],
-        "allowed_arguments": {},
-        "forbidden_arguments": {},
-        "max_tool_calls": 1,
-        "clarification_required": false
-      }
-    },
-    {
-      "agent": "specialist-name",
-      "instructions": "perform the mutation only if the trusted read result satisfies the condition",
-      "intent": {
-        "summary": "conditional mutation",
-        "effect": "mutation",
-        "allowed_tools": [
-          "exact_mutation_capability"
-        ],
-        "forbidden_tools": [],
-        "allowed_arguments": {},
-        "forbidden_arguments": {},
-        "max_tool_calls": 1,
-        "clarification_required": false
-      },
-      "when": {
-        "source_agent": "specialist-name",
-        "result_field": "trusted_condition_field",
-        "equals": false
-      }
-    }
-  ]
+  "source_agent": "<earlier-specialist-name>",
+  "result_field": "<trusted-condition-field>",
+  "equals": "<supported-scalar-value>"
 }
 
-The capability names and arguments above are placeholders describing
-the structure.
-
-Use ONLY actual specialists, capabilities, grounded arguments, and
-trusted condition fields from AVAILABLE SPECIALISTS.
+The angle-bracket values are placeholders.
+Never copy them literally.
 
 ============================================================
 STRICT RULES
 ============================================================
 
-1. The unconditional READ delegation MUST NOT contain "when".
+1. The source delegation must appear earlier.
 
-2. The conditional MUTATION delegation MUST contain "when".
+2. The source delegation must be unconditional.
 
-3. "when" is a sibling of:
-   - "agent"
-   - "instructions"
-   - "intent"
+3. The source intent.effect must be read.
 
-   It is NEVER placed inside "intent".
+4. The source allowed_tools must contain only read capabilities.
 
-4. The first delegation's intent.effect MUST be "read".
+5. The conditional delegation intent.effect must be mutation.
 
-5. The first delegation's allowed_tools MUST contain only read
+6. The conditional delegation allowed_tools must contain only mutation
    capabilities.
 
-6. The second delegation's intent.effect MUST be "mutation".
+7. "when" is a sibling of agent, instructions, and intent.
 
-7. The second delegation's allowed_tools MUST contain only mutation
-   capabilities.
+8. Never put "when" inside intent.
 
-8. NEVER place both a read capability and a mutation capability in
-   the same semantic intent.
+9. result_field must exactly equal one field exposed through the source
+   capability's intent_metadata.condition_fields.
 
-9. NEVER use effect "unknown" when an explicit trusted read
-   capability has been selected.
+10. Never invent a condition field.
 
-10. effect "unknown" is permitted only for genuine clarification
-    cases with no safely selectable capability.
+11. equals must be a supported scalar value.
 
-11. source_agent must refer to an EARLIER unconditional read
-    delegation.
+12. Never use a list, object, or generated expression as equals.
 
-12. result_field must exactly equal a field exposed through the
-    source capability's:
+13. Never create a conditional mutation without an earlier trusted
+    read delegation.
 
-        intent_metadata.condition_fields
+14. Never create a conditional chain.
 
-13. NEVER invent result fields.
+15. The conditional mutation must itself have been requested by the
+    ORIGINAL USER REQUEST.
 
-14. NEVER place "when" on the source/read delegation.
+16. Grounded values remain subject to the ordinary exact grounding
+    rules.
 
-15. NEVER create a conditional mutation without an earlier read
-    delegation.
+17. Approval and execution policy remain owned by trusted application
+    code.
 
-16. NEVER create a conditional chain.
+18. The Hub does not evaluate the condition.
 
-17. The conditional mutation must have been explicitly requested by
-    the ORIGINAL USER REQUEST.
+19. The Hub does not authorize the mutation.
 
-18. Grounded identifiers and resources remain exact literal values
-    from the ORIGINAL USER REQUEST.
-
-19. Approval and execution policy are controlled by trusted
-    application code.
-
-    NEVER emit approval state, risk policy, internal policy
-    implementation details, executor metadata, or provider
-    implementation metadata inside an intent.
-
-20. The Hub does NOT authorize the conditional mutation.
-
-21. The Hub does NOT evaluate the condition.
-
-22. The Hub does NOT decide whether approval is required.
-
-23. The runtime evaluates the trusted structured result
+20. Trusted runtime code evaluates the structured condition
     deterministically.
 
-24. SemanticGuard and ToolGateway remain authoritative.
+21. If the user did NOT explicitly request result-dependent behavior,
+    do not emit a conditional workflow.
 
-25. If the read and conditional mutation use the same specialist,
-    two delegations for that specialist are valid ONLY in this
-    read-then-conditional-mutation shape.
-
-============================================================
-TRUSTED BOUNDED ARGUMENT VALUES
-============================================================
-
-Some capabilities may expose:
-
-    intent_metadata.bounded_argument_values
-
-These are trusted configured canonical values known to the runtime.
-
-They are descriptive capability metadata.
-
-They do NOT authorize execution.
-
-The semantic intent must STILL preserve the user's grounded target
-as an exact literal value from the ORIGINAL USER REQUEST.
-
-Do NOT rewrite the user's value to match a bounded value.
-
-For example:
-
-    User request:
-        "Check the status of the AI repository."
-
-    Trusted bounded values:
-        repository = [
-          "ai",
-          "backend",
-          "frontend"
-        ]
-
-The Hub may still emit:
-
-    allowed_arguments = {
-      "repository": [
-        "AI"
-      ]
-    }
-
-because "AI" is the exact grounded value from the user request.
-
-Trusted deterministic application code may later map that literal
-value to exactly one canonical bounded value when the mapping is
-unambiguous.
-
-The Hub must NOT perform that canonicalization itself.
-
-Never use bounded values to:
-
-- infer an unmentioned target,
-- widen the requested scope,
-- substitute a different resource,
-- perform fuzzy matching,
-- guess an abbreviation,
-- translate a value,
-- remove words,
-- add words,
-- select a merely similar identifier.
+22. If a mutation's policy_owns_preconditions metadata is true, do not
+    manufacture a source read solely to test those preconditions.
 
 ============================================================
-SELF-CHECK BEFORE OUTPUT
+BOUNDED ARGUMENT VALUES
 ============================================================
 
-For every result-dependent workflow verify:
+Trusted bounded_argument_values are descriptive configured values.
 
-- exactly one unconditional read delegation exists first
-- the read delegation has no "when"
-- read intent.effect == "read"
-- read intent contains no mutation capability
-- exactly one conditional mutation delegation follows
-- the mutation delegation owns "when"
-- mutation intent.effect == "mutation"
-- mutation intent contains no read capability
-- "when" is outside "intent"
-- no approval or internal execution-policy fields appear in either
-  intent
-- result_field exists in trusted condition_fields
-- every grounded value is copied literally from the original request
-- bounded argument metadata is never treated as authorization
+They do not authorize execution.
 
-If any of these checks fail, correct the JSON before returning it.
+The Hub must preserve grounded values from the ORIGINAL USER REQUEST.
+
+Trusted deterministic application code may later canonicalize a value
+only when the trusted mapping is unambiguous.
+
+Never use bounded values to infer an unmentioned target.
+
+============================================================
+SELF-CHECK
+============================================================
+
+Before returning a conditional workflow verify:
+
+- the user explicitly requested result-dependent behavior
+- the first delegation is an unconditional read
+- the second is a conditional mutation
+- the condition belongs to the mutation
+- result_field is present in trusted condition_fields
+- all grounded values come from the original request
+- no policy precondition was converted into a synthetic read
+- no authority or approval decision was invented
 
 No markdown.
 No explanation.
 No additional text.
-
-============================================================
-DO NOT SYNTHESIZE PREFLIGHT WORKFLOWS
-============================================================
-
-A conditional workflow is appropriate ONLY when the ORIGINAL USER
-REQUEST itself requires one operation to depend on the result of an
-earlier read.
-
-Do NOT invent a read-before-mutation workflow merely to check
-preconditions for a mutation capability.
-
-If one available governed mutation capability directly represents the
-operation requested by the user, select that mutation capability
-directly.
-
-Trusted application code owns capability preconditions such as:
-
-- whether a local Git branch exists;
-- whether a Git working tree is clean;
-- whether a target account is currently locked;
-- whether a resource is in an executable state;
-- whether an approved mutation remains safe at execution time.
-
-The Hub must NOT reproduce those trusted preconditions by adding an
-extra read delegation unless the ORIGINAL USER REQUEST explicitly asks
-for that read-dependent workflow.
-
-Example:
-
-    User:
-        "Switch the AI repository to feature/test."
-
-If an available governed branch-switch capability already validates
-that the local branch exists and that switching is safe, emit ONE
-mutation delegation for that capability.
-
-Do NOT emit:
-
-    read branches
-        then
-    conditionally switch branch
-
-The branch existence check is an execution-policy precondition owned by
-trusted application code, not a user-requested workflow condition.
-
-Another example:
-
-    User:
-        "If bob's account is locked, unlock it."
-
-This IS a result-dependent workflow because the user explicitly made
-the mutation conditional on a read result.
-
-In that case a trusted read followed by a conditional mutation may be
-appropriate, but ONLY when the source capability exposes the exact
-condition field through intent_metadata.condition_fields.
-
-Before creating more than one delegation for the same user operation,
-ask:
-
-    Did the USER explicitly request a result-dependent sequence?
-
-If no, do not synthesize one.

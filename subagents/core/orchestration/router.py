@@ -193,72 +193,32 @@ class LLMRouter:
                 )
             )
 
-    @staticmethod
-    def _request_may_be_result_dependent(
-        user_request: str,
-    ) -> bool:
-        """
-        Conservatively detect explicit result-dependent language.
-
-        This does NOT authorize anything.
-
-        It controls only whether the repair prompt retains the
-        conditional-workflow grammar.
-
-        False positives are intentionally acceptable because they
-        merely keep the more general prompt.
-        """
-
-        normalized = (
-            " "
-            + " ".join(
-                user_request
-                .casefold()
-                .split()
-            )
-            + " "
-        )
-
-        cues = (
-            " if ",
-            " only if ",
-            " when ",
-            " whenever ",
-            " unless ",
-            " provided that ",
-            " providing that ",
-            " as long as ",
-            " depending on ",
-            " once ",
-            " otherwise ",
-            " if not ",
-            " after ",
-            " before ",
-
-            # Common Indonesian conditional / sequencing cues.
-            " jika ",
-            " kalau ",
-            " bila ",
-            " apabila ",
-            " hanya jika ",
-            " setelah ",
-            " sebelum ",
-        )
-
-        return any(
-            cue in normalized
-
-            for cue
-            in cues
-        )
-
-
     async def route_with_repair(
         self,
         user_request: str,
     ) -> list[
         SpecialistRequest
     ]:
+        """
+        Run one normal routing generation.
+
+        If strict trusted contract validation rejects that plan,
+        permit exactly one fresh repair generation.
+
+        The repair generation receives:
+            - the original user request
+            - the trusted validation error
+            - the generic repair protocol
+
+        It does not receive the verbose conditional-workflow
+        protocol, avoiding reinforcement of an invalid synthetic
+        workflow pattern.
+
+        The repaired plan is validated from scratch through the
+        exact same trusted contract.
+
+        No rejected plan is executed.
+        """
 
         try:
 
@@ -280,17 +240,9 @@ class LLMRouter:
                 f"repair generation error={exc}"
             )
 
-            may_be_result_dependent = (
-                self
-                ._request_may_be_result_dependent(
-                    user_request
-                )
-            )
-
             print(
                 "[ROUTER] Repair prompt "
-                f"conditional_protocol="
-                f"{may_be_result_dependent}"
+                "conditional_protocol=False"
             )
 
             return (
@@ -299,9 +251,7 @@ class LLMRouter:
 
                     repair_mode=True,
 
-                    include_workflow_protocol=(
-                        may_be_result_dependent
-                    ),
+                    include_workflow_protocol=False,
 
                     repair_error=(
                         str(
