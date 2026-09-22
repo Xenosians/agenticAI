@@ -6,6 +6,7 @@ from tools.git import (
     evaluate_git_switch_branch_policy,
     evaluate_git_commit_policy,
     evaluate_git_stage_all_policy,
+    evaluate_git_push_policy,
 )
 
 from tools.git.presentation import (
@@ -1009,4 +1010,216 @@ GIT_TOOLS[
 
     "approval_formatter":
         format_git_commit_approval,
+}
+
+
+# ============================================================
+# GOVERNED GIT MUTATION — PUSH CURRENT BRANCH
+# ============================================================
+
+
+GIT_PUSH_TRUSTED_ARGUMENTS = [
+    "expected_branch",
+    "expected_head",
+    "expected_remote",
+    "expected_remote_ref",
+    "expected_remote_url",
+    "expected_remote_head",
+]
+
+
+def format_git_push_approval(
+    arguments: dict[
+        str,
+        Any,
+    ],
+) -> str:
+
+    repository = (
+        arguments.get(
+            "repository"
+        )
+        or "repository"
+    )
+
+    branch = (
+        arguments.get(
+            "expected_branch"
+        )
+        or "current branch"
+    )
+
+    remote = (
+        arguments.get(
+            "expected_remote"
+        )
+        or "configured remote"
+    )
+
+    remote_ref = (
+        arguments.get(
+            "expected_remote_ref"
+        )
+        or "configured upstream"
+    )
+
+    head = (
+        arguments.get(
+            "expected_head"
+        )
+    )
+
+    head_text = (
+        head[
+            :12
+        ]
+
+        if (
+            isinstance(
+                head,
+                str,
+            )
+            and head
+        )
+
+        else "unknown"
+    )
+
+    return (
+        f"Pushing {repository}:{branch} at {head_text} "
+        f"to configured upstream {remote}:{remote_ref} "
+        "requires HIGH-risk approval. "
+        "Force push, tags, arbitrary remotes, and arbitrary "
+        "refspecs are not permitted."
+    )
+
+
+def format_git_push_result(
+    result: dict[
+        str,
+        Any,
+    ],
+) -> str:
+
+    repository = (
+        result.get(
+            "repository"
+        )
+        or "repository"
+    )
+
+    branch = (
+        result.get(
+            "branch"
+        )
+        or "branch"
+    )
+
+    remote = (
+        result.get(
+            "remote"
+        )
+        or "configured remote"
+    )
+
+    commit = (
+        result.get(
+            "commit"
+        )
+    )
+
+    commit_text = (
+        commit[
+            :12
+        ]
+
+        if (
+            isinstance(
+                commit,
+                str,
+            )
+            and commit
+        )
+
+        else "unknown"
+    )
+
+    if (
+        result.get(
+            "verification_ok"
+        )
+        is False
+    ):
+
+        return (
+            f"Git push for {repository}:{branch} did not "
+            "finish with verified remote state."
+        )
+
+    if (
+        result.get(
+            "mutation_performed"
+        )
+        is False
+    ):
+
+        return (
+            f"{repository}:{branch} was already synchronized "
+            f"with {remote} at {commit_text}."
+        )
+
+    return (
+        f"Pushed {repository}:{branch} to {remote} and "
+        f"verified remote commit {commit_text}."
+    )
+
+
+GIT_TOOLS[
+    "workspace_git_push"
+] = {
+    "description": (
+        "PUSH the exact current commit of the current attached "
+        "Git branch to that branch's already-configured upstream. "
+        "Use this when the user explicitly asks to push the "
+        "current branch or push current committed changes. "
+        "Trusted policy binds the branch, exact HEAD SHA, remote, "
+        "remote URL, upstream branch ref, and previous remote SHA "
+        "into the approval. Execution fails closed if any approved "
+        "state changes. It does NOT stage files, commit changes, "
+        "create branches, switch branches, pull, fetch, push tags, "
+        "force-push, or accept a model-selected remote/refspec."
+    ),
+
+    "risk":
+        "high",
+
+    "requires_approval":
+        True,
+
+    "policy_owns_preconditions":
+        True,
+
+    "policy_resolver":
+        evaluate_git_push_policy,
+
+    "grounded_arguments": [
+        "repository",
+    ],
+
+    "trusted_policy_arguments":
+        GIT_PUSH_TRUSTED_ARGUMENTS,
+
+    "parameters": {
+        "repository":
+            REPOSITORY_PARAMETER,
+    },
+
+    "argument_values_resolver":
+        resolve_git_argument_values,
+
+    "result_formatter":
+        format_git_push_result,
+
+    "approval_formatter":
+        format_git_push_approval,
 }

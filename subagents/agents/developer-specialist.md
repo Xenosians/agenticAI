@@ -23,6 +23,7 @@ tools:
   - workspace_git_stage_files
   - workspace_git_stage_all
   - workspace_git_commit
+  - workspace_git_push
   - workspace_git_unstage_files
   - workspace_git_create_branch
   - workspace_git_switch_branch

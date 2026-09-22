@@ -26,6 +26,9 @@ from tools.git import (
     workspace_git_log
     as run_git_log,
 
+    workspace_git_push
+    as run_git_push,
+
     workspace_git_stage_files
     as run_git_stage_files,
 
@@ -375,6 +378,63 @@ class GitCommitMCPResult(
     ) = None
 
 
+class GitPushMCPResult(
+    BaseModel
+):
+    ok: bool
+    status: str
+
+    repository: (
+        str | None
+    ) = None
+
+    branch: (
+        str | None
+    ) = None
+
+    commit: (
+        str | None
+    ) = None
+
+    remote: (
+        str | None
+    ) = None
+
+    remote_ref: (
+        str | None
+    ) = None
+
+    remote_url: (
+        str | None
+    ) = None
+
+    remote_commit: (
+        str | None
+    ) = None
+
+    mutation_performed: (
+        bool | None
+    ) = None
+
+    files: list[
+        str
+    ] = Field(
+        default_factory=list
+    )
+
+    verification_ok: (
+        bool | None
+    ) = None
+
+    verification_error: (
+        str | None
+    ) = None
+
+    error: (
+        str | None
+    ) = None
+
+
 class GitCreateBranchMCPResult(
     BaseModel
 ):
@@ -663,6 +723,31 @@ def register_git_tools(
                 **run_git_create_branch(
                     repository=repository,
                     branch_name=branch_name,
+                )
+            )
+        )
+
+    @server.tool()
+    def workspace_git_push(
+        repository: str,
+        expected_branch: str,
+        expected_head: str,
+        expected_remote: str,
+        expected_remote_ref: str,
+        expected_remote_url: str,
+        expected_remote_head: str,
+    ) -> GitPushMCPResult:
+
+        return (
+            GitPushMCPResult(
+                **run_git_push(
+                    repository=repository,
+                    expected_branch=expected_branch,
+                    expected_head=expected_head,
+                    expected_remote=expected_remote,
+                    expected_remote_ref=expected_remote_ref,
+                    expected_remote_url=expected_remote_url,
+                    expected_remote_head=expected_remote_head,
                 )
             )
         )

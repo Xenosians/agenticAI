@@ -5805,3 +5805,1111 @@ def workspace_git_commit(
         "verification_error":
             verification_error,
     }
+
+
+# ============================================================
+# GOVERNED GIT PUSH
+# ============================================================
+
+
+GIT_PUSH_TIMEOUT_SECONDS = 30
+
+
+def _git_push_url_supported(
+    value: str,
+) -> bool:
+    """
+    Permit only ordinary configured HTTPS/SSH Git remotes.
+
+    This rejects local file transports and Git's ext transport.
+    """
+
+    if not isinstance(
+        value,
+        str,
+    ):
+
+        return False
+
+    if not value:
+
+        return False
+
+    if value.startswith(
+        "https://"
+    ):
+
+        return True
+
+    if value.startswith(
+        "ssh://"
+    ):
+
+        return True
+
+    # Ordinary SCP-style SSH URL:
+    #
+    #     git@github.com:owner/repository.git
+    #
+    # This is configuration-derived, never model supplied.
+    if (
+        re.fullmatch(
+            r"[^@\s:/]+@[^:\s/]+:.+",
+            value,
+        )
+        is not None
+    ):
+
+        return True
+
+    return False
+
+
+def _run_git_network(
+    *,
+    target: GitRepositoryTarget,
+    args: list[str],
+    timeout_seconds: int,
+) -> dict[
+    str,
+    Any,
+]:
+    """
+    Trusted Git network execution with an explicit protocol allowlist.
+
+    The model never controls these -c arguments.
+    """
+
+    return (
+        _run_git(
+            target=target,
+
+            args=[
+                "-c",
+                "protocol.allow=never",
+
+                "-c",
+                "protocol.https.allow=always",
+
+                "-c",
+                "protocol.ssh.allow=always",
+
+                *args,
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+
+def _single_git_stdout_line(
+    result: dict[
+        str,
+        Any,
+    ],
+    *,
+    error: str,
+) -> tuple[
+    str | None,
+    str | None,
+]:
+
+    if not result.get(
+        "ok",
+        False,
+    ):
+
+        return (
+            None,
+            error,
+        )
+
+    lines = (
+        _stdout_lines(
+            result
+        )
+    )
+
+    if len(
+        lines
+    ) != 1:
+
+        return (
+            None,
+            error,
+        )
+
+    value = (
+        lines[
+            0
+        ].strip()
+    )
+
+    if not value:
+
+        return (
+            None,
+            error,
+        )
+
+    return (
+        value,
+        None,
+    )
+
+
+def _git_push_remote_head(
+    *,
+    target: GitRepositoryTarget,
+    remote: str,
+    remote_ref: str,
+    timeout_seconds: int,
+) -> tuple[
+    str | None,
+    str | None,
+]:
+
+    result = (
+        _run_git_network(
+            target=target,
+
+            args=[
+                "ls-remote",
+                "--heads",
+                remote,
+                remote_ref,
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if not result.get(
+        "ok",
+        False,
+    ):
+
+        failure = (
+            _process_failure(
+                repository=target.name,
+                result=result,
+            )
+        )
+
+        return (
+            None,
+            failure.get(
+                "error"
+            )
+            or (
+                "Could not inspect the configured "
+                "remote branch."
+            ),
+        )
+
+    lines = (
+        _stdout_lines(
+            result
+        )
+    )
+
+    if len(
+        lines
+    ) != 1:
+
+        return (
+            None,
+            (
+                "Configured upstream branch does not "
+                "resolve to exactly one remote ref."
+            ),
+        )
+
+    pieces = (
+        lines[
+            0
+        ].split()
+    )
+
+    if (
+        len(
+            pieces
+        )
+        != 2
+
+        or pieces[
+            1
+        ]
+        != remote_ref
+    ):
+
+        return (
+            None,
+            (
+                "Configured upstream returned an "
+                "unexpected Git reference."
+            ),
+        )
+
+    return (
+        pieces[
+            0
+        ],
+        None,
+    )
+
+
+def _git_push_snapshot(
+    *,
+    repository: Any,
+    timeout_seconds: int = (
+        GIT_PUSH_TIMEOUT_SECONDS
+    ),
+) -> tuple[
+    GitRepositoryTarget | None,
+    dict[
+        str,
+        str,
+    ] | None,
+    str | None,
+]:
+    """
+    Capture the exact trusted state that one approval authorizes.
+
+    The model controls only the logical repository identifier.
+
+    Trusted application code resolves:
+        - attached current branch
+        - exact current HEAD
+        - configured remote
+        - configured upstream branch
+        - configured push URL
+        - current remote branch SHA
+    """
+
+    (
+        target,
+        target_error,
+    ) = (
+        _resolve_target(
+            repository
+        )
+    )
+
+    if target is None:
+
+        return (
+            None,
+            None,
+            (
+                target_error.get(
+                    "error"
+                )
+                if isinstance(
+                    target_error,
+                    dict,
+                )
+                else (
+                    "Git repository resolution failed."
+                )
+            ),
+        )
+
+    # --------------------------------------------------------
+    # Current attached branch.
+    # --------------------------------------------------------
+
+    branch_result = (
+        _run_git(
+            target=target,
+
+            args=[
+                "symbolic-ref",
+                "--quiet",
+                "--short",
+                "HEAD",
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    (
+        branch,
+        error,
+    ) = (
+        _single_git_stdout_line(
+            branch_result,
+
+            error=(
+                "Governed Git push requires an "
+                "attached current branch."
+            ),
+        )
+    )
+
+    if branch is None:
+
+        return (
+            None,
+            None,
+            error,
+        )
+
+    # --------------------------------------------------------
+    # Current exact HEAD.
+    # --------------------------------------------------------
+
+    head_result = (
+        _run_git(
+            target=target,
+
+            args=[
+                "rev-parse",
+                "--verify",
+                "HEAD",
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    (
+        head,
+        error,
+    ) = (
+        _single_git_stdout_line(
+            head_result,
+
+            error=(
+                "Could not safely resolve current Git HEAD."
+            ),
+        )
+    )
+
+    if head is None:
+
+        return (
+            None,
+            None,
+            error,
+        )
+
+    # --------------------------------------------------------
+    # Configured upstream remote.
+    # --------------------------------------------------------
+
+    remote_result = (
+        _run_git(
+            target=target,
+
+            args=[
+                "config",
+                "--get",
+                f"branch.{branch}.remote",
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    (
+        remote,
+        error,
+    ) = (
+        _single_git_stdout_line(
+            remote_result,
+
+            error=(
+                f"Current branch '{branch}' does not have "
+                "a configured upstream remote."
+            ),
+        )
+    )
+
+    if remote is None:
+
+        return (
+            None,
+            None,
+            error,
+        )
+
+    if (
+        remote == "."
+        or remote.startswith(
+            "-"
+        )
+    ):
+
+        return (
+            None,
+            None,
+            (
+                "Configured upstream remote is not supported "
+                "for governed push."
+            ),
+        )
+
+    # --------------------------------------------------------
+    # Configured upstream branch ref.
+    # --------------------------------------------------------
+
+    merge_result = (
+        _run_git(
+            target=target,
+
+            args=[
+                "config",
+                "--get",
+                f"branch.{branch}.merge",
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    (
+        remote_ref,
+        error,
+    ) = (
+        _single_git_stdout_line(
+            merge_result,
+
+            error=(
+                f"Current branch '{branch}' does not have "
+                "a configured upstream branch."
+            ),
+        )
+    )
+
+    if remote_ref is None:
+
+        return (
+            None,
+            None,
+            error,
+        )
+
+    if not remote_ref.startswith(
+        "refs/heads/"
+    ):
+
+        return (
+            None,
+            None,
+            (
+                "Governed Git push supports only configured "
+                "branch upstream refs."
+            ),
+        )
+
+    # --------------------------------------------------------
+    # Configured push URL.
+    # --------------------------------------------------------
+
+    url_result = (
+        _run_git(
+            target=target,
+
+            args=[
+                "remote",
+                "get-url",
+                "--push",
+                remote,
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    (
+        remote_url,
+        error,
+    ) = (
+        _single_git_stdout_line(
+            url_result,
+
+            error=(
+                f"Could not safely resolve push URL for "
+                f"remote '{remote}'."
+            ),
+        )
+    )
+
+    if remote_url is None:
+
+        return (
+            None,
+            None,
+            error,
+        )
+
+    if not (
+        _git_push_url_supported(
+            remote_url
+        )
+    ):
+
+        return (
+            None,
+            None,
+            (
+                "Governed Git push permits only configured "
+                "HTTPS or SSH remotes."
+            ),
+        )
+
+    # --------------------------------------------------------
+    # Exact current remote SHA.
+    # --------------------------------------------------------
+
+    (
+        remote_head,
+        error,
+    ) = (
+        _git_push_remote_head(
+            target=target,
+            remote=remote,
+            remote_ref=remote_ref,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if remote_head is None:
+
+        return (
+            None,
+            None,
+            error,
+        )
+
+    return (
+        target,
+
+        {
+            "branch":
+                branch,
+
+            "head":
+                head,
+
+            "remote":
+                remote,
+
+            "remote_ref":
+                remote_ref,
+
+            "remote_url":
+                remote_url,
+
+            "remote_head":
+                remote_head,
+        },
+
+        None,
+    )
+
+
+def evaluate_git_push_policy(
+    repository: Any,
+) -> dict[
+    str,
+    Any,
+]:
+    """
+    Trusted pre-approval Git push policy.
+
+    The approval becomes bound to exact source and destination state.
+    """
+
+    (
+        target,
+        snapshot,
+        error,
+    ) = (
+        _git_push_snapshot(
+            repository=repository
+        )
+    )
+
+    if (
+        target is None
+        or snapshot is None
+    ):
+
+        return {
+            "ok":
+                False,
+
+            "status":
+                "denied",
+
+            "error": (
+                error
+                or "Governed Git push policy denied the request."
+            ),
+        }
+
+    return {
+        "ok":
+            True,
+
+        "status":
+            "allowed",
+
+        "risk":
+            "high",
+
+        "requires_approval":
+            True,
+
+        # Trusted hidden arguments are persisted with the approval.
+        "execution_arguments": {
+            "repository":
+                target.name,
+
+            "expected_branch":
+                snapshot[
+                    "branch"
+                ],
+
+            "expected_head":
+                snapshot[
+                    "head"
+                ],
+
+            "expected_remote":
+                snapshot[
+                    "remote"
+                ],
+
+            "expected_remote_ref":
+                snapshot[
+                    "remote_ref"
+                ],
+
+            "expected_remote_url":
+                snapshot[
+                    "remote_url"
+                ],
+
+            "expected_remote_head":
+                snapshot[
+                    "remote_head"
+                ],
+        },
+    }
+
+
+def workspace_git_push(
+    repository: str,
+    expected_branch: str,
+    expected_head: str,
+    expected_remote: str,
+    expected_remote_ref: str,
+    expected_remote_url: str,
+    expected_remote_head: str,
+    timeout_seconds: int = (
+        GIT_PUSH_TIMEOUT_SECONDS
+    ),
+) -> dict[
+    str,
+    Any,
+]:
+    """
+    Push exactly one approval-bound commit to exactly one
+    approval-bound configured upstream branch.
+
+    No model-selected:
+        remote
+        URL
+        refspec
+        SHA
+        force option
+        tags
+        push flags
+    """
+
+    (
+        target,
+        snapshot,
+        error,
+    ) = (
+        _git_push_snapshot(
+            repository=repository,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if (
+        target is None
+        or snapshot is None
+    ):
+
+        return {
+            "ok":
+                False,
+
+            "status":
+                "denied",
+
+            "repository":
+                repository,
+
+            "mutation_performed":
+                False,
+
+            "verification_ok":
+                None,
+
+            "verification_error":
+                None,
+
+            "error": (
+                error
+                or (
+                    "Governed Git push could not "
+                    "revalidate the repository."
+                )
+            ),
+        }
+
+    expected = {
+        "branch":
+            expected_branch,
+
+        "head":
+            expected_head,
+
+        "remote":
+            expected_remote,
+
+        "remote_ref":
+            expected_remote_ref,
+
+        "remote_url":
+            expected_remote_url,
+
+        "remote_head":
+            expected_remote_head,
+    }
+
+    mismatches = [
+        key
+
+        for (
+            key,
+            value,
+        )
+        in expected.items()
+
+        if snapshot.get(
+            key
+        )
+        != value
+    ]
+
+    if mismatches:
+
+        return {
+            "ok":
+                False,
+
+            "status":
+                "denied",
+
+            "repository":
+                target.name,
+
+            "branch":
+                snapshot.get(
+                    "branch"
+                ),
+
+            "mutation_performed":
+                False,
+
+            "verification_ok":
+                None,
+
+            "verification_error":
+                None,
+
+            "error": (
+                "Git push approval snapshot changed "
+                "before execution: "
+                + ", ".join(
+                    sorted(
+                        mismatches
+                    )
+                )
+                + "."
+            ),
+        }
+
+    # Already synchronized: truthful no-op.
+    if (
+        expected_head
+        == expected_remote_head
+    ):
+
+        return {
+            "ok":
+                True,
+
+            "status":
+                "success",
+
+            "repository":
+                target.name,
+
+            "branch":
+                expected_branch,
+
+            "commit":
+                expected_head,
+
+            "remote":
+                expected_remote,
+
+            "remote_ref":
+                expected_remote_ref,
+
+            "remote_url":
+                expected_remote_url,
+
+            "remote_commit":
+                expected_remote_head,
+
+            "mutation_performed":
+                False,
+
+            "verification_ok":
+                True,
+
+            "verification_error":
+                None,
+
+            "files":
+                [],
+        }
+
+    # --------------------------------------------------------
+    # Exact trusted refspec.
+    #
+    # No '+' prefix => never force.
+    #
+    # Push the approved commit SHA itself, not an independently
+    # moving symbolic local ref.
+    # --------------------------------------------------------
+
+    refspec = (
+        f"{expected_head}:"
+        f"{expected_remote_ref}"
+    )
+
+    mutation = (
+        _run_git_network(
+            target=target,
+
+            args=[
+                "-c",
+                "core.hooksPath=/dev/null",
+
+                "push",
+                "--porcelain",
+                "--no-verify",
+
+                expected_remote,
+                refspec,
+            ],
+
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    # --------------------------------------------------------
+    # Always reconcile remote state after an attempted push.
+    #
+    # A transport error can occur after the server accepted the
+    # update, so process exit status alone does not prove whether
+    # a side effect happened.
+    # --------------------------------------------------------
+
+    (
+        remote_after,
+        remote_error,
+    ) = (
+        _git_push_remote_head(
+            target=target,
+            remote=expected_remote,
+            remote_ref=expected_remote_ref,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if (
+        remote_after
+        == expected_head
+    ):
+
+        return {
+            "ok":
+                True,
+
+            "status":
+                "success",
+
+            "repository":
+                target.name,
+
+            "branch":
+                expected_branch,
+
+            "commit":
+                expected_head,
+
+            "remote":
+                expected_remote,
+
+            "remote_ref":
+                expected_remote_ref,
+
+            "remote_url":
+                expected_remote_url,
+
+            "remote_commit":
+                remote_after,
+
+            "mutation_performed": (
+                expected_remote_head
+                != expected_head
+            ),
+
+            "verification_ok":
+                True,
+
+            "verification_error":
+                None,
+
+            "files":
+                [],
+        }
+
+    # Command failed and remote stayed exactly where it was:
+    # we can truthfully say no mutation occurred.
+    if (
+        not mutation.get(
+            "ok",
+            False,
+        )
+
+        and remote_after
+        == expected_remote_head
+    ):
+
+        failure = (
+            _process_failure(
+                repository=target.name,
+                result=mutation,
+            )
+        )
+
+        return {
+            **failure,
+
+            "branch":
+                expected_branch,
+
+            "commit":
+                expected_head,
+
+            "remote":
+                expected_remote,
+
+            "remote_ref":
+                expected_remote_ref,
+
+            "remote_url":
+                expected_remote_url,
+
+            "remote_commit":
+                remote_after,
+
+            "mutation_performed":
+                False,
+
+            "verification_ok":
+                False,
+
+            "verification_error": (
+                failure.get(
+                    "error"
+                )
+            ),
+
+            "files":
+                [],
+        }
+
+    # Remote state does not equal either the old approved SHA or
+    # the desired new SHA. The exact side-effect history is
+    # ambiguous, so fail without pretending the operation succeeded.
+    return {
+        "ok":
+            False,
+
+        "status":
+            "error",
+
+        "repository":
+            target.name,
+
+        "branch":
+            expected_branch,
+
+        "commit":
+            expected_head,
+
+        "remote":
+            expected_remote,
+
+        "remote_ref":
+            expected_remote_ref,
+
+        "remote_url":
+            expected_remote_url,
+
+        "remote_commit":
+            remote_after,
+
+        "mutation_performed": (
+            True
+            if mutation.get(
+                "ok",
+                False,
+            )
+            else None
+        ),
+
+        "verification_ok":
+            False,
+
+        "verification_error": (
+            remote_error
+            or (
+                "Remote branch did not resolve to either "
+                "the approved previous SHA or the exact "
+                "requested pushed SHA."
+            )
+        ),
+
+        "error": (
+            "Git push outcome could not be verified "
+            "as the requested final remote state."
+        ),
+
+        "files":
+            [],
+    }
