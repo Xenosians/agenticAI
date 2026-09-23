@@ -223,3 +223,41 @@ def test_ticket_get_unknown_ticket_is_not_found():
         result.error
         is not None
     )
+
+
+def test_ticket_search_keeps_ticket_as_primary_resource():
+
+    tool = (
+        get_tool(
+            "ticket_search"
+        )
+    )
+
+    assert tool is not None
+
+    description = (
+        tool[
+            "description"
+        ]
+        .lower()
+    )
+
+    assert (
+        "primary resources"
+        in description
+    )
+
+    assert (
+        "tickets/issues"
+        in description
+    )
+
+    assert (
+        "scope or filter"
+        in description
+    )
+
+    assert (
+        "project-list operation"
+        in description
+    )

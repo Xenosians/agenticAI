@@ -741,3 +741,50 @@ def test_mutation_result_schema_contains_delete_truth():
         "deleted"
         in fields
     )
+
+
+
+def test_project_reads_explicitly_exclude_ticket_issue_resources():
+
+    list_description = (
+        JIRA_TOOLS[
+            "jira_project_list"
+        ][
+            "description"
+        ]
+        .lower()
+    )
+
+    get_description = (
+        JIRA_TOOLS[
+            "jira_project_get"
+        ][
+            "description"
+        ]
+        .lower()
+    )
+
+    assert (
+        "projects themselves are the primary resources"
+        in list_description
+    )
+
+    assert (
+        "scope or filter"
+        in list_description
+    )
+
+    assert (
+        "tickets or issues inside a project"
+        in list_description
+    )
+
+    assert (
+        "project itself"
+        in get_description
+    )
+
+    assert (
+        "ticket or issue"
+        in get_description
+    )

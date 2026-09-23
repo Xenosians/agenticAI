@@ -173,10 +173,14 @@ TICKETING_TOOLS = {
 
     "ticket_search": {
         "description": (
-            "Search for a bounded collection of tickets using "
-            "structured filters such as project, status, priority, "
-            "or text. Use this when the user wants multiple "
-            "matching tickets rather than one exact ticket."
+            "Search for a bounded collection of tickets or issues "
+            "using structured filters such as project, status, "
+            "priority, or text. The returned and primary resources "
+            "are tickets/issues. A project key is only a scope or "
+            "filter on the ticket collection; it does not turn this "
+            "into a project-list operation. Use this when the user "
+            "wants multiple matching tickets rather than one exact "
+            "ticket."
         ),
 
         "risk":

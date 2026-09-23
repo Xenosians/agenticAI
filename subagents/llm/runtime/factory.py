@@ -33,6 +33,10 @@ from subagents.llm.backends.qwen_coder_worker import (
 )
 
 
+from subagents.llm.backends.hf_causal_worker import (
+    HFCausalWorkerBackend,
+)
+
 def require_local_model_path(
     profile: ModelProfileSettings,
 ) -> Path:
@@ -196,6 +200,28 @@ def build_model_backend(
     ):
         return (
             QwenCoderWorkerBackend(
+                model_path=(
+                    model_path
+                ),
+
+                model_load_kwargs=(
+                    build_transformers_model_load_kwargs(
+                        profile
+                    )
+                ),
+            )
+        )
+
+    # ========================================================
+    # GENERIC HF CAUSAL SPECIALIST WORKER
+    # ========================================================
+
+    if (
+        backend_type
+        == "hf-causal"
+    ):
+        return (
+            HFCausalWorkerBackend(
                 model_path=(
                     model_path
                 ),

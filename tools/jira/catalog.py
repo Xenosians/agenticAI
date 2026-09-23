@@ -316,9 +316,14 @@ JIRA_PROJECT_CREATE_TRUSTED_ARGUMENTS = [
 JIRA_TOOLS = {
     "jira_project_list": {
         "description": (
-            "List a bounded collection of Jira projects visible to "
-            "the configured Jira account. An optional exact text "
-            "query may narrow the provider-side project search. "
+            "List a bounded collection of Jira PROJECT records "
+            "visible to the configured Jira account. The projects "
+            "themselves are the primary resources returned by this "
+            "capability. An optional exact text query may narrow the "
+            "provider-side project search. A project named only as "
+            "the scope or filter for another resource does not make "
+            "that request a project-list operation. Do not use this "
+            "capability to search tickets or issues inside a project. "
             "This is read-only."
         ),
 
@@ -361,9 +366,10 @@ JIRA_TOOLS = {
 
     "jira_project_get": {
         "description": (
-            "Retrieve read-only metadata for exactly one Jira project "
+            "Retrieve read-only metadata for exactly one Jira PROJECT "
             "using the exact project ID or project key supplied by "
-            "the user."
+            "the user. This retrieves the project itself; it does not "
+            "retrieve a ticket or issue contained by that project."
         ),
 
         "risk":

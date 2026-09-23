@@ -290,3 +290,39 @@ def test_generic_orchestration_runtime_does_not_hardcode_capability_names():
                 f"{path} hardcodes capability "
                 f"'{tool_name}'."
             )
+
+
+
+def test_hub_prompt_preserves_primary_resource_over_context():
+
+    prompt = (
+        load_prompt(
+            "hub_router.txt"
+        )
+    )
+
+    normalized = (
+        " ".join(
+            prompt.split()
+        )
+    )
+
+    assert (
+        "PRIMARY RESOURCE or object"
+        in normalized
+    )
+
+    assert (
+        "scope, filter, grouping value, or contextual resource"
+        in normalized
+    )
+
+    assert (
+        "requested operation"
+        in normalized
+    )
+
+    assert (
+        "primary resource"
+        in normalized
+    )

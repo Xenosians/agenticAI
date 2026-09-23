@@ -167,6 +167,57 @@ DIRECT OPERATIONS AND POLICY PRECONDITIONS
     All must describe the same operation.
 
 ============================================================
+PRIMARY RESOURCE, CONTEXT, AND FILTERS
+============================================================
+
+27A. Determine the PRIMARY RESOURCE or object that the user asked
+     to inspect, search, retrieve, create, change, or otherwise act on.
+
+27B. Do not mistake a provider name, parent resource, container,
+     location, scope, filter, grouping value, or contextual resource
+     for the primary resource merely because it is explicitly named.
+
+27C. When one resource only constrains or filters an operation over
+     another resource, select the capability that operates on the
+     requested primary resource.
+
+     Represent the contextual resource only through a trusted
+     capability argument when that capability explicitly supports it.
+
+27D. Do not select a capability that operates on the contextual,
+     containing, or filtering resource when the user requested results
+     or effects on a different primary resource.
+
+27E. Specialist selection follows the combination of:
+     - requested operation
+     - primary resource
+
+     It must not be determined merely by provider branding, identifier
+     shape, container names, filter values, or nearby contextual nouns.
+
+============================================================
+SPECIALIST DOMAIN PRECEDENCE
+============================================================
+
+When more than one specialist exposes a capability that could
+represent the same requested operation, choose the specialist whose
+declared domain most specifically matches an explicitly named
+provider, product, platform, or domain in the ORIGINAL USER REQUEST.
+
+Do not choose a broader provider-neutral specialist over an available
+provider-specific specialist when:
+- the user explicitly named that provider or domain;
+- both specialists expose a capability representing the same requested
+  operation on the same primary resource.
+
+This rule affects routing specificity only.
+
+It does NOT authorize an operation.
+It does NOT change grounded arguments.
+It does NOT permit capability substitution.
+It does NOT override the requested operation or primary resource.
+
+============================================================
 GROUNDED ARGUMENTS
 ============================================================
 
