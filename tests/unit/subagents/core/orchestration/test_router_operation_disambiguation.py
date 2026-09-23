@@ -167,6 +167,11 @@ def test_hub_prompt_uses_generic_operation_preservation():
     )
 
     assert (
+        "must contain exactly ONE capability"
+        in normalized_prompt
+    )
+
+    assert (
         "policy_owns_preconditions"
         in normalized_prompt
     )

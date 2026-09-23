@@ -26,6 +26,7 @@ def test_load_real_jira_specialist():
             "jira_project_create",
             "jira_project_update",
             "jira_project_archive",
+            "jira_project_delete",
         }
     )
 

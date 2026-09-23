@@ -142,6 +142,29 @@ class JiraProjectMutationProvider(
     ]:
         ...
 
+    def prepare_delete_project(
+        self,
+        *,
+        project_id_or_key: str,
+    ) -> dict[
+        str,
+        Any,
+    ]:
+        ...
+
+    def delete_project(
+        self,
+        *,
+        project_id_or_key: str,
+        expected_project_id: str,
+        expected_project_key: str,
+        expected_project_name: str,
+    ) -> dict[
+        str,
+        Any,
+    ]:
+        ...
+
     def create_project(
         self,
         *,
@@ -2439,6 +2462,897 @@ class JiraProjectMutationService:
                     ),
             }
 
+    def _resolve_delete_state(
+        self,
+        *,
+        project_id: str,
+        project_key: str,
+        project_name: str,
+    ) -> str:
+        """
+        Classify one exact trusted Jira project for governed deletion.
+
+        Returns:
+            live
+            archived
+            deleted
+            unknown
+
+        "deleted" requires:
+            - immutable project ID no longer resolves; and
+            - the exact project is absent from both trusted
+              live and archived project-search views.
+        """
+
+        (
+            lookup_status,
+            payload,
+        ) = (
+            self._lookup_project(
+                project_id
+            )
+        )
+
+        try:
+            archived = (
+                self._project_in_status(
+                    project_id=(
+                        project_id
+                    ),
+                    project_key=(
+                        project_key
+                    ),
+                    project_name=(
+                        project_name
+                    ),
+                    status="archived",
+                )
+            )
+
+            live = (
+                self._project_in_status(
+                    project_id=(
+                        project_id
+                    ),
+                    project_key=(
+                        project_key
+                    ),
+                    project_name=(
+                        project_name
+                    ),
+                    status="live",
+                )
+            )
+
+        except (
+            PermissionError,
+            LookupError,
+            RuntimeError,
+            ValueError,
+            httpx.HTTPError,
+        ):
+            return (
+                "unknown"
+            )
+
+        if (
+            lookup_status
+            == "missing"
+            and not live
+            and not archived
+        ):
+            return (
+                "deleted"
+            )
+
+        if (
+            lookup_status
+            == "found"
+            and isinstance(
+                payload,
+                dict,
+            )
+        ):
+            try:
+                snapshot = (
+                    self._project_snapshot(
+                        payload
+                    )
+                )
+
+            except (
+                RuntimeError,
+                ValueError,
+            ):
+                return (
+                    "unknown"
+                )
+
+            exact = (
+                snapshot.get(
+                    "id"
+                )
+                == project_id
+
+                and snapshot.get(
+                    "key"
+                )
+                == project_key
+
+                and snapshot.get(
+                    "name"
+                )
+                == project_name
+            )
+
+            if not exact:
+                return (
+                    "unknown"
+                )
+
+            if (
+                live
+                and not archived
+            ):
+                return (
+                    "live"
+                )
+
+            if (
+                archived
+                and not live
+            ):
+                return (
+                    "archived"
+                )
+
+        return (
+            "unknown"
+        )
+
+    def prepare_delete_project(
+        self,
+        *,
+        project_id_or_key: str,
+    ) -> dict[
+        str,
+        Any,
+    ]:
+        """
+        Read-only HIGH-risk Jira project deletion preparation.
+
+        Only a provably LIVE project is eligible.
+
+        Trusted policy freezes:
+            immutable project ID
+            exact project key
+            exact project name
+        """
+
+        try:
+            resolved_reference = (
+                self._normalize_project_reference(
+                    project_id_or_key
+                )
+            )
+
+            current = (
+                self._get_project_snapshot(
+                    resolved_reference
+                )
+            )
+
+            state = (
+                self._resolve_delete_state(
+                    project_id=(
+                        current[
+                            "id"
+                        ]
+                    ),
+                    project_key=(
+                        current[
+                            "key"
+                        ]
+                    ),
+                    project_name=(
+                        current[
+                            "name"
+                        ]
+                    ),
+                )
+            )
+
+            if state == "archived":
+                raise ValueError(
+                    "The Jira project is archived. "
+                    "Archived projects are not eligible for "
+                    "direct governed deletion."
+                )
+
+            if state != "live":
+                raise RuntimeError(
+                    "Trusted policy could not prove that "
+                    "the Jira project is currently live."
+                )
+
+            return {
+                "ok":
+                    True,
+
+                "status":
+                    "ready",
+
+                "risk":
+                    "high",
+
+                "requires_approval":
+                    True,
+
+                "execution_arguments": {
+                    "project_id_or_key":
+                        resolved_reference,
+
+                    "expected_project_id":
+                        current[
+                            "id"
+                        ],
+
+                    "expected_project_key":
+                        current[
+                            "key"
+                        ],
+
+                    "expected_project_name":
+                        current[
+                            "name"
+                        ],
+                },
+
+                "error":
+                    None,
+            }
+
+        except PermissionError as exc:
+
+            return {
+                "ok":
+                    False,
+
+                "status":
+                    "denied",
+
+                "risk":
+                    "high",
+
+                "requires_approval":
+                    True,
+
+                "error":
+                    str(
+                        exc
+                    ),
+            }
+
+        except (
+            ValueError,
+            LookupError,
+        ) as exc:
+
+            return {
+                "ok":
+                    False,
+
+                "status":
+                    "denied",
+
+                "risk":
+                    "high",
+
+                "requires_approval":
+                    True,
+
+                "error":
+                    str(
+                        exc
+                    ),
+            }
+
+        except (
+            RuntimeError,
+            httpx.HTTPError,
+        ) as exc:
+
+            return {
+                "ok":
+                    False,
+
+                "status":
+                    "error",
+
+                "risk":
+                    "high",
+
+                "requires_approval":
+                    True,
+
+                "error":
+                    str(
+                        exc
+                    ),
+            }
+
+    @staticmethod
+    def _delete_result(
+        *,
+        ok: bool,
+        status: str,
+        project_id: str,
+        project_key: str,
+        project_name: str,
+        deleted: (
+            bool
+            | None
+        ),
+        mutation_performed: (
+            bool
+            | None
+        ),
+        verification_ok: bool,
+        reconciled: bool,
+        error: (
+            str
+            | None
+        ),
+    ) -> dict[
+        str,
+        Any,
+    ]:
+
+        return {
+            "ok":
+                ok,
+
+            "status":
+                status,
+
+            "operation":
+                "delete",
+
+            "project_id":
+                project_id,
+
+            "project_key":
+                project_key,
+
+            "project_name":
+                project_name,
+
+            "previous_project_name":
+                None,
+
+            "new_project_name":
+                None,
+
+            "template":
+                None,
+
+            "project_type_key":
+                None,
+
+            "archived":
+                None,
+
+            "deleted":
+                deleted,
+
+            "mutation_performed":
+                mutation_performed,
+
+            "verification_ok":
+                verification_ok,
+
+            "reconciled":
+                reconciled,
+
+            "error":
+                error,
+        }
+
+    def _reconcile_uncertain_delete(
+        self,
+        *,
+        project_id: str,
+        project_key: str,
+        project_name: str,
+    ) -> dict[
+        str,
+        Any,
+    ]:
+
+        try:
+            state = (
+                self._resolve_delete_state(
+                    project_id=(
+                        project_id
+                    ),
+                    project_key=(
+                        project_key
+                    ),
+                    project_name=(
+                        project_name
+                    ),
+                )
+            )
+
+        except Exception:
+            state = (
+                "unknown"
+            )
+
+        if state == "deleted":
+
+            return (
+                self._delete_result(
+                    ok=True,
+                    status="success",
+                    project_id=(
+                        project_id
+                    ),
+                    project_key=(
+                        project_key
+                    ),
+                    project_name=(
+                        project_name
+                    ),
+                    deleted=True,
+                    mutation_performed=True,
+                    verification_ok=True,
+                    reconciled=True,
+                    error=None,
+                )
+            )
+
+        if state == "live":
+
+            return (
+                self._delete_result(
+                    ok=False,
+                    status="error",
+                    project_id=(
+                        project_id
+                    ),
+                    project_key=(
+                        project_key
+                    ),
+                    project_name=(
+                        project_name
+                    ),
+                    deleted=False,
+                    mutation_performed=False,
+                    verification_ok=False,
+                    reconciled=True,
+                    error=(
+                        "The Jira deletion request had an uncertain "
+                        "transport outcome, but trusted read-back "
+                        "still shows the exact project as live."
+                    ),
+                )
+            )
+
+        return (
+            self._delete_result(
+                ok=False,
+                status="outcome_unknown",
+                project_id=(
+                    project_id
+                ),
+                project_key=(
+                    project_key
+                ),
+                project_name=(
+                    project_name
+                ),
+                deleted=None,
+                mutation_performed=None,
+                verification_ok=False,
+                reconciled=False,
+                error=(
+                    "Jira project deletion had an ambiguous "
+                    "provider outcome and trusted read-back "
+                    "could not prove the requested final state."
+                ),
+            )
+        )
+
+    def delete_project(
+        self,
+        *,
+        project_id_or_key: str,
+        expected_project_id: str,
+        expected_project_key: str,
+        expected_project_name: str,
+    ) -> dict[
+        str,
+        Any,
+    ]:
+        """
+        Execute one exact approved Jira project deletion.
+
+        Trusted execution always sends:
+            enableUndo=true
+
+        The model cannot weaken that boundary.
+        """
+
+        resolved_project_id = None
+        resolved_project_key = None
+        resolved_project_name = None
+
+        try:
+            self._normalize_project_reference(
+                project_id_or_key
+            )
+
+            resolved_project_id = (
+                _exact_string(
+                    expected_project_id,
+                    field_name=(
+                        "expected_project_id"
+                    ),
+                    max_length=100,
+                )
+            )
+
+            resolved_project_key = (
+                _exact_string(
+                    expected_project_key,
+                    field_name=(
+                        "expected_project_key"
+                    ),
+                    max_length=(
+                        MAX_PROJECT_KEY_CHARS
+                    ),
+                )
+            )
+
+            resolved_project_name = (
+                _exact_string(
+                    expected_project_name,
+                    field_name=(
+                        "expected_project_name"
+                    ),
+                    max_length=(
+                        MAX_PROJECT_NAME_CHARS
+                    ),
+                )
+            )
+
+            # =================================================
+            # POST-APPROVAL SNAPSHOT REVALIDATION
+            # =================================================
+
+            current = (
+                self._get_project_snapshot(
+                    resolved_project_id
+                )
+            )
+
+            if not (
+                self._snapshot_matches(
+                    current,
+                    expected_project_id=(
+                        resolved_project_id
+                    ),
+                    expected_project_key=(
+                        resolved_project_key
+                    ),
+                    expected_project_name=(
+                        resolved_project_name
+                    ),
+                )
+            ):
+                raise ValueError(
+                    "Jira project state changed after approval. "
+                    "The approved deletion snapshot is stale."
+                )
+
+            state = (
+                self._resolve_delete_state(
+                    project_id=(
+                        resolved_project_id
+                    ),
+                    project_key=(
+                        resolved_project_key
+                    ),
+                    project_name=(
+                        resolved_project_name
+                    ),
+                )
+            )
+
+            if state != "live":
+                raise ValueError(
+                    "The approved Jira project is no longer "
+                    "provably live. Refusing stale deletion."
+                )
+
+            # =================================================
+            # REMOTE MUTATION
+            # =================================================
+
+            try:
+                response = (
+                    self.client.delete(
+                        (
+                            "/rest/api/3/project/"
+                            + quote(
+                                resolved_project_id,
+                                safe="",
+                            )
+                        ),
+                        params={
+                            "enableUndo":
+                                "true",
+                        },
+                    )
+                )
+
+            except (
+                httpx.TimeoutException,
+                httpx.TransportError,
+            ):
+
+                return (
+                    self._reconcile_uncertain_delete(
+                        project_id=(
+                            resolved_project_id
+                        ),
+                        project_key=(
+                            resolved_project_key
+                        ),
+                        project_name=(
+                            resolved_project_name
+                        ),
+                    )
+                )
+
+            if response.status_code in {
+                400,
+                401,
+                403,
+                404,
+                409,
+            }:
+
+                return (
+                    self._delete_result(
+                        ok=False,
+                        status="denied",
+                        project_id=(
+                            resolved_project_id
+                        ),
+                        project_key=(
+                            resolved_project_key
+                        ),
+                        project_name=(
+                            resolved_project_name
+                        ),
+                        deleted=False,
+                        mutation_performed=False,
+                        verification_ok=False,
+                        reconciled=False,
+                        error=(
+                            "Jira rejected the approved project "
+                            "deletion. No successful provider "
+                            "mutation was confirmed."
+                        ),
+                    )
+                )
+
+            if response.status_code >= 500:
+
+                return (
+                    self._reconcile_uncertain_delete(
+                        project_id=(
+                            resolved_project_id
+                        ),
+                        project_key=(
+                            resolved_project_key
+                        ),
+                        project_name=(
+                            resolved_project_name
+                        ),
+                    )
+                )
+
+            if response.status_code != 204:
+
+                return (
+                    self._delete_result(
+                        ok=False,
+                        status="outcome_unknown",
+                        project_id=(
+                            resolved_project_id
+                        ),
+                        project_key=(
+                            resolved_project_key
+                        ),
+                        project_name=(
+                            resolved_project_name
+                        ),
+                        deleted=None,
+                        mutation_performed=None,
+                        verification_ok=False,
+                        reconciled=False,
+                        error=(
+                            "Jira returned an unexpected "
+                            "response to project deletion."
+                        ),
+                    )
+                )
+
+            # =================================================
+            # AUTHORITATIVE READ-BACK
+            # =================================================
+
+            final_state = (
+                self._resolve_delete_state(
+                    project_id=(
+                        resolved_project_id
+                    ),
+                    project_key=(
+                        resolved_project_key
+                    ),
+                    project_name=(
+                        resolved_project_name
+                    ),
+                )
+            )
+
+            if final_state == "deleted":
+
+                return (
+                    self._delete_result(
+                        ok=True,
+                        status="success",
+                        project_id=(
+                            resolved_project_id
+                        ),
+                        project_key=(
+                            resolved_project_key
+                        ),
+                        project_name=(
+                            resolved_project_name
+                        ),
+                        deleted=True,
+                        mutation_performed=True,
+                        verification_ok=True,
+                        reconciled=False,
+                        error=None,
+                    )
+                )
+
+            return (
+                self._delete_result(
+                    ok=False,
+                    status="outcome_unknown",
+                    project_id=(
+                        resolved_project_id
+                    ),
+                    project_key=(
+                        resolved_project_key
+                    ),
+                    project_name=(
+                        resolved_project_name
+                    ),
+                    deleted=(
+                        False
+                        if final_state
+                        in {
+                            "live",
+                            "archived",
+                        }
+                        else None
+                    ),
+                    mutation_performed=None,
+                    verification_ok=False,
+                    reconciled=False,
+                    error=(
+                        "Jira reported successful project deletion, "
+                        "but trusted read-back did not verify the "
+                        "requested final state."
+                    ),
+                )
+            )
+
+        except PermissionError as exc:
+            status = (
+                "denied"
+            )
+
+            error = (
+                str(
+                    exc
+                )
+            )
+
+        except (
+            ValueError,
+            LookupError,
+        ) as exc:
+            status = (
+                "denied"
+            )
+
+            error = (
+                str(
+                    exc
+                )
+            )
+
+        except (
+            RuntimeError,
+            httpx.HTTPError,
+        ) as exc:
+            status = (
+                "error"
+            )
+
+            error = (
+                str(
+                    exc
+                )
+            )
+
+        return (
+            self._delete_result(
+                ok=False,
+                status=(
+                    status
+                ),
+                project_id=(
+                    resolved_project_id
+                    or (
+                        expected_project_id
+                        if isinstance(
+                            expected_project_id,
+                            str,
+                        )
+                        else ""
+                    )
+                ),
+                project_key=(
+                    resolved_project_key
+                    or (
+                        expected_project_key
+                        if isinstance(
+                            expected_project_key,
+                            str,
+                        )
+                        else ""
+                    )
+                ),
+                project_name=(
+                    resolved_project_name
+                    or (
+                        expected_project_name
+                        if isinstance(
+                            expected_project_name,
+                            str,
+                        )
+                        else ""
+                    )
+                ),
+                deleted=False,
+                mutation_performed=False,
+                verification_ok=False,
+                reconciled=False,
+                error=(
+                    error
+                ),
+            )
+        )
+
     @staticmethod
     def _archive_result(
         *,
@@ -3966,6 +4880,94 @@ class UnavailableJiraProjectMutationService:
                 None,
 
             "archived":
+                False,
+
+            "mutation_performed":
+                False,
+
+            "verification_ok":
+                False,
+
+            "reconciled":
+                False,
+
+            "error":
+                self.ERROR,
+        }
+
+    def prepare_delete_project(
+        self,
+        *,
+        project_id_or_key: str,
+    ) -> dict[
+        str,
+        Any,
+    ]:
+
+        return {
+            "ok":
+                False,
+
+            "status":
+                "denied",
+
+            "risk":
+                "high",
+
+            "requires_approval":
+                True,
+
+            "error":
+                self.ERROR,
+        }
+
+    def delete_project(
+        self,
+        *,
+        project_id_or_key: str,
+        expected_project_id: str,
+        expected_project_key: str,
+        expected_project_name: str,
+    ) -> dict[
+        str,
+        Any,
+    ]:
+
+        return {
+            "ok":
+                False,
+
+            "status":
+                "denied",
+
+            "operation":
+                "delete",
+
+            "project_id":
+                expected_project_id,
+
+            "project_key":
+                expected_project_key,
+
+            "project_name":
+                expected_project_name,
+
+            "previous_project_name":
+                None,
+
+            "new_project_name":
+                None,
+
+            "template":
+                None,
+
+            "project_type_key":
+                None,
+
+            "archived":
+                None,
+
+            "deleted":
                 False,
 
             "mutation_performed":

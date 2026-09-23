@@ -7,6 +7,7 @@ tools:
   - jira_project_create
   - jira_project_update
   - jira_project_archive
+  - jira_project_delete
 model: hub-main
 max_steps: 2
 ---

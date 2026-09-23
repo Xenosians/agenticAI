@@ -88,8 +88,13 @@ DELEGATION RULES
 9. Semantic intent describes what the USER requested.
    It is not authorization.
 
-10. allowed_tools may contain only capabilities consistent with the
-    operation requested by the user.
+10. For an executable non-clarification delegation, allowed_tools
+    must contain exactly ONE capability: the capability that directly
+    represents the operation requested by the user.
+
+    Do not include adjacent, related, fallback, alternative, or
+    semantically different operations merely because they affect the
+    same target or share arguments.
 
 11. Every capability name in allowed_tools and forbidden_tools must
     exactly equal a capability exposed through AVAILABLE SPECIALISTS.

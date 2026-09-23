@@ -76,6 +76,7 @@ class JiraProjectMutationResult(
     project_type_key: str | None = None
 
     archived: bool | None = None
+    deleted: bool | None = None
 
     mutation_performed: bool | None = None
     verification_ok: bool = False
@@ -211,6 +212,37 @@ def register_jira_project_tools(
         return (
             JiraProjectMutationResult(
                 **mutation_service.archive_project(
+                    project_id_or_key=(
+                        project_id_or_key
+                    ),
+
+                    expected_project_id=(
+                        expected_project_id
+                    ),
+
+                    expected_project_key=(
+                        expected_project_key
+                    ),
+
+                    expected_project_name=(
+                        expected_project_name
+                    ),
+                )
+            )
+        )
+
+
+    @server.tool()
+    def jira_project_delete(
+        project_id_or_key: str,
+        expected_project_id: str,
+        expected_project_key: str,
+        expected_project_name: str,
+    ) -> JiraProjectMutationResult:
+
+        return (
+            JiraProjectMutationResult(
+                **mutation_service.delete_project(
                     project_id_or_key=(
                         project_id_or_key
                     ),

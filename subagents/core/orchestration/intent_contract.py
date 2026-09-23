@@ -1186,12 +1186,16 @@ def parse_semantic_intent(
 
     if (
         not clarification_required
-        and not allowed_tools
+        and len(
+            allowed_tools
+        )
+        != 1
     ):
 
         raise ValueError(
             "A non-clarification intent must contain "
-            "at least one allowed tool."
+            "exactly one allowed tool for the current "
+            "exactly-one-call specialist runtime."
         )
 
     trusted_agent_tools = {

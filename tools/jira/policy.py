@@ -93,3 +93,27 @@ def evaluate_jira_project_archive_policy(
         )
     )
 
+
+
+def evaluate_jira_project_delete_policy(
+    project_id_or_key: str,
+):
+    """
+    Trusted read-only pre-approval policy for Jira project delete.
+
+    The provider operation itself is never executed here.
+    """
+
+    service = (
+        build_jira_project_mutation_service(
+            Settings()
+        )
+    )
+
+    return (
+        service.prepare_delete_project(
+            project_id_or_key=(
+                project_id_or_key
+            )
+        )
+    )

@@ -8,6 +8,7 @@ from services.jira import (
 
 from tools.jira.policy import (
     evaluate_jira_project_archive_policy,
+    evaluate_jira_project_delete_policy,
     evaluate_jira_project_create_policy,
     evaluate_jira_project_update_policy,
 )
@@ -658,3 +659,143 @@ JIRA_TOOLS[
         format_jira_project_archive_result,
 }
 
+
+
+# ============================================================
+# GOVERNED JIRA PROJECT DELETE
+# ============================================================
+
+JIRA_PROJECT_DELETE_TRUSTED_ARGUMENTS = [
+    "expected_project_id",
+    "expected_project_key",
+    "expected_project_name",
+]
+
+
+def format_jira_project_delete_approval(
+    arguments: dict[
+        str,
+        Any,
+    ],
+) -> str:
+
+    project_key = (
+        arguments.get(
+            "expected_project_key"
+        )
+        or arguments.get(
+            "project_id_or_key"
+        )
+        or "project"
+    )
+
+    project_name = (
+        arguments.get(
+            "expected_project_name"
+        )
+        or "unknown"
+    )
+
+    return (
+        f"Deleting Jira project {project_key} "
+        f"({project_name!r}) requires HIGH-risk approval. "
+        "Trusted execution keeps Jira undo enabled."
+    )
+
+
+def format_jira_project_delete_result(
+    result: dict[
+        str,
+        Any,
+    ],
+) -> str:
+
+    project_key = (
+        result.get(
+            "project_key"
+        )
+        or "project"
+    )
+
+    project_name = (
+        result.get(
+            "project_name"
+        )
+        or "unknown"
+    )
+
+    if (
+        result.get(
+            "verification_ok"
+        )
+        is not True
+
+        or result.get(
+            "deleted"
+        )
+        is not True
+    ):
+        return (
+            f"Jira project deletion for {project_key} "
+            f"({project_name!r}) did not finish with "
+            "verified deleted state."
+        )
+
+    return (
+        f"Deleted and verified Jira project "
+        f"{project_key} ({project_name!r}) "
+        "with provider undo enabled."
+    )
+
+
+JIRA_TOOLS[
+    "jira_project_delete"
+] = {
+    "description": (
+        "Delete exactly one existing LIVE Jira project identified "
+        "by the exact project ID or key explicitly supplied by the "
+        "user. Trusted policy freezes the immutable project ID, key, "
+        "name, and live-state precondition before approval. Trusted "
+        "execution always enables Jira undo; the model cannot request "
+        "permanent deletion. Archived projects are rejected. This is "
+        "a HIGH-risk administrative mutation."
+    ),
+
+    "risk":
+        "high",
+
+    "requires_approval":
+        True,
+
+    "policy_owns_preconditions":
+        True,
+
+    "policy_resolver":
+        evaluate_jira_project_delete_policy,
+
+    "trusted_policy_arguments":
+        JIRA_PROJECT_DELETE_TRUSTED_ARGUMENTS,
+
+    "grounded_arguments": [
+        "project_id_or_key",
+    ],
+
+    "parameters": {
+        "project_id_or_key": {
+            "type":
+                "str",
+
+            "description": (
+                "Exact Jira project ID or key explicitly supplied "
+                "by the user. Do not invent, rewrite, normalize, "
+                "restore, archive, or otherwise alter it."
+            ),
+        },
+    },
+
+    "approval_formatter":
+        format_jira_project_delete_approval,
+
+    "result_formatter":
+        format_jira_project_delete_result,
+}

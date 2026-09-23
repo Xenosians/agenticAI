@@ -614,3 +614,59 @@ def test_legacy_delegation_remains_readable_during_transition(
         ].semantic_intent
         is None
     )
+
+
+
+def test_router_rejects_multi_tool_semantic_widening(
+):
+
+    (
+        router,
+        _,
+    ) = (
+        router_for(
+            """
+            {
+              "delegations": [
+                {
+                  "agent": "account-specialist",
+                  "instructions":
+                    "Unlock or reset bob.",
+                  "intent": {
+                    "summary":
+                      "Unlock bob.",
+                    "effect":
+                      "mutation",
+                    "allowed_tools": [
+                      "unlock_user",
+                      "reset_password"
+                    ],
+                    "forbidden_tools": [],
+                    "allowed_arguments": {
+                      "user_id": [
+                        "bob"
+                      ]
+                    },
+                    "forbidden_arguments": {},
+                    "max_tool_calls": 1,
+                    "clarification_required": false
+                  }
+                }
+              ]
+            }
+            """
+        )
+    )
+
+    delegations = (
+        asyncio.run(
+            router.route(
+                "Unlock bob."
+            )
+        )
+    )
+
+    assert (
+        delegations
+        == []
+    )

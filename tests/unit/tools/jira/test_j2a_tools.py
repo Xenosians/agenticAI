@@ -588,3 +588,156 @@ def test_mutation_result_schema_contains_archive_truth():
         "archived"
         in fields
     )
+
+
+
+def test_j2d_project_delete_is_high_risk_governed():
+
+    tool = (
+        JIRA_TOOLS[
+            "jira_project_delete"
+        ]
+    )
+
+    assert tool["risk"] == "high"
+    assert tool["requires_approval"] is True
+    assert tool["policy_owns_preconditions"] is True
+
+    assert (
+        tool[
+            "grounded_arguments"
+        ]
+        == [
+            "project_id_or_key",
+        ]
+    )
+
+    assert (
+        set(
+            tool[
+                "parameters"
+            ]
+        )
+        == {
+            "project_id_or_key",
+        }
+    )
+
+    assert (
+        set(
+            tool[
+                "trusted_policy_arguments"
+            ]
+        )
+        == {
+            "expected_project_id",
+            "expected_project_key",
+            "expected_project_name",
+        }
+    )
+
+
+def test_delete_mcp_preserves_deleted_result_field():
+
+    class DeleteMutationService:
+
+        def delete_project(
+            self,
+            *,
+            project_id_or_key,
+            expected_project_id,
+            expected_project_key,
+            expected_project_name,
+        ):
+
+            return {
+                "ok":
+                    True,
+
+                "status":
+                    "success",
+
+                "operation":
+                    "delete",
+
+                "project_id":
+                    expected_project_id,
+
+                "project_key":
+                    expected_project_key,
+
+                "project_name":
+                    expected_project_name,
+
+                "previous_project_name":
+                    None,
+
+                "new_project_name":
+                    None,
+
+                "template":
+                    None,
+
+                "project_type_key":
+                    None,
+
+                "archived":
+                    None,
+
+                "deleted":
+                    True,
+
+                "mutation_performed":
+                    True,
+
+                "verification_ok":
+                    True,
+
+                "reconciled":
+                    False,
+
+                "error":
+                    None,
+            }
+
+    server = (
+        FakeMCPServer()
+    )
+
+    jira_mcp.register_jira_project_tools(
+        server,
+        FakeReadService(),
+        DeleteMutationService(),
+    )
+
+    result = (
+        server.functions[
+            "jira_project_delete"
+        ](
+            project_id_or_key="J2DDEL",
+            expected_project_id="10040",
+            expected_project_key="J2DDEL",
+            expected_project_name="J2D Delete Proof",
+        )
+    )
+
+    assert result.ok is True
+    assert result.status == "success"
+    assert result.operation == "delete"
+    assert result.deleted is True
+    assert result.mutation_performed is True
+    assert result.verification_ok is True
+
+
+def test_mutation_result_schema_contains_delete_truth():
+
+    fields = (
+        jira_mcp
+        .JiraProjectMutationResult
+        .model_fields
+    )
+
+    assert (
+        "deleted"
+        in fields
+    )
