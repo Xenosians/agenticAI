@@ -80,6 +80,21 @@ class ModelProfileSettings(
     )
 
     # ============================================================
+    # WORKER PROMPT PROFILE
+    #
+    # standard:
+    #   Full descriptive capability protocol for larger models.
+    #
+    # compact:
+    #   Bounded tool-call protocol intended for small specialist
+    #   models. Authority and execution semantics remain unchanged.
+    # ============================================================
+
+    worker_prompt_profile: str = (
+        "standard"
+    )
+
+    # ============================================================
     # FP8 OPTIONS
     # ============================================================
 
@@ -124,6 +139,37 @@ class ModelProfileSettings(
         if not normalized:
             raise ValueError(
                 "Model backend must not be empty."
+            )
+
+        return normalized
+
+    @field_validator(
+        "worker_prompt_profile"
+    )
+    @classmethod
+    def validate_worker_prompt_profile(
+        cls,
+        value: str,
+    ) -> str:
+        normalized = (
+            value
+            .strip()
+            .lower()
+        )
+
+        supported = {
+            "standard",
+            "compact",
+        }
+
+        if normalized not in supported:
+            raise ValueError(
+                "worker_prompt_profile must be one of: "
+                + ", ".join(
+                    sorted(
+                        supported
+                    )
+                )
             )
 
         return normalized
@@ -470,6 +516,29 @@ class Settings(
     )
 
     # ============================================================
+    # MODEL RESIDENCY POLICY
+    #
+    # GpuScheduler serializes accelerator work. Residency is a
+    # separate concern: without an explicit bound, sequential use
+    # of multiple specialists can leave every backend cached and
+    # eventually exhaust VRAM / WSL memory.
+    #
+    # The default keeps the Hub resident plus one active specialist.
+    # Non-pinned models are evicted using LRU when capacity is full.
+    # ============================================================
+
+    model_max_loaded_models: int = Field(
+        default=2,
+        ge=1,
+    )
+
+    # The configured HUB_MODEL_KEY is always pinned by ModelManager.
+    # This list is for additional deployment-specific pinned models.
+    model_pinned_keys: list[str] = Field(
+        default_factory=list
+    )
+
+    # ============================================================
     # GENERATION POLICY
     #
     # Generation budgets are deployment/runtime configuration.
@@ -504,6 +573,24 @@ class Settings(
 
     directory_backend: str = (
         "mock"
+    )
+
+    # ============================================================
+    # CORPORATE ACCOUNT CREATION
+    # ============================================================
+
+    account_email_domain: (
+        str | None
+    ) = None
+
+    ad_account_container_dn: (
+        str | None
+    ) = None
+
+    account_temporary_password_length: int = Field(
+        default=24,
+        ge=16,
+        le=128,
     )
 
     # ============================================================
@@ -646,6 +733,44 @@ class Settings(
     # ============================================================
     # VALIDATION
     # ============================================================
+
+    @field_validator(
+        "account_email_domain"
+    )
+    @classmethod
+    def validate_account_email_domain(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower().strip(".")
+        if not normalized or "." not in normalized:
+            raise ValueError(
+                "ACCOUNT_EMAIL_DOMAIN must be a DNS-style domain."
+            )
+        if not all(
+            part
+            and part.replace("-", "").isalnum()
+            for part in normalized.split(".")
+        ):
+            raise ValueError(
+                "ACCOUNT_EMAIL_DOMAIN contains invalid labels."
+            )
+        return normalized
+
+    @field_validator(
+        "ad_account_container_dn"
+    )
+    @classmethod
+    def validate_account_container_dn(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
 
     @field_validator(
         "directory_backend"
@@ -845,6 +970,42 @@ class Settings(
             normalized[
                 key
             ] = profile
+
+        return normalized
+
+    @field_validator(
+        "model_pinned_keys"
+    )
+    @classmethod
+    def validate_model_pinned_keys(
+        cls,
+        value: list[str],
+    ) -> list[str]:
+        normalized: list[str] = []
+
+        for model_key in value:
+            if not isinstance(
+                model_key,
+                str,
+            ):
+                raise ValueError(
+                    "MODEL_PINNED_KEYS values must be strings."
+                )
+
+            key = (
+                model_key
+                .strip()
+            )
+
+            if not key:
+                raise ValueError(
+                    "MODEL_PINNED_KEYS contains an empty key."
+                )
+
+            if key not in normalized:
+                normalized.append(
+                    key
+                )
 
         return normalized
 

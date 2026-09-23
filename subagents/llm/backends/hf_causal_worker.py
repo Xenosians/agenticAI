@@ -16,7 +16,12 @@ from transformers import (
 )
 
 from subagents.llm.runtime.base import (
+    GenerationOutput,
     LLMBackend,
+)
+
+from subagents.llm.runtime.hf_prompt import (
+    render_hf_causal_fallback_prompt,
 )
 
 
@@ -37,6 +42,10 @@ class HFCausalWorkerBackend(
 
     Models with a tokenizer chat template use that template.
     Models without one receive a deterministic role-labelled prompt.
+
+    Lifecycle and observability intentionally match the common model
+    runtime contract so BLOOMZ and future HF causal specialists do
+    not need model-specific loader scripts.
     """
 
     def __init__(
@@ -62,6 +71,8 @@ class HFCausalWorkerBackend(
                 f"{self.model_path}"
             )
 
+        self._closed = False
+
         self.tokenizer = (
             AutoTokenizer
             .from_pretrained(
@@ -83,6 +94,49 @@ class HFCausalWorkerBackend(
         )
 
         self.model.eval()
+
+    # ========================================================
+    # LIFECYCLE
+    # ========================================================
+
+    def _require_open(
+        self,
+    ) -> None:
+        if self._closed:
+            raise RuntimeError(
+                "HFCausalWorkerBackend is closed."
+            )
+
+    def close(
+        self,
+    ) -> None:
+        """
+        Drop backend-owned references.
+
+        ModelRegistry performs process-wide garbage collection /
+        accelerator-cache release after this hook returns.
+        """
+
+        if self._closed:
+            return
+
+        self._closed = True
+
+        if hasattr(
+            self,
+            "model",
+        ):
+            del self.model
+
+        if hasattr(
+            self,
+            "tokenizer",
+        ):
+            del self.tokenizer
+
+    # ========================================================
+    # RESPONSE NORMALIZATION
+    # ========================================================
 
     @staticmethod
     def _clean_response(
@@ -122,6 +176,10 @@ class HFCausalWorkerBackend(
 
         return response
 
+    # ========================================================
+    # PROMPT RENDERING
+    # ========================================================
+
     def _render_prompt(
         self,
         messages: list[
@@ -131,6 +189,8 @@ class HFCausalWorkerBackend(
             ]
         ],
     ) -> str:
+
+        self._require_open()
 
         chat_template = (
             getattr(
@@ -157,60 +217,79 @@ class HFCausalWorkerBackend(
                 )
             )
 
-        parts: list[str] = []
-
-        role_labels = {
-            "system":
-                "SYSTEM",
-
-            "user":
-                "USER",
-
-            "assistant":
-                "ASSISTANT",
-        }
-
-        for message in messages:
-
-            role = (
-                message.get(
-                    "role",
-                    "user",
-                )
-            )
-
-            content = (
-                message.get(
-                    "content",
-                    ""
-                )
-            )
-
-            label = (
-                role_labels.get(
-                    role,
-                    role.upper(),
-                )
-            )
-
-            parts.append(
-                (
-                    f"{label}:\n"
-                    f"{content.strip()}"
-                )
-            )
-
-        parts.append(
-            "ASSISTANT:\n"
-        )
-
         return (
-            "\n\n".join(
-                parts
+            render_hf_causal_fallback_prompt(
+                messages
             )
         )
 
-    def generate(
+    # ========================================================
+    # INPUT DEVICE
+    # ========================================================
+
+    def _input_device(
+        self,
+    ) -> torch.device:
+        """
+        Resolve the device that owns the model input embeddings.
+
+        This is safer than assuming the first model parameter owns
+        the input device when Transformers/Accelerate has applied an
+        automatic device map or offload plan.
+        """
+
+        self._require_open()
+
+        try:
+            embeddings = (
+                self.model
+                .get_input_embeddings()
+            )
+
+            weight = getattr(
+                embeddings,
+                "weight",
+                None,
+            )
+
+            device = getattr(
+                weight,
+                "device",
+                None,
+            )
+
+            if (
+                isinstance(
+                    device,
+                    torch.device,
+                )
+                and device.type
+                != "meta"
+            ):
+                return device
+
+        except Exception:
+            pass
+
+        device = (
+            next(
+                self.model.parameters()
+            )
+            .device
+        )
+
+        if device.type == "meta":
+            raise RuntimeError(
+                "Unable to resolve a concrete model input device."
+            )
+
+        return device
+
+    # ========================================================
+    # GENERATION
+    # ========================================================
+
+    def _generate_observed(
         self,
         messages: list[
             dict[
@@ -218,8 +297,10 @@ class HFCausalWorkerBackend(
                 str,
             ]
         ],
-        max_new_tokens: int = 256,
-    ) -> str:
+        max_new_tokens: int,
+    ) -> GenerationOutput:
+
+        self._require_open()
 
         prompt = (
             self._render_prompt(
@@ -234,17 +315,14 @@ class HFCausalWorkerBackend(
             )
         )
 
-        model_device = (
-            next(
-                self.model.parameters()
-            )
-            .device
+        input_device = (
+            self._input_device()
         )
 
         model_inputs = {
             key:
                 value.to(
-                    model_device
+                    input_device
                 )
 
             for (
@@ -272,7 +350,7 @@ class HFCausalWorkerBackend(
                 .eos_token_id
             )
 
-        with torch.no_grad():
+        with torch.inference_mode():
 
             generated = (
                 self.model.generate(
@@ -287,22 +365,71 @@ class HFCausalWorkerBackend(
                 )
             )
 
-        generated_tokens = (
+        generated_token_ids = (
             generated[
                 0,
                 input_length:
             ]
         )
 
+        generated_token_count = int(
+            generated_token_ids.numel()
+        )
+
         response = (
             self.tokenizer.decode(
-                generated_tokens,
+                generated_token_ids,
                 skip_special_tokens=True,
             )
         )
 
         return (
-            self._clean_response(
-                response
+            GenerationOutput(
+                text=(
+                    self._clean_response(
+                        response
+                    )
+                ),
+
+                generated_tokens=(
+                    generated_token_count
+                ),
+
+                # Non-streaming Transformers generation cannot
+                # provide true TTFT. Keep the metric explicitly
+                # unavailable instead of inventing a value.
+                first_token_seconds=None,
+            )
+        )
+
+    def generate(
+        self,
+        messages: list[
+            dict[
+                str,
+                str,
+            ]
+        ],
+        max_new_tokens: int = 256,
+    ) -> str:
+        return (
+            self._generate_observed(
+                messages,
+                max_new_tokens,
+            )
+            .text
+        )
+
+    def generate_observed(
+        self,
+        messages: list[
+            dict[str, str]
+        ],
+        max_new_tokens: int = 256,
+    ) -> GenerationOutput:
+        return (
+            self._generate_observed(
+                messages,
+                max_new_tokens,
             )
         )

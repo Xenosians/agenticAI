@@ -1,3 +1,7 @@
+from threading import (
+    RLock,
+)
+
 from config import (
     ModelProfileSettings,
     Settings,
@@ -16,6 +20,11 @@ from subagents.llm.runtime.registry import (
     ModelRegistry,
 )
 
+from subagents.llm.runtime.residency import (
+    ModelResidencyController,
+    ModelResidencySnapshot,
+)
+
 
 class ModelManager:
     """
@@ -25,12 +34,22 @@ class ModelManager:
     - logical model profile discovery
     - lazy backend construction
     - backend caching through ModelRegistry
+    - bounded model residency / LRU eviction
     - explicit load/unload lifecycle
     - backend-native generation measurements
     - diagnostics
 
     It deliberately does NOT decide request priority or GPU
     scheduling. InferenceCoordinator owns that boundary.
+
+    Residency is intentionally separate from scheduling:
+
+        ModelManager / ModelResidencyController
+            decide which backends may remain loaded.
+
+        InferenceCoordinator / GpuScheduler
+            decide when model work may enter the accelerator
+            execution boundary.
     """
 
     def __init__(
@@ -49,6 +68,32 @@ class ModelManager:
             registry
             if registry is not None
             else ModelRegistry()
+        )
+
+        self.residency = (
+            ModelResidencyController(
+                max_loaded_models=(
+                    settings
+                    .model_max_loaded_models
+                ),
+
+                pinned_model_keys=(
+                    [
+                        settings
+                        .hub_model_key,
+
+                        *settings
+                        .model_pinned_keys,
+                    ]
+                ),
+            )
+        )
+
+        # ModelRegistry owns per-entry locking. This manager-level
+        # lock protects the multi-step "plan eviction -> unload ->
+        # load target -> update LRU" transaction.
+        self._residency_lock = (
+            RLock()
         )
 
         self._register_profiles()
@@ -185,6 +230,67 @@ class ModelManager:
             .list_loaded_models()
         )
 
+    def residency_snapshot(
+        self,
+    ) -> ModelResidencySnapshot:
+        return (
+            self.residency
+            .snapshot(
+                self.list_loaded_models()
+            )
+        )
+
+    # ========================================================
+    # RESIDENCY
+    # ========================================================
+
+    def _prepare_residency_for_load(
+        self,
+        model_key: str,
+    ) -> list[str]:
+        loaded = (
+            self.registry
+            .list_loaded_models()
+        )
+
+        victims = (
+            self.residency
+            .plan_load(
+                target_model_key=(
+                    model_key
+                ),
+
+                loaded_model_keys=(
+                    loaded
+                ),
+            )
+        )
+
+        evicted: list[str] = []
+
+        for victim in victims:
+            print(
+                "[MODEL] Residency eviction "
+                f"victim='{victim}' "
+                f"target='{model_key}'"
+            )
+
+            if (
+                self.registry
+                .unload(
+                    victim
+                )
+            ):
+                self.residency.forget(
+                    victim
+                )
+
+                evicted.append(
+                    victim
+                )
+
+        return evicted
+
     # ========================================================
     # LIFECYCLE
     # ========================================================
@@ -193,23 +299,59 @@ class ModelManager:
         self,
         model_key: str,
     ) -> LLMBackend:
-        return (
-            self.registry
-            .get(
+        with self._residency_lock:
+            if not (
+                self.registry
+                .exists(
+                    model_key
+                )
+            ):
+                raise KeyError(
+                    f"Model '{model_key}' "
+                    "is not registered."
+                )
+
+            if not (
+                self.registry
+                .is_loaded(
+                    model_key
+                )
+            ):
+                self._prepare_residency_for_load(
+                    model_key
+                )
+
+            backend = (
+                self.registry
+                .get(
+                    model_key
+                )
+            )
+
+            self.residency.touch(
                 model_key
             )
-        )
+
+            return backend
 
     def unload(
         self,
         model_key: str,
     ) -> bool:
-        return (
-            self.registry
-            .unload(
-                model_key
+        with self._residency_lock:
+            unloaded = (
+                self.registry
+                .unload(
+                    model_key
+                )
             )
-        )
+
+            if unloaded:
+                self.residency.forget(
+                    model_key
+                )
+
+            return unloaded
 
     def unload_all(
         self,
@@ -219,10 +361,15 @@ class ModelManager:
         manager while preserving all lazy model registrations.
         """
 
-        return (
-            self.registry
-            .unload_all()
-        )
+        with self._residency_lock:
+            unloaded = (
+                self.registry
+                .unload_all()
+            )
+
+            self.residency.clear()
+
+            return unloaded
 
     # ========================================================
     # GENERATION
@@ -242,14 +389,22 @@ class ModelManager:
             )
         )
 
-        return (
-            backend.generate(
-                messages,
-                max_new_tokens=(
-                    max_new_tokens
-                ),
+        try:
+            return (
+                backend.generate(
+                    messages,
+                    max_new_tokens=(
+                        max_new_tokens
+                    ),
+                )
             )
-        )
+
+        finally:
+            # A completed generation is the strongest indication
+            # that this model is currently hot.
+            self.residency.touch(
+                model_key
+            )
 
     def generate_observed(
         self,
@@ -277,12 +432,18 @@ class ModelManager:
             )
         )
 
-        return (
-            backend
-            .generate_observed(
-                messages,
-                max_new_tokens=(
-                    max_new_tokens
-                ),
+        try:
+            return (
+                backend
+                .generate_observed(
+                    messages,
+                    max_new_tokens=(
+                        max_new_tokens
+                    ),
+                )
             )
-        )
+
+        finally:
+            self.residency.touch(
+                model_key
+            )

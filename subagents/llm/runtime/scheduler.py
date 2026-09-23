@@ -103,8 +103,10 @@ class GpuScheduler:
     Observability is intentionally measured here because this is
     the resource-admission boundary.
 
-    Future HOT/WARM/COLD residency, measured eviction, and
-    validated overlap can evolve behind this boundary.
+    Model residency / eviction is deliberately owned by
+    ModelManager rather than this scheduler. Future validated
+    overlap can evolve behind this admission boundary without
+    merging the two responsibilities.
     """
 
     def __init__(

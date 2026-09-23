@@ -16,7 +16,7 @@ tools:
   - ticket_create
   - ticket_assign
   - ticket_transition
-model: hub-main
+model: jira-func-trained
 max_steps: 2
 ---
 

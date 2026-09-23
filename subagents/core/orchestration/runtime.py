@@ -264,11 +264,46 @@ class AgentRuntime:
             )
         )
 
+        # Resolve model-facing prompt policy from the same logical
+        # model profile used for inference/provenance. Failure to
+        # resolve remains non-authoritative and falls back to the
+        # established standard prompt; actual generation will still
+        # fail normally if the model itself is unavailable.
+        resolved_model_profile = None
+        prompt_profile = "standard"
+
+        if (
+            self.model_profile_resolver
+            is not None
+        ):
+            try:
+                resolved_model_profile = (
+                    self.model_profile_resolver(
+                        agent.model
+                    )
+                )
+
+                prompt_profile = (
+                    resolved_model_profile
+                    .worker_prompt_profile
+                )
+
+            except Exception as exc:
+                print(
+                    "[WORKER] Model profile prompt resolution "
+                    f"failed agent='{agent.name}' "
+                    f"model='{agent.model}' "
+                    f"error={exc!r}; using standard prompt"
+                )
+
         system_prompt = (
             build_worker_system_prompt(
                 agent,
                 capability_catalog=(
                     capability_catalog
+                ),
+                prompt_profile=(
+                    prompt_profile
                 ),
             )
         )
@@ -430,8 +465,13 @@ class AgentRuntime:
             try:
 
                 model_profile = (
-                    self.model_profile_resolver(
-                        agent.model
+                    resolved_model_profile
+                    if resolved_model_profile
+                    is not None
+                    else (
+                        self.model_profile_resolver(
+                            agent.model
+                        )
                     )
                 )
 

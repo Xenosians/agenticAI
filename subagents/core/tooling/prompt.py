@@ -19,6 +19,132 @@ from subagents.prompts.prompt_loader import (
 )
 
 
+def _compact_argument(
+    name: str,
+    schema: dict[
+        str,
+        Any,
+    ],
+) -> str:
+    argument_type = (
+        schema.get(
+            "type"
+        )
+        or "value"
+    )
+
+    enum = (
+        schema.get(
+            "enum"
+        )
+    )
+
+    if (
+        isinstance(
+            enum,
+            list,
+        )
+        and enum
+    ):
+        encoded = (
+            "|".join(
+                str(
+                    item
+                )
+                for item
+                in enum
+            )
+        )
+
+        return (
+            f"{name}:{argument_type}="
+            f"[{encoded}]"
+        )
+
+    return (
+        f"{name}:{argument_type}"
+    )
+
+
+def build_compact_capability_text(
+    capabilities: list[
+        dict[
+            str,
+            Any,
+        ]
+    ],
+) -> str:
+    """
+    Render a bounded, low-token capability view for small specialist
+    models.
+
+    This is model-facing metadata only. The trusted registry,
+    SemanticGuard, ToolGateway, approval policy, and provider execution
+    remain authoritative.
+    """
+
+    lines: list[str] = []
+
+    for capability in capabilities:
+        name = (
+            capability.get(
+                "name"
+            )
+        )
+
+        if not isinstance(
+            name,
+            str,
+        ) or not name.strip():
+            raise ValueError(
+                "Compact capability contains an invalid name."
+            )
+
+        schema = (
+            capability.get(
+                "argument_schema",
+                {},
+            )
+        )
+
+        if not isinstance(
+            schema,
+            dict,
+        ):
+            raise ValueError(
+                f"Capability '{name}' has an invalid argument schema."
+            )
+
+        arguments = [
+            _compact_argument(
+                argument_name,
+                argument_schema,
+            )
+            for (
+                argument_name,
+                argument_schema,
+            ) in schema.items()
+            if isinstance(
+                argument_schema,
+                dict,
+            )
+        ]
+
+        lines.append(
+            f"- {name}("
+            + ", ".join(
+                arguments
+            )
+            + ")"
+        )
+
+    return (
+        "\n".join(
+            lines
+        )
+    )
+
+
 def build_worker_system_prompt(
     agent: AgentDefinition,
     *,
@@ -31,24 +157,18 @@ def build_worker_system_prompt(
         ]
         | None
     ) = None,
+    prompt_profile: str = "standard",
 ) -> str:
     """
-    Build the worker prompt from the specialist definition and
-    trusted runtime capability catalog.
+    Build the worker prompt from the specialist definition and trusted
+    runtime capability catalog.
 
-    Callers may provide a prebuilt capability catalog.
+    `standard` preserves the original verbose protocol.
 
-    AgentRuntime does this deliberately so the exact SAME catalog
-    object is used for:
-
-        prompt construction
-        provenance hashing
-
-    This prevents dynamic capability metadata from being resolved
-    independently at two different moments.
-
-    Other callers remain backward compatible: when no catalog is
-    supplied, it is built normally.
+    `compact` renders the same capability names and argument schemas in
+    a bounded representation intended for small specialist models.
+    Compact mode changes only model-facing prompting; it never changes
+    authority, policy, approval, grounding, or execution.
     """
 
     capabilities = (
@@ -65,27 +185,66 @@ def build_worker_system_prompt(
         )
     )
 
-    capability_json = (
-        json.dumps(
-            capabilities,
-            indent=2,
-        )
+    normalized_profile = (
+        prompt_profile
+        .strip()
+        .lower()
     )
 
-    template = (
-        load_prompt(
-            "worker_tool_protocol.txt"
+    if (
+        normalized_profile
+        == "standard"
+    ):
+        capability_json = (
+            json.dumps(
+                capabilities,
+                indent=2,
+            )
         )
-    )
 
-    return (
-        template
-        .replace(
-            "{{AGENT_SYSTEM_PROMPT}}",
-            agent.system_prompt,
+        template = (
+            load_prompt(
+                "worker_tool_protocol.txt"
+            )
         )
-        .replace(
-            "{{TOOLS_JSON}}",
-            capability_json,
+
+        return (
+            template
+            .replace(
+                "{{AGENT_SYSTEM_PROMPT}}",
+                agent.system_prompt,
+            )
+            .replace(
+                "{{TOOLS_JSON}}",
+                capability_json,
+            )
         )
+
+    if (
+        normalized_profile
+        == "compact"
+    ):
+        template = (
+            load_prompt(
+                "worker_tool_protocol_compact.txt"
+            )
+        )
+
+        return (
+            template
+            .replace(
+                "{{AGENT_SYSTEM_PROMPT}}",
+                agent.system_prompt,
+            )
+            .replace(
+                "{{TOOLS_COMPACT}}",
+                build_compact_capability_text(
+                    capabilities
+                ),
+            )
+        )
+
+    raise ValueError(
+        "Unsupported worker prompt profile: "
+        f"{prompt_profile}"
     )

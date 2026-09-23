@@ -27,11 +27,17 @@ from services.assets import (
 
 from services.directory import (
     AccessMutationService,
+    AccountCreationService,
     AccountLifecycleService,
     DirectoryService,
     build_access_mutation_service,
+    build_account_creation_service,
     build_account_lifecycle_service,
     build_directory_service,
+)
+
+from services.credentials import (
+    build_credential_store,
 )
 
 from services.jira import (
@@ -242,6 +248,10 @@ def create_mcp_server(
         AccountLifecycleService | None
     ) = None,
 
+    account_creation: (
+        AccountCreationService | None
+    ) = None,
+
     access_mutations: (
         AccessMutationService | None
     ) = None,
@@ -287,6 +297,22 @@ def create_mcp_server(
         is not None
         else build_account_lifecycle_service(
             directory_service
+        )
+    )
+
+    credential_store = (
+        build_credential_store(
+            runtime_settings
+        )
+    )
+
+    account_creation_service = (
+        account_creation
+        if account_creation is not None
+        else build_account_creation_service(
+            directory_service,
+            credential_store,
+            runtime_settings,
         )
     )
 
@@ -380,6 +406,7 @@ def create_mcp_server(
     register_account_lifecycle_tools(
         server,
         account_lifecycle_service,
+        account_creation_service,
     )
 
     @server.tool()

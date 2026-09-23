@@ -1,5 +1,9 @@
 import json
 
+from dataclasses import (
+    replace,
+)
+
 from pathlib import (
     Path,
 )
@@ -41,7 +45,10 @@ def _write_model(
     weight_payload: bytes = (
         b"fake-weight-v1"
     ),
-    chat_template: str = (
+    chat_template: (
+        str
+        | None
+    ) = (
         "{% for message in messages %}"
         "{{ message['content'] }}"
         "{% endfor %}"
@@ -122,13 +129,14 @@ def _write_model(
         encoding="utf-8",
     )
 
-    (
-        root
-        / "chat_template.jinja"
-    ).write_text(
-        chat_template,
-        encoding="utf-8",
-    )
+    if chat_template is not None:
+        (
+            root
+            / "chat_template.jinja"
+        ).write_text(
+            chat_template,
+            encoding="utf-8",
+        )
 
     (
         root
@@ -1608,4 +1616,83 @@ def test_execution_provenance_schema_alias(
         == (
             "specialist-execution-provenance.v1"
         )
+    )
+
+def test_hf_causal_without_native_chat_template_uses_fallback_prompt_identity(
+    tmp_path: Path,
+):
+    clear_runtime_model_fingerprint_cache()
+
+    model_path = (
+        _write_model(
+            tmp_path
+            / "bloomz-like",
+            chat_template=None,
+        )
+    )
+
+    agent = (
+        replace(
+            _agent(),
+            model="jira-func",
+        )
+    )
+
+    profile = (
+        ModelProfileSettings(
+            backend="hf-causal",
+            model_path=model_path,
+            quantization="bnb4",
+            compute_dtype="bfloat16",
+            model_dtype="auto",
+            device_map="auto",
+        )
+    )
+
+    capability_catalog = (
+        build_agent_capability_catalog(
+            agent,
+            include_arguments=True,
+        )
+    )
+
+    messages = [
+        {
+            "role": "system",
+            "content": build_worker_system_prompt(
+                agent,
+                capability_catalog=capability_catalog,
+            ),
+        },
+        {
+            "role": "user",
+            "content": "Get KAN-3",
+        },
+    ]
+
+    provenance = (
+        build_specialist_execution_provenance(
+            agent=agent,
+            model_profile=profile,
+            capability_catalog=capability_catalog,
+            messages=messages,
+            user_request="Get KAN-3",
+            task_instructions=None,
+            max_new_tokens=128,
+        )
+    )
+
+    assert (
+        provenance.chat_template_sha256
+        is None
+    )
+
+    assert (
+        provenance.prompt_renderer_sha256
+        is not None
+    )
+
+    assert (
+        provenance.provenance_complete
+        is True
     )

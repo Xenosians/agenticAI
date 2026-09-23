@@ -35,6 +35,10 @@ from learning.training.dpo_materializer import (
     SpecialistDpoRecord,
 )
 
+from subagents.llm.runtime.hf_prompt import (
+    resolve_prompt_renderer_sha256,
+)
+
 
 # ============================================================
 # TRAINING API LOCK
@@ -1022,6 +1026,7 @@ def _execution_environment_identity(
         provenance.tokenizer_config_sha256,
         provenance.tokenizer_json_sha256,
         provenance.chat_template_sha256,
+        provenance.prompt_renderer_sha256,
 
         provenance.agent_definition_sha256,
         provenance.capability_catalog_sha256,
@@ -1607,6 +1612,18 @@ def _assert_runtime_fingerprint_matches_provenance(
             "source execution provenance is missing."
         )
 
+    current_prompt_renderer_sha256 = (
+        resolve_prompt_renderer_sha256(
+            backend=(
+                provenance.backend
+            ),
+            native_chat_template_sha256=(
+                fingerprint
+                .chat_template_sha256
+            ),
+        )
+    )
+
     comparisons = (
         (
             "model artifact",
@@ -1654,6 +1671,12 @@ def _assert_runtime_fingerprint_matches_provenance(
             "chat template",
             fingerprint.chat_template_sha256,
             provenance.chat_template_sha256,
+        ),
+
+        (
+            "prompt renderer",
+            current_prompt_renderer_sha256,
+            provenance.prompt_renderer_sha256,
         ),
     )
 

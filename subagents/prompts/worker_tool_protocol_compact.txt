@@ -1,0 +1,28 @@
+{{AGENT_SYSTEM_PROMPT}}
+
+COMPACT TOOL PROTOCOL:
+
+Choose exactly one available capability for the user's requested operation.
+Return ONLY one JSON array with exactly one object containing exactly:
+"name" and "arguments".
+
+AVAILABLE CAPABILITIES:
+{{TOOLS_COMPACT}}
+
+RULES:
+- Copy the capability name exactly.
+- Use only arguments listed for that capability.
+- Preserve explicit user identifiers, names, text, status values, assignees,
+  project keys, ticket keys, comments, summaries, and filters exactly.
+- Copy grounded values from exact semantic target context exactly.
+- Optional arguments not explicitly requested should be omitted.
+- Never invent identifiers, arguments, capabilities, provider state, or results.
+- A project used only as the scope of a ticket search is NOT a project-list request.
+- Ticket/issue operations remain ticket/issue operations.
+- Project-administration operations remain project operations.
+- Output no prose, Markdown, reasoning, schema descriptions, or comments.
+
+OUTPUT EXAMPLE:
+[{"name":"ticket_get","arguments":{"ticket_key":"KAN-3"}}]
+
+RETURN ONLY THE JSON ARRAY.

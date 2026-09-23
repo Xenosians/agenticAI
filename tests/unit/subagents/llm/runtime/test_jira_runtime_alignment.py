@@ -1,7 +1,11 @@
 from pathlib import Path
 
+from subagents.core.definitions.loader import (
+    load_agent_definition,
+)
 
-def test_jira_eval_uses_runtime_scheduler_stack():
+
+def test_jira_eval_uses_runtime_scheduler_stack_and_configured_profile():
     source = (
         Path(
             "scripts/jira_specialist_model_eval.py"
@@ -32,12 +36,27 @@ def test_jira_eval_uses_runtime_scheduler_stack():
     )
 
     assert (
+        ".require_model_profile("
+        in source
+    )
+
+    assert (
+        "ModelProfileSettings("
+        not in source
+    )
+
+    assert (
         "HFCausalWorkerBackend("
         not in source
     )
 
+    assert (
+        "/Models/BLOOMZ-560M"
+        not in source
+    )
 
-def test_jira_eval_defaults_to_profile_driven_bnb4():
+
+def test_jira_eval_emits_learning_provenance_and_candidate_report():
     source = (
         Path(
             "scripts/jira_specialist_model_eval.py"
@@ -48,25 +67,34 @@ def test_jira_eval_defaults_to_profile_driven_bnb4():
     )
 
     assert (
-        '"bnb4"'
+        "build_specialist_execution_provenance"
         in source
     )
 
     assert (
-        '"bfloat16"'
+        "SpecialistModelCaseResult"
         in source
     )
 
     assert (
-        'device_map=MODEL_DEVICE_MAP'
+        "write_specialist_model_report"
         in source
     )
 
     assert (
-        "model_manager.unload_all()"
+        ".runtime"
         in source
-        or (
-            "model_manager\n"
-            "            .unload_all()"
-        ) in source
+    )
+
+
+def test_jira_production_model_is_not_auto_promoted_by_candidate_alignment():
+    agent = (
+        load_agent_definition(
+            "subagents/agents/jira-specialist.md"
+        )
+    )
+
+    assert (
+        agent.model
+        == "hub-main"
     )

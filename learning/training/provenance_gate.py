@@ -37,6 +37,10 @@ from subagents.core.tooling.prompt import (
     build_worker_system_prompt,
 )
 
+from subagents.llm.runtime.hf_prompt import (
+    resolve_prompt_renderer_sha256,
+)
+
 
 # Must remain equal to the specialist runtime generation contract.
 #
@@ -78,6 +82,8 @@ class SpecialistTrainingEnvironment:
     capability_catalog_sha256: str
 
     system_prompt_sha256: str
+
+    prompt_renderer_sha256: str
 
 
 @dataclass(
@@ -136,6 +142,9 @@ def _model_profile_identity_payload(
 
         "device_map":
             profile.device_map,
+
+        "worker_prompt_profile":
+            profile.worker_prompt_profile,
 
         "dequantize_fp8":
             profile.dequantize_fp8,
@@ -229,6 +238,10 @@ def build_specialist_training_environment(
             capability_catalog=(
                 capability_catalog
             ),
+            prompt_profile=(
+                model_profile
+                .worker_prompt_profile
+            ),
         )
     )
 
@@ -236,6 +249,18 @@ def build_specialist_training_environment(
         fingerprint_runtime_model_artifact(
             model_profile.model_path,
             use_cache=False,
+        )
+    )
+
+    prompt_renderer_sha256 = (
+        resolve_prompt_renderer_sha256(
+            backend=(
+                model_profile.backend
+            ),
+            native_chat_template_sha256=(
+                model_fingerprint
+                .chat_template_sha256
+            ),
         )
     )
 
@@ -278,7 +303,7 @@ def build_specialist_training_environment(
         model_fingerprint.weights_sha256,
         model_fingerprint.tokenizer_sha256,
         model_fingerprint.config_sha256,
-        model_fingerprint.chat_template_sha256,
+        prompt_renderer_sha256,
         model_profile_sha256,
         agent_definition_sha256,
         capability_catalog_sha256,
@@ -335,6 +360,11 @@ def build_specialist_training_environment(
 
             system_prompt_sha256=(
                 system_prompt_sha256
+            ),
+
+            prompt_renderer_sha256=(
+                prompt_renderer_sha256
+                or ""
             ),
         )
     )
@@ -506,6 +536,12 @@ def reconstruct_current_training_provenance(
                 .device_map
             ),
 
+            worker_prompt_profile=(
+                environment
+                .model_profile
+                .worker_prompt_profile
+            ),
+
             bnb_4bit_quant_type=(
                 environment
                 .model_profile
@@ -561,6 +597,11 @@ def reconstruct_current_training_provenance(
             chat_template_sha256=(
                 fingerprint
                 .chat_template_sha256
+            ),
+
+            prompt_renderer_sha256=(
+                environment
+                .prompt_renderer_sha256
             ),
 
             agent_definition_sha256=(
@@ -662,6 +703,7 @@ PROVENANCE_COMPARISON_GROUPS: tuple[
             "tokenizer_config_sha256",
             "tokenizer_json_sha256",
             "chat_template_sha256",
+            "prompt_renderer_sha256",
         ),
     ),
 

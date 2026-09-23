@@ -2,6 +2,7 @@
 torch
 transformers
 accelerate
+bitsandbytes
 
 # MCP
 mcp>=2,<3

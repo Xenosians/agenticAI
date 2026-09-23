@@ -16,6 +16,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    model_validator,
 )
 
 from config import (
@@ -24,6 +25,10 @@ from config import (
 
 from subagents.core.definitions.types import (
     AgentDefinition,
+)
+
+from subagents.llm.runtime.hf_prompt import (
+    resolve_prompt_renderer_sha256,
 )
 
 
@@ -908,6 +913,10 @@ class SpecialistExecutionProvenance(
         | None
     ) = None
 
+    worker_prompt_profile: str = (
+        "standard"
+    )
+
     bnb_4bit_quant_type: str
 
     bnb_4bit_use_double_quant: bool
@@ -950,6 +959,15 @@ class SpecialistExecutionProvenance(
         | None
     ) = None
 
+    # Effective prompt-renderer identity. For native chat-template
+    # models this equals chat_template_sha256. For generic
+    # hf-causal models without a native template it fingerprints
+    # the versioned deterministic fallback renderer.
+    prompt_renderer_sha256: (
+        str
+        | None
+    ) = None
+
     # ========================================================
     # PROMPT / CAPABILITY IDENTITY
     # ========================================================
@@ -980,6 +998,61 @@ class SpecialistExecutionProvenance(
     max_new_tokens: int = Field(
         ge=1
     )
+
+    @model_validator(
+        mode="before"
+    )
+    @classmethod
+    def populate_prompt_renderer_identity(
+        cls,
+        value,
+    ):
+        # Backward-compatible parsing for historical provenance
+        # records created before prompt_renderer_sha256 existed.
+        if not isinstance(
+            value,
+            dict,
+        ):
+            return value
+
+        if value.get(
+            "prompt_renderer_sha256"
+        ) is not None:
+            return value
+
+        backend = value.get(
+            "backend"
+        )
+
+        if not isinstance(
+            backend,
+            str,
+        ):
+            return value
+
+        resolved = (
+            resolve_prompt_renderer_sha256(
+                backend=backend,
+                native_chat_template_sha256=(
+                    value.get(
+                        "chat_template_sha256"
+                    )
+                ),
+            )
+        )
+
+        if resolved is None:
+            return value
+
+        updated = dict(
+            value
+        )
+
+        updated[
+            "prompt_renderer_sha256"
+        ] = resolved
+
+        return updated
 
 
 # ============================================================
@@ -1013,6 +1086,9 @@ def _model_profile_identity_payload(
 
         "device_map":
             profile.device_map,
+
+        "worker_prompt_profile":
+            profile.worker_prompt_profile,
 
         "dequantize_fp8":
             profile.dequantize_fp8,
@@ -1184,6 +1260,18 @@ def build_specialist_execution_provenance(
         )
     )
 
+    prompt_renderer_sha256 = (
+        resolve_prompt_renderer_sha256(
+            backend=(
+                model_profile.backend
+            ),
+            native_chat_template_sha256=(
+                model_fingerprint
+                .chat_template_sha256
+            ),
+        )
+    )
+
     # ========================================================
     # MODEL PROFILE IDENTITY
     # ========================================================
@@ -1252,8 +1340,7 @@ def build_specialist_execution_provenance(
                 ),
 
                 bool(
-                    model_fingerprint
-                    .chat_template_sha256
+                    prompt_renderer_sha256
                 ),
 
                 bool(
@@ -1299,6 +1386,11 @@ def build_specialist_execution_provenance(
 
             device_map=(
                 model_profile.device_map
+            ),
+
+            worker_prompt_profile=(
+                model_profile
+                .worker_prompt_profile
             ),
 
             bnb_4bit_quant_type=(
@@ -1357,6 +1449,10 @@ def build_specialist_execution_provenance(
             chat_template_sha256=(
                 model_fingerprint
                 .chat_template_sha256
+            ),
+
+            prompt_renderer_sha256=(
+                prompt_renderer_sha256
             ),
 
             agent_definition_sha256=(
