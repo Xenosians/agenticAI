@@ -28,12 +28,12 @@ from subagents.integration.support import (
 )
 
 
-PROJECT_ID = "10034"
-PROJECT_KEY = "J2C2V2"
-PROJECT_NAME = "J2C2 Corrected Archive Proof"
+PROJECT_ID = "10035"
+PROJECT_KEY = "JIRADEL1"
+PROJECT_NAME = "Jira Project Delete Proof"
 
 USER_REQUEST = (
-    f"Archive Jira project {PROJECT_KEY}"
+    f"Delete Jira project {PROJECT_KEY}"
 )
 
 
@@ -50,14 +50,14 @@ class FailIfCalledMCP:
         )
 
 
-def prove_live_state(
+def prove_delete_ready(
     service,
     *,
     label: str,
 ) -> None:
 
     result = (
-        service.prepare_archive_project(
+        service.prepare_delete_project(
             project_id_or_key=(
                 PROJECT_KEY
             )
@@ -90,21 +90,39 @@ def prove_live_state(
         ),
     )
 
+    print(
+        "requires approval:",
+        result.get(
+            "requires_approval"
+        ),
+    )
+
     if result.get("ok") is not True:
         raise AssertionError(
-            "Could not prove project is live: "
+            "Could not prove project is eligible "
+            "for governed deletion: "
             + str(result)
         )
 
     if result.get("status") != "ready":
         raise AssertionError(
-            "Expected archive preparation "
+            "Expected delete preparation "
             "status='ready'."
         )
 
     if result.get("risk") != "high":
         raise AssertionError(
-            "Archive preparation is not HIGH risk."
+            "Delete preparation is not HIGH risk."
+        )
+
+    if (
+        result.get(
+            "requires_approval"
+        )
+        is not True
+    ):
+        raise AssertionError(
+            "Delete preparation does not require approval."
         )
 
     args = (
@@ -143,11 +161,6 @@ def prove_live_state(
     )
 
     print(
-        "trusted lifecycle state:",
-        "live",
-    )
-
-    print(
         "project id:",
         args.get(
             "expected_project_id"
@@ -170,6 +183,11 @@ def prove_live_state(
         ),
     )
 
+    print(
+        "trusted live-delete precondition:",
+        "PASS",
+    )
+
 
 async def main() -> None:
 
@@ -179,12 +197,12 @@ async def main() -> None:
         settings.resolve_runtime_path(
             Path(
                 ".runtime/"
-                "j2c2_corrected_archive_approvals.sqlite3"
+                "jira_project_delete_approvals.sqlite3"
             )
         )
     )
 
-    # Dedicated DB for this proof.
+    # Dedicated durable approval DB for this live proof.
     for suffix in (
         "",
         "-wal",
@@ -205,20 +223,20 @@ async def main() -> None:
     )
 
     # ========================================================
-    # PROVE THE FRESH FIXTURE IS LIVE
+    # READ-ONLY PRE-PROPOSAL PROVIDER PROOF
     # ========================================================
 
-    prove_live_state(
+    prove_delete_ready(
         jira,
         label=(
-            "BEFORE ARCHIVE PROPOSAL"
+            "BEFORE DELETE PROPOSAL"
         ),
     )
 
     # ========================================================
-    # REAL HUB + SPECIALIST + SEMANTIC GUARD + GATEWAY
+    # REAL HUB + SPECIALIST + SEMANTIC GUARD + TOOLGATEWAY
     #
-    # MCP cannot execute here.
+    # MCP execution is deliberately impossible here.
     # ========================================================
 
     runtime = (
@@ -233,6 +251,7 @@ async def main() -> None:
     )
 
     try:
+
         await (
             runtime
             .inference
@@ -251,7 +270,7 @@ async def main() -> None:
 
         print()
         print(
-            "=== ARCHIVE PROPOSAL ==="
+            "=== DELETE PROPOSAL ==="
         )
 
         print(
@@ -287,7 +306,7 @@ async def main() -> None:
             ]
         ):
             raise AssertionError(
-                "Unexpected routes: "
+                "Unexpected route: "
                 f"{result.routes!r}"
             )
 
@@ -344,7 +363,7 @@ async def main() -> None:
 
         assert (
             worker.proposed_tool
-            == "jira_project_archive"
+            == "jira_project_delete"
         )
 
         assert (
@@ -361,7 +380,7 @@ async def main() -> None:
         )
 
         # ====================================================
-        # DURABLE APPROVAL SNAPSHOT
+        # EXACT DURABLE APPROVAL SNAPSHOT
         # ====================================================
 
         approval = (
@@ -395,7 +414,7 @@ async def main() -> None:
             approval[
                 "tool"
             ]
-            == "jira_project_archive"
+            == "jira_project_delete"
         )
 
         args = (
@@ -432,9 +451,23 @@ async def main() -> None:
             == PROJECT_NAME
         )
 
+        # Critical boundary:
+        # enableUndo is NOT persisted as a model argument.
+        # It belongs entirely to trusted provider execution.
+
+        assert (
+            "enableUndo"
+            not in args
+        )
+
+        assert (
+            "enable_undo"
+            not in args
+        )
+
         print()
         print(
-            "=== PERSISTED ARCHIVE APPROVAL ==="
+            "=== PERSISTED DELETE APPROVAL ==="
         )
 
         print(
@@ -491,11 +524,24 @@ async def main() -> None:
             ),
         )
 
+        print(
+            "model/provider undo flag exposed:",
+            (
+                "enableUndo"
+                in args
+                or "enable_undo"
+                in args
+            ),
+        )
+
         # ====================================================
-        # APPROVAL BARRIER
+        # APPROVAL BARRIER:
+        #
+        # prove the provider project is STILL live and eligible.
+        # FailIfCalledMCP proves no DELETE could have happened.
         # ====================================================
 
-        prove_live_state(
+        prove_delete_ready(
             jira,
             label=(
                 "AFTER PROPOSAL / BEFORE APPROVAL"
@@ -504,11 +550,27 @@ async def main() -> None:
 
         print()
         print(
-            "J2C.2 CORRECTED APPROVAL BARRIER: PASS"
+            "======================================"
+        )
+
+        print(
+            "JIRA DELETE APPROVAL BARRIER: PASS"
+        )
+
+        print(
+            "======================================"
         )
 
         print(
             "Fresh Jira project remains live."
+        )
+
+        print(
+            "No DELETE request was executed."
+        )
+
+        print(
+            "Provider undo behavior remains trusted-side."
         )
 
         print()

@@ -48,7 +48,7 @@ PROJECT_KEY = (
 )
 
 SUMMARY = (
-    "J3B governed create proof"
+    "Jira governed create proof"
 )
 
 TICKET_TYPE = (
@@ -60,7 +60,7 @@ EXPECTED_APPROVAL_ARGUMENTS = {
         "KAN",
 
     "summary":
-        "J3B governed create proof",
+        "Jira governed create proof",
 
     "ticket_type":
         "Task",
@@ -96,7 +96,7 @@ async def main() -> int:
 
         print(
             "  python "
-            "scripts/j3b_live_create_execute.py "
+            "scripts/jira_ticket_create_execute.py "
             "<approval-id>"
         )
 
@@ -135,7 +135,7 @@ async def main() -> int:
         .resolve_runtime_path(
             Path(
                 ".runtime/"
-                "j3b_create_approvals.sqlite3"
+                "jira_ticket_create_approvals.sqlite3"
             )
         )
     )
@@ -251,7 +251,7 @@ async def main() -> int:
 
         print(
             "Stored approval does not exactly match "
-            "the J3B-5A proven snapshot."
+            "the JIRA-CREATE-PROPOSAL proven snapshot."
         )
 
         print()
@@ -377,7 +377,7 @@ async def main() -> int:
             )
 
             print(
-                "J3B-5B OUTCOME: UNRESOLVED"
+                "JIRA-CREATE-EXECUTE OUTCOME: UNRESOLVED"
             )
 
             print(
@@ -412,7 +412,7 @@ async def main() -> int:
             )
 
             print(
-                "J3B-5B OUTCOME: KNOWN FAILURE"
+                "JIRA-CREATE-EXECUTE OUTCOME: KNOWN FAILURE"
             )
 
             print(
@@ -614,7 +614,7 @@ async def main() -> int:
         )
 
         print(
-            "J3B-5B LIVE CREATE: PASS"
+            "JIRA-CREATE-EXECUTE LIVE CREATE: PASS"
         )
 
         print(

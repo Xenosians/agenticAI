@@ -44,7 +44,7 @@ PROJECT_KEY = (
 )
 
 SUMMARY = (
-    "J3B governed create proof"
+    "Jira governed create proof"
 )
 
 TICKET_TYPE = (
@@ -85,7 +85,7 @@ async def main() -> None:
     ):
         raise SystemExit(
             "TICKETING_BACKEND must be jira "
-            "for J3B live proof."
+            "for Jira live create proof."
         )
 
     approval_db = (
@@ -93,7 +93,7 @@ async def main() -> None:
         .resolve_runtime_path(
             Path(
                 ".runtime/"
-                "j3b_create_approvals.sqlite3"
+                "jira_ticket_create_approvals.sqlite3"
             )
         )
     )
@@ -703,7 +703,7 @@ async def main() -> None:
         )
 
         print(
-            "J3B-5A APPROVAL BARRIER: PASS"
+            "JIRA-CREATE-PROPOSAL APPROVAL BARRIER: PASS"
         )
 
         print(

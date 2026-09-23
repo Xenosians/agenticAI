@@ -1,12 +1,23 @@
 import asyncio
+import sys
 
-from pathlib import (
-    Path,
+from pathlib import Path
+
+
+REPO_ROOT = (
+    Path(__file__)
+    .resolve()
+    .parents[1]
 )
 
-from config import (
-    Settings,
-)
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(
+        0,
+        str(REPO_ROOT),
+    )
+
+
+from config import Settings
 
 from services.jira import (
     build_jira_project_read_service,
@@ -17,17 +28,9 @@ from subagents.integration.support import (
 )
 
 
-PROJECT_KEY = (
-    "JIRATST"
-)
-
-PROJECT_NAME = (
-    "Jira Project Create Proof"
-)
-
-TEMPLATE = (
-    "software-kanban"
-)
+PROJECT_KEY = "JIRAARC1"
+PROJECT_NAME = "Jira Project Archive Proof"
+TEMPLATE = "software-kanban"
 
 USER_REQUEST = (
     "Create a Jira project with key "
@@ -50,50 +53,42 @@ class FailIfCalledMCP:
         )
 
 
-async def main(
-) -> None:
+async def main() -> None:
 
-    settings = (
-        Settings()
-    )
+    settings = Settings()
 
     approval_db = (
         settings.resolve_runtime_path(
             Path(
                 ".runtime/"
-                "jira_project_create_approvals.sqlite3"
+                "jira_project_archive_fixture_approvals.sqlite3"
             )
         )
     )
 
-    # --------------------------------------------------------
-    # This database is dedicated only to this JIRA CREATE live proof.
-    # --------------------------------------------------------
-
+    # Dedicated DB for this disposable fixture proof.
     for suffix in (
         "",
         "-wal",
         "-shm",
     ):
         candidate = Path(
-            str(
-                approval_db
-            )
+            str(approval_db)
             + suffix
         )
 
         if candidate.exists():
             candidate.unlink()
 
-    # ========================================================
-    # PROVE TARGET DOES NOT ALREADY EXIST
-    # ========================================================
-
     jira = (
         build_jira_project_read_service(
             settings
         )
     )
+
+    # ========================================================
+    # PROVE FRESH KEY IS ABSENT
+    # ========================================================
 
     before = (
         jira.get_project(
@@ -102,7 +97,7 @@ async def main(
     )
 
     print(
-        "=== BEFORE PROPOSAL ==="
+        "=== BEFORE CREATE PROPOSAL ==="
     )
 
     print(
@@ -112,45 +107,28 @@ async def main(
         ),
     )
 
-    if (
-        before.get(
-            "ok"
-        )
-        is True
-    ):
+    if before.get("ok") is True:
         raise SystemExit(
             f"Project {PROJECT_KEY} already exists. "
-            "Choose a fresh key before continuing."
+            "Use a fresh disposable key."
         )
 
-    if (
-        before.get(
-            "status"
-        )
-        != "not_found"
-    ):
+    if before.get("status") != "not_found":
         raise SystemExit(
-            "Could not prove the target project is absent: "
-            + str(
-                before
-            )
+            "Could not prove the fixture key is absent: "
+            + str(before)
         )
 
     # ========================================================
-    # REAL HUB + REAL MODELS + REAL TRUSTED POLICY
+    # REAL HUB / SEMANTIC / TOOLGATEWAY
     #
-    # MCP execution is deliberately impossible in this phase.
+    # MCP execution is impossible at this checkpoint.
     # ========================================================
 
     runtime = (
         build_hub_integration_context(
-            approval_db_path=(
-                approval_db
-            ),
-
-            mcp=(
-                FailIfCalledMCP()
-            ),
+            approval_db_path=approval_db,
+            mcp=FailIfCalledMCP(),
         )
     )
 
@@ -173,7 +151,7 @@ async def main(
 
         print()
         print(
-            "=== HUB PROPOSAL ==="
+            "=== CREATE PROPOSAL ==="
         )
 
         print(
@@ -184,13 +162,6 @@ async def main(
         print(
             "routes:",
             result.routes,
-        )
-
-        print(
-            "workers:",
-            len(
-                result.results
-            ),
         )
 
         if (
@@ -209,34 +180,25 @@ async def main(
             ]
         ):
             raise AssertionError(
-                "Expected only jira-specialist route, got "
+                "Unexpected routing: "
                 f"{result.routes!r}"
             )
 
         if (
-            len(
-                result.results
-            )
+            len(result.results)
             != 1
         ):
             raise AssertionError(
-                "Expected exactly one specialist result."
+                "Expected exactly one worker result."
             )
 
         worker = (
-            result.results[
-                0
-            ]
+            result.results[0]
         )
 
         print(
             "worker:",
             worker.agent_name,
-        )
-
-        print(
-            "worker status:",
-            worker.status,
         )
 
         print(
@@ -257,11 +219,6 @@ async def main(
         assert (
             worker.agent_name
             == "jira-specialist"
-        )
-
-        assert (
-            worker.status
-            == "approval_required"
         )
 
         assert (
@@ -288,11 +245,6 @@ async def main(
             is not None
         )
 
-        # ====================================================
-        # DURABLE APPROVAL MUST CONTAIN ORIGINAL + TRUSTED
-        # SNAPSHOT ARGUMENTS.
-        # ====================================================
-
         approval = (
             runtime
             .approvals
@@ -307,126 +259,89 @@ async def main(
         )
 
         assert (
-            approval[
-                "status"
-            ]
+            approval["status"]
             == "pending"
         )
 
         assert (
-            approval[
-                "tool"
-            ]
-            == "jira_project_create"
-        )
-
-        arguments = (
-            approval[
-                "arguments"
-            ]
+            approval["risk"]
+            == "medium"
         )
 
         assert (
-            arguments[
-                "project_key"
-            ]
+            approval["tool"]
+            == "jira_project_create"
+        )
+
+        args = (
+            approval["arguments"]
+        )
+
+        assert (
+            args["project_key"]
             == PROJECT_KEY
         )
 
         assert (
-            arguments[
-                "project_name"
-            ]
+            args["project_name"]
             == PROJECT_NAME
         )
 
         assert (
-            arguments[
-                "template"
-            ]
+            args["template"]
             == TEMPLATE
         )
 
-        assert (
-            isinstance(
-                arguments.get(
-                    "expected_project_type_key"
-                ),
-                str,
+        for field in (
+            "expected_project_type_key",
+            "expected_project_template_key",
+            "expected_lead_account_id",
+        ):
+            assert (
+                isinstance(
+                    args.get(field),
+                    str,
+                )
+                and args[field]
             )
-        )
-
-        assert (
-            isinstance(
-                arguments.get(
-                    "expected_project_template_key"
-                ),
-                str,
-            )
-        )
-
-        assert (
-            isinstance(
-                arguments.get(
-                    "expected_lead_account_id"
-                ),
-                str,
-            )
-        )
 
         print()
         print(
-            "=== PERSISTED APPROVAL ==="
+            "=== PERSISTED CREATE APPROVAL ==="
         )
 
         print(
             "status:",
-            approval[
-                "status"
-            ],
+            approval["status"],
         )
 
         print(
             "risk:",
-            approval[
-                "risk"
-            ],
+            approval["risk"],
         )
 
         print(
-            "original project key preserved:",
-            (
-                arguments[
-                    "project_key"
-                ]
-                == PROJECT_KEY
-            ),
+            "project key exact:",
+            args["project_key"]
+            == PROJECT_KEY,
         )
 
         print(
-            "original project name preserved:",
-            (
-                arguments[
-                    "project_name"
-                ]
-                == PROJECT_NAME
-            ),
+            "project name exact:",
+            args["project_name"]
+            == PROJECT_NAME,
         )
 
         print(
-            "template alias preserved:",
-            (
-                arguments[
-                    "template"
-                ]
-                == TEMPLATE
-            ),
+            "template exact:",
+            args["template"]
+            == TEMPLATE,
         )
 
         print(
             "trusted project type bound:",
             bool(
-                arguments.get(
+                args.get(
                     "expected_project_type_key"
                 )
             ),
@@ -435,25 +350,23 @@ async def main(
         print(
             "trusted native template bound:",
             bool(
-                arguments.get(
+                args.get(
                     "expected_project_template_key"
                 )
             ),
         )
 
         print(
-            "trusted lead identity bound:",
+            "trusted lead bound:",
             bool(
-                arguments.get(
+                args.get(
                     "expected_lead_account_id"
                 )
             ),
         )
 
         # ====================================================
-        # CRITICAL PROOF:
-        #
-        # Project must STILL NOT EXIST after approval proposal.
+        # APPROVAL BARRIER
         # ====================================================
 
         after = (
@@ -475,22 +388,18 @@ async def main(
         )
 
         assert (
-            after.get(
-                "ok"
-            )
+            after.get("ok")
             is False
         )
 
         assert (
-            after.get(
-                "status"
-            )
+            after.get("status")
             == "not_found"
         )
 
         print()
         print(
-            "JIRA CREATE APPROVAL BARRIER: PASS"
+            "FRESH FIXTURE CREATE BARRIER: PASS"
         )
 
         print(

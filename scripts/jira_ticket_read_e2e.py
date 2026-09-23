@@ -112,7 +112,7 @@ async def main() -> None:
         settings.resolve_runtime_path(
             Path(
                 ".runtime/"
-                "j3a_read_e2e_approvals.sqlite3"
+                "jira_ticket_read_e2e_approvals.sqlite3"
             )
         )
     )
@@ -451,7 +451,7 @@ async def main() -> None:
         )
 
         print(
-            "J3A LIVE READ E2E: PASS"
+            "JIRA LIVE READ E2E: PASS"
         )
 
         print(

@@ -29,8 +29,8 @@ from subagents.integration.support import (
 
 
 PROJECT_ID = "10035"
-PROJECT_KEY = "J2DDEL1"
-PROJECT_NAME = "J2D Delete Proof"
+PROJECT_KEY = "JIRADEL1"
+PROJECT_NAME = "Jira Project Delete Proof"
 
 USER_REQUEST = (
     f"Delete Jira project {PROJECT_KEY}"
@@ -197,7 +197,7 @@ async def main() -> None:
         settings.resolve_runtime_path(
             Path(
                 ".runtime/"
-                "j2d_delete_approvals.sqlite3"
+                "jira_project_delete_approvals.sqlite3"
             )
         )
     )
@@ -554,7 +554,7 @@ async def main() -> None:
         )
 
         print(
-            "J2D HIGH-RISK APPROVAL BARRIER: PASS"
+            "JIRA DELETE APPROVAL BARRIER: PASS"
         )
 
         print(

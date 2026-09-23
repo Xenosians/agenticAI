@@ -28,8 +28,8 @@ from subagents.integration.support import (
 )
 
 
-PROJECT_KEY = "J2C2V2"
-PROJECT_NAME = "J2C2 Corrected Archive Proof"
+PROJECT_KEY = "JIRADEL1"
+PROJECT_NAME = "Jira Project Delete Proof"
 TEMPLATE = "software-kanban"
 
 USER_REQUEST = (
@@ -61,7 +61,7 @@ async def main() -> None:
         settings.resolve_runtime_path(
             Path(
                 ".runtime/"
-                "j2c2_v2_create_approvals.sqlite3"
+                "jira_project_delete_fixture_approvals.sqlite3"
             )
         )
     )

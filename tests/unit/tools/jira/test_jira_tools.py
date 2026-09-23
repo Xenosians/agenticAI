@@ -201,7 +201,7 @@ class FakeMutationService:
         }
 
 
-def test_j2a_capabilities_remain_read_only():
+def test_jira_project_read_capabilities_remain_read_only():
 
     for tool_name in (
         "jira_project_list",
@@ -243,7 +243,7 @@ def test_project_get_is_exactly_grounded():
     )
 
 
-def test_j2b_project_create_is_governed():
+def test_jira_project_create_is_governed():
 
     tool = (
         JIRA_TOOLS[
@@ -401,7 +401,7 @@ def test_jira_project_create_mcp_preserves_approved_snapshot():
     )
 
 
-def test_j2c2_project_archive_is_high_risk_governed():
+def test_jira_project_archive_is_high_risk_governed():
 
     tool = (
         JIRA_TOOLS[
@@ -538,10 +538,10 @@ def test_archive_mcp_preserves_archived_result_field():
         server.functions[
             "jira_project_archive"
         ](
-            project_id_or_key="J2BTST",
+            project_id_or_key="JIRATST",
             expected_project_id="10033",
-            expected_project_key="J2BTST",
-            expected_project_name="J2C Rename Proof",
+            expected_project_key="JIRATST",
+            expected_project_name="Jira Project Rename Proof",
         )
     )
 
@@ -591,7 +591,7 @@ def test_mutation_result_schema_contains_archive_truth():
 
 
 
-def test_j2d_project_delete_is_high_risk_governed():
+def test_jira_project_delete_is_high_risk_governed():
 
     tool = (
         JIRA_TOOLS[
@@ -714,10 +714,10 @@ def test_delete_mcp_preserves_deleted_result_field():
         server.functions[
             "jira_project_delete"
         ](
-            project_id_or_key="J2DDEL",
+            project_id_or_key="JIRADEL",
             expected_project_id="10040",
-            expected_project_key="J2DDEL",
-            expected_project_name="J2D Delete Proof",
+            expected_project_key="JIRADEL",
+            expected_project_name="Jira Project Delete Proof",
         )
     )
 
