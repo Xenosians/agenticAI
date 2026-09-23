@@ -30,6 +30,11 @@ from .jira import (
     JiraTicketService,
 )
 
+from .jira_create_policy import (
+    DEFAULT_TICKET_TYPE,
+    revalidate_jira_ticket_create_snapshot,
+)
+
 from .mock import (
     MockTicketService,
 )
@@ -86,6 +91,15 @@ class TicketMutationResult(
 
     changed: bool = False
 
+    mutation_performed: (
+        bool
+        | None
+    ) = None
+
+    verification_ok: bool = False
+
+    reconciled: bool = False
+
     comment_id: (
         str | None
     ) = None
@@ -135,6 +149,11 @@ class TicketMutationService(
         summary: str,
         *,
         ticket_type: str | None = None,
+        expected_project_id: str | None = None,
+        expected_project_key: str | None = None,
+        expected_project_name: str | None = None,
+        expected_ticket_type_id: str | None = None,
+        expected_ticket_type_name: str | None = None,
     ) -> TicketMutationResult:
         raise NotImplementedError
 
@@ -534,7 +553,45 @@ class MockTicketMutationService(
         summary: str,
         *,
         ticket_type: str | None = None,
+        expected_project_id: str | None = None,
+        expected_project_key: str | None = None,
+        expected_project_name: str | None = None,
+        expected_ticket_type_id: str | None = None,
+        expected_ticket_type_name: str | None = None,
     ) -> TicketMutationResult:
+
+        trusted_snapshot_values = (
+            expected_project_id,
+            expected_project_key,
+            expected_project_name,
+            expected_ticket_type_id,
+            expected_ticket_type_name,
+        )
+
+        if any(
+            value is not None
+            for value
+            in trusted_snapshot_values
+        ):
+            return (
+                TicketMutationResult(
+                    ok=False,
+                    status="denied",
+                    provider="mock",
+                    operation=(
+                        "create_ticket"
+                    ),
+                    changed=False,
+                    mutation_performed=False,
+                    verification_ok=False,
+                    reconciled=False,
+                    error=(
+                        "Jira provider snapshot arguments "
+                        "cannot be used with the mock "
+                        "ticket provider."
+                    ),
+                )
+            )
 
         (
             normalized_project,
@@ -1415,87 +1472,526 @@ class JiraTicketMutationService(
             )
         )
 
+    @staticmethod
+    def _exact_create_string(
+        value: object,
+        *,
+        field_name: str,
+        max_length: int,
+    ) -> str:
+
+        if not isinstance(
+            value,
+            str,
+        ):
+            raise ValueError(
+                f"{field_name} must be a string."
+            )
+
+        if not value:
+            raise ValueError(
+                f"{field_name} must not be empty."
+            )
+
+        if (
+            value
+            != value.strip()
+        ):
+            raise ValueError(
+                f"{field_name} must not contain "
+                "leading or trailing whitespace."
+            )
+
+        if (
+            len(
+                value
+            )
+            > max_length
+        ):
+            raise ValueError(
+                f"{field_name} exceeds the maximum "
+                f"length of {max_length} characters."
+            )
+
+        return value
+
+    @staticmethod
+    def _provider_identifier(
+        value: object,
+        *,
+        field_name: str,
+    ) -> str:
+
+        if (
+            isinstance(
+                value,
+                int,
+            )
+            and not isinstance(
+                value,
+                bool,
+            )
+        ):
+            value = str(
+                value
+            )
+
+        if not isinstance(
+            value,
+            str,
+        ):
+            raise RuntimeError(
+                f"Jira returned invalid {field_name}."
+            )
+
+        if (
+            not value
+            or value
+            != value.strip()
+        ):
+            raise RuntimeError(
+                f"Jira returned invalid {field_name}."
+            )
+
+        return value
+
+    def _read_created_ticket_snapshot(
+        self,
+        ticket_key: str,
+    ) -> dict[
+        str,
+        str,
+    ]:
+        """
+        Read the exact provider state created by ticket_create.
+
+        This is verification only. It never performs a mutation.
+        """
+
+        encoded_key = (
+            quote(
+                ticket_key,
+                safe="",
+            )
+        )
+
+        try:
+            response = (
+                self.ticket_service
+                .client
+                .get(
+                    (
+                        "/rest/api/3/issue/"
+                        f"{encoded_key}"
+                    ),
+                    params={
+                        "fields":
+                            (
+                                "summary,"
+                                "project,"
+                                "issuetype"
+                            ),
+                    },
+                )
+            )
+
+        except (
+            httpx.TimeoutException,
+            httpx.TransportError,
+        ) as exc:
+            raise RuntimeError(
+                "Jira ticket read-back failed."
+            ) from exc
+
+        if (
+            response.status_code
+            != 200
+        ):
+            raise RuntimeError(
+                "Jira ticket read-back returned HTTP "
+                f"{response.status_code}."
+            )
+
+        try:
+            payload = (
+                response.json()
+            )
+
+        except ValueError as exc:
+            raise RuntimeError(
+                "Jira ticket read-back returned invalid JSON."
+            ) from exc
+
+        if not isinstance(
+            payload,
+            dict,
+        ):
+            raise RuntimeError(
+                "Jira ticket read-back returned invalid data."
+            )
+
+        returned_key = (
+            self._provider_identifier(
+                payload.get(
+                    "key"
+                ),
+                field_name=(
+                    "ticket key"
+                ),
+            )
+        )
+
+        fields = (
+            payload.get(
+                "fields"
+            )
+        )
+
+        if not isinstance(
+            fields,
+            dict,
+        ):
+            raise RuntimeError(
+                "Jira ticket read-back did not contain fields."
+            )
+
+        summary = (
+            self._provider_identifier(
+                fields.get(
+                    "summary"
+                ),
+                field_name=(
+                    "ticket summary"
+                ),
+            )
+        )
+
+        project = (
+            fields.get(
+                "project"
+            )
+        )
+
+        if not isinstance(
+            project,
+            dict,
+        ):
+            raise RuntimeError(
+                "Jira ticket read-back did not contain "
+                "valid project metadata."
+            )
+
+        issue_type = (
+            fields.get(
+                "issuetype"
+            )
+        )
+
+        if not isinstance(
+            issue_type,
+            dict,
+        ):
+            raise RuntimeError(
+                "Jira ticket read-back did not contain "
+                "valid issue-type metadata."
+            )
+
+        return {
+            "ticket_key":
+                returned_key,
+
+            "summary":
+                summary,
+
+            "project_id":
+                self._provider_identifier(
+                    project.get(
+                        "id"
+                    ),
+                    field_name=(
+                        "project ID"
+                    ),
+                ),
+
+            "project_key":
+                self._provider_identifier(
+                    project.get(
+                        "key"
+                    ),
+                    field_name=(
+                        "project key"
+                    ),
+                ),
+
+            "project_name":
+                self._provider_identifier(
+                    project.get(
+                        "name"
+                    ),
+                    field_name=(
+                        "project name"
+                    ),
+                ),
+
+            "ticket_type_id":
+                self._provider_identifier(
+                    issue_type.get(
+                        "id"
+                    ),
+                    field_name=(
+                        "issue-type ID"
+                    ),
+                ),
+
+            "ticket_type_name":
+                self._provider_identifier(
+                    issue_type.get(
+                        "name"
+                    ),
+                    field_name=(
+                        "issue-type name"
+                    ),
+                ),
+        }
+
+    @staticmethod
+    def _create_outcome_unknown(
+        *,
+        summary: str,
+        ticket_key: str | None = None,
+        mutation_performed: bool | None = None,
+        error: str,
+    ) -> TicketMutationResult:
+
+        return (
+            TicketMutationResult(
+                ok=False,
+                status=(
+                    "outcome_unknown"
+                ),
+                provider="jira",
+                ticket_key=(
+                    ticket_key
+                ),
+                operation=(
+                    "create_ticket"
+                ),
+                changed=False,
+                mutation_performed=(
+                    mutation_performed
+                ),
+                verification_ok=False,
+                reconciled=False,
+                new_value=(
+                    summary
+                ),
+                error=(
+                    error
+                ),
+            )
+        )
+
     def create_ticket(
         self,
         project_key: str,
         summary: str,
         *,
         ticket_type: str | None = None,
+        expected_project_id: str | None = None,
+        expected_project_key: str | None = None,
+        expected_project_name: str | None = None,
+        expected_ticket_type_id: str | None = None,
+        expected_ticket_type_name: str | None = None,
     ) -> TicketMutationResult:
+        """
+        Execute one exact approved Jira issue creation.
 
-        (
-            normalized_project,
-            project_error,
-        ) = (
-            self.ticket_service
-            ._normalize_project_key(
-                project_key
-            )
-        )
+        Jira creation without a trusted pre-approval provider
+        snapshot fails closed.
 
-        if normalized_project is None:
+        The POST is never blindly retried.
+        """
 
-            return (
-                TicketMutationResult(
-                    ok=False,
-                    status="denied",
-                    provider="jira",
-                    operation=(
-                        "create_ticket"
+        try:
+            resolved_project_key = (
+                self._exact_create_string(
+                    project_key,
+                    field_name=(
+                        "project_key"
                     ),
-                    error=(
-                        project_error
+                    max_length=(
+                        MAX_PROJECT_KEY_LENGTH
                     ),
                 )
             )
 
-        (
-            normalized_summary,
-            summary_error,
-        ) = (
-            normalize_required_string(
-                summary,
-                field_name=(
-                    "summary"
-                ),
-                max_length=(
-                    MAX_TICKET_SUMMARY_LENGTH
-                ),
-            )
-        )
-
-        if normalized_summary is None:
-
-            return (
-                TicketMutationResult(
-                    ok=False,
-                    status="denied",
-                    provider="jira",
-                    operation=(
-                        "create_ticket"
+            resolved_summary = (
+                self._exact_create_string(
+                    summary,
+                    field_name=(
+                        "summary"
                     ),
-                    error=(
-                        summary_error
+                    max_length=(
+                        MAX_TICKET_SUMMARY_LENGTH
                     ),
                 )
             )
 
-        (
-            normalized_type,
-            type_error,
-        ) = (
-            normalize_optional_string(
-                ticket_type,
-                field_name=(
-                    "ticket_type"
+            if ticket_type is None:
+                resolved_ticket_type = (
+                    DEFAULT_TICKET_TYPE
+                )
+
+            else:
+                resolved_ticket_type = (
+                    self._exact_create_string(
+                        ticket_type,
+                        field_name=(
+                            "ticket_type"
+                        ),
+                        max_length=(
+                            MAX_TICKET_TYPE_LENGTH
+                        ),
+                    )
+                )
+
+            trusted_values = {
+                "expected_project_id":
+                    expected_project_id,
+
+                "expected_project_key":
+                    expected_project_key,
+
+                "expected_project_name":
+                    expected_project_name,
+
+                "expected_ticket_type_id":
+                    expected_ticket_type_id,
+
+                "expected_ticket_type_name":
+                    expected_ticket_type_name,
+            }
+
+            if any(
+                value is None
+                for value
+                in trusted_values.values()
+            ):
+                raise ValueError(
+                    "Approved Jira ticket creation requires "
+                    "a complete trusted provider snapshot."
+                )
+
+            resolved_expected_project_id = (
+                self._exact_create_string(
+                    expected_project_id,
+                    field_name=(
+                        "expected_project_id"
+                    ),
+                    max_length=100,
+                )
+            )
+
+            if not (
+                resolved_expected_project_id
+                .isdigit()
+            ):
+                raise ValueError(
+                    "Trusted Jira project ID must be numeric."
+                )
+
+            resolved_expected_project_key = (
+                self._exact_create_string(
+                    expected_project_key,
+                    field_name=(
+                        "expected_project_key"
+                    ),
+                    max_length=(
+                        MAX_PROJECT_KEY_LENGTH
+                    ),
+                )
+            )
+
+            resolved_expected_project_name = (
+                self._exact_create_string(
+                    expected_project_name,
+                    field_name=(
+                        "expected_project_name"
+                    ),
+                    max_length=255,
+                )
+            )
+
+            resolved_expected_type_id = (
+                self._exact_create_string(
+                    expected_ticket_type_id,
+                    field_name=(
+                        "expected_ticket_type_id"
+                    ),
+                    max_length=100,
+                )
+            )
+
+            resolved_expected_type_name = (
+                self._exact_create_string(
+                    expected_ticket_type_name,
+                    field_name=(
+                        "expected_ticket_type_name"
+                    ),
+                    max_length=(
+                        MAX_TICKET_TYPE_LENGTH
+                    ),
+                )
+            )
+
+            # The provider snapshot may add trusted identity,
+            # but it may not alter the persisted semantic request.
+            if (
+                resolved_expected_project_key
+                != resolved_project_key
+            ):
+                raise ValueError(
+                    "Approved Jira project snapshot does not "
+                    "match the persisted project key."
+                )
+
+            if (
+                resolved_expected_type_name
+                != resolved_ticket_type
+            ):
+                raise ValueError(
+                    "Approved Jira issue-type snapshot does not "
+                    "match the persisted ticket type."
+                )
+
+            # =================================================
+            # POST-APPROVAL PROVIDER REVALIDATION
+            # =================================================
+
+            revalidate_jira_ticket_create_snapshot(
+                self.ticket_service,
+                expected_project_id=(
+                    resolved_expected_project_id
                 ),
-                max_length=(
-                    MAX_TICKET_TYPE_LENGTH
+                expected_project_key=(
+                    resolved_expected_project_key
+                ),
+                expected_project_name=(
+                    resolved_expected_project_name
+                ),
+                expected_ticket_type_id=(
+                    resolved_expected_type_id
+                ),
+                expected_ticket_type_name=(
+                    resolved_expected_type_name
                 ),
             )
-        )
 
-        if type_error is not None:
+        except (
+            PermissionError,
+            LookupError,
+            ValueError,
+        ) as exc:
 
             return (
                 TicketMutationResult(
@@ -1505,8 +2001,35 @@ class JiraTicketMutationService(
                     operation=(
                         "create_ticket"
                     ),
-                    error=(
-                        type_error
+                    changed=False,
+                    mutation_performed=False,
+                    verification_ok=False,
+                    reconciled=False,
+                    error=str(
+                        exc
+                    ),
+                )
+            )
+
+        except (
+            RuntimeError,
+            httpx.HTTPError,
+        ) as exc:
+
+            return (
+                TicketMutationResult(
+                    ok=False,
+                    status="error",
+                    provider="jira",
+                    operation=(
+                        "create_ticket"
+                    ),
+                    changed=False,
+                    mutation_performed=False,
+                    verification_ok=False,
+                    reconciled=False,
+                    error=str(
+                        exc
                     ),
                 )
             )
@@ -1514,25 +2037,25 @@ class JiraTicketMutationService(
         request_body = {
             "fields": {
                 "project": {
-                    "key":
-                        normalized_project,
+                    "id":
+                        resolved_expected_project_id,
                 },
 
                 "summary":
-                    normalized_summary,
+                    resolved_summary,
 
                 "issuetype": {
-                    "name":
-                        (
-                            normalized_type
-                            or "Task"
-                        ),
+                    "id":
+                        resolved_expected_type_id,
                 },
             }
         }
 
-        try:
+        # =====================================================
+        # EXACTLY ONE MUTATING REQUEST
+        # =====================================================
 
+        try:
             response = (
                 self.ticket_service
                 .client
@@ -1544,47 +2067,36 @@ class JiraTicketMutationService(
                 )
             )
 
-        except httpx.HTTPError:
-
-            return (
-                unknown_mutation_result(
-                    provider="jira",
-                    operation=(
-                        "create_ticket"
-                    ),
-                    error=(
-                        "The Jira create request failed and "
-                        "the remote mutation state is unknown."
-                    ),
-                )
-            )
-
-        if (
-            response.status_code
-            in {
-                401,
-                403,
-            }
+        except (
+            httpx.TimeoutException,
+            httpx.TransportError,
         ):
 
             return (
-                TicketMutationResult(
-                    ok=False,
-                    status="error",
-                    provider="jira",
-                    operation=(
-                        "create_ticket"
+                self._create_outcome_unknown(
+                    summary=(
+                        resolved_summary
                     ),
+                    mutation_performed=None,
                     error=(
-                        "Jira authentication or "
-                        "authorization failed."
+                        "The Jira create request encountered "
+                        "an ambiguous transport failure. "
+                        "Automatic retry is disabled."
                     ),
                 )
             )
 
+        # Explicit provider rejection means the requested create
+        # was not accepted as successful.
         if (
             response.status_code
-            == 400
+            in {
+                400,
+                401,
+                403,
+                404,
+                422,
+            }
         ):
 
             return (
@@ -1595,78 +2107,256 @@ class JiraTicketMutationService(
                     operation=(
                         "create_ticket"
                     ),
+                    changed=False,
+                    mutation_performed=False,
+                    verification_ok=False,
+                    reconciled=False,
+                    new_value=(
+                        resolved_summary
+                    ),
                     error=(
-                        "Jira rejected the supplied "
-                        "ticket creation fields."
+                        "Jira rejected the approved "
+                        "ticket creation request."
                     ),
                 )
             )
 
-        if not (
-            200
-            <= response.status_code
-            < 300
+        if (
+            response.status_code
+            == 429
         ):
-
-            if (
-                response.status_code
-                >= 500
-            ):
-
-                return (
-                    unknown_mutation_result(
-                        provider="jira",
-                        operation=(
-                            "create_ticket"
-                        ),
-                        error=(
-                            "Jira returned HTTP "
-                            f"{response.status_code} "
-                            "while creating the ticket; "
-                            "remote mutation state is unknown."
-                        ),
-                    )
-                )
 
             return (
                 TicketMutationResult(
                     ok=False,
-                    status="error",
+                    status=(
+                        "rate_limited"
+                    ),
                     provider="jira",
                     operation=(
                         "create_ticket"
                     ),
+                    changed=False,
+                    mutation_performed=False,
+                    verification_ok=False,
+                    reconciled=False,
+                    new_value=(
+                        resolved_summary
+                    ),
                     error=(
-                        "Jira returned HTTP "
-                        f"{response.status_code} "
-                        "while creating the ticket."
+                        "Jira rate limited the approved "
+                        "ticket creation request."
                     ),
                 )
             )
 
-        ticket_key = None
+        if (
+            response.status_code
+            >= 500
+        ):
+
+            return (
+                self._create_outcome_unknown(
+                    summary=(
+                        resolved_summary
+                    ),
+                    mutation_performed=None,
+                    error=(
+                        "Jira returned HTTP "
+                        f"{response.status_code} after the "
+                        "create request was sent. "
+                        "Automatic retry is disabled."
+                    ),
+                )
+            )
+
+        # Jira Cloud documents 201 for successful issue creation.
+        if (
+            response.status_code
+            != 201
+        ):
+
+            return (
+                self._create_outcome_unknown(
+                    summary=(
+                        resolved_summary
+                    ),
+                    mutation_performed=None,
+                    error=(
+                        "Jira returned unexpected HTTP "
+                        f"{response.status_code} for issue "
+                        "creation. The mutation outcome is "
+                        "not trusted."
+                    ),
+                )
+            )
 
         try:
-
             payload = (
                 response.json()
             )
 
         except ValueError:
 
-            payload = None
+            return (
+                self._create_outcome_unknown(
+                    summary=(
+                        resolved_summary
+                    ),
+                    mutation_performed=True,
+                    error=(
+                        "Jira reported successful creation, "
+                        "but the response could not identify "
+                        "the created ticket for verification."
+                    ),
+                )
+            )
 
-        if isinstance(
+        if not isinstance(
             payload,
             dict,
         ):
 
-            ticket_key = (
-                self.ticket_service
-                ._string_field(
-                    payload.get(
-                        "key"
-                    )
+            return (
+                self._create_outcome_unknown(
+                    summary=(
+                        resolved_summary
+                    ),
+                    mutation_performed=True,
+                    error=(
+                        "Jira reported successful creation, "
+                        "but returned invalid create metadata."
+                    ),
+                )
+            )
+
+        raw_ticket_key = (
+            payload.get(
+                "key"
+            )
+        )
+
+        if not isinstance(
+            raw_ticket_key,
+            str,
+        ):
+
+            return (
+                self._create_outcome_unknown(
+                    summary=(
+                        resolved_summary
+                    ),
+                    mutation_performed=True,
+                    error=(
+                        "Jira reported successful creation, "
+                        "but did not return a valid ticket key."
+                    ),
+                )
+            )
+
+        (
+            created_ticket_key,
+            key_error,
+        ) = (
+            self.ticket_service
+            ._normalize_ticket_key(
+                raw_ticket_key
+            )
+        )
+
+        if (
+            created_ticket_key
+            is None
+        ):
+
+            return (
+                self._create_outcome_unknown(
+                    summary=(
+                        resolved_summary
+                    ),
+                    mutation_performed=True,
+                    error=(
+                        key_error
+                        or (
+                            "Jira returned an invalid "
+                            "created ticket key."
+                        )
+                    ),
+                )
+            )
+
+        # =====================================================
+        # TRUSTED READ-BACK VERIFICATION
+        # =====================================================
+
+        try:
+            current = (
+                self._read_created_ticket_snapshot(
+                    created_ticket_key
+                )
+            )
+
+        except Exception:
+
+            return (
+                self._create_outcome_unknown(
+                    summary=(
+                        resolved_summary
+                    ),
+                    ticket_key=(
+                        created_ticket_key
+                    ),
+                    mutation_performed=True,
+                    error=(
+                        "Jira created the ticket, but trusted "
+                        "read-back verification could not "
+                        "confirm the resulting state."
+                    ),
+                )
+            )
+
+        expected = {
+            "ticket_key":
+                created_ticket_key,
+
+            "summary":
+                resolved_summary,
+
+            "project_id":
+                resolved_expected_project_id,
+
+            "project_key":
+                resolved_expected_project_key,
+
+            "project_name":
+                resolved_expected_project_name,
+
+            "ticket_type_id":
+                resolved_expected_type_id,
+
+            "ticket_type_name":
+                resolved_expected_type_name,
+        }
+
+        if (
+            current
+            != expected
+        ):
+
+            return (
+                self._create_outcome_unknown(
+                    summary=(
+                        resolved_summary
+                    ),
+                    ticket_key=(
+                        created_ticket_key
+                    ),
+                    mutation_performed=True,
+                    error=(
+                        "Jira created a ticket, but its "
+                        "read-back state does not exactly "
+                        "match the approved mutation."
+                    ),
                 )
             )
 
@@ -1676,17 +2366,20 @@ class JiraTicketMutationService(
                 status="success",
                 provider="jira",
                 ticket_key=(
-                    ticket_key
+                    created_ticket_key
                 ),
                 operation=(
                     "create_ticket"
                 ),
                 changed=True,
+                mutation_performed=True,
+                verification_ok=True,
+                reconciled=False,
                 new_value=(
-                    normalized_summary
+                    resolved_summary
                 ),
                 message=(
-                    "Ticket created."
+                    "Ticket created and verified."
                 ),
             )
         )

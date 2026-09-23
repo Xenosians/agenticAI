@@ -68,7 +68,7 @@ def test_ticket_specialist_exposes_all_governed_ticket_mutations():
     )
 
 
-def test_all_ticket_mutations_require_approval():
+def test_ticket_mutation_risk_and_approval_contract():
 
     expected = {
         "ticket_add_comment": [
@@ -109,11 +109,18 @@ def test_all_ticket_mutations_require_approval():
             is not None
         )
 
+        expected_risk = (
+            "medium"
+            if tool_name
+            == "ticket_create"
+            else "low"
+        )
+
         assert (
             tool[
                 "risk"
             ]
-            == "low"
+            == expected_risk
         )
 
         assert (

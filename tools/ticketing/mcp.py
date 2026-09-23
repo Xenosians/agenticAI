@@ -138,6 +138,9 @@ class TicketMutationMCPResult(
     ticket_key: str | None = None
     operation: str | None = None
     changed: bool = False
+    mutation_performed: bool | None = None
+    verification_ok: bool = False
+    reconciled: bool = False
     comment_id: str | None = None
     previous_value: str | None = None
     new_value: str | None = None
@@ -311,6 +314,11 @@ def register_ticketing_tools(
         project_key: str,
         summary: str,
         ticket_type: str | None = None,
+        expected_project_id: str | None = None,
+        expected_project_key: str | None = None,
+        expected_project_name: str | None = None,
+        expected_ticket_type_id: str | None = None,
+        expected_ticket_type_name: str | None = None,
     ) -> TicketMutationMCPResult:
 
         result = (
@@ -320,6 +328,21 @@ def register_ticketing_tools(
                 summary,
                 ticket_type=(
                     ticket_type
+                ),
+                expected_project_id=(
+                    expected_project_id
+                ),
+                expected_project_key=(
+                    expected_project_key
+                ),
+                expected_project_name=(
+                    expected_project_name
+                ),
+                expected_ticket_type_id=(
+                    expected_ticket_type_id
+                ),
+                expected_ticket_type_name=(
+                    expected_ticket_type_name
                 ),
             )
         )

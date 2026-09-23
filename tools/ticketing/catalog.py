@@ -2,6 +2,10 @@ from typing import (
     Any,
 )
 
+from tools.ticketing.policy import (
+    evaluate_ticket_create_policy,
+)
+
 from tools.ticketing.presentation import (
     build_ticket_comments_card,
     build_ticket_get_card,
@@ -399,10 +403,21 @@ TICKETING_TOOLS = {
         ),
 
         "risk":
-            "low",
+            "medium",
 
         "requires_approval":
             True,
+
+        "policy_resolver":
+            evaluate_ticket_create_policy,
+
+        "trusted_policy_arguments": [
+            "expected_project_id",
+            "expected_project_key",
+            "expected_project_name",
+            "expected_ticket_type_id",
+            "expected_ticket_type_name",
+        ],
 
         "grounded_arguments": [
             "project_key",

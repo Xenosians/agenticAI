@@ -67,6 +67,9 @@ def execution_unresolved_result(
                 approval
             ),
 
+        "result":
+            approval.result,
+
         "replayed":
             True,
 
@@ -485,6 +488,106 @@ class ApprovalManager:
                     "The approval remains in "
                     "executing state because the "
                     "side-effect outcome is unknown."
+                ),
+            }
+
+        # ========================================================
+        # AMBIGUOUS REMOTE MUTATION OUTCOME
+        #
+        # A provider may have received/applied the side effect even
+        # though trusted code cannot determine the final state.
+        #
+        # DO NOT:
+        #     mark failed
+        #     return to pending
+        #     automatically retry
+        #
+        # Keep the durable approval in executing state and persist
+        # the provider evidence for later reconciliation.
+        # ========================================================
+
+        ambiguous_statuses = {
+            "outcome_unknown",
+
+            # Compatibility with older mutation adapters.
+            # New hardened providers should prefer
+            # ``outcome_unknown``.
+            "unknown",
+        }
+
+        if (
+            result.get(
+                "status"
+            )
+            in ambiguous_statuses
+        ):
+
+            try:
+                approval = (
+                    self.store
+                    .record_execution_result(
+                        approval_id,
+                        result,
+                    )
+                )
+
+            except Exception as exc:
+                current = (
+                    self.store.get(
+                        approval_id
+                    )
+                )
+
+                return {
+                    "ok":
+                        False,
+
+                    "approval": (
+                        approval_to_dict(
+                            current
+                        )
+                        if current
+                        is not None
+                        else None
+                    ),
+
+                    "result":
+                        result,
+
+                    "replayed":
+                        False,
+
+                    "error": (
+                        "Approval execution reached an "
+                        "ambiguous remote outcome. "
+                        "Automatic retry is disabled. "
+                        "The approval remains unresolved, "
+                        "but the provider result could not "
+                        "be durably recorded. "
+                        f"Error: {exc}"
+                    ),
+                }
+
+            return {
+                "ok":
+                    False,
+
+                "approval":
+                    approval_to_dict(
+                        approval
+                    ),
+
+                "result":
+                    result,
+
+                "replayed":
+                    False,
+
+                "error": (
+                    "Approval execution outcome is unresolved. "
+                    "The approval remains in executing state "
+                    "and automatic retry is disabled pending "
+                    "trusted reconciliation."
                 ),
             }
 

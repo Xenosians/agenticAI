@@ -265,6 +265,78 @@ class ApprovalStore:
             return cursor.rowcount == 1
 
     # ============================================================
+    # Unresolved execution evidence
+    # ============================================================
+
+    def record_execution_result(
+        self,
+        approval_id: str,
+        result: dict[str, Any],
+    ) -> ApprovalEntry:
+        """
+        Persist provider execution evidence while intentionally
+        keeping the approval in ``executing`` state.
+
+        This is used when a remote side-effect outcome is ambiguous.
+
+        The approval MUST NOT return to ``pending`` because the
+        side effect may already have happened.
+
+        The approval MUST NOT become ``failed`` because failure of
+        the remote mutation has not been proven.
+        """
+
+        if not isinstance(
+            result,
+            dict,
+        ):
+            raise ValueError(
+                "result must be a dict"
+            )
+
+        encoded_result = (
+            self._encode_object(
+                result
+            )
+        )
+
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE approvals
+                SET
+                    result = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE approval_id = ?
+                  AND status = 'executing'
+                """,
+                (
+                    encoded_result,
+                    approval_id,
+                ),
+            )
+
+            if cursor.rowcount != 1:
+                raise ValueError(
+                    "approval is not in executing state: "
+                    f"{approval_id}"
+                )
+
+        approval = (
+            self.get(
+                approval_id
+            )
+        )
+
+        if approval is None:
+            raise RuntimeError(
+                "approval disappeared after unresolved "
+                "execution result was recorded"
+            )
+
+        return approval
+
+    # ============================================================
     # Terminal states
     # ============================================================
 
