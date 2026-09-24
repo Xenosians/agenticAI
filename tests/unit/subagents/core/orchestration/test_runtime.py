@@ -14,6 +14,7 @@ from subagents.core.orchestration.runtime import (
 
 from subagents.core.definitions.types import (
     AgentTask,
+    SemanticIntent,
 )
 
 
@@ -642,3 +643,147 @@ def test_runtime_returns_gateway_error():
         result.error
         == "Execution denied."
     )
+
+
+# ============================================================
+# CURRENT-TURN CAPABILITY NARROWING
+# ============================================================
+
+
+def test_runtime_exposes_only_semantically_allowed_capability():
+
+    (
+        runtime,
+        inference,
+        gateway,
+    ) = (
+        build_runtime()
+    )
+
+    task = (
+        AgentTask(
+            task_id=(
+                "task-semantic-narrowing"
+            ),
+
+            agent_name=(
+                "account-specialist"
+            ),
+
+            user_request=(
+                "Is jdoe locked?"
+            ),
+
+            semantic_intent=(
+                SemanticIntent(
+                    summary=(
+                        "Read the current account "
+                        "state for jdoe."
+                    ),
+
+                    effect=(
+                        "read"
+                    ),
+
+                    allowed_tools=[
+                        "account_status",
+                    ],
+
+                    forbidden_tools=[],
+
+                    allowed_arguments={
+                        "user_id": [
+                            "jdoe",
+                        ],
+                    },
+
+                    forbidden_arguments={},
+
+                    max_tool_calls=1,
+
+                    clarification_required=False,
+                )
+            ),
+        )
+    )
+
+    result = (
+        asyncio.run(
+            runtime.run(
+                task
+            )
+        )
+    )
+
+    assert (
+        result.status
+        == "success"
+    ), result.error
+
+    assert (
+        len(
+            inference.calls
+        )
+        == 1
+    )
+
+    system_prompt = (
+        inference.calls[
+            0
+        ][
+            "messages"
+        ][
+            0
+        ][
+            "content"
+        ]
+    )
+
+    # --------------------------------------------------------
+    # Only the currently semantically allowed capability is
+    # model-facing.
+    # --------------------------------------------------------
+
+    assert (
+        '"name": "account_status"'
+        in system_prompt
+    )
+
+    assert (
+        '"name": "unlock_user"'
+        not in system_prompt
+    )
+
+    assert (
+        '"name": "reset_password"'
+        not in system_prompt
+    )
+
+    assert (
+        '"name": "enable_user"'
+        not in system_prompt
+    )
+
+    assert (
+        '"name": "disable_user"'
+        not in system_prompt
+    )
+
+    assert (
+        '"name": "account_create"'
+        not in system_prompt
+    )
+
+    # --------------------------------------------------------
+    # Execution still crosses the normal trusted gateway.
+    # --------------------------------------------------------
+
+    assert (
+        gateway.calls[
+            0
+        ][
+            "tool_name"
+        ]
+        == "account_status"
+    )
+

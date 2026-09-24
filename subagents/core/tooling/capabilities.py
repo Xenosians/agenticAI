@@ -377,6 +377,10 @@ def build_agent_capability_catalog(
     *,
     tool_lookup: ToolLookup = get_tool,
     include_arguments: bool = True,
+    allowed_tools: (
+        list[str]
+        | None
+    ) = None,
 ) -> list[
     dict[
         str,
@@ -387,18 +391,30 @@ def build_agent_capability_catalog(
     Build the trusted model-facing capability catalog for one
     specialist.
 
-    Only capabilities explicitly present in AgentDefinition.tools
-    are exposed.
+    AgentDefinition.tools owns the specialist's maximum trusted
+    capability boundary.
+
+    When allowed_tools is supplied, it may only NARROW that
+    boundary for the current semantic task.
+
+    It can never add a capability that the specialist does not own.
+
+    This filtering is model-facing guidance only.
+
+    SemanticGuard and ToolGateway remain independently authoritative
+    for semantic validation, grounding, authorization, policy,
+    approval, and execution.
     """
 
-    capabilities: list[
-        dict[
-            str,
-            Any,
-        ]
+    # ============================================================
+    # TRUSTED AGENT CAPABILITY BOUNDARY
+    # ============================================================
+
+    trusted_tools: list[
+        str
     ] = []
 
-    seen: set[
+    trusted_seen: set[
         str
     ] = set()
 
@@ -406,19 +422,29 @@ def build_agent_capability_catalog(
         agent.tools
     ):
 
+        if not isinstance(
+            tool_name,
+            str,
+        ):
+
+            raise ValueError(
+                f"Agent '{agent.name}' "
+                "contains a non-string capability."
+            )
+
         normalized = (
-            tool_name.strip()
+            tool_name
+            .strip()
         )
 
         if not normalized:
 
             raise ValueError(
                 f"Agent '{agent.name}' "
-                "contains an empty "
-                "capability name."
+                "contains an empty capability name."
             )
 
-        if normalized in seen:
+        if normalized in trusted_seen:
 
             raise ValueError(
                 f"Agent '{agent.name}' "
@@ -426,25 +452,144 @@ def build_agent_capability_catalog(
                 f"'{normalized}'."
             )
 
-        seen.add(
+        trusted_seen.add(
             normalized
         )
 
-        capabilities.append(
-            build_capability_spec(
-                normalized,
+        trusted_tools.append(
+            normalized
+        )
 
-                tool_lookup=(
-                    tool_lookup
-                ),
+    # ============================================================
+    # CURRENT-TURN SEMANTIC NARROWING
+    # ============================================================
 
-                include_arguments=(
-                    include_arguments
-                ),
+    if allowed_tools is None:
+
+        selected_tools = (
+            trusted_tools
+        )
+
+    else:
+
+        if not isinstance(
+            allowed_tools,
+            list,
+        ):
+
+            raise ValueError(
+                "allowed_tools must be a list."
+            )
+
+        requested_tools: list[
+            str
+        ] = []
+
+        requested_seen: set[
+            str
+        ] = set()
+
+        for tool_name in (
+            allowed_tools
+        ):
+
+            if not isinstance(
+                tool_name,
+                str,
+            ):
+
+                raise ValueError(
+                    "allowed_tools must contain "
+                    "only strings."
+                )
+
+            normalized = (
+                tool_name
+                .strip()
+            )
+
+            if not normalized:
+
+                raise ValueError(
+                    "allowed_tools must not contain "
+                    "empty capability names."
+                )
+
+            if normalized in requested_seen:
+
+                continue
+
+            requested_seen.add(
+                normalized
+            )
+
+            requested_tools.append(
+                normalized
+            )
+
+        unknown = [
+            tool_name
+
+            for tool_name
+            in requested_tools
+
+            if tool_name
+            not in trusted_seen
+        ]
+
+        if unknown:
+
+            raise ValueError(
+                "Semantic capability narrowing "
+                "contains capability outside agent "
+                f"'{agent.name}' boundary: "
+                + ", ".join(
+                    sorted(
+                        unknown
+                    )
+                )
+            )
+
+        requested_set = (
+            set(
+                requested_tools
             )
         )
 
-    return capabilities
+        # Preserve trusted AgentDefinition ordering.
+        #
+        # Hub ordering is descriptive metadata and must not redefine
+        # the specialist's canonical capability ordering.
+        selected_tools = [
+            tool_name
+
+            for tool_name
+            in trusted_tools
+
+            if tool_name
+            in requested_set
+        ]
+
+    # ============================================================
+    # MODEL-FACING CATALOG
+    # ============================================================
+
+    return [
+        build_capability_spec(
+            tool_name,
+
+            tool_lookup=(
+                tool_lookup
+            ),
+
+            include_arguments=(
+                include_arguments
+            ),
+        )
+
+        for tool_name
+        in selected_tools
+    ]
 
 
 def build_router_agent_spec(

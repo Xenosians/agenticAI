@@ -319,6 +319,7 @@ def test_runtime_captures_exact_pre_generation_provenance(
         supplied_agent,
         *,
         include_arguments,
+        allowed_tools=None,
     ):
 
         assert (
@@ -329,6 +330,11 @@ def test_runtime_captures_exact_pre_generation_provenance(
         assert (
             include_arguments
             is True
+        )
+
+        assert (
+            allowed_tools
+            is None
         )
 
         return (

@@ -423,3 +423,109 @@ def test_duplicate_capability_is_rejected():
                 fake_tool_lookup
             ),
         )
+
+
+# ============================================================
+# CURRENT-TURN CAPABILITY NARROWING
+# ============================================================
+
+
+def test_agent_catalog_can_be_narrowed_for_current_turn():
+
+    catalog = (
+        build_agent_capability_catalog(
+            example_agent(),
+
+            tool_lookup=(
+                fake_tool_lookup
+            ),
+
+            allowed_tools=[
+                "beta_search",
+            ],
+        )
+    )
+
+    assert [
+        item[
+            "name"
+        ]
+
+        for item
+        in catalog
+    ] == [
+        "beta_search",
+    ]
+
+
+def test_agent_catalog_narrowing_preserves_agent_order():
+
+    catalog = (
+        build_agent_capability_catalog(
+            example_agent(),
+
+            tool_lookup=(
+                fake_tool_lookup
+            ),
+
+            allowed_tools=[
+                "beta_search",
+                "alpha_read",
+            ],
+        )
+    )
+
+    assert [
+        item[
+            "name"
+        ]
+
+        for item
+        in catalog
+    ] == [
+        "alpha_read",
+        "beta_search",
+    ]
+
+
+def test_agent_catalog_narrowing_cannot_add_capability():
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "outside agent"
+        ),
+    ):
+
+        build_agent_capability_catalog(
+            example_agent(),
+
+            tool_lookup=(
+                fake_tool_lookup
+            ),
+
+            allowed_tools=[
+                "repo_status",
+            ],
+        )
+
+
+def test_agent_catalog_can_be_narrowed_to_empty_set():
+
+    catalog = (
+        build_agent_capability_catalog(
+            example_agent(),
+
+            tool_lookup=(
+                fake_tool_lookup
+            ),
+
+            allowed_tools=[],
+        )
+    )
+
+    assert (
+        catalog
+        == []
+    )
+
