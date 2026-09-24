@@ -1,9 +1,40 @@
+# Environment / secrets
 .env
 .env.*
 !.env.example
 
+# Python bytecode / tooling
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
-# Durable local runtime state
+# Virtual environments
+.venv/
+venv/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Durable local runtime / learning state
 .runtime/
+
+# Logs
+*.log
+
+# Local model artifacts / checkpoints
+*.pt
+*.pth
+*.bin
+*.safetensors
+
+# Local backup artifacts
+*.bak
+*.bak-*

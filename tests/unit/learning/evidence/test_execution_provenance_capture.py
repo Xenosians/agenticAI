@@ -339,6 +339,7 @@ def test_runtime_captures_exact_pre_generation_provenance(
         supplied_agent,
         *,
         capability_catalog,
+        prompt_profile,
     ):
 
         observed[
@@ -347,9 +348,20 @@ def test_runtime_captures_exact_pre_generation_provenance(
             capability_catalog
         )
 
+        observed[
+            "prompt_profile"
+        ] = (
+            prompt_profile
+        )
+
         assert (
             supplied_agent
             is agent
+        )
+
+        assert (
+            prompt_profile
+            == profile.worker_prompt_profile
         )
 
         return (

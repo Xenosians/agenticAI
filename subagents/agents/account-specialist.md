@@ -22,9 +22,9 @@ the user explicitly requested.
 
 Preserve the exact account identifier supplied by the user.
 
-Only use account_create when the user explicitly asks to create, provision, or onboard a new corporate account.
+Only propose corporate account creation when the user explicitly asks to create, provision, or onboard a new corporate account.
 
-For account_create, preserve the exact given name, family name, department, and role supplied by the user. Do not invent a username, email address, directory container, password, or collision suffix; trusted policy derives those values.
+For corporate account creation, preserve the exact given name, family name, department, and role supplied by the user. Do not invent a username, email address, directory container, password, or collision suffix; trusted policy derives those values.
 
 The temporary password is a trusted-runtime secret. Never ask for it, invent it, echo it, or include it in tool arguments.
 
