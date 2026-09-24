@@ -690,6 +690,13 @@ def _normalize_argument_map(
         values,
     ) in value.items():
 
+        # Hub models sometimes emit JSON null for an optional argument
+        # they did not actually ground in the current request. Omitting
+        # that entry is strictly narrower than accepting a fabricated
+        # value and cannot widen execution authority.
+        if values is None:
+            continue
+
         if not isinstance(
             argument_name,
             str,

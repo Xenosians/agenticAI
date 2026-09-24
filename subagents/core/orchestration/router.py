@@ -14,6 +14,10 @@ from subagents.core.definitions.types import (
     SpecialistRequest,
 )
 
+from subagents.core.orchestration.conversation_context import (
+    conversation_messages,
+)
+
 from subagents.core.orchestration.condition_contract import (
     parse_result_condition,
 )
@@ -196,6 +200,8 @@ class LLMRouter:
     async def route_with_repair(
         self,
         user_request: str,
+        *,
+        context: list[dict[str, str]] | None = None,
     ) -> list[
         SpecialistRequest
     ]:
@@ -224,7 +230,8 @@ class LLMRouter:
 
             return (
                 await self.route(
-                    user_request
+                    user_request,
+                    context=context,
                 )
             )
 
@@ -249,6 +256,8 @@ class LLMRouter:
                 await self.route(
                     user_request,
 
+                    context=context,
+
                     repair_mode=True,
 
                     include_workflow_protocol=False,
@@ -266,6 +275,7 @@ class LLMRouter:
         self,
         user_request: str,
         *,
+        context: list[dict[str, str]] | None = None,
         repair_mode: bool = False,
         include_workflow_protocol: bool = True,
         repair_error: (
@@ -275,29 +285,33 @@ class LLMRouter:
         SpecialistRequest
     ]:
 
+        context_messages = (
+            conversation_messages(
+                context,
+                max_turns=24,
+            )
+        )
+
+        system_content = (
+            self._build_system_prompt(
+                repair_mode=(
+                    repair_mode
+                ),
+                include_workflow_protocol=(
+                    include_workflow_protocol
+                ),
+            )
+        )
+
         messages = [
             {
-                "role":
-                    "system",
-
-                "content":
-                    self._build_system_prompt(
-                        repair_mode=(
-                            repair_mode
-                        ),
-
-                        include_workflow_protocol=(
-                            include_workflow_protocol
-                        ),
-                    ),
+                "role": "system",
+                "content": system_content,
             },
-
+            *context_messages,
             {
-                "role":
-                    "user",
-
-                "content":
-                    user_request,
+                "role": "user",
+                "content": user_request,
             },
         ]
 

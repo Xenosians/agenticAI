@@ -8,6 +8,10 @@ from config import (
     get_settings,
 )
 
+from subagents.core.orchestration.conversation_context import (
+    conversation_messages,
+)
+
 from subagents.core.definitions.types import (
     AgentResult,
 )
@@ -120,6 +124,8 @@ class PrimaryAssistant:
     async def respond(
         self,
         user_request: str,
+        *,
+        context: list[dict[str, str]] | None = None,
     ) -> str:
         messages = [
             {
@@ -129,6 +135,11 @@ class PrimaryAssistant:
                 "content":
                     self.system_prompt,
             },
+
+            *conversation_messages(
+                context,
+                max_turns=24,
+            ),
 
             {
                 "role":
@@ -163,6 +174,8 @@ class PrimaryAssistant:
         results: list[
             AgentResult
         ],
+        *,
+        context: list[dict[str, str]] | None = None,
     ) -> str:
         """
         Produce the final Main-LLM answer from successful
@@ -188,6 +201,11 @@ class PrimaryAssistant:
                 "content":
                     self.system_prompt,
             },
+
+            *conversation_messages(
+                context,
+                max_turns=24,
+            ),
 
             {
                 "role":

@@ -602,4 +602,10 @@ ToolGateway
 MCP / Directory infrastructure
 ```
 
+```text
+https://www.srajdev.com/p/a-deep-dive-into-llm-post-training
+
+https://www.marktechpost.com/2023/11/26/how-to-train-your-llm-efficiently-best-practices-for-small-scale-implementation/
+```
+
 This service split is intentionally deferred until the core hub/worker runtime is stable.

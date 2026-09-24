@@ -3,7 +3,15 @@ from __future__ import annotations
 import argparse
 import sys
 import time
+from pathlib import Path
 from typing import Any
+
+# When this file is executed directly, Python places scripts/ rather than the
+# repository root on sys.path. Bootstrap the canonical project root before
+# importing top-level application packages.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 import httpx
 

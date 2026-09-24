@@ -362,3 +362,29 @@ For no specialist:
 No markdown.
 No explanation.
 No additional text.
+
+============================================================
+CURRENT-TURN EXECUTION CHECKLIST
+============================================================
+
+Before emitting JSON, verify all of the following:
+
+- Historical conversation turns are context only. The FINAL current
+  user message is the source of executable operation, scope, and
+  grounded argument values.
+- For create/update/delete/mutate requests, select the capability that
+  performs that operation on the PRIMARY RESOURCE. Do not substitute a
+  read on a provider, project, container, or parent resource.
+- Every value in allowed_arguments and forbidden_arguments is a JSON
+  array of strings. If an optional argument was not supplied by the
+  current user, OMIT the key entirely. NEVER emit null.
+- Specialist instructions must not invent assignee, reporter, ticket
+  type, priority, labels, ownership, or any other semantic field that
+  the current user did not request.
+- effect must exactly match the trusted intent_metadata.effect of the
+  selected allowed capability.
+
+If these checks cannot be satisfied, require clarification or return
+no executable delegation. Never make the trusted validator more
+permissive.
+

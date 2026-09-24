@@ -56,6 +56,10 @@ from config import (
     Settings,
 )
 
+from subagents.core.orchestration.conversation_context import (
+    normalize_conversation_context,
+)
+
 from subagents.core.tooling.gateway import (
     ToolGateway,
 )
@@ -94,6 +98,18 @@ class AgentRunRequest(
     )
 
 
+class ConversationTurn(
+    BaseModel
+):
+    role: str = Field(
+        pattern="^(user|assistant)$"
+    )
+
+    content: str = Field(
+        min_length=1
+    )
+
+
 class JobExecuteRequest(
     BaseModel
 ):
@@ -111,6 +127,11 @@ class JobExecuteRequest(
 
     message: str = Field(
         min_length=1
+    )
+
+    context: list[ConversationTurn] = Field(
+        default_factory=list,
+        max_length=24,
     )
 
 
@@ -1000,10 +1021,23 @@ async def execute_job(
             f"attempt={payload.attempt}"
         )
 
+        conversation_context = (
+            normalize_conversation_context(
+                [
+                    turn.model_dump()
+                    for turn in payload.context
+                ],
+                max_turns=24,
+            )
+        )
+
         result = (
             await
             runtime.hub.run(
-                payload.message
+                payload.message,
+                context=(
+                    conversation_context
+                ),
             )
         )
 

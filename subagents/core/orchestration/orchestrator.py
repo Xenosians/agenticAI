@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import math
 import uuid
 
@@ -10,6 +11,10 @@ from dataclasses import (
 from learning.evidence.runtime_decisions import (
     attach_hub_runtime_decisions,
     extract_task_runtime_decisions,
+)
+
+from subagents.core.orchestration.conversation_context import (
+    normalize_conversation_context,
 )
 
 from subagents.core.orchestration.router import (
@@ -31,6 +36,45 @@ from subagents.core.definitions.types import (
     HubResult,
     ResultCondition,
 )
+
+
+def _accepts_context_keyword(callback) -> bool:
+    """
+    Return whether a callable explicitly accepts ``context`` or a
+    generic ``**kwargs`` mapping.
+
+    This keeps the production context-aware router/primary assistant
+    compatible with narrow test doubles and legacy implementations
+    whose public methods still accept only the historical arguments.
+    """
+
+    try:
+        signature = inspect.signature(callback)
+    except (TypeError, ValueError):
+        return False
+
+    if "context" in signature.parameters:
+        return True
+
+    return any(
+        parameter.kind
+        is inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )
+
+
+async def _call_with_optional_context(
+    callback,
+    *args,
+    context: list[dict[str, str]],
+):
+    if _accepts_context_keyword(callback):
+        return await callback(
+            *args,
+            context=context,
+        )
+
+    return await callback(*args)
 
 
 class Orchestrator:
@@ -287,7 +331,16 @@ class Orchestrator:
     async def run(
         self,
         user_request: str,
+        *,
+        context: list[dict[str, str]] | None = None,
     ) -> HubResult:
+
+        conversation_context = (
+            normalize_conversation_context(
+                context,
+                max_turns=24,
+            )
+        )
 
         try:
 
@@ -304,16 +357,20 @@ class Orchestrator:
             ):
 
                 delegations = (
-                    await route_with_repair(
-                        user_request
+                    await _call_with_optional_context(
+                        route_with_repair,
+                        user_request,
+                        context=conversation_context,
                     )
                 )
 
             else:
 
                 delegations = (
-                    await self.router.route(
-                        user_request
+                    await _call_with_optional_context(
+                        self.router.route,
+                        user_request,
+                        context=conversation_context,
                     )
                 )
 
@@ -355,9 +412,10 @@ class Orchestrator:
 
             answer = (
                 await
-                self.primary_assistant
-                .respond(
-                    user_request
+                _call_with_optional_context(
+                    self.primary_assistant.respond,
+                    user_request,
+                    context=conversation_context,
                 )
             )
 
@@ -760,10 +818,11 @@ class Orchestrator:
 
                 answer = (
                     await
-                    self.primary_assistant
-                    .synthesize(
+                    _call_with_optional_context(
+                        self.primary_assistant.synthesize,
                         user_request,
                         results,
+                        context=conversation_context,
                     )
                 )
 
