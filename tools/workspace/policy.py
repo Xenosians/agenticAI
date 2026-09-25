@@ -38,6 +38,7 @@ DENIED_NAME_FRAGMENTS = {
 
 
 DENIED_DIRECTORY_NAMES = {
+    ".elixir_ls",
     ".git",
     ".mypy_cache",
     ".pytest_cache",
@@ -45,9 +46,12 @@ DENIED_DIRECTORY_NAMES = {
     ".runtime",
     ".venv",
     "__pycache__",
+    "_build",
     "build",
+    "deps",
     "dist",
     "node_modules",
+    "surreal_data",
     "venv",
 }
 
@@ -72,7 +76,12 @@ def is_sensitive_name(
         return False
 
     if (
-        normalized == ".env"
+        normalized
+        in {
+            ".env",
+            ".envrc",
+            "erl_crash.dump",
+        }
         or normalized.startswith(
             ".env."
         )

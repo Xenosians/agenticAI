@@ -386,3 +386,219 @@ def test_workspace_file_info_blocks_sensitive_path(
     assert result[
         "status"
     ] == "denied"
+
+
+def test_workspace_list_uses_logical_repository(
+    tmp_path,
+    monkeypatch,
+):
+
+    backend = (
+        tmp_path
+        / "backend"
+    )
+
+    backend.mkdir()
+
+    (
+        backend
+        / "mix.exs"
+    ).write_text(
+        "defmodule Demo.MixProject do\nend\n",
+        encoding="utf-8",
+    )
+
+    class Target:
+        name = "backend"
+        path = backend
+
+    def fake_resolve_repository(
+        repository,
+    ):
+        assert (
+            repository
+            == "backend"
+        )
+
+        return Target()
+
+    monkeypatch.setattr(
+        discovery,
+        "resolve_workspace_repository",
+        fake_resolve_repository,
+    )
+
+    result = (
+        discovery.workspace_list(
+            repository="backend"
+        )
+    )
+
+    assert result[
+        "ok"
+    ] is True
+
+    assert result[
+        "repository"
+    ] == "backend"
+
+    assert result[
+        "path"
+    ] == "."
+
+    names = {
+        item[
+            "name"
+        ]
+
+        for item
+        in result[
+            "entries"
+        ]
+    }
+
+    assert (
+        "mix.exs"
+        in names
+    )
+
+
+def test_workspace_tools_expose_logical_repository_contract():
+
+    from tools.registry import (
+        get_tool,
+    )
+
+    for tool_name in [
+        "workspace_read_text",
+        "workspace_list",
+        "workspace_search",
+        "workspace_file_info",
+    ]:
+
+        tool = (
+            get_tool(
+                tool_name
+            )
+        )
+
+        assert tool is not None
+
+        assert (
+            "repository"
+            in tool[
+                "parameters"
+            ]
+        )
+
+        assert (
+            "repository"
+            in tool[
+                "grounded_arguments"
+            ]
+        )
+
+        assert callable(
+            tool.get(
+                "argument_values_resolver"
+            )
+        )
+
+
+def test_workspace_search_grounds_query_and_scope():
+
+    from tools.registry import (
+        get_tool,
+    )
+
+    tool = (
+        get_tool(
+            "workspace_search"
+        )
+    )
+
+    assert tool is not None
+
+    assert set(
+        tool[
+            "grounded_arguments"
+        ]
+    ) == {
+        "repository",
+        "query",
+        "relative_path",
+    }
+
+
+def test_workspace_listing_hides_generated_and_local_env_paths(
+    tmp_path,
+    monkeypatch,
+):
+
+    configure_workspace(
+        monkeypatch,
+        tmp_path,
+    )
+
+    for directory_name in [
+        ".elixir_ls",
+        "_build",
+        "deps",
+        "surreal_data",
+    ]:
+        (
+            tmp_path
+            / directory_name
+        ).mkdir()
+
+    (
+        tmp_path
+        / ".envrc"
+    ).write_text(
+        "SECRET=value\n",
+        encoding="utf-8",
+    )
+
+    (
+        tmp_path
+        / "erl_crash.dump"
+    ).write_text(
+        "runtime state\n",
+        encoding="utf-8",
+    )
+
+    (
+        tmp_path
+        / "README.md"
+    ).write_text(
+        "safe\n",
+        encoding="utf-8",
+    )
+
+    result = (
+        discovery.workspace_list()
+    )
+
+    assert result[
+        "ok"
+    ] is True
+
+    names = {
+        item[
+            "name"
+        ]
+
+        for item
+        in result[
+            "entries"
+        ]
+    }
+
+    assert "README.md" in names
+
+    assert ".elixir_ls" not in names
+    assert "_build" not in names
+    assert "deps" not in names
+    assert "surreal_data" not in names
+    assert ".envrc" not in names
+    assert "erl_crash.dump" not in names

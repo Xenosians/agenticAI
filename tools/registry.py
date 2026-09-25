@@ -54,6 +54,11 @@ from tools.ticketing.catalog import (
     TICKETING_TOOLS,
 )
 
+from tools.workspace.catalog import (
+    WORKSPACE_REPOSITORY_PARAMETER,
+    resolve_workspace_argument_values,
+)
+
 from tools.workspace.presentation import (
     format_workspace_file_info_result,
     format_workspace_list_result,
@@ -342,8 +347,10 @@ TOOLS = {
 
     "workspace_read_text": {
         "description": (
-            "Read one approved UTF-8 text or source file "
-            "from the developer workspace."
+            "Read one approved UTF-8 text or source file from one "
+            "configured logical developer repository. Use "
+            "repository for repository scope and relative_path "
+            "only for a path inside that repository."
         ),
 
         "risk":
@@ -353,20 +360,27 @@ TOOLS = {
             False,
 
         "grounded_arguments": [
+            "repository",
             "relative_path",
         ],
 
         "parameters": {
+            "repository":
+                WORKSPACE_REPOSITORY_PARAMETER,
+
             "relative_path": {
                 "type":
                     "str",
 
                 "description": (
-                    "Exact workspace-relative file path "
-                    "explicitly supplied by the user."
+                    "Exact path inside the selected repository. "
+                    "Do not place a repository identifier here."
                 ),
             },
         },
+
+        "argument_values_resolver":
+            resolve_workspace_argument_values,
 
         "result_formatter":
             format_workspace_read_result,
@@ -374,8 +388,10 @@ TOOLS = {
 
     "workspace_list": {
         "description": (
-            "List direct children of a safe workspace "
-            "directory without invoking a shell."
+            "List direct children of a safe directory in one "
+            "configured logical developer repository. Use "
+            "repository for repository scope. Omit relative_path "
+            "to list the selected repository root."
         ),
 
         "risk":
@@ -384,20 +400,29 @@ TOOLS = {
         "requires_approval":
             False,
 
-        "grounded_arguments":
-            [],
+        "grounded_arguments": [
+            "repository",
+            "relative_path",
+        ],
 
         "parameters": {
+            "repository":
+                WORKSPACE_REPOSITORY_PARAMETER,
+
             "relative_path": {
                 "type":
                     "str",
 
                 "description": (
-                    "Optional workspace-relative directory. "
-                    "Defaults to the workspace root."
+                    "Optional path inside the selected repository. "
+                    "Defaults to that repository root. Do not put "
+                    "the repository identifier in this field."
                 ),
             },
         },
+
+        "argument_values_resolver":
+            resolve_workspace_argument_values,
 
         "result_formatter":
             format_workspace_list_result,
@@ -405,8 +430,10 @@ TOOLS = {
 
     "workspace_search": {
         "description": (
-            "Search approved source/text files recursively "
-            "inside the workspace using a bounded literal query."
+            "Search approved source/text files recursively inside "
+            "one configured logical developer repository. Use "
+            "repository for repository scope and relative_path "
+            "only for an optional directory inside it."
         ),
 
         "risk":
@@ -415,16 +442,23 @@ TOOLS = {
         "requires_approval":
             False,
 
-        "grounded_arguments":
-            [],
+        "grounded_arguments": [
+            "repository",
+            "query",
+            "relative_path",
+        ],
 
         "parameters": {
+            "repository":
+                WORKSPACE_REPOSITORY_PARAMETER,
+
             "query": {
                 "type":
                     "str",
 
                 "description": (
-                    "Literal source/text phrase to search for."
+                    "Exact literal source/text phrase supplied "
+                    "by the user."
                 ),
             },
 
@@ -433,10 +467,13 @@ TOOLS = {
                     "str",
 
                 "description": (
-                    "Optional workspace-relative directory."
+                    "Optional path inside the selected repository."
                 ),
             },
         },
+
+        "argument_values_resolver":
+            resolve_workspace_argument_values,
 
         "result_formatter":
             format_workspace_search_result,
@@ -444,8 +481,9 @@ TOOLS = {
 
     "workspace_file_info": {
         "description": (
-            "Inspect safe metadata for one workspace "
-            "file or directory without reading its contents."
+            "Inspect safe metadata for one file or directory in "
+            "a configured logical developer repository without "
+            "reading file contents."
         ),
 
         "risk":
@@ -454,19 +492,27 @@ TOOLS = {
         "requires_approval":
             False,
 
-        "grounded_arguments":
-            [],
+        "grounded_arguments": [
+            "repository",
+            "relative_path",
+        ],
 
         "parameters": {
+            "repository":
+                WORKSPACE_REPOSITORY_PARAMETER,
+
             "relative_path": {
                 "type":
                     "str",
 
                 "description": (
-                    "Workspace-relative file or directory path."
+                    "Exact path inside the selected repository."
                 ),
             },
         },
+
+        "argument_values_resolver":
+            resolve_workspace_argument_values,
 
         "result_formatter":
             format_workspace_file_info_result,

@@ -7,6 +7,10 @@ from services.process_runner import (
     workspace_root,
 )
 
+from services.workspace_repositories import (
+    resolve_workspace_repository,
+)
+
 from tools.workspace.policy import (
     DENIED_DIRECTORY_NAMES,
     validate_discoverable_path,
@@ -29,13 +33,28 @@ class WorkspacePathError(
 
 def _resolve_workspace_path(
     relative_path: str,
+    repository: (
+        str
+        | None
+    ) = None,
 ) -> tuple[
     Path,
     Path,
+    str | None,
 ]:
     """
-    Resolve a workspace-relative path while preserving the
-    configured workspace as the trust boundary.
+    Resolve one safe path inside either the configured global
+    workspace root or one explicitly selected logical repository.
+
+    Logical repository identifiers such as:
+
+        ai
+        backend
+        frontend
+
+    are resolved through trusted runtime configuration.
+
+    They are never interpreted as relative filesystem paths.
     """
 
     if not isinstance(
@@ -61,8 +80,10 @@ def _resolve_workspace_path(
             "null character."
         )
 
-    requested = Path(
-        relative_path
+    requested = (
+        Path(
+            relative_path
+        )
     )
 
     if requested.is_absolute():
@@ -84,10 +105,39 @@ def _resolve_workspace_path(
             or "Workspace path is not allowed."
         )
 
-    root = (
-        workspace_root()
-        .resolve()
-    )
+    repository_name = None
+
+    if repository is None:
+
+        root = (
+            workspace_root()
+            .resolve()
+        )
+
+    else:
+
+        try:
+            target = (
+                resolve_workspace_repository(
+                    repository
+                )
+            )
+
+        except ValueError as exc:
+            raise WorkspacePathError(
+                str(
+                    exc
+                )
+            ) from exc
+
+        root = (
+            target.path
+            .resolve()
+        )
+
+        repository_name = (
+            target.name
+        )
 
     try:
         candidate = (
@@ -110,7 +160,11 @@ def _resolve_workspace_path(
             "approved workspace."
         )
 
-    return root, candidate
+    return (
+        root,
+        candidate,
+        repository_name,
+    )
 
 
 def _normalized_relative_path(
@@ -153,6 +207,10 @@ def _entry_is_discoverable(
 
 def workspace_list(
     relative_path: str = ".",
+    repository: (
+        str
+        | None
+    ) = None,
 ) -> dict[str, Any]:
     """
     List direct children of one workspace directory.
@@ -165,8 +223,12 @@ def workspace_list(
         (
             root,
             candidate,
+            repository_name,
         ) = _resolve_workspace_path(
-            relative_path
+            relative_path,
+            repository=(
+                repository
+            ),
         )
 
     except WorkspacePathError as exc:
@@ -295,6 +357,9 @@ def workspace_list(
         "ok": True,
         "status": "success",
 
+        "repository":
+            repository_name,
+
         "path":
             _normalized_relative_path(
                 root,
@@ -315,6 +380,10 @@ def workspace_list(
 def workspace_search(
     query: str,
     relative_path: str = ".",
+    repository: (
+        str
+        | None
+    ) = None,
 ) -> dict[str, Any]:
     """
     Search approved UTF-8 source/text files recursively.
@@ -371,8 +440,12 @@ def workspace_search(
         (
             root,
             candidate,
+            repository_name,
         ) = _resolve_workspace_path(
-            relative_path
+            relative_path,
+            repository=(
+                repository
+            ),
         )
 
     except WorkspacePathError as exc:
@@ -583,6 +656,9 @@ def workspace_search(
         "ok": True,
         "status": "success",
 
+        "repository":
+            repository_name,
+
         "query":
             query,
 
@@ -608,6 +684,10 @@ def workspace_search(
 
 def workspace_file_info(
     relative_path: str,
+    repository: (
+        str
+        | None
+    ) = None,
 ) -> dict[str, Any]:
     """
     Return bounded metadata for one workspace path.
@@ -619,8 +699,12 @@ def workspace_file_info(
         (
             root,
             candidate,
+            repository_name,
         ) = _resolve_workspace_path(
-            relative_path
+            relative_path,
+            repository=(
+                repository
+            ),
         )
 
     except WorkspacePathError as exc:
@@ -697,6 +781,9 @@ def workspace_file_info(
     return {
         "ok": True,
         "status": "success",
+
+        "repository":
+            repository_name,
 
         "path":
             normalized_path,

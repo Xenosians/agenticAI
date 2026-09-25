@@ -6,6 +6,10 @@ from services.process_runner import (
     workspace_root,
 )
 
+from services.workspace_repositories import (
+    resolve_workspace_repository,
+)
+
 from tools.workspace.policy import (
     validate_readable_text_path,
 )
@@ -22,6 +26,10 @@ def workspace_mkdir(
     """
     Create one direct-child directory through the governed
     native process runner.
+
+    Logical-repository-aware mutation targeting is introduced in
+    the mutation-specific hardening pass. B2a changes only safe
+    discovery/read operations.
     """
 
     return run_process(
@@ -36,17 +44,93 @@ def workspace_mkdir(
     )
 
 
+def _workspace_root_for_repository(
+    repository: (
+        str
+        | None
+    ),
+) -> tuple[
+    Path | None,
+    str | None,
+    str | None,
+]:
+    """
+    Resolve the trust root for one workspace read.
+
+    Backward compatibility:
+
+        repository is None
+            -> existing PROCESS_WORKSPACE_ROOT behavior
+
+        repository is supplied
+            -> trusted configured logical repository root
+    """
+
+    if repository is None:
+        try:
+            return (
+                workspace_root()
+                .resolve(),
+                None,
+                None,
+            )
+
+        except Exception as exc:
+            return (
+                None,
+                None,
+                str(
+                    exc
+                ),
+            )
+
+    try:
+        target = (
+            resolve_workspace_repository(
+                repository
+            )
+        )
+
+    except ValueError as exc:
+        return (
+            None,
+            None,
+            str(
+                exc
+            ),
+        )
+
+    return (
+        target.path.resolve(),
+        target.name,
+        None,
+    )
+
+
 def workspace_read_text(
     relative_path: str,
+    repository: (
+        str
+        | None
+    ) = None,
 ) -> dict[str, Any]:
     """
-    Read one approved UTF-8 text file from the developer
-    workspace.
+    Read one approved UTF-8 source/text file.
+
+    The optional repository argument is a logical identifier such
+    as:
+
+        ai
+        backend
+        frontend
+
+    Physical repository roots remain trusted configuration.
 
     Security properties:
 
-    - path must be relative
-    - resolved path remains inside PROCESS_WORKSPACE_ROOT
+    - repository root is trusted runtime state
+    - path must be repository/workspace relative
+    - path remains inside the selected trust root
     - directories cannot be read as files
     - only approved source/text formats are allowed
     - sensitive paths are denied
@@ -61,6 +145,8 @@ def workspace_read_text(
         return {
             "ok": False,
             "status": "denied",
+            "repository":
+                repository,
             "error": (
                 "relative_path must be a string."
             ),
@@ -74,6 +160,8 @@ def workspace_read_text(
         return {
             "ok": False,
             "status": "denied",
+            "repository":
+                repository,
             "error": (
                 "relative_path cannot be empty."
             ),
@@ -83,20 +171,26 @@ def workspace_read_text(
         return {
             "ok": False,
             "status": "denied",
+            "repository":
+                repository,
             "error": (
                 "relative_path contains an "
                 "invalid null character."
             ),
         }
 
-    requested = Path(
-        relative_path
+    requested = (
+        Path(
+            relative_path
+        )
     )
 
     if requested.is_absolute():
         return {
             "ok": False,
             "status": "denied",
+            "repository":
+                repository,
             "error": (
                 "Only workspace-relative file "
                 "paths are allowed."
@@ -114,15 +208,29 @@ def workspace_read_text(
         return {
             "ok": False,
             "status": "denied",
-            "error": (
-                policy_error
-            ),
+            "repository":
+                repository,
+            "error":
+                policy_error,
         }
 
-    root = (
-        workspace_root()
-        .resolve()
+    (
+        root,
+        repository_name,
+        root_error,
+    ) = _workspace_root_for_repository(
+        repository
     )
+
+    if root is None:
+        return {
+            "ok": False,
+            "status": "denied",
+            "repository":
+                repository,
+            "error":
+                root_error,
+        }
 
     try:
         candidate = (
@@ -134,6 +242,8 @@ def workspace_read_text(
         return {
             "ok": False,
             "status": "error",
+            "repository":
+                repository_name,
             "error": (
                 "Could not resolve the requested "
                 f"workspace file: {exc}"
@@ -147,9 +257,11 @@ def workspace_read_text(
         return {
             "ok": False,
             "status": "denied",
+            "repository":
+                repository_name,
             "error": (
                 "Requested file is outside the "
-                "approved workspace."
+                "approved repository workspace."
             ),
         }
 
@@ -157,6 +269,8 @@ def workspace_read_text(
         return {
             "ok": False,
             "status": "error",
+            "repository":
+                repository_name,
             "error": (
                 "Requested workspace file "
                 "does not exist."
@@ -167,6 +281,8 @@ def workspace_read_text(
         return {
             "ok": False,
             "status": "error",
+            "repository":
+                repository_name,
             "error": (
                 "Requested workspace path "
                 "is not a file."
@@ -177,6 +293,8 @@ def workspace_read_text(
         return {
             "ok": False,
             "status": "denied",
+            "repository":
+                repository_name,
             "error": (
                 "Symbolic links cannot be read "
                 "through workspace_read_text."
@@ -188,15 +306,20 @@ def workspace_read_text(
             "r",
             encoding="utf-8",
         ) as handle:
-            content = handle.read(
-                MAX_TEXT_READ_CHARS
-                + 1
+
+            content = (
+                handle.read(
+                    MAX_TEXT_READ_CHARS
+                    + 1
+                )
             )
 
     except UnicodeDecodeError:
         return {
             "ok": False,
             "status": "denied",
+            "repository":
+                repository_name,
             "error": (
                 "Requested file is not valid "
                 "UTF-8 text."
@@ -207,6 +330,8 @@ def workspace_read_text(
         return {
             "ok": False,
             "status": "error",
+            "repository":
+                repository_name,
             "error": (
                 "Workspace file read failed: "
                 f"{exc}"
@@ -214,24 +339,33 @@ def workspace_read_text(
         }
 
     truncated = (
-        len(content)
+        len(
+            content
+        )
         > MAX_TEXT_READ_CHARS
     )
 
     if truncated:
-        content = content[
-            :MAX_TEXT_READ_CHARS
-        ]
+        content = (
+            content[
+                :MAX_TEXT_READ_CHARS
+            ]
+        )
 
     normalized_path = (
         candidate
-        .relative_to(root)
+        .relative_to(
+            root
+        )
         .as_posix()
     )
 
     return {
         "ok": True,
         "status": "success",
+
+        "repository":
+            repository_name,
 
         "path":
             normalized_path,
