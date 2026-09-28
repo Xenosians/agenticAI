@@ -367,9 +367,12 @@ JIRA_TOOLS = {
     "jira_project_get": {
         "description": (
             "Retrieve read-only metadata for exactly one Jira PROJECT "
-            "using the exact project ID or project key supplied by "
-            "the user. This retrieves the project itself; it does not "
-            "retrieve a ticket or issue contained by that project."
+            "using the exact project ID or project key supplied by the "
+            "user. Select this only when the PROJECT itself is the primary "
+            "resource being inspected. Do NOT use this to retrieve a ticket or issue, "
+            "or for finding, listing, retrieving, or creating tickets/issues inside "
+            "that project. In those requests the project key is contextual scope "
+            "rather than the primary resource."
         ),
 
         "risk":
@@ -401,11 +404,14 @@ JIRA_TOOLS = {
 
     "jira_project_create": {
         "description": (
-            "Create exactly one Jira project using an exact project "
-            "key, exact project name, and one explicitly requested "
-            "trusted template alias. Trusted policy resolves the "
-            "authenticated project lead and provider-native project "
-            "type/template identifiers. This is a governed mutation."
+            "CREATE exactly one new Jira PROJECT resource using an exact "
+            "project key, exact project name, and one explicitly requested "
+            "trusted template alias. Select this only when the user asks to "
+            "create the PROJECT itself. Do NOT use it when the user asks to "
+            "create a Task, Bug, Story, issue, or ticket inside an existing "
+            "project. Trusted policy resolves the authenticated project lead "
+            "and provider-native project type/template identifiers. This is "
+            "a governed mutation."
         ),
 
         "risk":

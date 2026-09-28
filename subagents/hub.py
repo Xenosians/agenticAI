@@ -232,6 +232,10 @@ def build_hub(
                 settings
                 .hub_router_max_new_tokens
             ),
+
+            model_profile_resolver=(
+                model_manager.model_profile
+            ),
         )
     )
 

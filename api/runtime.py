@@ -120,6 +120,16 @@ class ApplicationRuntime:
         | None
     ) = None
 
+    continuous_learning_service: (
+        object
+        | None
+    ) = None
+
+    continuous_learning_task: (
+        asyncio.Task
+        | None
+    ) = None
+
     ready: bool = False
 
     learning_hooks: (

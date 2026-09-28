@@ -30,6 +30,10 @@ from learning.evidence.quality import (
     derive_trajectory_quality,
 )
 
+from learning.evidence.hub_routing import (
+    record_current_hub_routing_ledger,
+)
+
 from learning.evidence.rewards import (
     derive_execution_reward,
 )
@@ -597,6 +601,53 @@ class TrajectoryRecorder:
         # CONTEXT SECOND
         # ========================================================
 
+        # ========================================================
+        # HUB ROUTING PROVENANCE SECOND
+        #
+        # execute_job awaits hub.run(...) and invokes this recorder
+        # in the same asyncio task. The ContextVar trace therefore
+        # remains request-local and available here.
+        #
+        # The normal trajectory is already durable at this point.
+        # Provenance capture remains observability only and cannot
+        # change the authoritative job result.
+        # ========================================================
+        
+        try:
+        
+            hub_attempt_count = (
+                record_current_hub_routing_ledger(
+                    trajectory_id=(
+                        trajectory.trajectory_id
+                    ),
+                    job_id=(
+                        job_id
+                    ),
+                    job_attempt=(
+                        attempt
+                    ),
+                )
+            )
+        
+            if hub_attempt_count:
+        
+                print(
+                    "[LEARNING] Captured Hub routing provenance "
+                    "trajectory_id="
+                    f"{trajectory.trajectory_id} "
+                    f"attempts={hub_attempt_count}"
+                )
+        
+        except Exception as exc:
+        
+            print(
+                "[LEARNING] Hub routing provenance capture failed "
+                "trajectory_id="
+                f"{trajectory.trajectory_id} "
+                f"error={exc!r}"
+            )
+        
+        
         self._record_context(
             payload
         )

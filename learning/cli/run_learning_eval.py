@@ -232,6 +232,16 @@ def build_parser(
         ),
     )
 
+    parser.add_argument(
+        "--checkpoint-id",
+        default=None,
+        help=(
+            "Evaluate one registered Phase-5 checkpoint "
+            "without promoting it. This override is scoped "
+            "to this evaluation process only."
+        ),
+    )
+
     return parser
 
 
@@ -451,7 +461,14 @@ async def run(
         ModelManager(
             settings=(
                 settings
-            )
+            ),
+            checkpoint_id_override=(
+                args.checkpoint_id
+            ),
+            allow_unpromoted_checkpoint_override=(
+                args.checkpoint_id
+                is not None
+            ),
         )
     )
 

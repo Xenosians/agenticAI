@@ -160,6 +160,105 @@ def trusted_grounded_arguments(
     return normalized
 
 
+def trusted_grounded_argument_descriptions(
+    *,
+    tool_name: str,
+    tool: dict,
+) -> dict[
+    str,
+    str,
+]:
+    """
+    Return trusted descriptions for semantically grounded
+    capability arguments.
+
+    The Hub already receives grounded argument identities.
+
+    Supplying their trusted parameter descriptions gives the
+    routing model enough schema meaning to bind explicitly
+    supplied current-turn values without introducing any
+    domain-specific routing table.
+
+    This metadata remains descriptive only. It does not authorize
+    execution or weaken SemanticGuard exact binding.
+    """
+
+    grounded_arguments = (
+        trusted_grounded_arguments(
+            tool_name=(
+                tool_name
+            ),
+
+            tool=(
+                tool
+            ),
+        )
+    )
+
+    parameters = (
+        tool.get(
+            "parameters",
+            {},
+        )
+    )
+
+    if not isinstance(
+        parameters,
+        dict,
+    ):
+
+        raise ValueError(
+            f"Capability '{tool_name}' has invalid "
+            "parameters metadata."
+        )
+
+    descriptions: dict[
+        str,
+        str,
+    ] = {}
+
+    for argument_name in (
+        grounded_arguments
+    ):
+
+        parameter = (
+            parameters.get(
+                argument_name
+            )
+        )
+
+        if not isinstance(
+            parameter,
+            dict,
+        ):
+
+            continue
+
+        description = (
+            parameter.get(
+                "description"
+            )
+        )
+
+        if (
+            isinstance(
+                description,
+                str,
+            )
+            and description.strip()
+        ):
+
+            descriptions[
+                argument_name
+            ] = (
+                description.strip()
+            )
+
+    return (
+        descriptions
+    )
+
+
 def trusted_condition_fields(
     *,
     tool_name: str,
@@ -549,6 +648,17 @@ def build_router_semantic_agent_spec(
 
             "grounded_arguments":
                 trusted_grounded_arguments(
+                    tool_name=(
+                        tool_name
+                    ),
+
+                    tool=(
+                        tool
+                    ),
+                ),
+
+            "grounded_argument_descriptions":
+                trusted_grounded_argument_descriptions(
                     tool_name=(
                         tool_name
                     ),

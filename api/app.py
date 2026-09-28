@@ -52,6 +52,10 @@ from learning.integrations.approval_execution import (
     capture_approval_execution_evidence,
 )
 
+from learning.continuous.service import (
+    ContinuousLearningService,
+)
+
 from config import (
     Settings,
 )
@@ -1091,6 +1095,19 @@ async def execute_job(
                     f"job_id={job_id}"
                 )
 
+                continual = (
+                    runtime
+                    .continuous_learning_service
+                )
+
+                if isinstance(
+                    continual,
+                    ContinuousLearningService,
+                ):
+                    continual.enqueue_trajectory(
+                        trajectory
+                    )
+
         except Exception as learning_exc:
             print(
                 "[LEARNING] Trajectory capture failed "
@@ -1378,6 +1395,25 @@ async def lifespan(
             )
         )
 
+        runtime.continuous_learning_service = (
+            ContinuousLearningService(
+                runtime=runtime
+            )
+        )
+
+        if (
+            runtime
+            .continuous_learning_service
+            .enabled
+        ):
+            runtime.continuous_learning_task = (
+                asyncio.create_task(
+                    runtime
+                    .continuous_learning_service
+                    .run_forever()
+                )
+            )
+
         runtime.ready = (
             True
         )
@@ -1413,6 +1449,30 @@ async def lifespan(
                 )
 
             runtime.active_jobs.clear()
+
+        if (
+            runtime is not None
+            and runtime.continuous_learning_service
+            is not None
+        ):
+            try:
+                runtime.continuous_learning_service.request_stop()
+            except Exception:
+                pass
+
+        if (
+            runtime is not None
+            and runtime.continuous_learning_task
+            is not None
+        ):
+            runtime.continuous_learning_task.cancel()
+
+            await asyncio.gather(
+                runtime.continuous_learning_task,
+                return_exceptions=True,
+            )
+
+            runtime.continuous_learning_task = None
 
         if (
             runtime is not None

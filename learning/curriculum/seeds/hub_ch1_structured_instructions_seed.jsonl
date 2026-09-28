@@ -1,0 +1,8 @@
+{"chosen_response":"{\"delegations\":[]}","note":"Conversational request: valid Hub contract with no specialist delegation.","rejected_response":"Hello!","user_request":"Hello there."}
+{"chosen_response":"{\"delegations\":[]}","note":"No action requested; preserve the top-level routing object.","rejected_response":"[]","user_request":"Thanks, that's all."}
+{"chosen_response":"{\"delegations\":[]}","note":"Explicit no-tool instruction with strict JSON.","rejected_response":"{\"delegations\":","user_request":"Do not call any tools. This is only a conversational message."}
+{"chosen_response":"{\"delegations\":[]}","note":"Use the exact Hub contract field name.","rejected_response":"{\"routes\":[]}","user_request":"I only want to chat; no ITSM action is requested."}
+{"chosen_response":"{\"delegations\":[]}","note":"delegations must be a list.","rejected_response":"{\"delegations\":null}","user_request":"This is a routing-format check. Take no action."}
+{"chosen_response":"{\"delegations\":[]}","note":"Return raw JSON rather than a Markdown code fence.","rejected_response":"```json\n{\"delegations\":[]}\n```","user_request":"No specialist action is needed for this message."}
+{"chosen_response":"{\"delegations\":[]}","note":"No invented fields and no malformed delegation container.","rejected_response":"{\"delegations\":{},\"note\":\"none\"}","user_request":"Acknowledge this message without invoking an ITSM capability."}
+{"chosen_response":"{\"delegations\":[]}","note":"No-op routing uses an empty delegation list.","rejected_response":"{\"delegations\":[null]}","user_request":"There is nothing to execute here; keep this as a no-op routing decision."}
