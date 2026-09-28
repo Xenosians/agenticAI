@@ -594,3 +594,141 @@ def test_huggingface_reader_uses_isolated_worker(
         .returncode
         == 0
     )
+
+
+def test_permissive_repository_license_is_enforced():
+
+    source = CorpusRegistrySource(
+        source_id="license-test",
+        provider="local",
+        local_path="/tmp/test.jsonl",
+        target_component="developer-specialist",
+        objectives=[
+            "sft"
+        ],
+        trust="curated",
+        enabled=True,
+        training_eligible=True,
+        filters={
+            "languages": [],
+            "include_tasks": [],
+            "exclude_tasks": [],
+            "include_paths": [],
+            "exclude_paths": [],
+            "require_verified_outcome": False,
+            "require_permissive_source_license": True,
+            "deduplicate": True,
+            "secret_scan": True,
+            "benchmark_decontamination": False,
+        },
+        metadata={
+            "adapter":
+                "issue_patch"
+        },
+    )
+
+    record = normalize_source_row(
+        source,
+        index=0,
+        row={
+            "instance_id":
+                "test-1",
+
+            "repo":
+                "owner/repo",
+
+            "base_commit":
+                "abc123",
+
+            "license":
+                "GPL-3.0",
+
+            "problem_statement":
+                "Fix the bug.",
+
+            "patch":
+                "diff --git a/a.py b/a.py",
+        },
+    )
+
+    assert record is not None
+
+    import learning.continual.corpus_materializer as module
+
+    reason = module._filter_reason(
+        source,
+        record,
+        seen_hashes=set(),
+    )
+
+    assert (
+        reason
+        == "repository_license_not_permitted"
+    )
+
+
+def test_repository_identity_is_preserved():
+
+    source = CorpusRegistrySource(
+        source_id="identity-test",
+        provider="local",
+        local_path="/tmp/test.jsonl",
+        target_component="developer-specialist",
+        objectives=[
+            "sft"
+        ],
+        trust="curated",
+        enabled=True,
+        training_eligible=True,
+        metadata={
+            "adapter":
+                "issue_patch"
+        },
+    )
+
+    record = normalize_source_row(
+        source,
+        index=0,
+        row={
+            "instance_id":
+                "repo-task-1",
+
+            "repo":
+                "owner/repo",
+
+            "base_commit":
+                "abcdef",
+
+            "license":
+                "MIT",
+
+            "problem_statement":
+                "Fix the bug.",
+
+            "patch":
+                "diff --git a/a.py b/a.py",
+        },
+    )
+
+    assert record is not None
+
+    assert (
+        record.metadata[
+            "repository"
+        ]
+        == "owner/repo"
+    )
+
+    assert (
+        record.metadata[
+            "base_commit"
+        ]
+        == "abcdef"
+    )
+
+    assert (
+        record.metadata[
+            "repository_license"
+        ]
+        == "MIT"
+    )

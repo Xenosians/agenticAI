@@ -61,7 +61,7 @@
       "provider": "huggingface",
       "dataset_id": "PrimeIntellect/SWE-rebench-V2",
       "subset": null,
-      "revision": null,
+      "revision": "8851474cc41be8bce981362d1363d9f92e247b4b",
       "local_path": null,
       "license": "cc-by-4.0",
       "upstream_url": null,

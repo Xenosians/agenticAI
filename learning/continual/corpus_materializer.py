@@ -28,6 +28,14 @@ from pydantic import (
     model_validator,
 )
 
+from learning.continual.corpus_decontamination import (
+    DEFAULT_DECONTAMINATION_PATH,
+    CorpusDecontaminationPolicy,
+    decontamination_reason,
+    load_decontamination_manifest,
+    policy_sha256,
+)
+
 from learning.continual.corpus_registry import (
     CorpusRegistrySource,
     load_corpus_registry,
@@ -544,6 +552,10 @@ class CorpusSnapshotManifest(
     objectives: list[str]
 
     source_config_sha256: str
+
+    # None preserves compatibility with snapshots created before
+    # decontamination policy hashing was introduced.
+    decontamination_policy_sha256: str | None = None
 
     cursor_start: int
     cursor_end: int
@@ -1211,6 +1223,30 @@ def _record(
 
                 "contamination_group":
                     source.contamination_group,
+
+                "repository":
+                    _first_text(
+                        row,
+                        "repo",
+                        "repository",
+                        "repo_name",
+                    ),
+
+                "base_commit":
+                    _first_text(
+                        row,
+                        "base_commit",
+                        "base_sha",
+                        "commit",
+                    ),
+
+                "repository_license":
+                    _first_text(
+                        row,
+                        "license",
+                        "repository_license",
+                        "repo_license",
+                    ),
             },
     }
 
@@ -1882,6 +1918,10 @@ def _filter_reason(
     record: NormalizedCorpusRecord,
     *,
     seen_hashes: set[str],
+    decontamination_policy: (
+        CorpusDecontaminationPolicy
+        | None
+    ) = None,
 ) -> str | None:
 
     policy = source.filters
@@ -1961,11 +2001,90 @@ def _filter_reason(
     ):
         return "unverified_outcome"
 
+    if (
+        policy.require_permissive_source_license
+    ):
+        repository_license = (
+            record.metadata.get(
+                "repository_license"
+            )
+        )
+
+        if not (
+            isinstance(
+                repository_license,
+                str,
+            )
+            and repository_license.strip()
+        ):
+            return (
+                "repository_license_missing"
+            )
+
+        normalized_license = (
+            repository_license
+            .strip()
+            .lower()
+        )
+
+        permissive_licenses = {
+            "mit",
+            "apache-2.0",
+            "apache 2.0",
+            "bsd-2-clause",
+            "bsd-3-clause",
+            "isc",
+            "unlicense",
+            "cc0-1.0",
+        }
+
+        if (
+            normalized_license
+            not in permissive_licenses
+        ):
+            return (
+                "repository_license_not_permitted"
+            )
+
+    if (
+        policy.benchmark_decontamination
+        and decontamination_policy
+        is not None
+    ):
+        reason = decontamination_reason(
+            policy=(
+                decontamination_policy
+            ),
+            source_record_id=(
+                record.source_record_id
+            ),
+            repository=(
+                record.metadata.get(
+                    "repository"
+                )
+            ),
+            base_commit=(
+                record.metadata.get(
+                    "base_commit"
+                )
+            ),
+            content_sha256=(
+                record.content_sha256
+            ),
+        )
+
+        if reason is not None:
+            return reason
+
     return None
 
 
 def snapshot_training_blockers(
     source: CorpusRegistrySource,
+    *,
+    decontamination_path: Path = (
+        DEFAULT_DECONTAMINATION_PATH
+    ),
 ) -> list[str]:
 
     if source.provider in {
@@ -2003,9 +2122,22 @@ def snapshot_training_blockers(
         source.filters
         .benchmark_decontamination
     ):
-        blockers.append(
-            "benchmark_decontamination_manifest_not_wired"
+        decontamination_manifest = (
+            load_decontamination_manifest(
+                decontamination_path
+            )
         )
+
+        if (
+            decontamination_manifest
+            .policy_for(
+                source.source_id
+            )
+            is None
+        ):
+            blockers.append(
+                "benchmark_decontamination_manifest_not_wired"
+            )
 
     if (
         source.target_component
@@ -2041,6 +2173,9 @@ def materialize_corpus_source(
     cursor_store: CorpusCursorStore | None = None,
     snapshot_root: Path = (
         CORPUS_SNAPSHOT_ROOT
+    ),
+    decontamination_path: Path = (
+        DEFAULT_DECONTAMINATION_PATH
     ),
 ) -> CorpusMaterializationResult:
 
@@ -2088,6 +2223,28 @@ def materialize_corpus_source(
                 "the external corpus materializer."
             )
         )
+
+    decontamination_manifest = (
+        load_decontamination_manifest(
+            decontamination_path
+        )
+    )
+
+    source_decontamination_policy = (
+        decontamination_manifest
+        .policy_for(
+            source.source_id
+        )
+    )
+
+    source_decontamination_sha = (
+        policy_sha256(
+            source_decontamination_policy
+        )
+        if source_decontamination_policy
+        is not None
+        else None
+    )
 
     cursor_store = (
         cursor_store
@@ -2209,6 +2366,9 @@ def materialize_corpus_source(
                 source,
                 record,
                 seen_hashes=seen_hashes,
+                decontamination_policy=(
+                    source_decontamination_policy
+                ),
             )
 
             if reason is not None:
@@ -2311,6 +2471,9 @@ def materialize_corpus_source(
 
         "source_config_sha256":
             source_config_sha,
+
+        "decontamination_policy_sha256":
+            source_decontamination_sha,
     }
 
     snapshot_id = (
@@ -2342,7 +2505,10 @@ def materialize_corpus_source(
 
     blockers = (
         snapshot_training_blockers(
-            source
+            source,
+            decontamination_path=(
+                decontamination_path
+            ),
         )
     )
 
@@ -2380,6 +2546,9 @@ def materialize_corpus_source(
             ],
             source_config_sha256=(
                 source_config_sha
+            ),
+            decontamination_policy_sha256=(
+                source_decontamination_sha
             ),
             cursor_start=cursor_start,
             cursor_end=cursor_end,

@@ -1,0 +1,57 @@
+{
+  "schema": "continual-corpus-decontamination.v1",
+  "policies": [
+    {
+      "source_id": "swe-rebench-v2",
+      "holdout_modulus": 10,
+      "holdout_buckets": [
+        0
+      ],
+      "blocked_instance_ids": [],
+      "blocked_repositories": [],
+      "blocked_repository_commits": [],
+      "metadata": {
+        "purpose": "Reserve deterministic developer held-out examples and block known benchmark identities."
+      }
+    },
+    {
+      "source_id": "swe-zero-openhands",
+      "holdout_modulus": 10,
+      "holdout_buckets": [
+        0
+      ],
+      "blocked_instance_ids": [],
+      "blocked_repositories": [],
+      "blocked_repository_commits": [],
+      "metadata": {
+        "purpose": "Reserved developer trajectory holdout."
+      }
+    },
+    {
+      "source_id": "commitpack",
+      "holdout_modulus": 10,
+      "holdout_buckets": [
+        0
+      ],
+      "blocked_instance_ids": [],
+      "blocked_repositories": [],
+      "blocked_repository_commits": [],
+      "metadata": {
+        "purpose": "Reserved repository-change holdout."
+      }
+    },
+    {
+      "source_id": "themis-code-preference",
+      "holdout_modulus": 10,
+      "holdout_buckets": [
+        0
+      ],
+      "blocked_instance_ids": [],
+      "blocked_repositories": [],
+      "blocked_repository_commits": [],
+      "metadata": {
+        "purpose": "Reserved developer preference holdout."
+      }
+    }
+  ]
+}
