@@ -1,0 +1,473 @@
+{
+  "schema": "continual-corpus-registry.v1",
+  "mix": {
+    "max_external_fraction": 0.5,
+    "target_runtime_fraction": 0.3,
+    "target_replay_fraction": 0.2
+  },
+  "sources": [
+    {
+      "source_id": "swe-zero-openhands",
+      "provider": "huggingface",
+      "dataset_id": "nvidia/SWE-Zero-openhands-trajectories",
+      "subset": null,
+      "revision": null,
+      "local_path": null,
+      "license": "cc-by-4.0",
+      "upstream_url": null,
+      "target_component": "developer-specialist",
+      "audience": [
+        "developer-specialist"
+      ],
+      "objectives": [
+        "sft"
+      ],
+      "trust": "curated",
+      "enabled": false,
+      "training_eligible": true,
+      "evaluation_only": false,
+      "verified_reward": false,
+      "materialization_mode": "stream",
+      "contamination_group": "software-engineering-public",
+      "sampling": {
+        "priority": 80,
+        "max_records_per_cycle": 48,
+        "max_records_per_snapshot": 12000,
+        "replay_weight": 0.2,
+        "max_cycle_fraction": 0.25
+      },
+      "filters": {
+        "languages": [
+          "Python",
+          "JavaScript",
+          "TypeScript",
+          "Shell",
+          "Elixir"
+        ],
+        "include_tasks": [],
+        "exclude_tasks": [],
+        "include_paths": [],
+        "exclude_paths": [],
+        "require_verified_outcome": false,
+        "require_permissive_source_license": true,
+        "deduplicate": true,
+        "secret_scan": true,
+        "benchmark_decontamination": true
+      },
+      "metadata": {}
+    },
+
+    {
+      "source_id": "swe-rebench-v2",
+      "provider": "huggingface",
+      "dataset_id": "PrimeIntellect/SWE-rebench-V2",
+      "subset": null,
+      "revision": null,
+      "local_path": null,
+      "license": "cc-by-4.0",
+      "upstream_url": null,
+      "target_component": "developer-specialist",
+      "audience": [
+        "developer-specialist"
+      ],
+      "objectives": [
+        "sft"
+      ],
+      "trust": "curated",
+      "enabled": false,
+      "training_eligible": true,
+      "evaluation_only": false,
+      "verified_reward": false,
+      "materialization_mode": "stream",
+      "contamination_group": "software-engineering-public",
+      "sampling": {
+        "priority": 90,
+        "max_records_per_cycle": 32,
+        "max_records_per_snapshot": 8000,
+        "replay_weight": 0.25,
+        "max_cycle_fraction": 0.2
+      },
+      "filters": {
+        "languages": [
+          "Python",
+          "JavaScript",
+          "TypeScript",
+          "Elixir"
+        ],
+        "include_tasks": [],
+        "exclude_tasks": [],
+        "include_paths": [],
+        "exclude_paths": [],
+        "require_verified_outcome": true,
+        "require_permissive_source_license": true,
+        "deduplicate": true,
+        "secret_scan": true,
+        "benchmark_decontamination": true
+      },
+      "metadata": {}
+    },
+
+    {
+      "source_id": "commitpack",
+      "provider": "huggingface",
+      "dataset_id": "bigcode/commitpack",
+      "subset": null,
+      "revision": null,
+      "local_path": null,
+      "license": "mit",
+      "upstream_url": null,
+      "target_component": "developer-specialist",
+      "audience": [
+        "developer-specialist"
+      ],
+      "objectives": [
+        "retrieval",
+        "sft"
+      ],
+      "trust": "curated",
+      "enabled": false,
+      "training_eligible": true,
+      "evaluation_only": false,
+      "verified_reward": false,
+      "materialization_mode": "stream",
+      "contamination_group": "github-commits",
+      "sampling": {
+        "priority": 50,
+        "max_records_per_cycle": 16,
+        "max_records_per_snapshot": 10000,
+        "replay_weight": 0.1,
+        "max_cycle_fraction": 0.1
+      },
+      "filters": {
+        "languages": [
+          "Python",
+          "JavaScript",
+          "TypeScript",
+          "Shell",
+          "Elixir",
+          "Nim",
+          "YAML",
+          "Dockerfile"
+        ],
+        "include_tasks": [],
+        "exclude_tasks": [],
+        "include_paths": [],
+        "exclude_paths": [
+          "vendor/",
+          "node_modules/",
+          "dist/",
+          "build/"
+        ],
+        "require_verified_outcome": false,
+        "require_permissive_source_license": true,
+        "deduplicate": true,
+        "secret_scan": true,
+        "benchmark_decontamination": true
+      },
+      "metadata": {}
+    },
+
+    {
+      "source_id": "xlam-function-calling",
+      "provider": "huggingface",
+      "dataset_id": "Salesforce/xlam-function-calling-60k",
+      "subset": null,
+      "revision": null,
+      "local_path": null,
+      "license": "cc-by-4.0",
+      "upstream_url": null,
+      "target_component": "hub",
+      "audience": [
+        "hub"
+      ],
+      "objectives": [
+        "sft"
+      ],
+      "trust": "curated",
+      "enabled": false,
+      "training_eligible": true,
+      "evaluation_only": false,
+      "verified_reward": false,
+      "materialization_mode": "stream",
+      "contamination_group": "function-calling",
+      "sampling": {
+        "priority": 70,
+        "max_records_per_cycle": 24,
+        "max_records_per_snapshot": 5000,
+        "replay_weight": 0.2,
+        "max_cycle_fraction": 0.15
+      },
+      "filters": {
+        "languages": [
+          "English"
+        ],
+        "include_tasks": [],
+        "exclude_tasks": [],
+        "include_paths": [],
+        "exclude_paths": [],
+        "require_verified_outcome": false,
+        "require_permissive_source_license": false,
+        "deduplicate": true,
+        "secret_scan": true,
+        "benchmark_decontamination": true
+      },
+      "metadata": {
+        "requires_upstream_terms_acceptance": true
+      }
+    },
+
+    {
+      "source_id": "jira-issue-writer",
+      "provider": "huggingface",
+      "dataset_id": "fport/issue-writer-tr-en",
+      "subset": "default",
+      "revision": null,
+      "local_path": null,
+      "license": "apache-2.0",
+      "upstream_url": null,
+      "target_component": "jira-specialist",
+      "audience": [
+        "jira-specialist",
+        "hub"
+      ],
+      "objectives": [
+        "sft"
+      ],
+      "trust": "curated",
+      "enabled": false,
+      "training_eligible": true,
+      "evaluation_only": false,
+      "verified_reward": false,
+      "materialization_mode": "stream",
+      "contamination_group": "jira-public",
+      "sampling": {
+        "priority": 90,
+        "max_records_per_cycle": 24,
+        "max_records_per_snapshot": 6000,
+        "replay_weight": 0.25,
+        "max_cycle_fraction": 0.15
+      },
+      "filters": {
+        "languages": [
+          "English"
+        ],
+        "include_tasks": [
+          "draft_issue",
+          "bug_from_log",
+          "classify_type",
+          "improve_ticket",
+          "triage_priority"
+        ],
+        "exclude_tasks": [],
+        "include_paths": [],
+        "exclude_paths": [],
+        "require_verified_outcome": false,
+        "require_permissive_source_license": true,
+        "deduplicate": true,
+        "secret_scan": true,
+        "benchmark_decontamination": true
+      },
+      "metadata": {}
+    },
+
+    {
+      "source_id": "it-support-tickets",
+      "provider": "huggingface",
+      "dataset_id": "tasksource/it-support-tickets",
+      "subset": null,
+      "revision": null,
+      "local_path": null,
+      "license": "cc-by-4.0",
+      "upstream_url": null,
+      "target_component": "ticket-specialist",
+      "audience": [
+        "ticket-specialist",
+        "access-specialist",
+        "account-specialist",
+        "hub"
+      ],
+      "objectives": [
+        "sft"
+      ],
+      "trust": "curated",
+      "enabled": false,
+      "training_eligible": true,
+      "evaluation_only": false,
+      "verified_reward": false,
+      "materialization_mode": "stream",
+      "contamination_group": "itsm-public",
+      "sampling": {
+        "priority": 85,
+        "max_records_per_cycle": 24,
+        "max_records_per_snapshot": 2000,
+        "replay_weight": 0.3,
+        "max_cycle_fraction": 0.15
+      },
+      "filters": {
+        "languages": [
+          "English"
+        ],
+        "include_tasks": [],
+        "exclude_tasks": [],
+        "include_paths": [],
+        "exclude_paths": [],
+        "require_verified_outcome": false,
+        "require_permissive_source_license": true,
+        "deduplicate": true,
+        "secret_scan": true,
+        "benchmark_decontamination": true
+      },
+      "metadata": {}
+    },
+
+    {
+      "source_id": "themis-code-preference",
+      "provider": "huggingface",
+      "dataset_id": "project-themis/Themis-CodePreference",
+      "subset": null,
+      "revision": null,
+      "local_path": null,
+      "license": "apache-2.0",
+      "upstream_url": null,
+      "target_component": "developer-specialist",
+      "audience": [
+        "developer-specialist"
+      ],
+      "objectives": [
+        "dpo"
+      ],
+      "trust": "curated",
+      "enabled": false,
+      "training_eligible": true,
+      "evaluation_only": false,
+      "verified_reward": false,
+      "materialization_mode": "stream",
+      "contamination_group": "code-preference",
+      "sampling": {
+        "priority": 80,
+        "max_records_per_cycle": 32,
+        "max_records_per_snapshot": 10000,
+        "replay_weight": 0.2,
+        "max_cycle_fraction": 0.2
+      },
+      "filters": {
+        "languages": [
+          "Python",
+          "JavaScript"
+        ],
+        "include_tasks": [],
+        "exclude_tasks": [],
+        "include_paths": [],
+        "exclude_paths": [],
+        "require_verified_outcome": false,
+        "require_permissive_source_license": true,
+        "deduplicate": true,
+        "secret_scan": true,
+        "benchmark_decontamination": true
+      },
+      "metadata": {}
+    },
+
+    {
+      "source_id": "helpsteer2",
+      "provider": "huggingface",
+      "dataset_id": "nvidia/HelpSteer2",
+      "subset": null,
+      "revision": null,
+      "local_path": null,
+      "license": "cc-by-4.0",
+      "upstream_url": null,
+      "target_component": "hub",
+      "audience": [
+        "hub"
+      ],
+      "objectives": [
+        "dpo"
+      ],
+      "trust": "curated",
+      "enabled": false,
+      "training_eligible": true,
+      "evaluation_only": false,
+      "verified_reward": false,
+      "materialization_mode": "stream",
+      "contamination_group": "general-preference",
+      "sampling": {
+        "priority": 30,
+        "max_records_per_cycle": 8,
+        "max_records_per_snapshot": 2000,
+        "replay_weight": 0.1,
+        "max_cycle_fraction": 0.05
+      },
+      "filters": {
+        "languages": [
+          "English"
+        ],
+        "include_tasks": [],
+        "exclude_tasks": [],
+        "include_paths": [],
+        "exclude_paths": [],
+        "require_verified_outcome": false,
+        "require_permissive_source_license": true,
+        "deduplicate": true,
+        "secret_scan": true,
+        "benchmark_decontamination": true
+      },
+      "metadata": {}
+    },
+
+    {
+      "source_id": "runtime-user-feedback",
+      "provider": "runtime",
+      "dataset_id": null,
+      "subset": null,
+      "revision": null,
+      "local_path": null,
+      "license": null,
+      "upstream_url": null,
+      "target_component": "dynamic",
+      "audience": [
+        "hub",
+        "developer-specialist",
+        "jira-specialist",
+        "ticket-specialist",
+        "access-specialist",
+        "account-specialist"
+      ],
+      "objectives": [
+        "sft",
+        "dpo",
+        "ppo"
+      ],
+      "trust": "verified",
+      "enabled": true,
+      "training_eligible": true,
+      "evaluation_only": false,
+      "verified_reward": true,
+      "materialization_mode": "runtime",
+      "contamination_group": "runtime-private",
+      "sampling": {
+        "priority": 100,
+        "max_records_per_cycle": 64,
+        "max_records_per_snapshot": 10000,
+        "replay_weight": 0.4,
+        "max_cycle_fraction": 0.5
+      },
+      "filters": {
+        "languages": [],
+        "include_tasks": [],
+        "exclude_tasks": [],
+        "include_paths": [],
+        "exclude_paths": [],
+        "require_verified_outcome": true,
+        "require_permissive_source_license": false,
+        "deduplicate": true,
+        "secret_scan": true,
+        "benchmark_decontamination": true
+      },
+      "metadata": {
+        "raw_user_messages_are_training_eligible": false,
+        "requires_outcome_or_feedback_signal": true
+      }
+    }
+  ]
+}

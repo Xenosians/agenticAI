@@ -83,7 +83,7 @@ class CorpusSource(BaseModel):
     )
 
     schema_name: str = Field(
-        default="continuous-corpus-source.v1",
+        default="continual-corpus-source.v1",
         alias="schema",
     )
 
@@ -117,7 +117,7 @@ class CorpusPage(BaseModel):
     )
 
     schema_name: str = Field(
-        default="continuous-corpus-page.v1",
+        default="continual-corpus-page.v1",
         alias="schema",
     )
 
@@ -180,14 +180,14 @@ class AdaptiveRecipe(BaseModel):
     )
 
 
-class ContinuousCyclePlan(BaseModel):
+class ContinualAutomationCyclePlan(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
         extra="forbid",
     )
 
     schema_name: str = Field(
-        default="continuous-cycle-plan.v1",
+        default="continual-automation-cycle-plan.v1",
         alias="schema",
     )
 
@@ -222,14 +222,14 @@ class ContinuousCyclePlan(BaseModel):
     recipe: AdaptiveRecipe
 
 
-class ContinuousCycleResult(BaseModel):
+class ContinualAutomationCycleResult(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
         extra="forbid",
     )
 
     schema_name: str = Field(
-        default="continuous-cycle-result.v1",
+        default="continual-automation-cycle-result.v1",
         alias="schema",
     )
 

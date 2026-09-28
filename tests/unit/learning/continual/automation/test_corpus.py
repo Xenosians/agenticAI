@@ -2,14 +2,14 @@ import json
 
 from pathlib import Path
 
-from learning.continuous.corpus import (
+from learning.continual.automation.corpus import (
     next_progressive_pages,
     study_split,
 )
-from learning.continuous.store import (
-    ContinuousLearningStore,
+from learning.continual.automation.store import (
+    ContinualAutomationStore,
 )
-from learning.continuous.types import (
+from learning.continual.automation.types import (
     CorpusSource,
 )
 
@@ -38,7 +38,7 @@ def test_text_corpus_advances_one_page_at_a_time(
         encoding="utf-8",
     )
 
-    store = ContinuousLearningStore(
+    store = ContinualAutomationStore(
         tmp_path
         / "state.sqlite3"
     )

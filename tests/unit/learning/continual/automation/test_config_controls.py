@@ -1,12 +1,12 @@
 import pytest
 
-from learning.continuous.config import (
-    ContinuousLearningSettings,
+from learning.continual.automation.config import (
+    ContinualAutomationSettings,
 )
 
 
 def test_stage_defaults_fail_closed():
-    settings = ContinuousLearningSettings()
+    settings = ContinualAutomationSettings()
     assert not settings.enabled
     assert not settings.auto_train
     assert not settings.auto_evaluate
@@ -16,14 +16,14 @@ def test_stage_defaults_fail_closed():
 
 def test_auto_promote_requires_evaluation_and_training():
     with pytest.raises(ValueError, match="AUTO_PROMOTE"):
-        ContinuousLearningSettings(
+        ContinualAutomationSettings(
             auto_promote=True,
             auto_evaluate=False,
             auto_train=True,
         )
 
     with pytest.raises(ValueError, match="AUTO_PROMOTE"):
-        ContinuousLearningSettings(
+        ContinualAutomationSettings(
             auto_promote=True,
             auto_evaluate=True,
             auto_train=False,
@@ -32,7 +32,7 @@ def test_auto_promote_requires_evaluation_and_training():
 
 def test_ppo_requires_training():
     with pytest.raises(ValueError, match="PPO_ENABLED"):
-        ContinuousLearningSettings(
+        ContinualAutomationSettings(
             ppo_enabled=True,
             auto_train=False,
         )

@@ -7,10 +7,10 @@ from config import Settings
 from learning.continual.checkpoints import (
     AdapterCheckpointStore,
 )
-from learning.continuous.guard import (
+from learning.continual.automation.guard import (
     adapt_recipe_from_training_manifest,
 )
-from learning.continuous.types import (
+from learning.continual.automation.types import (
     AdaptiveRecipe,
 )
 from learning.paths import (
@@ -57,7 +57,7 @@ def seed_adapter_directory(
     )
 
 
-def train_continuous_candidate(
+def train_continual_candidate(
     *,
     materialization_directory: Path,
     recipe: AdaptiveRecipe,

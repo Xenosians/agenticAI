@@ -38,7 +38,7 @@ class ContinuousTargetCoverage(BaseModel):
     )
 
 
-def build_continuous_target_coverage(
+def build_continual_target_coverage(
     *,
     hub_model_key: str,
     agent_directory: Path,

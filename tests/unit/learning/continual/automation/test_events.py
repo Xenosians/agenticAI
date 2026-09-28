@@ -1,4 +1,4 @@
-from learning.continuous.events import (
+from learning.continual.automation.events import (
     learning_event_from_trajectory,
 )
 

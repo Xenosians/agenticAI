@@ -1,9 +1,9 @@
 from types import SimpleNamespace
 
-from learning.continuous.guard import (
+from learning.continual.automation.guard import (
     adapt_recipe_from_training_manifest,
 )
-from learning.continuous.types import (
+from learning.continual.automation.types import (
     AdaptiveRecipe,
 )
 

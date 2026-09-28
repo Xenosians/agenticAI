@@ -12,13 +12,13 @@ from learning.paths import (
     RUNTIME_LEARNING_ROOT,
 )
 
-from learning.continuous.types import (
+from learning.continual.automation.types import (
     AdaptiveRecipe,
     CorpusSource,
 )
 
 
-class ContinuousLearningSettings(BaseModel):
+class ContinualAutomationSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
@@ -83,7 +83,7 @@ class ContinuousLearningSettings(BaseModel):
     corpus_sources_path: Path = (
         REPOSITORY_ROOT
         / "config"
-        / "continuous_corpus_sources.json"
+        / "continual_corpus_registry.json"
     )
 
     recipe: AdaptiveRecipe = Field(
@@ -93,7 +93,7 @@ class ContinuousLearningSettings(BaseModel):
     @model_validator(mode="after")
     def validate_stage_controls(
         self,
-    ) -> "ContinuousLearningSettings":
+    ) -> "ContinualAutomationSettings":
         if (
             self.auto_promote
             and not self.auto_evaluate
@@ -146,7 +146,7 @@ class ContinuousLearningSettings(BaseModel):
     @classmethod
     def from_env(
         cls,
-    ) -> "ContinuousLearningSettings":
+    ) -> "ContinualAutomationSettings":
         base = cls()
 
         recipe = AdaptiveRecipe(
@@ -327,7 +327,7 @@ class ContinuousLearningSettings(BaseModel):
 
 
 def load_declared_corpus_sources(
-    settings: ContinuousLearningSettings,
+    settings: ContinualAutomationSettings,
 ) -> list[CorpusSource]:
     path = (
         settings
@@ -350,7 +350,7 @@ def load_declared_corpus_sources(
         list,
     ):
         raise ValueError(
-            "continuous_corpus_sources.json must contain a list."
+            "continual_corpus_registry.json must contain a list."
         )
 
     return [

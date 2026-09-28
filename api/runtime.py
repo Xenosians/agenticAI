@@ -120,12 +120,12 @@ class ApplicationRuntime:
         | None
     ) = None
 
-    continuous_learning_service: (
+    continual_automation_service: (
         object
         | None
     ) = None
 
-    continuous_learning_task: (
+    continual_automation_task: (
         asyncio.Task
         | None
     ) = None

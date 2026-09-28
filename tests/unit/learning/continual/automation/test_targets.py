@@ -1,11 +1,11 @@
 from learning.paths import REPOSITORY_ROOT
-from learning.continuous.targets import (
-    build_continuous_target_coverage,
+from learning.continual.automation.targets import (
+    build_continual_target_coverage,
 )
 
 
 def test_target_coverage_exposes_current_limits():
-    coverage = build_continuous_target_coverage(
+    coverage = build_continual_target_coverage(
         hub_model_key="hub-main",
         agent_directory=REPOSITORY_ROOT / "subagents" / "agents",
     )

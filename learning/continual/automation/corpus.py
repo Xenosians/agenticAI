@@ -15,14 +15,14 @@ from learning.continual.storage import (
     canonical_json,
     sha256_file,
 )
-from learning.continuous.config import (
-    ContinuousLearningSettings,
+from learning.continual.automation.config import (
+    ContinualAutomationSettings,
     load_declared_corpus_sources,
 )
-from learning.continuous.store import (
-    ContinuousLearningStore,
+from learning.continual.automation.store import (
+    ContinualAutomationStore,
 )
-from learning.continuous.types import (
+from learning.continual.automation.types import (
     CorpusPage,
     CorpusSource,
 )
@@ -194,8 +194,8 @@ def discover_semantic_code_sources(
 
 def register_sources(
     *,
-    store: ContinuousLearningStore,
-    settings: ContinuousLearningSettings,
+    store: ContinualAutomationStore,
+    settings: ContinualAutomationSettings,
 ) -> list[CorpusSource]:
     declared = (
         load_declared_corpus_sources(
@@ -632,7 +632,7 @@ def _text_pages(
 
 def next_progressive_pages(
     *,
-    store: ContinuousLearningStore,
+    store: ContinualAutomationStore,
     limit: int,
 ) -> list[CorpusPage]:
     """

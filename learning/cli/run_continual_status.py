@@ -4,14 +4,14 @@ import argparse
 import json
 
 from config import Settings
-from learning.continuous.config import (
-    ContinuousLearningSettings,
+from learning.continual.automation.config import (
+    ContinualAutomationSettings,
 )
-from learning.continuous.store import (
-    ContinuousLearningStore,
+from learning.continual.automation.store import (
+    ContinualAutomationStore,
 )
-from learning.continuous.targets import (
-    build_continuous_target_coverage,
+from learning.continual.automation.targets import (
+    build_continual_target_coverage,
 )
 
 
@@ -38,9 +38,9 @@ def build_snapshot(
     *,
     recover_interrupted: bool = False,
 ) -> dict:
-    continuous = ContinuousLearningSettings.from_env()
+    continuous = ContinualAutomationSettings.from_env()
     app = Settings()
-    store = ContinuousLearningStore(
+    store = ContinualAutomationStore(
         continuous.state_db_path
     )
     store.initialize()
@@ -62,7 +62,7 @@ def build_snapshot(
         )
     )
 
-    coverage = build_continuous_target_coverage(
+    coverage = build_continual_target_coverage(
         hub_model_key=app.hub_model_key,
         agent_directory=app.agents_dir,
     )
@@ -77,7 +77,7 @@ def build_snapshot(
     ]
 
     return {
-        "schema": "continuous-learning-status.v1",
+        "schema": "continual-learning-status.v1",
         "enabled": continuous.enabled,
         "controls": {
             "auto_train": continuous.auto_train,

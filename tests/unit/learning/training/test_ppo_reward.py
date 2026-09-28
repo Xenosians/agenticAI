@@ -1,7 +1,7 @@
 from learning.evaluation.eval_types import (
     EvaluationCase,
 )
-from learning.continuous.ppo_sandbox import (
+from learning.training.ppo import (
     score_router_response,
 )
 from subagents.core.definitions.registry import (

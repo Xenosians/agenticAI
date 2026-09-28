@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from learning.continuous.types import (
+from learning.continual.automation.types import (
     AdaptiveRecipe,
 )
 

@@ -52,8 +52,8 @@ from learning.integrations.approval_execution import (
     capture_approval_execution_evidence,
 )
 
-from learning.continuous.service import (
-    ContinuousLearningService,
+from learning.continual.automation.service import (
+    ContinualAutomationService,
 )
 
 from config import (
@@ -1097,12 +1097,12 @@ async def execute_job(
 
                 continual = (
                     runtime
-                    .continuous_learning_service
+                    .continual_automation_service
                 )
 
                 if isinstance(
                     continual,
-                    ContinuousLearningService,
+                    ContinualAutomationService,
                 ):
                     continual.enqueue_trajectory(
                         trajectory
@@ -1395,21 +1395,21 @@ async def lifespan(
             )
         )
 
-        runtime.continuous_learning_service = (
-            ContinuousLearningService(
+        runtime.continual_automation_service = (
+            ContinualAutomationService(
                 runtime=runtime
             )
         )
 
         if (
             runtime
-            .continuous_learning_service
+            .continual_automation_service
             .enabled
         ):
-            runtime.continuous_learning_task = (
+            runtime.continual_automation_task = (
                 asyncio.create_task(
                     runtime
-                    .continuous_learning_service
+                    .continual_automation_service
                     .run_forever()
                 )
             )
@@ -1452,27 +1452,27 @@ async def lifespan(
 
         if (
             runtime is not None
-            and runtime.continuous_learning_service
+            and runtime.continual_automation_service
             is not None
         ):
             try:
-                runtime.continuous_learning_service.request_stop()
+                runtime.continual_automation_service.request_stop()
             except Exception:
                 pass
 
         if (
             runtime is not None
-            and runtime.continuous_learning_task
+            and runtime.continual_automation_task
             is not None
         ):
-            runtime.continuous_learning_task.cancel()
+            runtime.continual_automation_task.cancel()
 
             await asyncio.gather(
-                runtime.continuous_learning_task,
+                runtime.continual_automation_task,
                 return_exceptions=True,
             )
 
-            runtime.continuous_learning_task = None
+            runtime.continual_automation_task = None
 
         if (
             runtime is not None

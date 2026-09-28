@@ -10,17 +10,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from learning.continuous.types import (
+from learning.continual.automation.types import (
     AdaptiveRecipe,
-    ContinuousCyclePlan,
-    ContinuousCycleResult,
+    ContinualAutomationCyclePlan,
+    ContinualAutomationCycleResult,
     CorpusPage,
     CorpusSource,
     LearningEvent,
 )
 
 
-class ContinuousLearningStore:
+class ContinualAutomationStore:
     """
     Durable local control-plane store.
 
@@ -543,7 +543,7 @@ class ContinuousLearningStore:
                         (cycle_id,),
                     )
 
-                    interrupted = ContinuousCycleResult(
+                    interrupted = ContinualAutomationCycleResult(
                         cycle_id=cycle_id,
                         completed_at=(
                             datetime.now(timezone.utc).isoformat()
@@ -892,7 +892,7 @@ class ContinuousLearningStore:
 
     def save_cycle_plan(
         self,
-        plan: ContinuousCyclePlan,
+        plan: ContinualAutomationCyclePlan,
     ) -> None:
         with self._connect() as conn:
             conn.execute(
@@ -917,7 +917,7 @@ class ContinuousLearningStore:
 
     def save_cycle_result(
         self,
-        result: ContinuousCycleResult,
+        result: ContinualAutomationCycleResult,
     ) -> None:
         with self._connect() as conn:
             conn.execute(

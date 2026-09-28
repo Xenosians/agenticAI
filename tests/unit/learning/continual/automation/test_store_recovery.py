@@ -1,12 +1,12 @@
 from pathlib import Path
 
-from learning.continuous.store import (
-    ContinuousLearningStore,
+from learning.continual.automation.store import (
+    ContinualAutomationStore,
 )
-from learning.continuous.types import (
+from learning.continual.automation.types import (
     AdaptiveRecipe,
-    ContinuousCyclePlan,
-    ContinuousCycleResult,
+    ContinualAutomationCyclePlan,
+    ContinualAutomationCycleResult,
     LearningEvent,
 )
 
@@ -20,8 +20,8 @@ def _event(event_id: str) -> LearningEvent:
     )
 
 
-def _plan(cycle_id: str) -> ContinuousCyclePlan:
-    return ContinuousCyclePlan(
+def _plan(cycle_id: str) -> ContinualAutomationCyclePlan:
+    return ContinualAutomationCyclePlan(
         cycle_id=cycle_id,
         created_at="2026-09-28T00:00:00+00:00",
         event_ids=[],
@@ -30,7 +30,7 @@ def _plan(cycle_id: str) -> ContinuousCyclePlan:
 
 
 def test_restart_quarantines_unknown_claim(tmp_path: Path):
-    store = ContinuousLearningStore(tmp_path / "state.sqlite3")
+    store = ContinualAutomationStore(tmp_path / "state.sqlite3")
     store.initialize()
     assert store.enqueue_event(_event("unknown"))
     assert len(
@@ -50,7 +50,7 @@ def test_restart_quarantines_unknown_claim(tmp_path: Path):
 
 
 def test_restart_releases_proven_no_training_claim(tmp_path: Path):
-    store = ContinuousLearningStore(tmp_path / "state.sqlite3")
+    store = ContinualAutomationStore(tmp_path / "state.sqlite3")
     store.initialize()
     assert store.enqueue_event(_event("blocked"))
     store.claim_events(
@@ -59,7 +59,7 @@ def test_restart_releases_proven_no_training_claim(tmp_path: Path):
     )
     store.save_cycle_plan(_plan("cycle-blocked"))
     store.save_cycle_result(
-        ContinuousCycleResult(
+        ContinualAutomationCycleResult(
             cycle_id="cycle-blocked",
             completed_at="2026-09-28T00:01:00+00:00",
             state="blocked",
@@ -75,7 +75,7 @@ def test_restart_releases_proven_no_training_claim(tmp_path: Path):
 
 
 def test_restart_consumes_proven_candidate_claim(tmp_path: Path):
-    store = ContinuousLearningStore(tmp_path / "state.sqlite3")
+    store = ContinualAutomationStore(tmp_path / "state.sqlite3")
     store.initialize()
     assert store.enqueue_event(_event("trained"))
     store.claim_events(
@@ -84,7 +84,7 @@ def test_restart_consumes_proven_candidate_claim(tmp_path: Path):
     )
     store.save_cycle_plan(_plan("cycle-trained"))
     store.save_cycle_result(
-        ContinuousCycleResult(
+        ContinualAutomationCycleResult(
             cycle_id="cycle-trained",
             completed_at="2026-09-28T00:01:00+00:00",
             state="candidate",

@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from learning.continuous.types import (
+from learning.continual.automation.types import (
     LearningEvent,
 )
 

@@ -4,11 +4,11 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from learning.continuous.config import (
-    ContinuousLearningSettings,
+from learning.continual.automation.config import (
+    ContinualAutomationSettings,
 )
-from learning.continuous.service import (
-    ContinuousLearningService,
+from learning.continual.automation.service import (
+    ContinualAutomationService,
 )
 from learning.paths import REPOSITORY_ROOT
 
@@ -31,7 +31,7 @@ def test_training_disabled_is_collection_only(tmp_path: Path):
         gpu_scheduler=_GpuScheduler(),
     )
 
-    settings = ContinuousLearningSettings(
+    settings = ContinualAutomationSettings(
         enabled=True,
         auto_train=False,
         auto_evaluate=False,
@@ -43,7 +43,7 @@ def test_training_disabled_is_collection_only(tmp_path: Path):
         corpus_sources_path=corpus_sources,
     )
 
-    service = ContinuousLearningService(
+    service = ContinualAutomationService(
         runtime=runtime,
         settings=settings,
     )

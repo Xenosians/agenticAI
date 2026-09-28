@@ -15,47 +15,47 @@ from learning.continual.checkpoints import (
 from learning.continual.controller import (
     ContinualLearningController,
 )
-from learning.continuous.config import (
-    ContinuousLearningSettings,
+from learning.continual.automation.config import (
+    ContinualAutomationSettings,
 )
-from learning.continuous.canary import (
+from learning.continual.automation.canary import (
     CanaryState,
     model_attributable_failure,
     observe_canary_event,
 )
-from learning.continuous.corpus import (
+from learning.continual.automation.corpus import (
     next_progressive_pages,
     register_sources,
 )
-from learning.continuous.dataset_overlay import (
+from learning.continual.automation.dataset_overlay import (
     augment_materialization_with_corpus,
     find_latest_ready_materialization,
 )
-from learning.continuous.evaluation import (
+from learning.continual.automation.evaluation import (
     ensure_baseline_reports,
     evaluate_candidate,
 )
-from learning.continuous.events import (
+from learning.continual.automation.events import (
     learning_event_from_trajectory,
 )
-from learning.continuous.ppo_sandbox import (
+from learning.training.ppo import (
     SandboxPPOSettings,
     run_sandbox_sequence_ppo,
 )
-from learning.continuous.store import (
-    ContinuousLearningStore,
+from learning.continual.automation.store import (
+    ContinualAutomationStore,
 )
-from learning.continuous.targets import (
-    build_continuous_target_coverage,
+from learning.continual.automation.targets import (
+    build_continual_target_coverage,
 )
-from learning.continuous.trainer import (
+from learning.continual.automation.trainer import (
     seed_adapter_directory,
-    train_continuous_candidate,
+    train_continual_candidate,
     update_recipe,
 )
-from learning.continuous.types import (
-    ContinuousCyclePlan,
-    ContinuousCycleResult,
+from learning.continual.automation.types import (
+    ContinualAutomationCyclePlan,
+    ContinualAutomationCycleResult,
 )
 from learning.paths import (
     RUNTIME_LEARNING_ROOT,
@@ -74,7 +74,7 @@ def _utc_now() -> str:
     ).isoformat()
 
 
-class ContinuousLearningService:
+class ContinualAutomationService:
     """
     Long-running Phase-5.6 control plane.
 
@@ -99,18 +99,18 @@ class ContinuousLearningService:
         self,
         *,
         runtime,
-        settings: ContinuousLearningSettings | None = None,
+        settings: ContinualAutomationSettings | None = None,
     ) -> None:
         self.runtime = runtime
 
         self.settings = (
             settings
-            or ContinuousLearningSettings
+            or ContinualAutomationSettings
             .from_env()
         )
 
         self.store = (
-            ContinuousLearningStore(
+            ContinualAutomationStore(
                 self.settings
                 .state_db_path
             )
@@ -124,7 +124,7 @@ class ContinuousLearningService:
         )
 
         self._target_coverage = (
-            build_continuous_target_coverage(
+            build_continual_target_coverage(
                 hub_model_key=(
                     self.runtime
                     .settings
@@ -402,7 +402,7 @@ class ContinuousLearningService:
         self,
     ) -> str:
         return (
-            "continuous-cycle-"
+            "continual-cycle-"
             + uuid.uuid4().hex
         )
 
@@ -574,7 +574,7 @@ class ContinuousLearningService:
             self.runtime.model_manager.unload_all()
 
             return (
-                train_continuous_candidate(
+                train_continual_candidate(
                     materialization_directory=(
                         materialization_directory
                     ),
@@ -702,7 +702,7 @@ class ContinuousLearningService:
 
     async def run_cycle(
         self,
-    ) -> ContinuousCycleResult | None:
+    ) -> ContinualAutomationCycleResult | None:
         if not self.enabled:
             return None
 
@@ -780,7 +780,7 @@ class ContinuousLearningService:
         else:
             stages.append("evaluation_disabled")
 
-        plan = ContinuousCyclePlan(
+        plan = ContinualAutomationCyclePlan(
             cycle_id=cycle_id,
             created_at=_utc_now(),
             event_ids=[
@@ -1000,7 +1000,7 @@ class ContinuousLearningService:
                     )
                 )
 
-            result = ContinuousCycleResult(
+            result = ContinualAutomationCycleResult(
                 cycle_id=cycle_id,
                 completed_at=_utc_now(),
                 state=state,
@@ -1059,7 +1059,7 @@ class ContinuousLearningService:
                 and not training_executed
             )
 
-            result = ContinuousCycleResult(
+            result = ContinualAutomationCycleResult(
                 cycle_id=cycle_id,
                 completed_at=_utc_now(),
                 state="failed",

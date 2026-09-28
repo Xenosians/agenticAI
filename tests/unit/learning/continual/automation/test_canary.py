@@ -1,4 +1,4 @@
-from learning.continuous.canary import (
+from learning.continual.automation.canary import (
     CanaryState,
     model_attributable_failure,
     observe_canary_event,

@@ -1,9 +1,9 @@
 from pathlib import Path
 
-from learning.continuous.store import (
-    ContinuousLearningStore,
+from learning.continual.automation.store import (
+    ContinualAutomationStore,
 )
-from learning.continuous.types import (
+from learning.continual.automation.types import (
     LearningEvent,
 )
 
@@ -28,7 +28,7 @@ def _event(
 def test_event_queue_is_durable_and_deduplicated(
     tmp_path: Path,
 ):
-    store = ContinuousLearningStore(
+    store = ContinualAutomationStore(
         tmp_path
         / "state.sqlite3"
     )

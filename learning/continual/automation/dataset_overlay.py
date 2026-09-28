@@ -21,15 +21,15 @@ from learning.training.phase5_materializer import (
     Phase5MaterializationManifest,
     Phase5SftRecord,
 )
-from learning.continuous.corpus import (
+from learning.continual.automation.corpus import (
     study_split,
 )
-from learning.continuous.types import (
+from learning.continual.automation.types import (
     CorpusPage,
 )
 
 
-DEFAULT_CONTINUOUS_MATERIALIZATION_ROOT = (
+DEFAULT_CONTINUAL_AUTOMATION_MATERIALIZATION_ROOT = (
     RUNTIME_LEARNING_ROOT
     / "continuous"
     / "materialized"
@@ -234,7 +234,7 @@ def augment_materialization_with_corpus(
     cycle_id: str,
     pages: list[CorpusPage],
     output_root: Path = (
-        DEFAULT_CONTINUOUS_MATERIALIZATION_ROOT
+        DEFAULT_CONTINUAL_AUTOMATION_MATERIALIZATION_ROOT
     ),
 ) -> Path:
     """
