@@ -56,7 +56,6 @@
       },
       "metadata": {}
     },
-
     {
       "source_id": "swe-rebench-v2",
       "provider": "huggingface",
@@ -74,7 +73,7 @@
         "sft"
       ],
       "trust": "curated",
-      "enabled": false,
+      "enabled": true,
       "training_eligible": true,
       "evaluation_only": false,
       "verified_reward": false,
@@ -106,7 +105,6 @@
       },
       "metadata": {}
     },
-
     {
       "source_id": "commitpack",
       "provider": "huggingface",
@@ -166,7 +164,6 @@
       },
       "metadata": {}
     },
-
     {
       "source_id": "xlam-function-calling",
       "provider": "huggingface",
@@ -215,7 +212,6 @@
         "requires_upstream_terms_acceptance": true
       }
     },
-
     {
       "source_id": "jira-issue-writer",
       "provider": "huggingface",
@@ -269,7 +265,6 @@
       },
       "metadata": {}
     },
-
     {
       "source_id": "it-support-tickets",
       "provider": "huggingface",
@@ -319,7 +314,6 @@
       },
       "metadata": {}
     },
-
     {
       "source_id": "themis-code-preference",
       "provider": "huggingface",
@@ -367,7 +361,6 @@
       },
       "metadata": {}
     },
-
     {
       "source_id": "helpsteer2",
       "provider": "huggingface",
@@ -414,7 +407,6 @@
       },
       "metadata": {}
     },
-
     {
       "source_id": "runtime-user-feedback",
       "provider": "runtime",
