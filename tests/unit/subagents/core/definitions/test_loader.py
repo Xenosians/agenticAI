@@ -64,6 +64,7 @@ def test_load_real_account_specialist():
     assert set(
         agent.tools
     ) == {
+        "account_create",
         "account_status",
         "unlock_user",
         "reset_password",

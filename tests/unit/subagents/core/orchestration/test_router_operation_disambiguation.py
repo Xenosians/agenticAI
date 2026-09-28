@@ -188,6 +188,92 @@ def test_hub_prompt_uses_generic_operation_preservation():
     )
 
 
+def test_router_spec_exposes_trusted_grounded_argument_descriptions():
+
+    agent = (
+        load_agent_definition(
+            "subagents/agents/jira-specialist.md"
+        )
+    )
+
+    spec = (
+        build_router_semantic_agent_spec(
+            agent
+        )
+    )
+
+    capabilities = {
+        capability[
+            "name"
+        ]:
+            capability
+
+        for capability
+        in spec[
+            "capabilities"
+        ]
+    }
+
+    metadata = (
+        capabilities[
+            "ticket_create"
+        ][
+            "intent_metadata"
+        ]
+    )
+
+    descriptions = (
+        metadata[
+            "grounded_argument_descriptions"
+        ]
+    )
+
+    assert set(
+        descriptions
+    ) == {
+        "project_key",
+        "summary",
+        "ticket_type",
+    }
+
+    assert (
+        "ticket type"
+        in descriptions[
+            "ticket_type"
+        ].lower()
+    )
+
+
+def test_hub_prompt_requires_binding_explicit_grounded_values():
+
+    prompt = (
+        load_prompt(
+            "hub_router.txt"
+        )
+    )
+
+    normalized = (
+        " ".join(
+            prompt.split()
+        )
+    )
+
+    assert (
+        "grounded_argument_descriptions"
+        in normalized
+    )
+
+    assert (
+        "explicitly supplies a concrete value"
+        in normalized
+    )
+
+    assert (
+        "Do not omit an explicitly supplied grounded value"
+        in normalized
+    )
+
+
 def test_generic_hub_templates_do_not_hardcode_registered_capability_names():
 
     templates = [

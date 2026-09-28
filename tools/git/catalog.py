@@ -235,10 +235,11 @@ def format_git_stage_files_result(
 GIT_TOOLS = {
     "workspace_git_status": {
         "description": (
-            "Inspect the current branch and complete working-tree "
-            "state of one configured logical Git repository, "
-            "including staged, unstaged, untracked, and conflicted "
-            "files."
+            "Inspect the CURRENT overall Git STATUS/state of one configured "
+            "logical repository: current branch plus staged, unstaged, "
+            "untracked, and conflicted files. Use this for requests asking "
+            "for repository status/state. Do NOT substitute commit history, "
+            "branch listing, patch diff, or changed-file-only views."
         ),
 
         "risk":
@@ -268,8 +269,11 @@ GIT_TOOLS = {
 
     "workspace_git_branches": {
         "description": (
-            "List local Git branches and identify the current "
-            "branch for one configured logical repository."
+            "LIST existing LOCAL Git branches and identify the current "
+            "branch for one configured logical repository. This is a "
+            "read-only branch listing operation. Do NOT use it to create "
+            "a branch, switch branches, inspect commit history, or report "
+            "the complete working-tree status."
         ),
 
         "risk":
@@ -299,8 +303,10 @@ GIT_TOOLS = {
 
     "workspace_git_log": {
         "description": (
-            "Retrieve the bounded recent commit history for "
-            "one configured logical Git repository."
+            "Retrieve bounded RECENT COMMIT HISTORY / Git log for one "
+            "configured logical repository. Use this for requests asking "
+            "for recent commits or history. Do NOT substitute current Git "
+            "status, branch listing, changed-file listing, or diff output."
         ),
 
         "risk":
@@ -330,8 +336,10 @@ GIT_TOOLS = {
 
     "workspace_git_diff": {
         "description": (
-            "Retrieve the bounded current UNSTAGED Git diff for "
-            "one configured logical repository."
+            "Retrieve the bounded current UNSTAGED Git PATCH/DIFF for one "
+            "configured logical repository. Use this only when the user "
+            "asks for unstaged diff/patch contents. Do NOT substitute a "
+            "changed-file name overview, staged diff, status, or history."
         ),
 
         "risk":
@@ -361,9 +369,10 @@ GIT_TOOLS = {
 
     "workspace_git_staged_diff": {
         "description": (
-            "Retrieve the bounded current STAGED Git diff for "
-            "one configured logical repository. Use this for "
-            "changes currently ready to commit."
+            "Retrieve the bounded current STAGED/INDEX Git PATCH/DIFF for "
+            "one configured logical repository. Use this only for patch "
+            "contents already staged and ready to commit. Do NOT substitute "
+            "unstaged diff, changed-file name overview, status, or history."
         ),
 
         "risk":
@@ -393,9 +402,11 @@ GIT_TOOLS = {
 
     "workspace_git_changed_files": {
         "description": (
-            "List all currently changed files in one configured "
-            "logical Git repository, including staged, unstaged, "
-            "untracked, and conflicted files."
+            "LIST the NAMES/overview of all currently changed files in one "
+            "configured logical Git repository, including staged, unstaged, "
+            "untracked, and conflicted files. Use this when the user asks "
+            "which files changed. Do NOT substitute patch/diff contents, "
+            "commit history, branch listing, or the broader status view."
         ),
 
         "risk":

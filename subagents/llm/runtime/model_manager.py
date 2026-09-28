@@ -7,6 +7,10 @@ from config import (
     Settings,
 )
 
+from subagents.llm.runtime.adapter_overlay import (
+    apply_phase5_adapter_overlay,
+)
+
 from subagents.llm.runtime.base import (
     GenerationOutput,
     LLMBackend,
@@ -59,6 +63,10 @@ class ModelManager:
             ModelRegistry
             | None
         ) = None,
+        checkpoint_id_override: (
+            str | None
+        ) = None,
+        allow_unpromoted_checkpoint_override: bool = False,
     ) -> None:
         self.settings = (
             settings
@@ -68,6 +76,14 @@ class ModelManager:
             registry
             if registry is not None
             else ModelRegistry()
+        )
+
+        self.checkpoint_id_override = (
+            checkpoint_id_override
+        )
+
+        self.allow_unpromoted_checkpoint_override = (
+            allow_unpromoted_checkpoint_override
         )
 
         self.residency = (
@@ -153,9 +169,30 @@ class ModelManager:
             f"backend='{profile.backend}'"
         )
 
-        return (
+        backend = (
             build_model_backend(
                 profile
+            )
+        )
+
+        model_path = (
+            profile.model_path
+        )
+
+        if model_path is None:
+            return backend
+
+        return (
+            apply_phase5_adapter_overlay(
+                backend=backend,
+                model_key=model_key,
+                base_model_path=model_path,
+                checkpoint_id_override=(
+                    self.checkpoint_id_override
+                ),
+                allow_unpromoted_override=(
+                    self.allow_unpromoted_checkpoint_override
+                ),
             )
         )
 

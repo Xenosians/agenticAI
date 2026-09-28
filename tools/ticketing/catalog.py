@@ -180,14 +180,16 @@ TICKETING_TOOLS = {
 
     "ticket_search": {
         "description": (
-            "Search for a bounded collection of tickets or issues "
-            "using structured filters such as project, status, "
-            "priority, or text. The returned and primary resources "
-            "are tickets/issues. A project key is only a scope or "
-            "filter on the ticket collection; it does not turn this "
-            "into a project-list operation. Use this when the user "
-            "wants multiple matching tickets rather than one exact "
-            "ticket."
+            "Search or list a bounded collection of TICKETS / ISSUES. "
+            "Use this when the user asks to find, list, search, or show "
+            "multiple tickets/issues, including requests such as tickets "
+            "inside one explicitly named project. Structured filters may "
+            "include project, status, priority, or text. The returned and "
+            "PRIMARY resources are tickets/issues. A project key is only a "
+            "scope or filter on the ticket collection; it does not turn this "
+            "into a project-list operation. Do NOT reinterpret a ticket search "
+            "as project lookup or project listing merely because the project "
+            "key is explicit."
         ),
 
         "risk":
@@ -411,10 +413,14 @@ TICKETING_TOOLS = {
 
     "ticket_create": {
         "description": (
-            "Create exactly one new ticket in an explicitly "
-            "specified project using the exact user-supplied "
-            "summary. An optional ticket type may be supplied "
-            "only when the user explicitly specifies it."
+            "CREATE exactly one new TICKET / ISSUE inside an explicitly "
+            "specified existing project using the exact user-supplied "
+            "summary. If the user says create a Task, Bug, Story, issue, "
+            "or ticket in project X, the PRIMARY resource being created "
+            "is the ticket/issue and project X is its containing scope. "
+            "Do NOT reinterpret this as project creation or project lookup. "
+            "An optional ticket type may be supplied only when the user "
+            "explicitly specifies it."
         ),
 
         "risk":

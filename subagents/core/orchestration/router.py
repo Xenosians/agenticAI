@@ -6,6 +6,14 @@ from config import (
     get_settings,
 )
 
+from learning.evidence.hub_routing import (
+    accept_current_hub_routing_attempt,
+    capture_hub_routing_generation,
+    reject_current_hub_routing_attempt,
+    reset_hub_routing_trace,
+    set_current_hub_routing_parsed_output,
+)
+
 from subagents.core.definitions.registry import (
     AgentRegistry,
 )
@@ -71,6 +79,7 @@ class LLMRouter:
         max_new_tokens: (
             int | None
         ) = None,
+        model_profile_resolver=None,
     ) -> None:
 
         self.registry = (
@@ -87,6 +96,10 @@ class LLMRouter:
 
         self.strict_contract = (
             strict_contract
+        )
+
+        self.model_profile_resolver = (
+            model_profile_resolver
         )
 
         self.max_new_tokens = (
@@ -118,19 +131,25 @@ class LLMRouter:
         *,
         repair_mode: bool = False,
         include_workflow_protocol: bool = True,
+        specialists: (
+            list[dict]
+            | None
+        ) = None,
     ) -> str:
 
-        specialists = [
-            build_router_semantic_agent_spec(
-                agent
-            )
+        if specialists is None:
 
-            for agent
-            in (
-                self.registry
-                .list_agents()
-            )
-        ]
+            specialists = [
+                build_router_semantic_agent_spec(
+                    agent
+                )
+
+                for agent
+                in (
+                    self.registry
+                    .list_agents()
+                )
+            ]
 
         specialists_json = (
             json.dumps(
@@ -188,6 +207,10 @@ class LLMRouter:
         self,
         message: str,
     ) -> None:
+
+        reject_current_hub_routing_attempt(
+            message
+        )
 
         if self.strict_contract:
 
@@ -285,12 +308,28 @@ class LLMRouter:
         SpecialistRequest
     ]:
 
+        if not repair_mode:
+
+            reset_hub_routing_trace()
+
         context_messages = (
             conversation_messages(
                 context,
                 max_turns=24,
             )
         )
+
+        specialists = [
+            build_router_semantic_agent_spec(
+                agent
+            )
+
+            for agent
+            in (
+                self.registry
+                .list_agents()
+            )
+        ]
 
         system_content = (
             self._build_system_prompt(
@@ -299,6 +338,9 @@ class LLMRouter:
                 ),
                 include_workflow_protocol=(
                     include_workflow_protocol
+                ),
+                specialists=(
+                    specialists
                 ),
             )
         )
@@ -372,6 +414,42 @@ class LLMRouter:
             "\n======================"
         )
 
+        capture_hub_routing_generation(
+            model_key=(
+                self.model_key
+            ),
+            model_profile_resolver=(
+                self.model_profile_resolver
+            ),
+            specialists=(
+                specialists
+            ),
+            messages=(
+                messages
+            ),
+            context_messages=(
+                context_messages
+            ),
+            user_request=(
+                user_request
+            ),
+            repair_mode=(
+                repair_mode
+            ),
+            include_workflow_protocol=(
+                include_workflow_protocol
+            ),
+            repair_error=(
+                repair_error
+            ),
+            max_new_tokens=(
+                self.max_new_tokens
+            ),
+            response=(
+                response
+            ),
+        )
+
         try:
 
             parsed = (
@@ -392,6 +470,15 @@ class LLMRouter:
             )
 
             return []
+
+        if isinstance(
+            parsed,
+            dict,
+        ):
+
+            set_current_hub_routing_parsed_output(
+                parsed
+            )
 
         if not isinstance(
             parsed,
@@ -423,6 +510,10 @@ class LLMRouter:
             return []
 
         if not delegations:
+
+            accept_current_hub_routing_attempt(
+                validated_delegation_count=0,
+            )
 
             return []
 
@@ -670,11 +761,17 @@ class LLMRouter:
             and not validated
         ):
 
-            raise (
-                RoutingContractError(
-                    "Hub router produced no executable valid "
-                    "delegation from a non-empty routing result."
-                )
+            self._contract_error(
+                "Hub router produced no executable valid "
+                "delegation from a non-empty routing result."
             )
+
+        accept_current_hub_routing_attempt(
+            validated_delegation_count=(
+                len(
+                    validated
+                )
+            ),
+        )
 
         return validated

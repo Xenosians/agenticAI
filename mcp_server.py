@@ -172,6 +172,11 @@ class WorkspaceReadTextResult(
 ):
     ok: bool
     status: str
+
+    repository: (
+        str
+        | None
+    ) = None
     path: str | None = None
     content: str | None = None
     truncated: bool | None = None
@@ -183,6 +188,11 @@ class WorkspaceListResult(
 ):
     ok: bool
     status: str
+
+    repository: (
+        str
+        | None
+    ) = None
     path: str | None = None
 
     entries: (
@@ -204,6 +214,11 @@ class WorkspaceSearchResult(
 ):
     ok: bool
     status: str
+
+    repository: (
+        str
+        | None
+    ) = None
     query: str | None = None
     path: str | None = None
 
@@ -227,6 +242,11 @@ class WorkspaceFileInfoResult(
 ):
     ok: bool
     status: str
+
+    repository: (
+        str
+        | None
+    ) = None
     path: str | None = None
     name: str | None = None
     type: str | None = None
@@ -554,6 +574,10 @@ def create_mcp_server(
     @server.tool()
     def workspace_read_text(
         relative_path: str,
+        repository: (
+            str
+            | None
+        ) = None,
     ) -> WorkspaceReadTextResult:
 
         return (
@@ -561,7 +585,11 @@ def create_mcp_server(
                 **run_workspace_read_text(
                     relative_path=(
                         relative_path
-                    )
+                    ),
+
+                    repository=(
+                        repository
+                    ),
                 )
             )
         )
@@ -569,6 +597,10 @@ def create_mcp_server(
     @server.tool()
     def workspace_list(
         relative_path: str = ".",
+        repository: (
+            str
+            | None
+        ) = None,
     ) -> WorkspaceListResult:
 
         return (
@@ -576,7 +608,11 @@ def create_mcp_server(
                 **run_workspace_list(
                     relative_path=(
                         relative_path
-                    )
+                    ),
+
+                    repository=(
+                        repository
+                    ),
                 )
             )
         )
@@ -585,6 +621,10 @@ def create_mcp_server(
     def workspace_search(
         query: str,
         relative_path: str = ".",
+        repository: (
+            str
+            | None
+        ) = None,
     ) -> WorkspaceSearchResult:
 
         return (
@@ -597,6 +637,10 @@ def create_mcp_server(
                     relative_path=(
                         relative_path
                     ),
+
+                    repository=(
+                        repository
+                    ),
                 )
             )
         )
@@ -604,6 +648,10 @@ def create_mcp_server(
     @server.tool()
     def workspace_file_info(
         relative_path: str,
+        repository: (
+            str
+            | None
+        ) = None,
     ) -> WorkspaceFileInfoResult:
 
         return (
@@ -611,7 +659,11 @@ def create_mcp_server(
                 **run_workspace_file_info(
                     relative_path=(
                         relative_path
-                    )
+                    ),
+
+                    repository=(
+                        repository
+                    ),
                 )
             )
         )

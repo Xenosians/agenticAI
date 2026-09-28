@@ -257,10 +257,28 @@ class AgentRuntime:
         # CAPABILITY CATALOG
         # ========================================================
 
+        current_turn_allowed_tools = (
+            task
+            .semantic_intent
+            .allowed_tools
+
+            if (
+                task.semantic_intent
+                is not None
+            )
+
+            else None
+        )
+
         capability_catalog = (
             build_agent_capability_catalog(
                 agent,
+
                 include_arguments=True,
+
+                allowed_tools=(
+                    current_turn_allowed_tools
+                ),
             )
         )
 

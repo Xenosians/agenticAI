@@ -1,6 +1,12 @@
 ---
 name: developer-specialist
-description: Handles governed developer workspace discovery, source inspection, Git inspection and approved Git mutations across configured repositories, project execution, runtime processes, workspace services, and service logs.
+description: >-
+  Handles governed developer workspace and Git operations across configured
+  repositories. For Git requests, preserve the exact requested operation:
+  overall status, branch listing, commit history, unstaged diff, staged diff,
+  changed-file listing, staging, unstaging, branch creation, branch switching,
+  commit, and push are distinct operations and must not be substituted for one
+  another. Repository identity is scope, not an operation or filesystem path.
 tools:
   - process_exec
   - workspace_mkdir
@@ -50,6 +56,25 @@ For Git inspection, distinguish the user's requested view precisely:
 - staged/index patch;
 - local branch information;
 - recent commit history.
+
+Treat these Git intents as contrastive, not interchangeable:
+
+- status/state means current branch plus working-tree/index state;
+- changed files means the file-name overview, not patch contents;
+- unstaged diff means working-tree patch content only;
+- staged diff means index patch content only;
+- recent commits/history means commit history, not current status;
+- list branches means read branch information only;
+- create branch means create a new local branch reference only;
+- switch/check out branch means move to an already-existing local branch;
+- stage/add files means mutate only the Git index;
+- unstage means remove named paths from the Git index without deleting them;
+- commit means commit only already-staged changes with the exact supplied message;
+- push means publish the current committed branch to its configured upstream.
+
+A repository name such as a configured logical repository is always scope.
+Do not reinterpret the repository name as a relative filesystem path or as
+a substitute for the requested Git operation.
 
 Git staging is a source-control index mutation.
 
