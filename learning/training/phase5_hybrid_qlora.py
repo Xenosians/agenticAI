@@ -20,7 +20,10 @@ from learning.continual.storage import (
     load_jsonl_models,
     sha256_file,
 )
-from learning.paths import RUNTIME_LEARNING_ROOT
+from learning.paths import (
+    REPOSITORY_ROOT,
+    RUNTIME_LEARNING_ROOT,
+)
 from learning.training.phase5_contracts import (
     build_hub_training_environment,
     validate_hub_response_contract,
@@ -29,6 +32,10 @@ from learning.training.phase5_materializer import (
     Phase5DpoRecord,
     Phase5MaterializationManifest,
     Phase5SftRecord,
+)
+
+from subagents.core.definitions.loader import (
+    load_agent_directory,
 )
 
 
@@ -130,6 +137,16 @@ class Phase5CheckpointObservation(BaseModel):
         ge=0.0,
         le=1.0,
     )
+
+    evaluation_metric_name: str = (
+        "hub_contract_pass_rate"
+    )
+
+    evaluation_metric_value: (
+        float
+        | None
+    ) = None
+
     score: float
 
 
@@ -152,6 +169,13 @@ class Phase5TrainingRunManifest(BaseModel):
     materialization_manifest_sha256: str
 
     target_model_key: str
+
+    target_component: str = "hub"
+
+    evaluation_contract: str = (
+        "hub_contract"
+    )
+
     base_model_path: str
     base_model_sha256_before: str
     base_model_sha256_after: str
@@ -1214,7 +1238,274 @@ def _best_observation(
     )
 
 
-def train_phase5_hub_adapter(
+
+def _resolve_contract_path(
+    value: str,
+) -> Path:
+
+    path = Path(
+        value
+    ).expanduser()
+
+    if not path.is_absolute():
+
+        path = (
+            REPOSITORY_ROOT
+            / path
+        )
+
+    return path.resolve()
+
+
+def _validate_target_training_environment(
+    *,
+    materialization: Phase5MaterializationManifest,
+    agent_directory: Path,
+):
+
+    if (
+        materialization.evaluation_contract
+        == "hub_contract"
+    ):
+
+        environment = (
+            build_hub_training_environment(
+                agent_directory=(
+                    agent_directory
+                )
+            )
+        )
+
+        if (
+            environment[
+                "system_prompt_sha256"
+            ]
+            != materialization
+            .hub_system_prompt_sha256
+
+            or environment[
+                "capability_catalog_sha256"
+            ]
+            != materialization
+            .hub_capability_catalog_sha256
+
+            or environment[
+                "agent_definitions_sha256"
+            ]
+            != materialization
+            .hub_agent_definitions_sha256
+        ):
+            raise ValueError(
+                "Trusted Hub training environment changed "
+                "after materialization. Re-materialize "
+                "before training."
+            )
+
+        return environment
+
+    if (
+        materialization.evaluation_contract
+        == "developer_sft_loss"
+    ):
+
+        if (
+            materialization.target_component
+            != "developer-specialist"
+        ):
+            raise ValueError(
+                "developer_sft_loss is valid only for "
+                "developer-specialist."
+            )
+
+        if not (
+            materialization
+            .target_contract_path
+
+            and materialization
+            .target_contract_sha256
+        ):
+            raise ValueError(
+                "Developer materialization has no pinned "
+                "specialist contract."
+            )
+
+        agents = load_agent_directory(
+            agent_directory
+        )
+
+        developer = next(
+            (
+                agent
+
+                for agent
+                in agents
+
+                if (
+                    agent.name
+                    == "developer-specialist"
+                )
+            ),
+            None,
+        )
+
+        if developer is None:
+            raise ValueError(
+                "developer-specialist definition is missing."
+            )
+
+        if (
+            developer.model
+            != materialization.target_model_key
+        ):
+            raise ValueError(
+                "Developer model assignment changed after "
+                "materialization."
+            )
+
+        expected_contract_path = (
+            Path(
+                agent_directory
+            )
+            .expanduser()
+            .resolve()
+            / "developer-specialist.md"
+        )
+
+        observed_contract_path = (
+            _resolve_contract_path(
+                materialization
+                .target_contract_path
+            )
+        )
+
+        if (
+            observed_contract_path
+            != expected_contract_path
+        ):
+            raise ValueError(
+                "Developer target contract path changed "
+                "after materialization."
+            )
+
+        observed_sha = sha256_file(
+            observed_contract_path
+        )
+
+        if (
+            observed_sha
+            != materialization
+            .target_contract_sha256
+        ):
+            raise ValueError(
+                "Developer specialist contract changed "
+                "after materialization."
+            )
+
+        return None
+
+    raise ValueError(
+        "Unsupported training evaluation contract: "
+        + materialization.evaluation_contract
+    )
+
+
+def _target_checkpoint_metrics(
+    *,
+    materialization: Phase5MaterializationManifest,
+    loaded,
+    sft_validation,
+    environment,
+    settings: Phase5TrainingSettings,
+    eval_sft_loss: float | None,
+    eval_dpo_loss: float | None,
+) -> tuple[
+    float,
+    str,
+    float,
+    float,
+]:
+
+    if (
+        materialization.evaluation_contract
+        == "hub_contract"
+    ):
+
+        if environment is None:
+            raise RuntimeError(
+                "Hub evaluation environment is missing."
+            )
+
+        contract_rate = (
+            _contract_pass_rate(
+                loaded=loaded,
+                records=(
+                    sft_validation
+                ),
+                registry=(
+                    environment[
+                        "registry"
+                    ]
+                ),
+                settings=settings,
+            )
+        )
+
+        score = _score(
+            contract_pass_rate=(
+                contract_rate
+            ),
+            eval_sft_loss=(
+                eval_sft_loss
+            ),
+            eval_dpo_loss=(
+                eval_dpo_loss
+            ),
+        )
+
+        return (
+            contract_rate,
+            "hub_contract_pass_rate",
+            contract_rate,
+            score,
+        )
+
+    if (
+        materialization.evaluation_contract
+        == "developer_sft_loss"
+    ):
+
+        if eval_sft_loss is None:
+            raise RuntimeError(
+                "Developer SFT candidate has no "
+                "validation loss."
+            )
+
+        # Lower validation loss is better.
+        #
+        # Phase5 best-observation selection maximizes score,
+        # therefore negate the loss.
+        score = (
+            -float(
+                eval_sft_loss
+            )
+        )
+
+        return (
+            0.0,
+            "developer_validation_loss",
+            float(
+                eval_sft_loss
+            ),
+            score,
+        )
+
+    raise ValueError(
+        "Unsupported checkpoint evaluation contract: "
+        + materialization.evaluation_contract
+    )
+
+
+def train_phase5_adapter(
     *,
     materialization_directory: Path,
     settings: Phase5TrainingSettings,
@@ -1255,22 +1546,16 @@ def train_phase5_hub_adapter(
             "Base model changed after materialization."
         )
 
-    environment = build_hub_training_environment(
-        agent_directory=agent_directory
-    )
-
-    if (
-        environment["system_prompt_sha256"]
-        != materialization.hub_system_prompt_sha256
-        or environment["capability_catalog_sha256"]
-        != materialization.hub_capability_catalog_sha256
-        or environment["agent_definitions_sha256"]
-        != materialization.hub_agent_definitions_sha256
-    ):
-        raise ValueError(
-            "Trusted Hub training environment changed after "
-            "materialization. Re-materialize before training."
+    environment = (
+        _validate_target_training_environment(
+            materialization=(
+                materialization
+            ),
+            agent_directory=(
+                agent_directory
+            ),
         )
+    )
 
     run_id = (
         "phase5-train-"
@@ -1367,19 +1652,27 @@ def train_phase5_hub_adapter(
                 )
             )
 
-            contract_rate = (
-                _contract_pass_rate(
-                    loaded=loaded,
-                    records=sft_validation,
-                    registry=environment["registry"],
-                    settings=settings,
-                )
-            )
-
-            score = _score(
-                contract_pass_rate=contract_rate,
-                eval_sft_loss=eval_sft,
-                eval_dpo_loss=eval_dpo,
+            (
+                contract_rate,
+                evaluation_metric_name,
+                evaluation_metric_value,
+                score,
+            ) = _target_checkpoint_metrics(
+                materialization=(
+                    materialization
+                ),
+                loaded=loaded,
+                sft_validation=(
+                    sft_validation
+                ),
+                environment=environment,
+                settings=settings,
+                eval_sft_loss=(
+                    eval_sft
+                ),
+                eval_dpo_loss=(
+                    eval_dpo
+                ),
             )
 
             observation = (
@@ -1391,7 +1684,18 @@ def train_phase5_hub_adapter(
                     train_loss=train_loss,
                     eval_sft_loss=eval_sft,
                     eval_dpo_loss=eval_dpo,
-                    contract_pass_rate=contract_rate,
+                    contract_pass_rate=(
+                        contract_rate
+                    ),
+
+                    evaluation_metric_name=(
+                        evaluation_metric_name
+                    ),
+
+                    evaluation_metric_value=(
+                        evaluation_metric_value
+                    ),
+
                     score=score,
                 )
             )
@@ -1661,15 +1965,44 @@ def train_phase5_hub_adapter(
                 "Base model checkpoint changed during QLoRA training."
             )
 
-        fit_diagnosis = (
-            "overfit_guard_triggered"
-            if early_stopped
-            else (
-                "underfit_suspected"
-                if best.contract_pass_rate < 0.75
-                else "no_guard_signal"
+        if early_stopped:
+
+            fit_diagnosis = (
+                "overfit_guard_triggered"
             )
-        )
+
+        elif (
+            materialization
+            .evaluation_contract
+            == "hub_contract"
+
+            and best
+            .contract_pass_rate
+            < 0.75
+        ):
+
+            fit_diagnosis = (
+                "underfit_suspected"
+            )
+
+        elif (
+            materialization
+            .evaluation_contract
+            == "developer_sft_loss"
+        ):
+
+            # Validation loss can select a candidate checkpoint,
+            # but does NOT constitute the separate developer
+            # held-out evidence needed for promotion.
+            fit_diagnosis = (
+                "developer_candidate_requires_heldout"
+            )
+
+        else:
+
+            fit_diagnosis = (
+                "no_guard_signal"
+            )
 
         checkpoint = (
             AdapterCheckpointStore()
@@ -1682,13 +2015,20 @@ def train_phase5_hub_adapter(
                 source_split_id=(
                     materialization.materialization_id
                 ),
-                target_agent="hub",
+                target_agent=(
+                    materialization
+                    .target_component
+                ),
                 target_model_key=(
                     materialization.target_model_key
                 ),
                 label=(
-                    "Phase-5 curriculum "
-                    + materialization.chapter_id
+                    "Phase-5 "
+                    + materialization
+                    .target_component
+                    + " "
+                    + materialization
+                    .chapter_id
                 ),
             )
         )
@@ -1716,6 +2056,17 @@ def train_phase5_hub_adapter(
             target_model_key=(
                 materialization.target_model_key
             ),
+
+            target_component=(
+                materialization
+                .target_component
+            ),
+
+            evaluation_contract=(
+                materialization
+                .evaluation_contract
+            ),
+
             base_model_path=str(base_model_path),
             base_model_sha256_before=base_before,
             base_model_sha256_after=base_after,
@@ -1771,3 +2122,38 @@ def train_phase5_hub_adapter(
                 torch.cuda.empty_cache()
         except Exception:
             pass
+
+
+
+def train_phase5_hub_adapter(
+    *,
+    materialization_directory: Path,
+    settings: Phase5TrainingSettings,
+    allow_training: bool,
+    backend: str,
+    output_root: Path = DEFAULT_PHASE5_TRAINING_ROOT,
+    agent_directory: Path,
+    seed_adapter_directory: Path | None = None,
+) -> Phase5TrainingRunManifest:
+    """
+    Backwards-compatible Hub entry point.
+
+    Target behavior is now determined by the immutable
+    materialization evaluation_contract. Existing callers remain valid.
+    """
+
+    return train_phase5_adapter(
+        materialization_directory=(
+            materialization_directory
+        ),
+        settings=settings,
+        allow_training=allow_training,
+        backend=backend,
+        output_root=output_root,
+        agent_directory=(
+            agent_directory
+        ),
+        seed_adapter_directory=(
+            seed_adapter_directory
+        ),
+    )

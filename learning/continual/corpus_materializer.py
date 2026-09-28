@@ -2150,12 +2150,31 @@ def snapshot_training_blockers(
             "target_specific_trainer_not_wired"
         )
 
-    # This is deliberate for this checkpoint.
+    developer_sft_bridge_supported = (
+        source.target_component
+        == "developer-specialist"
+
+        and "sft"
+        in source.objectives
+
+        and all(
+            objective
+            == "sft"
+
+            for objective
+            in source.objectives
+        )
+    )
+
+    # Developer SFT now has a candidate-only target-aware bridge.
     #
-    # The existing Phase-5 held-out contract evaluator is Hub-router
-    # specific. External developer/Jira/etc. SFT and DPO material must not
-    # silently enter it until role/objective-specific evaluation exists.
-    if source.training_eligible:
+    # DPO, Hub external corpora, Jira/ITSM and other specialist
+    # objectives remain explicitly blocked until their own bridge
+    # and evaluation contracts are wired.
+    if (
+        source.training_eligible
+        and not developer_sft_bridge_supported
+    ):
 
         blockers.append(
             "objective_specific_optimizer_bridge_not_wired"

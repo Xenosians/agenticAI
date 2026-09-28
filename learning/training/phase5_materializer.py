@@ -140,6 +140,22 @@ class Phase5MaterializationManifest(BaseModel):
     hub_agent_definitions_sha256: str
     curriculum_prompt_sha256: str
 
+    # Target-aware evaluation contract.
+    #
+    # Existing Phase-5 Hub materializations default to the original
+    # strict routing-contract evaluation. External developer corpus
+    # materializations use developer_sft_loss instead.
+    evaluation_contract: Literal[
+        "hub_contract",
+        "developer_sft_loss",
+    ] = "hub_contract"
+
+    # Immutable specialist definition used when materializing a
+    # non-Hub target. The trainer verifies this again immediately
+    # before optimizer execution.
+    target_contract_path: str | None = None
+    target_contract_sha256: str | None = None
+
     source_fingerprint_count: int
     source_fingerprints_verified: bool
 
