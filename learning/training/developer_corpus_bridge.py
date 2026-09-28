@@ -6,6 +6,7 @@ import shutil
 import tempfile
 
 from pathlib import Path
+from typing import Callable
 
 from learning.continual.corpus_materializer import (
     CorpusSnapshotManifest,
@@ -352,6 +353,11 @@ def materialize_developer_sft_snapshot(
     target_model_key: str,
     base_model_path: Path,
     target_contract_path: Path,
+    token_length_resolver: Callable[
+        [NormalizedCorpusRecord],
+        tuple[int, int, int],
+    ],
+    max_sequence_tokens: int = 1024,
     max_records: int = 32,
     output_root: Path = (
         DEFAULT_DEVELOPER_CORPUS_MATERIALIZATION_ROOT
@@ -361,6 +367,11 @@ def materialize_developer_sft_snapshot(
     if max_records < 2:
         raise ValueError(
             "Developer SFT bridge requires at least 2 records."
+        )
+
+    if max_sequence_tokens < 128:
+        raise ValueError(
+            "max_sequence_tokens must be at least 128."
         )
 
     (
@@ -391,18 +402,107 @@ def materialize_developer_sft_snapshot(
         )
     ]
 
-    if len(
-        eligible
-    ) < 2:
-        raise ValueError(
-            "Developer snapshot does not contain enough "
-            "SFT records."
-        )
+    sequence_rejected = {
+        "bridge_sequence_encoding_failed":
+            0,
 
-    selected = sorted(
+        "bridge_prompt_too_long":
+            0,
+
+        "bridge_full_sequence_too_long":
+            0,
+
+        "bridge_no_completion_tokens":
+            0,
+    }
+
+    sequence_eligible = []
+
+    for record in sorted(
         eligible,
         key=_selection_key,
-    )[:max_records]
+    ):
+
+        try:
+            (
+                prompt_tokens,
+                full_tokens,
+                common_prefix_tokens,
+            ) = token_length_resolver(
+                record
+            )
+
+        except Exception:
+            sequence_rejected[
+                "bridge_sequence_encoding_failed"
+            ] += 1
+
+            continue
+
+        if common_prefix_tokens <= 0:
+
+            sequence_rejected[
+                "bridge_sequence_encoding_failed"
+            ] += 1
+
+            continue
+
+        # Match the trainer's real failure condition.
+        if (
+            common_prefix_tokens
+            >= max_sequence_tokens
+        ):
+
+            sequence_rejected[
+                "bridge_prompt_too_long"
+            ] += 1
+
+            continue
+
+        # Never truncate a verified patch.
+        #
+        # Partial diffs are not valid SFT targets.
+        if (
+            full_tokens
+            > max_sequence_tokens
+        ):
+
+            sequence_rejected[
+                "bridge_full_sequence_too_long"
+            ] += 1
+
+            continue
+
+        if (
+            full_tokens
+            <= common_prefix_tokens
+        ):
+
+            sequence_rejected[
+                "bridge_no_completion_tokens"
+            ] += 1
+
+            continue
+
+        sequence_eligible.append(
+            record
+        )
+
+    if len(
+        sequence_eligible
+    ) < 2:
+        raise ValueError(
+            "Developer snapshot contains fewer than two "
+            f"complete examples within {max_sequence_tokens} "
+            "tokens. Materialize more corpus rows instead "
+            "of truncating patches."
+        )
+
+    selected = (
+        sequence_eligible[
+            :max_records
+        ]
+    )
 
     validation_records = [
         record
@@ -510,6 +610,12 @@ def materialize_developer_sft_snapshot(
 
         "target_contract_sha256":
             target_contract_sha,
+
+        "max_sequence_tokens":
+            max_sequence_tokens,
+
+        "sequence_budget_verified":
+            True,
 
         "selected_records":
             [
@@ -727,6 +833,12 @@ def materialize_developer_sft_snapshot(
                     target_contract_sha
                 ),
 
+                sequence_budget_tokens=(
+                    max_sequence_tokens
+                ),
+
+                sequence_budget_verified=True,
+
                 source_fingerprint_count=1,
 
                 source_fingerprints_verified=True,
@@ -771,12 +883,14 @@ def materialize_developer_sft_snapshot(
                     "bridge_unselected":
                         (
                             len(
-                                eligible
+                                sequence_eligible
                             )
                             - len(
                                 selected
                             )
                         ),
+
+                    **sequence_rejected,
                 },
 
                 lineage_isolated=True,

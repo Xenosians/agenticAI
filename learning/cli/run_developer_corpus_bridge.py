@@ -15,6 +15,11 @@ from learning.training.developer_corpus_bridge import (
     materialize_developer_sft_snapshot,
 )
 
+from learning.training.phase5_hybrid_qlora import (
+    _fallback_ids,
+    _template_ids,
+)
+
 from subagents.core.definitions.loader import (
     load_agent_directory,
 )
@@ -74,6 +79,156 @@ def _latest_snapshot(
     )
 
 
+
+def _build_token_length_resolver(
+    *,
+    model_path: Path,
+    backend: str,
+):
+
+    normalized_backend = (
+        backend
+        .strip()
+        .lower()
+    )
+
+    if (
+        normalized_backend
+        == "ministral"
+    ):
+
+        from transformers import (
+            MistralCommonBackend,
+        )
+
+        tokenizer = (
+            MistralCommonBackend
+            .from_pretrained(
+                str(
+                    model_path
+                )
+            )
+        )
+
+    else:
+
+        from transformers import (
+            AutoTokenizer,
+        )
+
+        tokenizer = (
+            AutoTokenizer
+            .from_pretrained(
+                str(
+                    model_path
+                ),
+                local_files_only=True,
+            )
+        )
+
+    def resolve(
+        record,
+    ) -> tuple[
+        int,
+        int,
+        int,
+    ]:
+
+        full_messages = [
+            *record.prompt_messages,
+            {
+                "role":
+                    "assistant",
+
+                "content":
+                    record.chosen,
+            },
+        ]
+
+        try:
+
+            prompt_ids = (
+                _template_ids(
+                    tokenizer,
+                    record.prompt_messages,
+                    add_generation_prompt=True,
+                )
+            )
+
+            full_ids = (
+                _template_ids(
+                    tokenizer,
+                    full_messages,
+                    add_generation_prompt=False,
+                )
+            )
+
+        except Exception:
+
+            prompt_ids = (
+                _fallback_ids(
+                    tokenizer,
+                    record.prompt_messages,
+                    add_generation_prompt=True,
+                )
+            )
+
+            full_ids = (
+                _fallback_ids(
+                    tokenizer,
+                    full_messages,
+                    add_generation_prompt=False,
+                )
+            )
+
+        prompt_ids = (
+            prompt_ids.flatten()
+        )
+
+        full_ids = (
+            full_ids.flatten()
+        )
+
+        common = 0
+
+        limit = min(
+            int(
+                prompt_ids.numel()
+            ),
+            int(
+                full_ids.numel()
+            ),
+        )
+
+        while (
+            common < limit
+            and int(
+                prompt_ids[
+                    common
+                ]
+            )
+            == int(
+                full_ids[
+                    common
+                ]
+            )
+        ):
+
+            common += 1
+
+        return (
+            int(
+                prompt_ids.numel()
+            ),
+            int(
+                full_ids.numel()
+            ),
+            common,
+        )
+
+    return resolve
+
+
 def main() -> int:
 
     parser = argparse.ArgumentParser(
@@ -98,6 +253,12 @@ def main() -> int:
         "--max-records",
         type=int,
         default=32,
+    )
+
+    parser.add_argument(
+        "--max-sequence-tokens",
+        type=int,
+        default=1024,
     )
 
     parser.add_argument(
@@ -141,6 +302,19 @@ def main() -> int:
         / "developer-specialist.md"
     )
 
+    token_length_resolver = (
+        _build_token_length_resolver(
+            model_path=(
+                Path(
+                    profile.model_path
+                )
+            ),
+            backend=(
+                profile.backend
+            ),
+        )
+    )
+
     result = (
         materialize_developer_sft_snapshot(
             snapshot_directory=(
@@ -159,6 +333,14 @@ def main() -> int:
 
             target_contract_path=(
                 target_contract
+            ),
+
+            token_length_resolver=(
+                token_length_resolver
+            ),
+
+            max_sequence_tokens=(
+                args.max_sequence_tokens
             ),
 
             max_records=(

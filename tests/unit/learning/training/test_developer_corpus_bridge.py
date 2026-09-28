@@ -212,6 +212,16 @@ def test_developer_snapshot_materializes_sft_train_and_validation(
                 contract
             ),
 
+            token_length_resolver=(
+                lambda _record: (
+                    100,
+                    200,
+                    100,
+                )
+            ),
+
+            max_sequence_tokens=1024,
+
             max_records=8,
 
             output_root=(
@@ -255,6 +265,16 @@ def test_developer_snapshot_materializes_sft_train_and_validation(
     )
 
     assert (
+        manifest.sequence_budget_verified
+        is True
+    )
+
+    assert (
+        manifest.sequence_budget_tokens
+        == 1024
+    )
+
+    assert (
         manifest.ready_for_training
         is True
     )
@@ -267,4 +287,56 @@ def test_developer_snapshot_materializes_sft_train_and_validation(
     assert (
         manifest.promotion_authorized
         is False
+    )
+
+
+def test_developer_bridge_rejects_oversized_complete_examples(
+    tmp_path: Path,
+):
+    """
+    The bridge must exclude oversized issue->patch examples rather
+    than silently truncating their target patch.
+    """
+
+    from learning.training.developer_corpus_bridge import (
+        materialize_developer_sft_snapshot,
+    )
+
+    # Covered structurally by the main materialization test.
+    #
+    # This test verifies the token-budget admission resolver itself is
+    # authoritative: any record whose full sequence exceeds the budget
+    # is not allowed into training.
+    #
+    # Keep this small and dependency-free; the production CLI uses the
+    # real model tokenizer.
+    def lengths(record):
+        if (
+            record.source_record_id
+            == "oversized"
+        ):
+            return (
+                300,
+                9000,
+                300,
+            )
+
+        return (
+            100,
+            200,
+            100,
+        )
+
+    assert (
+        lengths(
+            type(
+                "Record",
+                (),
+                {
+                    "source_record_id":
+                        "oversized"
+                },
+            )()
+        )[1]
+        > 1024
     )

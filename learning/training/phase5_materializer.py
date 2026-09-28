@@ -156,6 +156,12 @@ class Phase5MaterializationManifest(BaseModel):
     target_contract_path: str | None = None
     target_contract_sha256: str | None = None
 
+    # Token budget verified before GPU/model loading.
+    #
+    # Existing Hub materializations remain backwards-compatible.
+    sequence_budget_tokens: int | None = None
+    sequence_budget_verified: bool = False
+
     source_fingerprint_count: int
     source_fingerprints_verified: bool
 

@@ -1505,6 +1505,53 @@ def _target_checkpoint_metrics(
     )
 
 
+
+def _validate_sequence_budget(
+    *,
+    materialization: Phase5MaterializationManifest,
+    settings: Phase5TrainingSettings,
+) -> None:
+
+    if (
+        materialization
+        .evaluation_contract
+        != "developer_sft_loss"
+    ):
+        return
+
+    if not (
+        materialization
+        .sequence_budget_verified
+    ):
+        raise PermissionError(
+            "Developer materialization has no verified "
+            "sequence budget. Re-materialize the corpus bridge."
+        )
+
+    budget = (
+        materialization
+        .sequence_budget_tokens
+    )
+
+    if (
+        budget is None
+        or budget < 128
+    ):
+        raise ValueError(
+            "Developer materialization sequence budget is invalid."
+        )
+
+    if (
+        settings.max_length
+        < budget
+    ):
+        raise ValueError(
+            "Training max_length is smaller than the "
+            "materialization's verified sequence budget: "
+            f"{settings.max_length} < {budget}."
+        )
+
+
 def train_phase5_adapter(
     *,
     materialization_directory: Path,
@@ -1528,6 +1575,13 @@ def train_phase5_adapter(
         dpo_validation,
     ) = _load_materialization(
         materialization_directory
+    )
+
+    _validate_sequence_budget(
+        materialization=(
+            materialization
+        ),
+        settings=settings,
     )
 
     versions = _installed_versions()
