@@ -362,8 +362,33 @@ def main() -> int:
 
     print()
 
+    if not report.candidate_patch_applied:
+
+        next_gate = (
+            "candidate patch applicability"
+        )
+
+    elif not report.test_patch_applied:
+
+        next_gate = (
+            "hidden test patch applicability"
+        )
+
+    elif not report.test_execution_started:
+
+        next_gate = (
+            "benchmark test execution"
+        )
+
+    else:
+
+        next_gate = (
+            "parse benchmark test transitions"
+        )
+
     print(
-        "Next gate    parse benchmark test transitions"
+        "Next gate    "
+        + next_gate
     )
 
     return 0
