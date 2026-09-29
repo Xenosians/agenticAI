@@ -13,6 +13,10 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from config.path_portability import (
+    resolve_portable_path,
+)
+
 from learning.continual.checkpoints import AdapterCheckpointStore
 from learning.continual.storage import (
     fingerprint_directory,
@@ -301,7 +305,10 @@ def _load_materialization(
     list[Phase5DpoRecord],
 ]:
     directory = (
-        directory.expanduser().resolve()
+        resolve_portable_path(
+            directory,
+            base=REPOSITORY_ROOT,
+        )
     )
 
     manifest_path = (
@@ -631,9 +638,10 @@ def _load_model(
 
     if seed_adapter_directory is not None:
         seed_adapter_directory = (
-            seed_adapter_directory
-            .expanduser()
-            .resolve()
+            resolve_portable_path(
+                seed_adapter_directory,
+                base=REPOSITORY_ROOT,
+            )
         )
 
         if not seed_adapter_directory.is_dir():
@@ -1290,18 +1298,10 @@ def _resolve_contract_path(
     value: str,
 ) -> Path:
 
-    path = Path(
-        value
-    ).expanduser()
-
-    if not path.is_absolute():
-
-        path = (
-            REPOSITORY_ROOT
-            / path
-        )
-
-    return path.resolve()
+    return resolve_portable_path(
+        value,
+        base=REPOSITORY_ROOT,
+    )
 
 
 def _validate_target_training_environment(
@@ -1614,6 +1614,13 @@ def train_phase5_adapter(
             "Real training requires explicit allow_training=True."
         )
 
+    materialization_directory = (
+        resolve_portable_path(
+            materialization_directory,
+            base=REPOSITORY_ROOT,
+        )
+    )
+
     (
         materialization,
         sft_train,
@@ -1634,9 +1641,12 @@ def train_phase5_adapter(
     versions = _installed_versions()
     _require_training_packages(versions)
 
-    base_model_path = Path(
-        materialization.base_model_path
-    ).expanduser().resolve()
+    base_model_path = (
+        resolve_portable_path(
+            materialization.base_model_path,
+            base=REPOSITORY_ROOT,
+        )
+    )
 
     base_before = fingerprint_directory(
         base_model_path
@@ -1664,7 +1674,10 @@ def train_phase5_adapter(
     )
 
     run_root = (
-        output_root.expanduser().resolve()
+        resolve_portable_path(
+            output_root,
+            base=REPOSITORY_ROOT,
+        )
         / run_id
     )
 

@@ -10,6 +10,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from config.path_portability import (
+    resolve_portable_path,
+)
+
 from learning.continual.storage import (
     fingerprint_directory,
     immutable_write_json,
@@ -203,13 +207,13 @@ def _required_sha256(path: Path) -> str:
     return value
 
 
-def _resolve_artifact_path(value: str) -> Path:
-    path = Path(value).expanduser()
-
-    if not path.is_absolute():
-        path = REPOSITORY_ROOT / path
-
-    return path.resolve()
+def _resolve_artifact_path(
+    value: str,
+) -> Path:
+    return resolve_portable_path(
+        value,
+        base=REPOSITORY_ROOT,
+    )
 
 
 def _read_json(path: Path) -> dict[str, Any]:

@@ -2,6 +2,10 @@ from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from config.path_portability import (
+    resolve_portable_path,
+)
+
 from pydantic import (
     BaseModel,
     Field,
@@ -1419,38 +1423,22 @@ class Settings(
         self,
         value: Path,
     ) -> Path:
-        path = (
-            value
-            .expanduser()
-        )
-
-        if not path.is_absolute():
-            path = (
-                PROJECT_ROOT
-                / path
-            )
-
         return (
-            path.resolve()
+            resolve_portable_path(
+                value,
+                base=PROJECT_ROOT,
+            )
         )
 
     def resolve_project_path(
         self,
         value: Path,
     ) -> Path:
-        path = (
-            value
-            .expanduser()
-        )
-
-        if not path.is_absolute():
-            path = (
-                PROJECT_ROOT
-                / path
-            )
-
         return (
-            path.resolve()
+            resolve_portable_path(
+                value,
+                base=PROJECT_ROOT,
+            )
         )
 
     def require_path(
@@ -1467,18 +1455,10 @@ class Settings(
             )
 
         path = (
-            value
-            .expanduser()
-        )
-
-        if not path.is_absolute():
-            path = (
-                PROJECT_ROOT
-                / path
+            resolve_portable_path(
+                value,
+                base=PROJECT_ROOT,
             )
-
-        path = (
-            path.resolve()
         )
 
         if not path.exists():

@@ -7,6 +7,10 @@ from pathlib import Path
 
 from config import Settings
 
+from config.path_portability import (
+    resolve_portable_path,
+)
+
 from learning.continual.checkpoints import (
     AdapterCheckpointStore,
 )
@@ -119,9 +123,9 @@ def main() -> int:
         return 2
 
     directory = (
-        args.materialization_dir
-        .expanduser()
-        .resolve()
+        resolve_portable_path(
+            args.materialization_dir,
+        )
     )
 
     materialization = (
@@ -184,9 +188,11 @@ def main() -> int:
                 .target_model_key
             ):
 
-                seed_adapter = Path(
-                    candidate_seed
-                    .adapter_directory
+                seed_adapter = (
+                    resolve_portable_path(
+                        candidate_seed
+                        .adapter_directory
+                    )
                 )
 
                 seed_checkpoint_id = (

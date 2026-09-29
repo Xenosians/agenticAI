@@ -4,6 +4,10 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from config.path_portability import (
+    resolve_portable_path,
+)
+
 from learning.continual.storage import (
     append_jsonl,
     atomic_write_json,
@@ -52,7 +56,12 @@ class AdapterCheckpointStore:
         target_model_key: str,
         label: str,
     ) -> AdapterCheckpointManifest:
-        adapter_directory = adapter_directory.expanduser().resolve()
+        adapter_directory = (
+            resolve_portable_path(
+                adapter_directory
+            )
+        )
+
         adapter_sha256 = fingerprint_directory(adapter_directory)
         checkpoint_id = f"checkpoint-{uuid.uuid4().hex}"
         manifest = AdapterCheckpointManifest(
@@ -75,7 +84,11 @@ class AdapterCheckpointStore:
 
     def verify_adapter(self, checkpoint_id: str) -> AdapterCheckpointManifest:
         manifest = self.load(checkpoint_id)
-        observed = fingerprint_directory(Path(manifest.adapter_directory))
+        observed = fingerprint_directory(
+            resolve_portable_path(
+                manifest.adapter_directory
+            )
+        )
         if observed != manifest.adapter_sha256:
             raise ValueError("Adapter SHA-256 verification failed")
         return manifest
