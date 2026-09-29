@@ -498,6 +498,32 @@ def render_developer_holdout_summary(
         ),
     ]
 
+    excluded_cases = getattr(
+        report,
+        "excluded_cases",
+        {},
+    )
+
+    if excluded_cases:
+
+        lines.extend(
+            [
+                "",
+                "Excluded cases",
+                "--------------",
+            ]
+        )
+
+        for reason, identities in sorted(
+            excluded_cases.items()
+        ):
+
+            for identity in identities:
+
+                lines.append(
+                    f"{reason:<24} {identity}"
+                )
+
     return "\n".join(
         lines
     )

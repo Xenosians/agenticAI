@@ -227,3 +227,80 @@ def test_partial_holdout_report_requests_more_coverage():
         "increase heldout evaluation coverage"
         in rendered
     )
+
+
+def test_holdout_report_lists_resource_excluded_cases():
+
+    from types import SimpleNamespace
+
+    from learning.cli.reporting import (
+        render_developer_holdout_summary,
+    )
+
+    report = SimpleNamespace(
+        checkpoint_id="checkpoint-test",
+        source_id="swe-rebench-v2",
+        holdout_id="holdout-test",
+
+        evaluated_count=14,
+        holdout_count=16,
+
+        training_max_sequence_tokens=768,
+        max_sequence_tokens=8192,
+
+        base_mean_loss=1.2,
+        candidate_mean_loss=1.1,
+
+        relative_loss_improvement_percent=8.0,
+
+        candidate_better_cases=14,
+        base_better_cases=0,
+        tied_cases=0,
+
+        training_overlap_count=0,
+        lineage_verified=True,
+        base_model_unchanged=True,
+
+        excluded_counts={
+            "cuda_out_of_memory":
+                1,
+
+            "full_sequence_too_long":
+                1,
+        },
+
+        excluded_cases={
+            "cuda_out_of_memory": [
+                "phoenixframework__phoenix-3131",
+            ],
+
+            "full_sequence_too_long": [
+                "samuelcolvin__pydantic-1737",
+            ],
+        },
+
+        behavioral_evaluation_complete=False,
+
+        output_directory="/tmp/eval",
+    )
+
+    rendered = (
+        render_developer_holdout_summary(
+            report
+        )
+    )
+
+    assert (
+        "phoenixframework__phoenix-3131"
+        in rendered
+    )
+
+    assert (
+        "samuelcolvin__pydantic-1737"
+        in rendered
+    )
+
+    assert (
+        "cuda_out_of_memory"
+        in rendered
+    )

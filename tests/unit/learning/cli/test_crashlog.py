@@ -160,3 +160,61 @@ def test_nonzero_exit_retains_log(
         "exit_code=7"
         in content
     )
+
+
+def test_tee_is_safe_after_log_file_closes(
+    tmp_path: Path,
+):
+
+    import io
+
+    from learning.cli.crashlog import (
+        _TeeTextIO,
+    )
+
+    original = (
+        io.StringIO()
+    )
+
+    log_path = (
+        tmp_path
+        / "closed.log"
+    )
+
+    log = log_path.open(
+        "w",
+        encoding="utf-8",
+    )
+
+    tee = (
+        _TeeTextIO(
+            original,
+            log,
+        )
+    )
+
+    tee.write(
+        "before-close"
+    )
+
+    log.close()
+
+    # Simulates an atexit library such as colorama retaining
+    # the tee after run_with_crashlog has already closed its log.
+    tee.write(
+        "after-close"
+    )
+
+    tee.flush()
+
+    assert (
+        original.getvalue()
+        == "before-closeafter-close"
+    )
+
+    assert (
+        log_path.read_text(
+            encoding="utf-8"
+        )
+        == "before-close"
+    )

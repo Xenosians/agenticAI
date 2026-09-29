@@ -65,11 +65,26 @@ class _TeeTextIO:
             )
         )
 
-        self.log.write(
-            value
-        )
+        # Libraries such as colorama may retain a reference to the
+        # stream until interpreter shutdown. At that point the
+        # crash-log file may already be closed. The tee must degrade
+        # back to the original terminal rather than raising from an
+        # atexit callback.
+        if not self.log.closed:
 
-        self.log.flush()
+            try:
+
+                self.log.write(
+                    value
+                )
+
+                self.log.flush()
+
+            except (
+                OSError,
+                ValueError,
+            ):
+                pass
 
         return written
 
@@ -78,7 +93,18 @@ class _TeeTextIO:
     ) -> None:
 
         self.original.flush()
-        self.log.flush()
+
+        if not self.log.closed:
+
+            try:
+
+                self.log.flush()
+
+            except (
+                OSError,
+                ValueError,
+            ):
+                pass
 
     def __getattr__(
         self,

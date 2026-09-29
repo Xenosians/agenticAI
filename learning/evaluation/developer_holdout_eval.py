@@ -146,6 +146,13 @@ class DeveloperHoldoutEvaluationReport(
         default_factory=dict
     )
 
+    excluded_cases: dict[
+        str,
+        list[str],
+    ] = Field(
+        default_factory=dict
+    )
+
     base_mean_loss: float
     candidate_mean_loss: float
 
@@ -211,6 +218,33 @@ def _increment(
             0,
         )
         + 1
+    )
+
+
+
+def _record_exclusion(
+    *,
+    counts: dict[str, int],
+    cases: dict[str, list[str]],
+    reason: str,
+    record: DeveloperHoldoutRecord,
+) -> None:
+
+    _increment(
+        counts,
+        reason,
+    )
+
+    identity = (
+        record.source_record_id
+        or record.record_id
+    )
+
+    cases.setdefault(
+        reason,
+        [],
+    ).append(
+        identity
     )
 
 
@@ -879,6 +913,47 @@ def _encoded_loss(
     )
 
 
+def _paired_holdout_losses(
+    *,
+    loaded,
+    encoded,
+    torch,
+    dtype,
+    disable_adapter,
+) -> tuple[
+    float,
+    float,
+]:
+
+    with (
+        torch.autocast(
+            device_type="cuda",
+            dtype=dtype,
+        )
+    ):
+
+        with disable_adapter():
+
+            base_loss = (
+                _encoded_loss(
+                    loaded=loaded,
+                    encoded=encoded,
+                )
+            )
+
+        candidate_loss = (
+            _encoded_loss(
+                loaded=loaded,
+                encoded=encoded,
+            )
+        )
+
+    return (
+        base_loss,
+        candidate_loss,
+    )
+
+
 def _relative_improvement_percent(
     *,
     base_loss: float,
@@ -1123,6 +1198,11 @@ def evaluate_developer_holdout(
         int
     ] = {}
 
+    excluded_cases: dict[
+        str,
+        list[str],
+    ] = {}
+
     try:
 
         loaded = (
@@ -1196,41 +1276,70 @@ def evaluate_developer_holdout(
 
                 except _SequenceExcluded as exc:
 
-                    _increment(
-                        excluded_counts,
-                        str(
+                    _record_exclusion(
+                        counts=(
+                            excluded_counts
+                        ),
+
+                        cases=(
+                            excluded_cases
+                        ),
+
+                        reason=str(
                             exc
                         ),
+
+                        record=record,
                     )
 
                     continue
 
-                with (
-                    torch.autocast(
-                        device_type="cuda",
-                        dtype=dtype,
-                    )
-                ):
+                try:
 
-                    with disable_adapter():
-
-                        base_loss = (
-                            _encoded_loss(
-                                loaded=loaded,
-                                encoded=(
-                                    encoded
-                                ),
-                            )
-                        )
-
-                    candidate_loss = (
-                        _encoded_loss(
+                    (
+                        base_loss,
+                        candidate_loss,
+                    ) = (
+                        _paired_holdout_losses(
                             loaded=loaded,
-                            encoded=(
-                                encoded
+                            encoded=encoded,
+                            torch=torch,
+                            dtype=dtype,
+                            disable_adapter=(
+                                disable_adapter
                             ),
                         )
                     )
+
+                except torch.OutOfMemoryError:
+
+                    _record_exclusion(
+                        counts=(
+                            excluded_counts
+                        ),
+
+                        cases=(
+                            excluded_cases
+                        ),
+
+                        reason=(
+                            "cuda_out_of_memory"
+                        ),
+
+                        record=record,
+                    )
+
+                    del encoded
+
+                    gc.collect()
+
+                    if (
+                        torch.cuda
+                        .is_available()
+                    ):
+                        torch.cuda.empty_cache()
+
+                    continue
 
                 loss_improvement = (
                     base_loss
@@ -1447,6 +1556,19 @@ def evaluate_developer_holdout(
                         .items()
                     )
                 ),
+
+                excluded_cases={
+                    key:
+                        sorted(
+                            values
+                        )
+
+                    for key, values
+                    in sorted(
+                        excluded_cases
+                        .items()
+                    )
+                },
 
                 base_mean_loss=(
                     base_mean

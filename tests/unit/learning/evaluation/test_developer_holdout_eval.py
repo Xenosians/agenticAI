@@ -249,3 +249,37 @@ def test_evaluation_identity_changes_with_context_budget():
     )
 
     assert first != second
+
+
+def test_record_exclusion_preserves_case_identity():
+
+    from learning.evaluation.developer_holdout_eval import (
+        _record_exclusion,
+    )
+
+    counts = {}
+    cases = {}
+
+    record = (
+        _holdout_record(
+            "phoenix-case"
+        )
+    )
+
+    _record_exclusion(
+        counts=counts,
+        cases=cases,
+        reason="cuda_out_of_memory",
+        record=record,
+    )
+
+    assert counts == {
+        "cuda_out_of_memory":
+            1,
+    }
+
+    assert cases == {
+        "cuda_out_of_memory": [
+            "phoenix-case",
+        ],
+    }
