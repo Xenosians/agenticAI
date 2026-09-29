@@ -427,6 +427,50 @@ def _cuda_training_preflight(
     )
 
 
+
+def _cuda_memory_snapshot(
+    torch,
+    *,
+    stage: str,
+) -> None:
+    if not torch.cuda.is_available():
+        return
+
+    device_index = torch.cuda.current_device()
+
+    free_bytes, total_bytes = (
+        torch.cuda.mem_get_info(
+            device_index
+        )
+    )
+
+    allocated = (
+        torch.cuda.memory_allocated(
+            device_index
+        )
+    )
+
+    reserved = (
+        torch.cuda.memory_reserved(
+            device_index
+        )
+    )
+
+    gib = float(
+        1024 ** 3
+    )
+
+    print(
+        "[PHASE5][CUDA] "
+        f"stage={stage} "
+        f"free={free_bytes / gib:.3f}GiB "
+        f"allocated={allocated / gib:.3f}GiB "
+        f"reserved={reserved / gib:.3f}GiB "
+        f"total={total_bytes / gib:.3f}GiB",
+        flush=True,
+    )
+
+
 def _dtype(torch, value: str):
     normalized = value.strip().lower()
 
@@ -1805,7 +1849,30 @@ def train_phase5_adapter(
                     "Pending gradient stage is invalid."
                 )
 
+            _cuda_memory_snapshot(
+                torch,
+                stage=(
+                    "before_optimizer_step:"
+                    + str(
+                        optimizer_steps
+                        + 1
+                    )
+                ),
+            )
+
             optimizer.step()
+
+            _cuda_memory_snapshot(
+                torch,
+                stage=(
+                    "after_optimizer_step:"
+                    + str(
+                        optimizer_steps
+                        + 1
+                    )
+                ),
+            )
+
             optimizer.zero_grad(
                 set_to_none=True
             )
@@ -1870,7 +1937,23 @@ def train_phase5_adapter(
                 / settings.gradient_accumulation_steps
             )
 
+            _cuda_memory_snapshot(
+                torch,
+                stage=(
+                    "before_backward:"
+                    + stage
+                ),
+            )
+
             scaled.backward()
+
+            _cuda_memory_snapshot(
+                torch,
+                stage=(
+                    "after_backward:"
+                    + stage
+                ),
+            )
 
             value = float(
                 loss.detach().float().item()
