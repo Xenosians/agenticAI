@@ -154,6 +154,39 @@ class Phase5CheckpointObservation(BaseModel):
     score: float
 
 
+class Phase5PreTrainingObservation(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+        extra="forbid",
+    )
+
+    schema_name: str = Field(
+        default="phase5-pre-training-observation.v1",
+        alias="schema",
+    )
+
+    optimizer_step: int = Field(
+        default=0,
+        ge=0,
+        le=0,
+    )
+
+    initialization: str
+
+    eval_sft_loss: float | None = None
+    eval_dpo_loss: float | None = None
+
+    contract_pass_rate: float = Field(
+        ge=0.0,
+        le=1.0,
+    )
+
+    evaluation_metric_name: str
+    evaluation_metric_value: float | None = None
+
+    score: float
+
+
 class Phase5TrainingRunManifest(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
@@ -191,6 +224,11 @@ class Phase5TrainingRunManifest(BaseModel):
     optimizer_steps: int
     sft_optimizer_steps: int
     dpo_optimizer_steps: int
+
+    pre_training_observation: (
+        Phase5PreTrainingObservation
+        | None
+    ) = None
 
     checkpoint_observations: list[
         Phase5CheckpointObservation
@@ -1553,6 +1591,75 @@ def _target_checkpoint_metrics(
 
 
 
+def _evaluate_pre_training_observation(
+    *,
+    materialization: Phase5MaterializationManifest,
+    loaded,
+    sft_validation,
+    dpo_validation,
+    environment,
+    settings: Phase5TrainingSettings,
+    initialization: str,
+) -> Phase5PreTrainingObservation:
+
+    eval_sft, eval_dpo = (
+        _evaluate_losses(
+            loaded=loaded,
+            sft_records=sft_validation,
+            dpo_records=dpo_validation,
+            settings=settings,
+        )
+    )
+
+    (
+        contract_rate,
+        evaluation_metric_name,
+        evaluation_metric_value,
+        score,
+    ) = _target_checkpoint_metrics(
+        materialization=(
+            materialization
+        ),
+        loaded=loaded,
+        sft_validation=(
+            sft_validation
+        ),
+        environment=environment,
+        settings=settings,
+        eval_sft_loss=(
+            eval_sft
+        ),
+        eval_dpo_loss=(
+            eval_dpo
+        ),
+    )
+
+    return (
+        Phase5PreTrainingObservation(
+            optimizer_step=0,
+            initialization=(
+                initialization
+            ),
+            eval_sft_loss=(
+                eval_sft
+            ),
+            eval_dpo_loss=(
+                eval_dpo
+            ),
+            contract_pass_rate=(
+                contract_rate
+            ),
+            evaluation_metric_name=(
+                evaluation_metric_name
+            ),
+            evaluation_metric_value=(
+                evaluation_metric_value
+            ),
+            score=score,
+        )
+    )
+
+
 def _validate_sequence_budget(
     *,
     materialization: Phase5MaterializationManifest,
@@ -1698,6 +1805,14 @@ def train_phase5_adapter(
     running_losses = []
 
     try:
+        # Seed before model/adapter construction so fresh LoRA
+        # initialization is governed by the configured run seed.
+        import torch
+
+        torch.manual_seed(
+            settings.seed
+        )
+
         loaded = _load_model(
             model_path=base_model_path,
             backend=backend,
@@ -1708,7 +1823,44 @@ def train_phase5_adapter(
         )
 
         torch = loaded.torch
-        torch.manual_seed(settings.seed)
+
+        dtype = _dtype(
+            torch,
+            settings.compute_dtype,
+        )
+
+        initialization = (
+            "seed_adapter"
+            if seed_adapter_directory
+            is not None
+            else "fresh_lora"
+        )
+
+        pre_training_observation = (
+            _evaluate_pre_training_observation(
+                materialization=(
+                    materialization
+                ),
+                loaded=loaded,
+                sft_validation=(
+                    sft_validation
+                ),
+                dpo_validation=(
+                    dpo_validation
+                ),
+                environment=environment,
+                settings=settings,
+                initialization=(
+                    initialization
+                ),
+            )
+        )
+
+        # Validation can leave CUDA allocator cache reserved.
+        # Release unoccupied cache before the first backward pass,
+        # especially important on 6 GiB training devices.
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         from bitsandbytes.optim import (
             PagedAdamW8bit,
@@ -1733,11 +1885,6 @@ def train_phase5_adapter(
 
         optimizer.zero_grad(
             set_to_none=True
-        )
-
-        dtype = _dtype(
-            torch,
-            settings.compute_dtype,
         )
 
         def evaluate_and_checkpoint(
@@ -2231,6 +2378,9 @@ def train_phase5_adapter(
             optimizer_steps=optimizer_steps,
             sft_optimizer_steps=sft_optimizer_steps,
             dpo_optimizer_steps=dpo_optimizer_steps,
+            pre_training_observation=(
+                pre_training_observation
+            ),
             checkpoint_observations=observations,
             best_checkpoint_directory=(
                 best.checkpoint_directory
