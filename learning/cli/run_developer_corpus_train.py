@@ -6,6 +6,10 @@ import os
 
 from pathlib import Path
 
+from learning.cli.crashlog import (
+    run_with_crashlog,
+)
+
 from config import Settings
 
 from config.path_portability import (
@@ -319,6 +323,10 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+
     raise SystemExit(
-        main()
+        run_with_crashlog(
+            "developer-corpus-train",
+            main,
+        )
     )

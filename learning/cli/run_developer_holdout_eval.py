@@ -5,6 +5,10 @@ import json
 
 from pathlib import Path
 
+from learning.cli.crashlog import (
+    run_with_crashlog,
+)
+
 from config import (
     Settings,
 )
@@ -153,5 +157,8 @@ def main() -> int:
 if __name__ == "__main__":
 
     raise SystemExit(
-        main()
+        run_with_crashlog(
+            "developer-holdout-eval",
+            main,
+        )
     )
