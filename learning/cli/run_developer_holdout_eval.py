@@ -46,6 +46,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--max-length",
+        type=int,
+        default=None,
+        help=(
+            "Forward-only heldout evaluation sequence budget. "
+            "May be larger than the original training budget. "
+            "Gold completions are never truncated."
+        ),
+    )
+
+    parser.add_argument(
         "--output-root",
         type=Path,
         default=(
@@ -103,6 +114,10 @@ def main() -> int:
 
             backend=(
                 profile.backend
+            ),
+
+            max_sequence_tokens=(
+                args.max_length
             ),
 
             output_root=(

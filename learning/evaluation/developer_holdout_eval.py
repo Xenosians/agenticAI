@@ -129,6 +129,11 @@ class DeveloperHoldoutEvaluationReport(
     target_component: str
     target_model_key: str
 
+    # Evaluation may use a larger forward-only context than the
+    # candidate's original training sequence budget. Keep both
+    # values explicit so future readers cannot confuse them.
+    training_max_sequence_tokens: int
+
     max_sequence_tokens: int
 
     holdout_count: int
@@ -900,6 +905,7 @@ def evaluate_developer_holdout(
     checkpoint_id: str,
     holdout_directory: Path,
     backend: str,
+    max_sequence_tokens: int | None = None,
     output_root: Path = (
         DEFAULT_DEVELOPER_HOLDOUT_EVAL_ROOT
     ),
@@ -976,11 +982,27 @@ def evaluate_developer_holdout(
         training_run.settings
     )
 
-    max_length = int(
+    training_max_length = int(
         settings_payload[
             "max_length"
         ]
     )
+
+    if max_sequence_tokens is None:
+        max_length = (
+            training_max_length
+        )
+
+    else:
+        max_length = int(
+            max_sequence_tokens
+        )
+
+    if max_length < 128:
+        raise ValueError(
+            "Heldout evaluation max_sequence_tokens "
+            "must be at least 128."
+        )
 
     compute_dtype = str(
         settings_payload[
@@ -1043,7 +1065,10 @@ def evaluate_developer_holdout(
         "base_model_sha256":
             base_before,
 
-        "max_sequence_tokens":
+        "training_max_sequence_tokens":
+            training_max_length,
+
+        "evaluation_max_sequence_tokens":
             max_length,
 
         "compute_dtype":
@@ -1397,6 +1422,10 @@ def evaluate_developer_holdout(
                 target_model_key=(
                     checkpoint
                     .target_model_key
+                ),
+
+                training_max_sequence_tokens=(
+                    training_max_length
                 ),
 
                 max_sequence_tokens=(

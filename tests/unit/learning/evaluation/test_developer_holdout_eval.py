@@ -190,3 +190,62 @@ def test_relative_loss_improvement_is_positive_when_loss_falls():
     )
 
     assert value == 25.0
+
+
+def test_evaluation_budget_can_exceed_training_budget():
+    training_budget = 768
+    evaluation_budget = 4096
+
+    assert (
+        evaluation_budget
+        > training_budget
+    )
+
+
+def test_evaluation_identity_changes_with_context_budget():
+    from learning.evaluation import (
+        developer_holdout_eval as module,
+    )
+
+    common = {
+        "checkpoint_id":
+            "checkpoint-test",
+
+        "adapter_sha256":
+            "a" * 64,
+
+        "holdout_id":
+            "holdout-test",
+
+        "training_max_sequence_tokens":
+            768,
+
+        "compute_dtype":
+            "bfloat16",
+    }
+
+    first = (
+        module._sha256_text(
+            module.canonical_json(
+                {
+                    **common,
+                    "evaluation_max_sequence_tokens":
+                        3072,
+                }
+            )
+        )
+    )
+
+    second = (
+        module._sha256_text(
+            module.canonical_json(
+                {
+                    **common,
+                    "evaluation_max_sequence_tokens":
+                        4096,
+                }
+            )
+        )
+    )
+
+    assert first != second

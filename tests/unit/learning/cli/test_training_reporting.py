@@ -164,3 +164,66 @@ def test_training_summary_handles_missing_baseline(
 
     assert "Baseline     n/a" in rendered
     assert "Improvement  n/a" in rendered
+
+
+def test_partial_holdout_report_requests_more_coverage():
+    from types import SimpleNamespace
+
+    from learning.cli.reporting import (
+        render_developer_holdout_summary,
+    )
+
+    report = SimpleNamespace(
+        checkpoint_id="checkpoint-test",
+        source_id="swe-rebench-v2",
+        holdout_id="holdout-test",
+
+        evaluated_count=14,
+        holdout_count=16,
+
+        training_max_sequence_tokens=768,
+        max_sequence_tokens=4096,
+
+        base_mean_loss=1.8,
+        candidate_mean_loss=1.7,
+
+        relative_loss_improvement_percent=5.0,
+
+        candidate_better_cases=10,
+        base_better_cases=4,
+        tied_cases=0,
+
+        training_overlap_count=0,
+        lineage_verified=True,
+        base_model_unchanged=True,
+
+        excluded_counts={
+            "full_sequence_too_long":
+                2,
+        },
+
+        behavioral_evaluation_complete=False,
+
+        output_directory="/tmp/eval",
+    )
+
+    rendered = (
+        render_developer_holdout_summary(
+            report
+        )
+    )
+
+    assert (
+        "PARTIAL (loss evidence only)"
+        in rendered
+    )
+
+    assert (
+        "4096 eval / 768 train"
+        in rendered
+    )
+
+    assert (
+        "increase heldout evaluation coverage"
+        in rendered
+    )

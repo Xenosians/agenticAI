@@ -372,13 +372,30 @@ def render_developer_holdout_summary(
         or "none"
     )
 
+    complete_coverage = (
+        report.evaluated_count
+        == report.holdout_count
+    )
+
+    status = (
+        "COMPLETE (loss evidence only)"
+        if complete_coverage
+        else "PARTIAL (loss evidence only)"
+    )
+
+    next_gate = (
+        "executable developer behavioral evaluation"
+        if complete_coverage
+        else "increase heldout evaluation coverage"
+    )
+
     lines = [
         "",
         "Developer Heldout Evaluation",
         "============================",
         (
             "Status       "
-            "COMPLETE (loss evidence only)"
+            + status
         ),
         (
             "Candidate    "
@@ -397,6 +414,11 @@ def render_developer_holdout_summary(
             f"{report.evaluated_count}/"
             f"{report.holdout_count} "
             f"({coverage:.1f}%)"
+        ),
+        (
+            "Context      "
+            f"{report.max_sequence_tokens} eval / "
+            f"{report.training_max_sequence_tokens} train"
         ),
         (
             "Base loss    "
@@ -466,8 +488,8 @@ def render_developer_holdout_summary(
             "Promotion    BLOCKED"
         ),
         (
-            "Next gate    executable developer "
-            "behavioral evaluation"
+            "Next gate    "
+            + next_gate
         ),
         (
             "Artifact     "
