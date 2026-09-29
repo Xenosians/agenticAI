@@ -344,3 +344,138 @@ def render_developer_training_summary(
     return "\n".join(
         lines
     )
+
+
+def render_developer_holdout_summary(
+    report: Any,
+) -> str:
+
+    coverage = (
+        report.evaluated_count
+        / report.holdout_count
+        * 100.0
+    )
+
+    excluded = (
+        ", ".join(
+            (
+                f"{key}={value}"
+            )
+
+            for key, value
+            in sorted(
+                report
+                .excluded_counts
+                .items()
+            )
+        )
+        or "none"
+    )
+
+    lines = [
+        "",
+        "Developer Heldout Evaluation",
+        "============================",
+        (
+            "Status       "
+            "COMPLETE (loss evidence only)"
+        ),
+        (
+            "Candidate    "
+            f"{report.checkpoint_id}"
+        ),
+        (
+            "Source       "
+            f"{report.source_id}"
+        ),
+        (
+            "Holdout      "
+            f"{report.holdout_id}"
+        ),
+        (
+            "Coverage     "
+            f"{report.evaluated_count}/"
+            f"{report.holdout_count} "
+            f"({coverage:.1f}%)"
+        ),
+        (
+            "Base loss    "
+            f"{report.base_mean_loss:.6f}"
+        ),
+        (
+            "Candidate    "
+            f"{report.candidate_mean_loss:.6f}"
+        ),
+        (
+            "Improvement  "
+            f"{report.relative_loss_improvement_percent:+.2f}%"
+        ),
+        (
+            "Case wins    "
+            f"{report.candidate_better_cases} candidate / "
+            f"{report.base_better_cases} base / "
+            f"{report.tied_cases} tied"
+        ),
+        (
+            "Overlap      "
+            + (
+                "NONE"
+                if (
+                    report
+                    .training_overlap_count
+                    == 0
+                )
+                else str(
+                    report
+                    .training_overlap_count
+                )
+            )
+        ),
+        (
+            "Lineage      "
+            + (
+                "VERIFIED"
+                if report.lineage_verified
+                else "FAILED"
+            )
+        ),
+        (
+            "Base frozen  "
+            + (
+                "YES"
+                if report.base_model_unchanged
+                else "NO"
+            )
+        ),
+        (
+            "Excluded     "
+            + excluded
+        ),
+        (
+            "Behavioral   "
+            + (
+                "COMPLETE"
+                if (
+                    report
+                    .behavioral_evaluation_complete
+                )
+                else "NOT RUN"
+            )
+        ),
+        (
+            "Promotion    BLOCKED"
+        ),
+        (
+            "Next gate    executable developer "
+            "behavioral evaluation"
+        ),
+        (
+            "Artifact     "
+            f"{report.output_directory}"
+            "/report.json"
+        ),
+    ]
+
+    return "\n".join(
+        lines
+    )
