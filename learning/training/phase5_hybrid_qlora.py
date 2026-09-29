@@ -580,6 +580,9 @@ def _load_model(
     model = prepare_model_for_kbit_training(
         model,
         use_gradient_checkpointing=True,
+        gradient_checkpointing_kwargs={
+            "use_reentrant": False,
+        },
     )
 
     if seed_adapter_directory is not None:
