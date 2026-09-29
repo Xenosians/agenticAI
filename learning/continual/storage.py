@@ -59,7 +59,12 @@ def fingerprint_directory(directory: Path) -> str:
         key=lambda item: str(item.relative_to(directory)),
     ):
         file_count += 1
-        relative = str(path.relative_to(directory))
+        relative = (
+            path
+            .relative_to(directory)
+            .as_posix()
+        )
+
         file_hash = sha256_file(path)
         digest.update(relative.encode("utf-8"))
         digest.update((file_hash or "").encode("ascii"))
