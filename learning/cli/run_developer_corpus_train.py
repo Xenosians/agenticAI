@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 
 from pathlib import Path
 
@@ -13,6 +14,10 @@ from config.path_portability import (
 
 from learning.continual.checkpoints import (
     AdapterCheckpointStore,
+)
+
+from learning.cli.reporting import (
+    render_developer_training_summary,
 )
 
 from learning.training.phase5_hybrid_qlora import (
@@ -109,9 +114,29 @@ def main() -> int:
     parser.add_argument(
         "--json",
         action="store_true",
+        help=(
+            "Print the full machine-readable run manifest. "
+            "For normal interactive use, omit this flag and "
+            "use the concise developer summary."
+        ),
+    )
+
+    parser.add_argument(
+        "--cuda-telemetry",
+        action="store_true",
+        help=(
+            "Print detailed CUDA memory snapshots around "
+            "backward and optimizer steps. Intended for "
+            "GPU debugging, not normal training output."
+        ),
     )
 
     args = parser.parse_args()
+
+    if args.cuda_telemetry:
+        os.environ[
+            "PHASE5_CUDA_TELEMETRY"
+        ] = "1"
 
     if not args.allow_training:
 
@@ -282,73 +307,12 @@ def main() -> int:
         return 0
 
     print(
-        "Developer Corpus QLoRA"
-    )
-
-    print(
-        "======================"
-    )
-
-    print(
-        "run="
-        + result.run_id
-    )
-
-    print(
-        "seed_checkpoint="
-        + str(
-            seed_checkpoint_id
+        render_developer_training_summary(
+            result,
+            seed_checkpoint_id=(
+                seed_checkpoint_id
+            ),
         )
-    )
-
-    print(
-        "target="
-        + result.target_component
-    )
-
-    print(
-        "evaluation="
-        + result.evaluation_contract
-    )
-
-    print(
-        "optimizer_steps="
-        + str(
-            result.optimizer_steps
-        )
-    )
-
-    print(
-        "sft_steps="
-        + str(
-            result.sft_optimizer_steps
-        )
-    )
-
-    print(
-        "best_score="
-        + str(
-            result.best_score
-        )
-    )
-
-    print(
-        "guard="
-        + result.fit_diagnosis
-    )
-
-    print(
-        "checkpoint="
-        + result.registered_checkpoint_id
-    )
-
-    print(
-        "adapter="
-        + result.adapter_directory
-    )
-
-    print(
-        "activation=DISABLED"
     )
 
     return 0

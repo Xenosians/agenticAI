@@ -3,6 +3,7 @@ from __future__ import annotations
 import gc
 import importlib.metadata
 import math
+import os
 import re
 import shutil
 import uuid
@@ -478,6 +479,25 @@ def _cuda_memory_snapshot(
     *,
     stage: str,
 ) -> None:
+    enabled = (
+        os.environ
+        .get(
+            "PHASE5_CUDA_TELEMETRY",
+            "",
+        )
+        .strip()
+        .lower()
+        in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+    )
+
+    if not enabled:
+        return
+
     if not torch.cuda.is_available():
         return
 
