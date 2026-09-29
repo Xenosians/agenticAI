@@ -3,6 +3,7 @@ torch
 transformers
 accelerate
 bitsandbytes
+mistral-common
 
 # MCP
 mcp>=2,<3
