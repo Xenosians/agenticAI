@@ -113,6 +113,20 @@ class Phase5TrainingSettings(BaseModel):
         default=3,
         ge=1,
     )
+
+    developer_underfit_min_relative_eval_improvement: float = Field(
+        default=0.01,
+        ge=0.0,
+        le=1.0,
+    )
+
+    developer_underfit_min_checkpoints: int = Field(
+        default=2,
+        ge=1,
+    )
+
+    developer_underfit_require_step_budget_exhausted: bool = True
+
     max_generation_tokens: int = Field(
         default=256,
         ge=16,
@@ -239,6 +253,10 @@ class Phase5TrainingRunManifest(BaseModel):
     best_score: float
     early_stopped: bool
     fit_diagnosis: str
+
+    fit_evidence: dict[str, Any] = Field(
+        default_factory=dict
+    )
 
     adapter_directory: str
     adapter_sha256: str
@@ -1352,6 +1370,142 @@ def _best_observation(
 
 
 
+def _developer_fit_diagnosis(
+    *,
+    pre_training_observation: Phase5PreTrainingObservation,
+    observations: list[Phase5CheckpointObservation],
+    best: Phase5CheckpointObservation,
+    optimizer_steps: int,
+    settings: Phase5TrainingSettings,
+) -> tuple[
+    str,
+    dict[str, Any],
+]:
+    """
+    Detect likely insufficient developer learning.
+
+    This deliberately uses relative validation improvement rather
+    than an absolute loss threshold because absolute loss is
+    model/dataset dependent.
+
+    By default it only fires when:
+      * enough checkpoints were evaluated,
+      * the optimizer-step budget was exhausted, and
+      * validation improvement was smaller than the configured
+        relative threshold.
+    """
+
+    baseline_loss = (
+        pre_training_observation
+        .eval_sft_loss
+    )
+
+    best_loss = (
+        best.eval_sft_loss
+    )
+
+    relative_improvement = None
+
+    if (
+        baseline_loss is not None
+        and best_loss is not None
+        and baseline_loss != 0
+    ):
+
+        relative_improvement = (
+            (
+                float(
+                    baseline_loss
+                )
+                - float(
+                    best_loss
+                )
+            )
+            / abs(
+                float(
+                    baseline_loss
+                )
+            )
+        )
+
+    checkpoint_count = len(
+        observations
+    )
+
+    enough_checkpoints = (
+        checkpoint_count
+        >= settings
+        .developer_underfit_min_checkpoints
+    )
+
+    step_budget_exhausted = (
+        optimizer_steps
+        >= settings.max_optimizer_steps
+    )
+
+    budget_condition = (
+        step_budget_exhausted
+        or not settings
+        .developer_underfit_require_step_budget_exhausted
+    )
+
+    insufficient_improvement = (
+        relative_improvement is not None
+        and relative_improvement
+        < settings
+        .developer_underfit_min_relative_eval_improvement
+    )
+
+    suspected = bool(
+        enough_checkpoints
+        and budget_condition
+        and insufficient_improvement
+    )
+
+    evidence = {
+        "baseline_eval_sft_loss":
+            baseline_loss,
+
+        "best_eval_sft_loss":
+            best_loss,
+
+        "relative_eval_improvement":
+            relative_improvement,
+
+        "required_relative_eval_improvement":
+            settings
+            .developer_underfit_min_relative_eval_improvement,
+
+        "checkpoint_count":
+            checkpoint_count,
+
+        "required_checkpoint_count":
+            settings
+            .developer_underfit_min_checkpoints,
+
+        "optimizer_steps":
+            optimizer_steps,
+
+        "max_optimizer_steps":
+            settings.max_optimizer_steps,
+
+        "step_budget_exhausted":
+            step_budget_exhausted,
+
+        "underfit_suspected":
+            suspected,
+    }
+
+    return (
+        (
+            "underfit_suspected"
+            if suspected
+            else "developer_candidate_requires_heldout"
+        ),
+        evidence,
+    )
+
+
 def _resolve_contract_path(
     value: str,
 ) -> Path:
@@ -2285,10 +2439,54 @@ def train_phase5_adapter(
                 "Base model checkpoint changed during QLoRA training."
             )
 
+        fit_evidence: dict[str, Any] = {}
+
         if early_stopped:
 
             fit_diagnosis = (
                 "overfit_guard_triggered"
+            )
+
+            fit_evidence = {
+                "early_stopped":
+                    True,
+
+                "checkpoint_count":
+                    len(
+                        observations
+                    ),
+
+                "optimizer_steps":
+                    optimizer_steps,
+            }
+
+        elif (
+            materialization
+            .evaluation_contract
+            == "developer_sft_loss"
+        ):
+
+            (
+                fit_diagnosis,
+                fit_evidence,
+            ) = (
+                _developer_fit_diagnosis(
+                    pre_training_observation=(
+                        pre_training_observation
+                    ),
+
+                    observations=(
+                        observations
+                    ),
+
+                    best=best,
+
+                    optimizer_steps=(
+                        optimizer_steps
+                    ),
+
+                    settings=settings,
+                )
             )
 
         elif (
@@ -2305,18 +2503,16 @@ def train_phase5_adapter(
                 "underfit_suspected"
             )
 
-        elif (
-            materialization
-            .evaluation_contract
-            == "developer_sft_loss"
-        ):
+            fit_evidence = {
+                "best_contract_pass_rate":
+                    best.contract_pass_rate,
 
-            # Validation loss can select a candidate checkpoint,
-            # but does NOT constitute the separate developer
-            # held-out evidence needed for promotion.
-            fit_diagnosis = (
-                "developer_candidate_requires_heldout"
-            )
+                "required_contract_pass_rate":
+                    0.75,
+
+                "optimizer_steps":
+                    optimizer_steps,
+            }
 
         else:
 
@@ -2408,6 +2604,7 @@ def train_phase5_adapter(
             best_score=best.score,
             early_stopped=early_stopped,
             fit_diagnosis=fit_diagnosis,
+            fit_evidence=fit_evidence,
             adapter_directory=str(best_adapter),
             adapter_sha256=adapter_sha,
             registered_checkpoint_id=(

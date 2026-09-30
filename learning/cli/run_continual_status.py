@@ -80,6 +80,8 @@ def build_snapshot(
         "schema": "continual-learning-status.v1",
         "enabled": continuous.enabled,
         "controls": {
+            "autonomous_mode":
+                continuous.autonomous_mode,
             "auto_train": continuous.auto_train,
             "auto_evaluate": continuous.auto_evaluate,
             "ppo_enabled": continuous.ppo_enabled,

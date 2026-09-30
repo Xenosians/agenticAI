@@ -36,3 +36,18 @@ def test_ppo_requires_training():
             ppo_enabled=True,
             auto_train=False,
         )
+
+
+def test_autonomous_mode_expands_learning_pipeline():
+
+    settings = (
+        ContinualAutomationSettings(
+            autonomous_mode=True,
+        )
+    )
+
+    assert settings.enabled
+    assert settings.auto_train
+    assert settings.auto_evaluate
+    assert settings.ppo_enabled
+    assert settings.auto_promote

@@ -134,3 +134,131 @@ def test_pre_training_developer_observation_is_step_zero(
     )
 
     assert observation.score == -0.75
+
+
+def test_developer_fit_diagnosis_flags_underfit():
+
+    from learning.training import (
+        phase5_hybrid_qlora as module,
+    )
+
+    settings = (
+        module.Phase5TrainingSettings(
+            max_optimizer_steps=8,
+
+            developer_underfit_min_relative_eval_improvement=(
+                0.05
+            ),
+
+            developer_underfit_min_checkpoints=2,
+        )
+    )
+
+    baseline = (
+        module.Phase5PreTrainingObservation(
+            initialization="fresh_lora",
+
+            eval_sft_loss=1.0,
+
+            eval_dpo_loss=None,
+
+            contract_pass_rate=0.0,
+
+            evaluation_metric_name=(
+                "developer_validation_loss"
+            ),
+
+            evaluation_metric_value=1.0,
+
+            score=-1.0,
+        )
+    )
+
+    observations = [
+        module.Phase5CheckpointObservation(
+            step=4,
+
+            checkpoint_directory=(
+                "/tmp/step-4"
+            ),
+
+            train_loss=0.95,
+
+            eval_sft_loss=0.99,
+
+            eval_dpo_loss=None,
+
+            contract_pass_rate=0.0,
+
+            evaluation_metric_name=(
+                "developer_validation_loss"
+            ),
+
+            evaluation_metric_value=0.99,
+
+            score=-0.99,
+        ),
+
+        module.Phase5CheckpointObservation(
+            step=8,
+
+            checkpoint_directory=(
+                "/tmp/step-8"
+            ),
+
+            train_loss=0.93,
+
+            eval_sft_loss=0.98,
+
+            eval_dpo_loss=None,
+
+            contract_pass_rate=0.0,
+
+            evaluation_metric_name=(
+                "developer_validation_loss"
+            ),
+
+            evaluation_metric_value=0.98,
+
+            score=-0.98,
+        ),
+    ]
+
+    diagnosis, evidence = (
+        module._developer_fit_diagnosis(
+            pre_training_observation=(
+                baseline
+            ),
+
+            observations=(
+                observations
+            ),
+
+            best=(
+                observations[-1]
+            ),
+
+            optimizer_steps=8,
+
+            settings=settings,
+        )
+    )
+
+    assert (
+        diagnosis
+        == "underfit_suspected"
+    )
+
+    assert (
+        evidence[
+            "step_budget_exhausted"
+        ]
+        is True
+    )
+
+    assert (
+        evidence[
+            "underfit_suspected"
+        ]
+        is True
+    )

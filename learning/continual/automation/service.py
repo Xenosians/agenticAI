@@ -281,6 +281,8 @@ class ContinualAutomationService:
         return {
             "enabled": self.enabled,
             "controls": {
+                "autonomous_mode":
+                    self.settings.autonomous_mode,
                 "auto_train": self.settings.auto_train,
                 "auto_evaluate": self.settings.auto_evaluate,
                 "ppo_enabled": self.settings.ppo_enabled,
@@ -735,6 +737,8 @@ class ContinualAutomationService:
             for item in self._target_coverage
         ]
         controls = {
+            "autonomous_mode":
+                self.settings.autonomous_mode,
             "auto_train": self.settings.auto_train,
             "auto_evaluate": self.settings.auto_evaluate,
             "ppo_enabled": self.settings.ppo_enabled,

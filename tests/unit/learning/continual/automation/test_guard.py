@@ -42,3 +42,38 @@ def test_overfit_guard_reduces_next_cycle_pressure():
         updated.replay_pages_per_cycle
         > recipe.replay_pages_per_cycle
     )
+
+
+def test_underfit_guard_expands_next_cycle_budget():
+
+    recipe = AdaptiveRecipe(
+        max_optimizer_steps=8,
+        corpus_pages_per_cycle=10,
+    )
+
+    manifest = SimpleNamespace(
+        fit_diagnosis=(
+            "underfit_suspected"
+        ),
+
+        checkpoint_observations=[],
+    )
+
+    updated, signal = (
+        adapt_recipe_from_training_manifest(
+            manifest=manifest,
+            current=recipe,
+        )
+    )
+
+    assert signal == "underfit"
+
+    assert (
+        updated.max_optimizer_steps
+        > recipe.max_optimizer_steps
+    )
+
+    assert (
+        updated.corpus_pages_per_cycle
+        > recipe.corpus_pages_per_cycle
+    )

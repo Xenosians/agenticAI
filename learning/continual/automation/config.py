@@ -34,6 +34,13 @@ class ContinualAutomationSettings(BaseModel):
 
     enabled: bool = False
 
+    # Master switch for unattended continual learning.
+    #
+    # This enables orchestration, not unrestricted authority.
+    # Evaluation, promotion, shared-model coverage checks,
+    # canary rollback, and GPU admission remain authoritative.
+    autonomous_mode: bool = False
+
     poll_seconds: float = Field(
         default=5.0,
         ge=0.5,
@@ -110,6 +117,47 @@ class ContinualAutomationSettings(BaseModel):
     recipe: AdaptiveRecipe = Field(
         default_factory=AdaptiveRecipe
     )
+
+    @model_validator(
+        mode="before"
+    )
+    @classmethod
+    def expand_autonomous_mode(
+        cls,
+        values,
+    ):
+
+        if not isinstance(
+            values,
+            dict,
+        ):
+
+            return values
+
+        if not values.get(
+            "autonomous_mode",
+            False,
+        ):
+
+            return values
+
+        expanded = dict(
+            values
+        )
+
+        for key in (
+            "enabled",
+            "auto_train",
+            "auto_evaluate",
+            "auto_promote",
+            "ppo_enabled",
+        ):
+
+            expanded[
+                key
+            ] = True
+
+        return expanded
 
     @model_validator(
         mode="after"
@@ -204,6 +252,11 @@ class ContinualAutomationSettings(BaseModel):
 
         base = cls()
 
+        autonomous_mode = cls._bool(
+            "CONTINUAL_AUTONOMOUS_MODE",
+            base.autonomous_mode,
+        )
+
         recipe = AdaptiveRecipe(
             learning_rate=float(
                 os.getenv(
@@ -270,6 +323,10 @@ class ContinualAutomationSettings(BaseModel):
         )
 
         return cls(
+            autonomous_mode=(
+                autonomous_mode
+            ),
+
             enabled=cls._bool(
                 "CONTINUAL_LEARNING_ENABLED",
                 base.enabled,
