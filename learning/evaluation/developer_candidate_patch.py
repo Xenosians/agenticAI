@@ -571,8 +571,40 @@ def _candidate_visible_case(
 def _issue_keywords(
     problem_statement: str,
 ) -> list[str]:
+    """
+    Extract candidate-context search terms.
 
-    candidates = re.findall(
+    Traceback function names and code-like identifiers are
+    prioritized so long issue templates and prose cannot crowd
+    them out of the bounded keyword list.
+    """
+
+    trace_symbols: list[str] = []
+
+    for line in problem_statement.splitlines():
+
+        match = re.search(
+            r",\s+in\s+"
+            r"([A-Za-z_][A-Za-z0-9_]*)"
+            r"\s*$",
+            line,
+        )
+
+        if match is not None:
+
+            trace_symbols.append(
+                match.group(
+                    1
+                )
+            )
+
+    structured = re.findall(
+        r"[A-Za-z_][A-Za-z0-9_]*"
+        r"_[A-Za-z0-9_]+",
+        problem_statement,
+    )
+
+    ordinary = re.findall(
         r"[A-Za-z_][A-Za-z0-9_]{2,}",
         problem_statement,
     )
@@ -581,7 +613,11 @@ def _issue_keywords(
 
     seen: set[str] = set()
 
-    for value in candidates:
+    for value in [
+        *trace_symbols,
+        *structured,
+        *ordinary,
+    ]:
 
         normalized = (
             value.casefold()
@@ -607,6 +643,83 @@ def _issue_keywords(
             break
 
     return result
+
+def _issue_referenced_paths(
+    problem_statement: str,
+    tree: list[str],
+) -> list[str]:
+    """
+    Resolve tracked repository paths explicitly mentioned by the
+    issue text.
+
+    Absolute traceback paths are supported naturally because a
+    repository-relative tracked path is a suffix/sub-string of
+    paths such as:
+
+        /.../site-packages/bimmer_connected/account.py
+
+    Only already-tracked, policy-allowed paths from `tree` can be
+    returned; arbitrary issue text never becomes a filesystem path.
+    """
+
+    normalized_issue = (
+        problem_statement
+        .replace(
+            "\\\\",
+            "/",
+        )
+        .casefold()
+    )
+
+    matches: list[
+        tuple[
+            int,
+            int,
+            str,
+        ]
+    ] = []
+
+    for path in tree:
+
+        normalized_path = (
+            path.replace(
+                "\\\\",
+                "/",
+            )
+            .casefold()
+        )
+
+        position = (
+            normalized_issue.find(
+                normalized_path
+            )
+        )
+
+        if position < 0:
+            continue
+
+        matches.append(
+            (
+                position,
+                -len(
+                    normalized_path
+                ),
+                path,
+            )
+        )
+
+    matches.sort()
+
+    return [
+        path
+
+        for (
+            _position,
+            _negative_length,
+            path,
+        )
+        in matches
+    ]
 
 
 def _context_path_allowed(
@@ -731,6 +844,76 @@ def _path_score(
     return score
 
 
+def _rank_context_paths(
+    *,
+    tree: list[str],
+    matched: list[str],
+    referenced: list[str],
+    keywords: list[str],
+) -> list[str]:
+    """
+    Rank candidate-visible repository files.
+
+    Explicit paths mentioned by the issue take precedence over
+    broad lexical matches. Their original mention order is
+    preserved so an earlier traceback/source reference cannot be
+    displaced by a later file that happens to match more generic
+    keywords.
+    """
+
+    matched_set = set(
+        matched
+    )
+
+    referenced_order = {
+        path:
+            index
+
+        for (
+            index,
+            path,
+        ) in enumerate(
+            referenced
+        )
+    }
+
+    not_referenced = len(
+        referenced_order
+    )
+
+    return sorted(
+        tree,
+
+        key=lambda path: (
+            0
+            if path
+            in referenced_order
+            else 1,
+
+            referenced_order.get(
+                path,
+                not_referenced,
+            ),
+
+            -(
+                100
+                if path
+                in matched_set
+                else 0
+            )
+            - _path_score(
+                path,
+                keywords,
+            ),
+
+            len(
+                path
+            ),
+
+            path.casefold(),
+        ),
+    )
+
 def _context_excerpt(
     text: str,
     keywords: list[str],
@@ -742,6 +925,15 @@ def _context_excerpt(
     str,
     bool,
 ]:
+    """
+    Select one contiguous, issue-relevant source window.
+
+    Candidate windows are anchored around issue keywords and scored
+    by how many high-priority keywords they contain. This avoids
+    spending the entire context budget on early boilerplate merely
+    because a generic repository/package term appears near the top
+    of the file.
+    """
 
     if len(
         text
@@ -756,23 +948,69 @@ def _context_excerpt(
         text.casefold()
     )
 
-    positions: list[int] = []
+    matches: list[
+        tuple[
+            int,
+            int,
+        ]
+    ] = []
 
-    for keyword in keywords:
+    for (
+        keyword_index,
+        keyword,
+    ) in enumerate(
+        keywords
+    ):
 
-        position = (
-            normalized.find(
-                keyword.casefold()
-            )
+        value = (
+            keyword.casefold()
         )
 
-        if position >= 0:
+        if not value:
+            continue
 
-            positions.append(
-                position
+        search_from = 0
+
+        while True:
+
+            position = (
+                normalized.find(
+                    value,
+                    search_from,
+                )
             )
 
-    if not positions:
+            if position < 0:
+                break
+
+            matches.append(
+                (
+                    keyword_index,
+                    position,
+                )
+            )
+
+            search_from = (
+                position
+                + max(
+                    1,
+                    len(
+                        value
+                    ),
+                )
+            )
+
+            if len(
+                matches
+            ) >= 256:
+                break
+
+        if len(
+            matches
+        ) >= 256:
+            break
+
+    if not matches:
 
         return (
             text[
@@ -781,34 +1019,37 @@ def _context_excerpt(
             True,
         )
 
-    pieces: list[str] = []
+    best_start = 0
 
-    remaining = (
-        max_chars
+    best_score: (
+        tuple[
+            int,
+            int,
+            int,
+        ]
+        | None
+    ) = None
+
+    keyword_count = max(
+        1,
+        len(
+            keywords
+        ),
     )
 
-    for position in sorted(
-        set(
-            positions
-        )
-    )[
-        :4
-    ]:
+    for (
+        _anchor_keyword_index,
+        anchor_position,
+    ) in matches:
 
-        if remaining <= 0:
-            break
-
-        window = min(
-            1800,
-            remaining,
-        )
-
+        # Keep some leading source context while reserving more
+        # room after the anchor for the implementation body.
         start = max(
             0,
-            position
+            anchor_position
             - (
-                window
-                // 2
+                max_chars
+                // 3
             ),
         )
 
@@ -817,34 +1058,92 @@ def _context_excerpt(
                 text
             ),
             start
-            + window,
+            + max_chars,
         )
 
-        piece = (
-            text[
-                start:end
-            ]
+        if (
+            end
+            - start
+            < max_chars
+        ):
+
+            start = max(
+                0,
+                end
+                - max_chars,
+            )
+
+        seen_keywords: set[int] = set()
+
+        weighted_score = 0
+
+        occurrence_score = 0
+
+        for (
+            keyword_index,
+            position,
+        ) in matches:
+
+            if not (
+                start
+                <= position
+                < end
+            ):
+
+                continue
+
+            occurrence_score += 1
+
+            if (
+                keyword_index
+                in seen_keywords
+            ):
+
+                continue
+
+            seen_keywords.add(
+                keyword_index
+            )
+
+            # Earlier entries from _issue_keywords() carry more
+            # relevance, but multiple distinct issue terms within
+            # one contiguous source window are preferred.
+            weighted_score += (
+                keyword_count
+                - keyword_index
+            )
+
+        score = (
+            weighted_score,
+            len(
+                seen_keywords
+            ),
+            occurrence_score,
         )
 
-        pieces.append(
-            piece
-        )
+        if (
+            best_score is None
+            or score > best_score
+        ):
 
-        remaining -= len(
-            piece
-        )
+            best_score = (
+                score
+            )
+
+            best_start = (
+                start
+            )
 
     excerpt = (
-        "\n\n...[excerpt boundary]...\n\n"
-        .join(
-            pieces
-        )
+        text[
+            best_start:
+            best_start
+            + max_chars
+        ]
     )
 
     return (
-        excerpt[
-            :max_chars
-        ],
+        excerpt,
         True,
     )
 
@@ -1186,33 +1485,20 @@ def _build_repository_context(
         )
     )
 
-    matched_set = (
-        set(
-            matched
+    referenced = (
+        _issue_referenced_paths(
+            problem_statement,
+            tree,
         )
     )
 
-    ranked = sorted(
-        tree,
-
-        key=lambda path: (
-            -(
-                100
-                if path
-                in matched_set
-                else 0
-            )
-            - _path_score(
-                path,
-                keywords,
-            ),
-
-            len(
-                path
-            ),
-
-            path.casefold(),
-        ),
+    ranked = (
+        _rank_context_paths(
+            tree=tree,
+            matched=matched,
+            referenced=referenced,
+            keywords=keywords,
+        )
     )
 
     selected_paths = (
