@@ -45,6 +45,13 @@ from learning.continual.storage import (
     canonical_json,
 )
 
+from learning.developer_contract import (
+    behavioral_parser_supported,
+    build_developer_issue_messages,
+    canonical_language,
+    extract_log_parser,
+)
+
 from learning.paths import (
     REPOSITORY_ROOT,
     RUNTIME_LEARNING_ROOT,
@@ -212,11 +219,13 @@ def _language(
     row: dict[str, Any],
 ) -> str | None:
 
-    return _first_text(
-        row,
-        "language",
-        "lang",
-        "programming_language",
+    return canonical_language(
+        _first_text(
+            row,
+            "language",
+            "lang",
+            "programming_language",
+        )
     )
 
 
@@ -236,7 +245,21 @@ def _task(
 
 def _verified_outcome(
     row: dict[str, Any],
+    *,
+    source: (
+        CorpusRegistrySource
+        | None
+    ) = None,
 ) -> bool:
+
+    if (
+        source is not None
+        and source.metadata.get(
+            "upstream_verified"
+        )
+        is True
+    ):
+        return True
 
     for key in (
         "verified",
@@ -284,22 +307,6 @@ def _verified_outcome(
             ),
         )
         and reward > 0
-    ):
-        return True
-
-    # SWE-style records may express verification through executable
-    # test-transition data rather than one boolean.
-    if any(
-        row.get(
-            key
-        )
-        for key in (
-            "test_patch",
-            "FAIL_TO_PASS",
-            "PASS_TO_PASS",
-            "fail_to_pass",
-            "pass_to_pass",
-        )
     ):
         return True
 
@@ -1209,7 +1216,8 @@ def _record(
         "verified_outcome":
             (
                 _verified_outcome(
-                    row
+                    row,
+                    source=source,
                 )
                 if verified_outcome
                 is None
@@ -1246,6 +1254,22 @@ def _record(
                         "license",
                         "repository_license",
                         "repo_license",
+                    ),
+
+                "problem_statement":
+                    _first_text(
+                        row,
+                        "problem_statement",
+                        "problem",
+                        "issue",
+                        "issue_text",
+                        "description",
+                        "title",
+                    ),
+
+                "behavioral_log_parser":
+                    extract_log_parser(
+                        row
                     ),
             },
     }
@@ -1429,10 +1453,26 @@ def _normalize_issue_patch(
     ):
         return None
 
-    prompt = (
-        "Resolve the software issue below with a minimal, "
-        "testable source patch.\n\n"
-        + issue
+    prompt_messages = (
+        build_developer_issue_messages(
+            problem_statement=issue,
+            repository=(
+                _first_text(
+                    row,
+                    "repo",
+                    "repository",
+                    "repo_name",
+                )
+            ),
+            base_commit=(
+                _first_text(
+                    row,
+                    "base_commit",
+                    "base_sha",
+                    "commit",
+                )
+            ),
+        )
     )
 
     return _record(
@@ -1441,14 +1481,7 @@ def _normalize_issue_patch(
         objective="sft",
         row=row,
         prompt_messages=(
-            _prompt_messages(
-                prompt,
-                system=(
-                    "You are a software-engineering agent. "
-                    "Inspect the issue, preserve unrelated behavior, "
-                    "and produce only the necessary patch."
-                ),
-            )
+            prompt_messages
         ),
         chosen=patch,
         adapter="issue_patch",
@@ -1941,21 +1974,59 @@ def _filter_reason(
     ):
         return "secret_like_content"
 
-    allowed_languages = (
-        _normalized_set(
-            policy.languages
+    allowed_languages = {
+        normalized
+
+        for normalized
+        in (
+            canonical_language(
+                value
+            )
+
+            for value
+            in policy.languages
         )
-    )
+
+        if normalized
+    }
 
     if (
         allowed_languages
         and record.language
         and record.language
-        .strip()
-        .lower()
         not in allowed_languages
     ):
         return "language_filtered"
+
+    if (
+        source.metadata.get(
+            "require_behavioral_parser_support"
+        )
+        is True
+    ):
+        parser_name = (
+            record.metadata.get(
+                "behavioral_log_parser"
+            )
+        )
+
+        if not (
+            isinstance(
+                parser_name,
+                str,
+            )
+            and parser_name.strip()
+        ):
+            return (
+                "behavioral_log_parser_missing"
+            )
+
+        if not behavioral_parser_supported(
+            parser_name
+        ):
+            return (
+                "behavioral_log_parser_unsupported"
+            )
 
     include_tasks = (
         _normalized_set(

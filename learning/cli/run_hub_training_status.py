@@ -47,7 +47,7 @@ def main() -> int:
     )
     active = AdapterCheckpointStore().active()
 
-    print("Phase-5 Status")
+    print("Hub Training Status")
     print("==============")
 
     if materialized is None:

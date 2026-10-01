@@ -6,9 +6,9 @@ from pathlib import Path
 from config import Settings
 
 from learning.paths import REPOSITORY_ROOT
-from learning.training.phase5_hybrid_qlora import (
-    Phase5TrainingSettings,
-    train_phase5_hub_adapter,
+from learning.training.hub_hybrid_qlora import (
+    HubTrainingSettings,
+    train_hub_adapter,
 )
 
 
@@ -93,7 +93,7 @@ def main() -> int:
         settings.hub_model_key
     )
 
-    recipe = Phase5TrainingSettings(
+    recipe = HubTrainingSettings(
         compute_dtype=args.compute_dtype,
         learning_rate=args.learning_rate,
         beta=args.beta,
@@ -111,7 +111,7 @@ def main() -> int:
         early_stop_patience=args.patience,
     )
 
-    manifest = train_phase5_hub_adapter(
+    manifest = train_hub_adapter(
         materialization_directory=(
             args.materialization_dir
         ),
@@ -125,7 +125,7 @@ def main() -> int:
         ),
     )
 
-    print("Phase-5 Hub Training")
+    print("Hub Hybrid Training")
     print("====================")
     print(f"Run:          {manifest.run_id}")
     print(f"Steps:        {manifest.optimizer_steps}")

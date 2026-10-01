@@ -15,7 +15,7 @@ from learning.training.developer_corpus_bridge import (
     materialize_developer_sft_snapshot,
 )
 
-from learning.training.phase5_hybrid_qlora import (
+from learning.training.hub_hybrid_qlora import (
     _fallback_ids,
     _template_ids,
 )

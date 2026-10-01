@@ -24,13 +24,13 @@ from learning.cli.reporting import (
     render_developer_training_summary,
 )
 
-from learning.training.phase5_hybrid_qlora import (
-    Phase5TrainingSettings,
+from learning.training.hub_hybrid_qlora import (
+    HubTrainingSettings,
     train_phase5_adapter,
 )
 
-from learning.training.phase5_materializer import (
-    Phase5MaterializationManifest,
+from learning.training.hub_training_materializer import (
+    HubTrainingMaterializationManifest,
 )
 
 
@@ -158,7 +158,7 @@ def main() -> int:
     )
 
     materialization = (
-        Phase5MaterializationManifest
+        HubTrainingMaterializationManifest
         .model_validate_json(
             (
                 directory
@@ -230,7 +230,7 @@ def main() -> int:
                 )
 
     recipe = (
-        Phase5TrainingSettings(
+        HubTrainingSettings(
             compute_dtype=(
                 args.compute_dtype
             ),

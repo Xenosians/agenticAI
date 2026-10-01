@@ -5,9 +5,9 @@ from pathlib import Path
 
 from config import Settings
 
-from learning.training.phase5_materializer import (
+from learning.training.hub_training_materializer import (
     find_latest_ready_hub_plan,
-    materialize_phase5_training,
+    materialize_hub_training,
 )
 
 
@@ -54,7 +54,7 @@ def main() -> int:
         else find_latest_ready_hub_plan()
     )
 
-    result = materialize_phase5_training(
+    result = materialize_hub_training(
         plan_directory=plan_dir,
         target_model_key=model_key,
         base_model_path=profile.model_path,
@@ -62,7 +62,7 @@ def main() -> int:
 
     manifest = result.manifest
 
-    print("Phase-5 Training Materialization")
+    print("Hub Training Materialization")
     print("================================")
     print(f"ID:          {manifest.materialization_id}")
     print(f"Plan:        {manifest.source_plan_id}")

@@ -59,9 +59,9 @@
     {
       "source_id": "swe-rebench-v2",
       "provider": "huggingface",
-      "dataset_id": "PrimeIntellect/SWE-rebench-V2",
+      "dataset_id": "PrimeIntellect/SWE-rebench-V2-Filtered-Verified",
       "subset": null,
-      "revision": "8851474cc41be8bce981362d1363d9f92e247b4b",
+      "revision": "03cc767ee33126b7fc7890ad57047e9dd6914cca",
       "local_path": null,
       "license": "cc-by-4.0",
       "upstream_url": null,
@@ -103,7 +103,12 @@
         "secret_scan": true,
         "benchmark_decontamination": true
       },
-      "metadata": {}
+      "metadata": {
+        "adapter": "issue_patch",
+        "upstream_verified": true,
+        "require_behavioral_parser_support": true,
+        "developer_prompt_contract": "developer-issue-context.v2"
+      }
     },
     {
       "source_id": "commitpack",

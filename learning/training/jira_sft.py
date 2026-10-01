@@ -29,6 +29,10 @@ from learning.training.dpo_qlora import (
     EXPECTED_TRAINING_VERSIONS,
 )
 
+from learning.training.capability_curriculum import (
+    build_agent_capability_records,
+)
+
 from subagents.core.definitions.loader import (
     load_agent_definition,
 )
@@ -1006,17 +1010,43 @@ def _agent_identity_hash(
 
 
 def _build_records(
+    *,
+    project_root: Path | None = None,
 ) -> list[
     JiraSftRecord
 ]:
+    """
+    Build a deterministic hybrid Jira supervision corpus.
+
+    Existing callers may still call _build_records() with no arguments.
+    Catalog-derived language examples augment the existing reviewed seed
+    instead of replacing it.
+    """
+
+    if project_root is None:
+        project_root = (
+            Path(__file__)
+            .resolve()
+            .parents[2]
+        )
+
+    project_root = (
+        project_root
+        .expanduser()
+        .resolve()
+    )
+
     raw = _seed_examples()
+
     per_tool_index: dict[
         str,
         int,
     ] = {}
+
     records: list[
         JiraSftRecord
     ] = []
+
     seen_requests: set[
         str
     ] = set()
@@ -1056,8 +1086,6 @@ def _build_records(
             tool_name
         ] = index + 1
 
-        # Every fifth example for each capability is held out.
-        # This guarantees validation coverage across all Jira tools.
         split = (
             "validation"
             if index % 5 == 0
@@ -1071,30 +1099,102 @@ def _build_records(
             )[:12]
         )
 
-        semantic_context = (
-            semantic_context_for(
-                tool_name,
-                arguments,
-            )
-        )
-
         records.append(
             JiraSftRecord(
                 record_id=record_id,
                 split=split,
                 tool_name=tool_name,
                 user_request=normalized_request,
-                semantic_context=semantic_context,
-                target_response=canonical_tool_call(
-                    tool_name,
-                    arguments,
+                semantic_context=(
+                    semantic_context_for(
+                        tool_name,
+                        arguments,
+                    )
                 ),
-                tags=tags,
+                target_response=(
+                    canonical_tool_call(
+                        tool_name,
+                        arguments,
+                    )
+                ),
+                tags=[
+                    *tags,
+                    "reviewed-seed",
+                ],
+            )
+        )
+
+    generated = (
+        build_agent_capability_records(
+            project_root=(
+                project_root
+            ),
+            agent_definition=(
+                Path(
+                    "subagents/agents/jira-specialist.md"
+                )
+            ),
+            excluded_requests=(
+                JIRA_HELD_OUT_EVAL_REQUESTS
+            ),
+        )
+    )
+
+    for generated_record in generated:
+        normalized_request = (
+            generated_record
+            .user_request
+            .strip()
+        )
+
+        if not normalized_request:
+            continue
+
+        if (
+            normalized_request
+            in JIRA_HELD_OUT_EVAL_REQUESTS
+        ):
+            continue
+
+        if normalized_request in seen_requests:
+            continue
+
+        seen_requests.add(
+            normalized_request
+        )
+
+        records.append(
+            JiraSftRecord(
+                record_id=(
+                    "jira-sft-"
+                    + generated_record.record_id
+                ),
+                split=(
+                    generated_record.split
+                ),
+                tool_name=(
+                    generated_record.tool_name
+                ),
+                user_request=(
+                    normalized_request
+                ),
+                semantic_context=(
+                    semantic_context_for(
+                        generated_record.tool_name,
+                        generated_record.arguments,
+                    )
+                ),
+                target_response=(
+                    generated_record.target_response
+                ),
+                tags=[
+                    *generated_record.tags,
+                    "capability-language-v2.1",
+                ],
             )
         )
 
     return records
-
 
 def build_jira_sft_corpus(
     *,
@@ -1156,7 +1256,11 @@ def build_jira_sft_corpus(
         ),
     )
 
-    records = _build_records()
+    records = _build_records(
+        project_root=(
+            project_root
+        )
+    )
 
     train = [
         record
@@ -1233,7 +1337,7 @@ def build_jira_sft_corpus(
     manifest = JiraSftCorpusManifest(
         created_at=_utc_now(),
         source=(
-            "deterministic-reviewed-jira-capability-seed"
+            "catalog-derived-jira-capability-language-v2"
         ),
         agent_name=agent.name,
         base_model_key=base_model_key,
@@ -2323,7 +2427,7 @@ def train_jira_sft(
     merged.save_pretrained(
         merged_directory,
         safe_serialization=True,
-        max_shard_size="2GB",
+        max_shard_size="256MB",
     )
 
     tokenizer.save_pretrained(

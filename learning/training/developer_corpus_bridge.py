@@ -21,20 +21,24 @@ from learning.continual.storage import (
     sha256_file,
 )
 
+from learning.developer_contract import (
+    build_developer_issue_messages,
+)
+
 from learning.paths import (
     RUNTIME_LEARNING_ROOT,
 )
 
-from learning.training.phase5_contracts import (
+from learning.training.hub_training_contracts import (
     canonical_json,
     sha256_text,
 )
 
-from learning.training.phase5_materializer import (
-    Phase5DpoRecord,
-    Phase5MaterializationManifest,
-    Phase5MaterializationResult,
-    Phase5SftRecord,
+from learning.training.hub_training_materializer import (
+    HubDpoRecord,
+    HubTrainingMaterializationManifest,
+    HubTrainingMaterializationResult,
+    HubSftRecord,
 )
 
 
@@ -246,12 +250,74 @@ def _validation_record(
     )
 
 
+def _developer_training_messages(
+    record: NormalizedCorpusRecord,
+) -> list[dict[str, str]]:
+
+    if (
+        record.metadata.get(
+            "adapter"
+        )
+        != "issue_patch"
+    ):
+        return record.prompt_messages
+
+    problem_statement = (
+        record.metadata.get(
+            "problem_statement"
+        )
+    )
+
+    if not (
+        isinstance(
+            problem_statement,
+            str,
+        )
+        and problem_statement.strip()
+    ):
+        return record.prompt_messages
+
+    repository = (
+        record.metadata.get(
+            "repository"
+        )
+    )
+
+    base_commit = (
+        record.metadata.get(
+            "base_commit"
+        )
+    )
+
+    return build_developer_issue_messages(
+        problem_statement=(
+            problem_statement
+        ),
+        repository=(
+            repository
+            if isinstance(
+                repository,
+                str,
+            )
+            else None
+        ),
+        base_commit=(
+            base_commit
+            if isinstance(
+                base_commit,
+                str,
+            )
+            else None
+        ),
+    )
+
+
 def _phase5_record(
     *,
     snapshot: CorpusSnapshotManifest,
     record: NormalizedCorpusRecord,
     partition: str,
-) -> Phase5SftRecord:
+) -> HubSftRecord:
 
     if not (
         record.objective
@@ -296,7 +362,7 @@ def _phase5_record(
         )
     )
 
-    return Phase5SftRecord(
+    return HubSftRecord(
         record_id=record_id,
 
         member_id=(
@@ -315,7 +381,9 @@ def _phase5_record(
         ),
 
         prompt_messages=(
-            record.prompt_messages
+            _developer_training_messages(
+                record
+            )
         ),
 
         chosen=(
@@ -362,7 +430,7 @@ def materialize_developer_sft_snapshot(
     output_root: Path = (
         DEFAULT_DEVELOPER_CORPUS_MATERIALIZATION_ROOT
     ),
-) -> Phase5MaterializationResult:
+) -> HubTrainingMaterializationResult:
 
     if max_records < 2:
         raise ValueError(
@@ -654,7 +722,7 @@ def materialize_developer_sft_snapshot(
     if target.is_dir():
 
         existing = (
-            Phase5MaterializationManifest
+            HubTrainingMaterializationManifest
             .model_validate_json(
                 (
                     target
@@ -673,7 +741,7 @@ def materialize_developer_sft_snapshot(
                 "Existing developer materialization identity mismatch."
             )
 
-        return Phase5MaterializationResult(
+        return HubTrainingMaterializationResult(
             manifest=existing,
             output_directory=str(
                 target
@@ -703,11 +771,11 @@ def materialize_developer_sft_snapshot(
     ]
 
     dpo_train: list[
-        Phase5DpoRecord
+        HubDpoRecord
     ] = []
 
     dpo_validation: list[
-        Phase5DpoRecord
+        HubDpoRecord
     ] = []
 
     temporary = Path(
@@ -754,7 +822,7 @@ def materialize_developer_sft_snapshot(
         )
 
         manifest = (
-            Phase5MaterializationManifest(
+            HubTrainingMaterializationManifest(
                 materialization_id=(
                     materialization_id
                 ),
@@ -925,7 +993,7 @@ def materialize_developer_sft_snapshot(
 
         raise
 
-    return Phase5MaterializationResult(
+    return HubTrainingMaterializationResult(
         manifest=manifest,
         output_directory=str(
             target

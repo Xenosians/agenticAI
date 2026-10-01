@@ -16,10 +16,10 @@ from learning.continual.storage import (
 from learning.paths import (
     RUNTIME_LEARNING_ROOT,
 )
-from learning.training.phase5_materializer import (
-    Phase5DpoRecord,
-    Phase5MaterializationManifest,
-    Phase5SftRecord,
+from learning.training.hub_training_materializer import (
+    HubDpoRecord,
+    HubTrainingMaterializationManifest,
+    HubSftRecord,
 )
 from learning.continual.automation.corpus import (
     study_split,
@@ -72,7 +72,7 @@ def find_latest_ready_materialization(
     ):
         try:
             manifest = (
-                Phase5MaterializationManifest
+                HubTrainingMaterializationManifest
                 .model_validate_json(
                     manifest_path.read_text(
                         encoding="utf-8"
@@ -115,7 +115,7 @@ def _code_study_record(
     *,
     page: CorpusPage,
     partition: str,
-) -> Phase5SftRecord:
+) -> HubSftRecord:
     prefix, continuation = (
         study_split(
             page.content
@@ -187,7 +187,7 @@ def _code_study_record(
         )[:24]
     )
 
-    return Phase5SftRecord(
+    return HubSftRecord(
         record_id=record_id,
         member_id=(
             "corpus:"
@@ -250,7 +250,7 @@ def augment_materialization_with_corpus(
     )
 
     manifest = (
-        Phase5MaterializationManifest
+        HubTrainingMaterializationManifest
         .model_validate_json(
             (
                 base_directory
@@ -265,25 +265,25 @@ def augment_materialization_with_corpus(
     sft_train = load_jsonl_models(
         base_directory
         / "sft-train.jsonl",
-        Phase5SftRecord,
+        HubSftRecord,
     )
 
     sft_validation = load_jsonl_models(
         base_directory
         / "sft-validation.jsonl",
-        Phase5SftRecord,
+        HubSftRecord,
     )
 
     dpo_train = load_jsonl_models(
         base_directory
         / "dpo-train.jsonl",
-        Phase5DpoRecord,
+        HubDpoRecord,
     )
 
     dpo_validation = load_jsonl_models(
         base_directory
         / "dpo-validation.jsonl",
-        Phase5DpoRecord,
+        HubDpoRecord,
     )
 
     page_ids = [

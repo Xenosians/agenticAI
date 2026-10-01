@@ -21,7 +21,7 @@ from learning.continual.storage import (
     sha256_file,
 )
 from learning.paths import REPOSITORY_ROOT, RUNTIME_LEARNING_ROOT
-from learning.training.phase5_contracts import (
+from learning.training.hub_training_contracts import (
     build_hub_training_environment,
     canonical_json,
     sha256_text,
@@ -29,7 +29,7 @@ from learning.training.phase5_contracts import (
 )
 
 
-DEFAULT_PHASE5_MATERIALIZATION_ROOT = (
+DEFAULT_HUB_MATERIALIZATION_ROOT = (
     RUNTIME_LEARNING_ROOT / "phase5" / "materialized"
 )
 
@@ -66,7 +66,7 @@ def _curriculum_prompt_for_chapter(
     return runtime_system_prompt
 
 
-class Phase5SftRecord(BaseModel):
+class HubSftRecord(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     schema_name: str = Field(
@@ -89,7 +89,7 @@ class Phase5SftRecord(BaseModel):
     lineage_id: str
 
 
-class Phase5DpoRecord(BaseModel):
+class HubDpoRecord(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     schema_name: str = Field(
@@ -113,7 +113,7 @@ class Phase5DpoRecord(BaseModel):
     lineage_id: str
 
 
-class Phase5MaterializationManifest(BaseModel):
+class HubTrainingMaterializationManifest(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     schema_name: str = Field(
@@ -189,10 +189,10 @@ class Phase5MaterializationManifest(BaseModel):
     promotion_authorized: bool = False
 
 
-class Phase5MaterializationResult(BaseModel):
+class HubTrainingMaterializationResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    manifest: Phase5MaterializationManifest
+    manifest: HubTrainingMaterializationManifest
     output_directory: str
 
 
@@ -374,7 +374,7 @@ def _curriculum_lesson_records(
     source: dict[str, Any],
     system_prompt: str,
     registry,
-) -> tuple[Phase5SftRecord, Phase5DpoRecord | None]:
+) -> tuple[HubSftRecord, HubDpoRecord | None]:
     chosen = source.get("chosen_response")
     rejected = source.get("rejected_response")
     request = source.get("user_request")
@@ -413,7 +413,7 @@ def _curriculum_lesson_records(
         "lineage_id": member["lineage_id"],
     }
 
-    sft = Phase5SftRecord(
+    sft = HubSftRecord(
         record_id=(
             "sft-"
             + sha256_text(canonical_json(common))[:24]
@@ -433,7 +433,7 @@ def _curriculum_lesson_records(
             "rejected": rejected.strip(),
         }
 
-        dpo = Phase5DpoRecord(
+        dpo = HubDpoRecord(
             record_id=(
                 "dpo-"
                 + sha256_text(
@@ -451,7 +451,7 @@ def _hub_preference_records(
     member: dict[str, Any],
     source: dict[str, Any],
     environment: dict[str, Any],
-) -> tuple[Phase5SftRecord, Phase5DpoRecord]:
+) -> tuple[HubSftRecord, HubDpoRecord]:
     prompt_messages = source.get("prompt_messages")
     chosen = source.get("chosen")
     rejected = source.get("rejected")
@@ -538,7 +538,7 @@ def _hub_preference_records(
         "lineage_id": member["lineage_id"],
     }
 
-    sft = Phase5SftRecord(
+    sft = HubSftRecord(
         record_id=(
             "sft-"
             + sha256_text(canonical_json(common))[:24]
@@ -551,7 +551,7 @@ def _hub_preference_records(
         "rejected": rejected,
     }
 
-    dpo = Phase5DpoRecord(
+    dpo = HubDpoRecord(
         record_id=(
             "dpo-"
             + sha256_text(
@@ -576,14 +576,14 @@ def _write_partition(
     )
 
 
-def materialize_phase5_training(
+def materialize_hub_training(
     *,
     plan_directory: Path,
     target_model_key: str,
     base_model_path: Path,
-    output_root: Path = DEFAULT_PHASE5_MATERIALIZATION_ROOT,
+    output_root: Path = DEFAULT_HUB_MATERIALIZATION_ROOT,
     agent_directory: Path | None = None,
-) -> Phase5MaterializationResult:
+) -> HubTrainingMaterializationResult:
     plan_directory = (
         plan_directory.expanduser().resolve()
     )
@@ -836,7 +836,7 @@ def materialize_phase5_training(
 
     if manifest_target.is_file():
         manifest = (
-            Phase5MaterializationManifest
+            HubTrainingMaterializationManifest
             .model_validate_json(
                 manifest_target.read_text(
                     encoding="utf-8"
@@ -844,7 +844,7 @@ def materialize_phase5_training(
             )
         )
 
-        return Phase5MaterializationResult(
+        return HubTrainingMaterializationResult(
             manifest=manifest,
             output_directory=str(target),
         )
@@ -887,7 +887,7 @@ def materialize_phase5_training(
             == len(sft_train) + len(sft_validation)
         )
 
-        manifest = Phase5MaterializationManifest(
+        manifest = HubTrainingMaterializationManifest(
             materialization_id=materialization_id,
             created_at=_utc_now(),
             target_component="hub",
@@ -961,7 +961,7 @@ def materialize_phase5_training(
         )
         raise
 
-    return Phase5MaterializationResult(
+    return HubTrainingMaterializationResult(
         manifest=manifest,
         output_directory=str(target),
     )

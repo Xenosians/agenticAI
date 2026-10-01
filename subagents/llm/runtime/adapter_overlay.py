@@ -150,7 +150,7 @@ def _resolve_checkpoint_id(
     return checkpoint_id.strip(), False
 
 
-def apply_phase5_adapter_overlay(
+def apply_hub_adapter_overlay(
     *,
     backend,
     model_key: str,
@@ -161,7 +161,7 @@ def apply_phase5_adapter_overlay(
     checkpoint_root: Path = DEFAULT_CHECKPOINT_ROOT,
 ):
     """
-    Apply one verified Phase-5 LoRA adapter to an already-loaded backend.
+    Apply one verified Hub LoRA adapter to an already-loaded backend.
 
     Production accepts only the promotion-gated active pointer.
     Isolated evaluation may use an explicit unpromoted checkpoint override.
@@ -205,7 +205,7 @@ def apply_phase5_adapter_overlay(
 
     if not manifest_path.is_file():
         raise ValueError(
-            "Phase-5 checkpoint manifest does not exist: "
+            "Hub adapter checkpoint manifest does not exist: "
             f"{manifest_path}"
         )
 
@@ -240,7 +240,7 @@ def apply_phase5_adapter_overlay(
 
     if observed_adapter_sha != expected_adapter_sha:
         raise ValueError(
-            "Phase-5 adapter SHA-256 verification failed."
+            "Hub adapter SHA-256 verification failed."
         )
 
     observed_base_sha = (
@@ -256,7 +256,7 @@ def apply_phase5_adapter_overlay(
         )
     ):
         raise ValueError(
-            "Phase-5 adapter base-model identity mismatch."
+            "Hub adapter base-model identity mismatch."
         )
 
     if not is_override:
@@ -267,7 +267,7 @@ def apply_phase5_adapter_overlay(
 
         if not promotion_path.is_file():
             raise PermissionError(
-                "Active Phase-5 checkpoint has no promotion artifact."
+                "Active Hub adapter checkpoint has no promotion artifact."
             )
 
         promotion = _read_json(
@@ -278,7 +278,7 @@ def apply_phase5_adapter_overlay(
             "promotion_eligible"
         ) is not True:
             raise PermissionError(
-                "Active Phase-5 checkpoint promotion is not eligible."
+                "Active Hub adapter checkpoint promotion is not eligible."
             )
 
     if not hasattr(backend, "model"):
@@ -300,7 +300,7 @@ def apply_phase5_adapter_overlay(
     backend.model.eval()
 
     print(
-        "[MODEL] Applied Phase-5 adapter "
+        "[MODEL] Applied Hub adapter "
         f"checkpoint='{checkpoint_id}' "
         f"model='{model_key}' "
         f"evaluation_override={is_override}"

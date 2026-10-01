@@ -19,7 +19,7 @@ from learning.paths import (
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Build a Phase-5 promotion decision from held-out "
+            "Build a Hub adapter promotion decision from held-out "
             "orchestrator + ToolGateway safety reports, then "
             "optionally activate the registered checkpoint."
         )
@@ -117,7 +117,7 @@ def main() -> int:
         decision
     )
 
-    print("Phase-5 Promotion Gate")
+    print("Hub Adapter Promotion Gate")
     print("======================")
     print(f"Decision:     {decision.decision_id}")
     print(

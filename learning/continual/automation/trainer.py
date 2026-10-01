@@ -16,9 +16,9 @@ from learning.continual.automation.types import (
 from learning.paths import (
     REPOSITORY_ROOT,
 )
-from learning.training.phase5_hybrid_qlora import (
-    Phase5TrainingSettings,
-    train_phase5_hub_adapter,
+from learning.training.hub_hybrid_qlora import (
+    HubTrainingSettings,
+    train_hub_adapter,
 )
 
 
@@ -70,7 +70,7 @@ def train_continual_candidate(
     available. With no active adapter it starts from the frozen base model.
     """
     settings = (
-        Phase5TrainingSettings(
+        HubTrainingSettings(
             learning_rate=(
                 recipe.learning_rate
             ),
@@ -110,7 +110,7 @@ def train_continual_candidate(
     )
 
     return (
-        train_phase5_hub_adapter(
+        train_hub_adapter(
             materialization_directory=(
                 materialization_directory
             ),

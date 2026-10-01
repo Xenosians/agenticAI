@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
-from learning.training.phase5_hybrid_qlora import (
-    Phase5TrainingSettings,
+from learning.training.hub_hybrid_qlora import (
+    HubTrainingSettings,
     _target_checkpoint_metrics,
 )
 
@@ -35,7 +35,7 @@ def test_developer_checkpoint_uses_validation_loss_not_hub_contract():
         environment=None,
 
         settings=(
-            Phase5TrainingSettings()
+            HubTrainingSettings()
         ),
 
         eval_sft_loss=0.625,
@@ -68,7 +68,7 @@ def test_pre_training_developer_observation_is_step_zero(
     monkeypatch,
 ):
     from learning.training import (
-        phase5_hybrid_qlora as module,
+        hub_hybrid_qlora as module,
     )
 
     monkeypatch.setattr(
@@ -103,7 +103,7 @@ def test_pre_training_developer_observation_is_step_zero(
             environment=None,
             settings=(
                 module
-                .Phase5TrainingSettings()
+                .HubTrainingSettings()
             ),
             initialization=(
                 "fresh_lora"
@@ -139,11 +139,11 @@ def test_pre_training_developer_observation_is_step_zero(
 def test_developer_fit_diagnosis_flags_underfit():
 
     from learning.training import (
-        phase5_hybrid_qlora as module,
+        hub_hybrid_qlora as module,
     )
 
     settings = (
-        module.Phase5TrainingSettings(
+        module.HubTrainingSettings(
             max_optimizer_steps=8,
 
             developer_underfit_min_relative_eval_improvement=(
@@ -155,7 +155,7 @@ def test_developer_fit_diagnosis_flags_underfit():
     )
 
     baseline = (
-        module.Phase5PreTrainingObservation(
+        module.HubPreTrainingObservation(
             initialization="fresh_lora",
 
             eval_sft_loss=1.0,
@@ -175,7 +175,7 @@ def test_developer_fit_diagnosis_flags_underfit():
     )
 
     observations = [
-        module.Phase5CheckpointObservation(
+        module.HubCheckpointObservation(
             step=4,
 
             checkpoint_directory=(
@@ -199,7 +199,7 @@ def test_developer_fit_diagnosis_flags_underfit():
             score=-0.99,
         ),
 
-        module.Phase5CheckpointObservation(
+        module.HubCheckpointObservation(
             step=8,
 
             checkpoint_directory=(

@@ -8,7 +8,7 @@ from config import (
 )
 
 from subagents.llm.runtime.adapter_overlay import (
-    apply_phase5_adapter_overlay,
+    apply_hub_adapter_overlay,
 )
 
 from subagents.llm.runtime.base import (
@@ -183,7 +183,7 @@ class ModelManager:
             return backend
 
         return (
-            apply_phase5_adapter_overlay(
+            apply_hub_adapter_overlay(
                 backend=backend,
                 model_key=model_key,
                 base_model_path=model_path,

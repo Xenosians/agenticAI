@@ -63,8 +63,8 @@ from learning.paths import (
 from learning.training.membership import (
     build_training_membership_plan,
 )
-from learning.training.phase5_materializer import (
-    materialize_phase5_training,
+from learning.training.hub_training_materializer import (
+    materialize_hub_training,
 )
 
 
@@ -532,7 +532,7 @@ class ContinualAutomationService:
                 .readiness_ready
             ):
                 materialized = (
-                    materialize_phase5_training(
+                    materialize_hub_training(
                         plan_directory=Path(
                             membership
                             .output_directory

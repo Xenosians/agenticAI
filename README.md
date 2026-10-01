@@ -2,11 +2,11 @@
 
 Local-first AI runtime for the **Agentic Developer Hub / ITSM Platform**.
 
-This repository contains the Python/FastAPI AI service that sits behind the Phoenix application boundary. It provides conversational orchestration, specialist routing, governed tool execution, durable approval handling, local model lifecycle management, and trusted integrations for developer and ITSM workflows.
+This repository contains the Python/FastAPI intelligence and governed-execution layer that sits behind the Phoenix backend. It provides conversational orchestration, specialist routing, local model lifecycle management, typed Jira/Git/ITSM capabilities, deterministic execution guardrails, durable approvals, runtime evidence capture, and a gated learning/evaluation stack.
 
 > **Core rule:** model output is a proposal, never authorization.
 
-The runtime is designed around one principle:
+The runtime follows one design principle:
 
 ```text
 RUSH CAPABILITIES.
@@ -15,14 +15,12 @@ DO NOT RUSH AUTHORITY.
 
 ---
 
-## System role
+## Repository role
 
-The browser does not call this service directly.
-
-The intended application path is:
+The browser does **not** call this service directly.
 
 ```text
-Browser / Nim + Karax
+Nim / Karax frontend
         |
         v
 Phoenix / Elixir backend
@@ -44,7 +42,7 @@ SemanticGuard
 ToolGateway
         |
         v
-MCP / trusted provider
+Trusted provider / MCP
         |
         v
 Verified result
@@ -56,28 +54,29 @@ Phoenix durable result
 Frontend
 ```
 
-Repository boundaries:
+Cross-repository ownership:
 
 ```text
 agenticFrontend
-    Browser UI only.
-    Calls Phoenix, never FastAPI directly.
+    Browser UX, authentication UI, chats, job polling,
+    approval controls, result rendering.
 
 agenticBackend
-    Public API, durable jobs, leases, approval binding,
-    callback validation, and browser-facing lifecycle.
+    Public API, durable jobs, chat/session ownership,
+    SurrealDB persistence, leases, callback validation,
+    browser-facing approval lifecycle, outbound mail.
 
 agenticAI
-    Model runtime, orchestration, semantic validation,
-    ToolGateway, approval execution safety, providers,
-    completion outbox, and runtime evidence.
+    Model runtime, orchestration, specialist semantics,
+    SemanticGuard, ToolGateway, approval execution safety,
+    providers, completion outbox, evidence and learning.
 ```
 
 ---
 
-## Security and authority model
+## Authority model
 
-The AI runtime deliberately separates **semantic intent** from **execution authority**.
+The AI layer deliberately separates **understanding** from **authority**.
 
 ```text
 User request
@@ -89,20 +88,20 @@ Hub / Primary Assistant
     v
 Specialist
     |
-    | one typed tool proposal
+    | typed capability proposal
     v
 SemanticGuard
     |
-    | semantic consistency only
+    | semantic consistency
     v
 ToolGateway
     |
-    | deterministic authorization boundary
+    | deterministic authorization
     v
-Trusted provider / MCP
+Trusted provider
 ```
 
-`SemanticIntent` may describe:
+`SemanticIntent` may define:
 
 ```text
 effect
@@ -115,20 +114,19 @@ clarification_required
 summary
 ```
 
-It is not an authorization token.
+It is **not** an authorization token.
 
 `ToolGateway` and trusted application code own:
 
 - tool existence and specialist allowlists;
 - typed argument validation;
-- exact user-grounding and provenance;
-- trusted enum/resource resolution;
+- exact user grounding;
 - risk classification;
 - approval requirements;
 - trusted preconditions;
 - hidden execution snapshots;
 - provider dispatch;
-- final execution policy.
+- post-execution verification.
 
 Unknown, malformed, unsupported, or unsafe requests fail closed.
 
@@ -136,23 +134,21 @@ Unknown, malformed, unsupported, or unsafe requests fail closed.
 
 ## Exact approval execution
 
-Governed mutations are persisted before execution.
-
-A successful approval path is:
+Mutation approval persists the exact proposed action before side effects occur.
 
 ```text
-model proposes exact capability + exact user arguments
+model proposes exact capability + arguments
         |
         v
-trusted policy validates preconditions
+trusted policy validates current state
         |
         v
-trusted policy appends declared execution snapshot
+trusted policy binds immutable execution facts
         |
         v
 durable approval
         |
-        | user approval
+        | explicit user approval
         v
 execute exact persisted action
         |
@@ -160,13 +156,21 @@ execute exact persisted action
 provider read-back / reconciliation
 ```
 
-The model is **not rerun** after approval to regenerate mutation arguments.
+The model is not rerun after approval to regenerate mutation arguments.
 
-Trusted policy arguments may append data such as immutable provider IDs, current resource names, repository HEADs, remote refs, or account state. They may not silently rewrite model/user-controlled arguments.
+Trusted policy may append facts such as:
 
-For remote mutations, transport success alone is not treated as sufficient proof. Provider state is reconciled after execution.
+```text
+provider IDs
+current project/resource identity
+repository HEAD
+current branch/upstream/remote
+pre-mutation account state
+```
 
-Ambiguous side effects are never blindly retried.
+Trusted policy may not silently rewrite model/user-controlled arguments.
+
+Ambiguous remote mutations are never blindly retried.
 
 ---
 
@@ -176,20 +180,13 @@ Ambiguous side effects are never blindly retried.
 FastAPI lifespan
     |
     +-- Settings
-    |
     +-- CompletionOutbox
-    |
     +-- Phoenix HTTP client
-    |
     +-- MCPRuntime
-    |
-    +-- ApprovalStore
-    +-- ApprovalManager
-    |
+    +-- ApprovalStore / ApprovalManager
     +-- ModelManager
     +-- GpuScheduler
     +-- InferenceCoordinator
-    |
     +-- ToolGateway
     |
     +-- build_hub(...)
@@ -201,84 +198,13 @@ FastAPI lifespan
             +-- Orchestrator
 ```
 
-Runtime resources are owned by the FastAPI lifespan.
-
-`build_hub(...)` assembles the reasoning graph; it does not own process-wide runtime resources.
-
----
-
-## Conversational and specialist flow
-
-For normal non-tool conversation:
-
-```text
-Phoenix
-   |
-   v
-FastAPI
-   |
-   v
-Orchestrator
-   |
-   v
-LLMRouter
-   |
-   +-- no specialist required
-           |
-           v
-     PrimaryAssistant
-```
-
-For specialist work:
-
-```text
-Phoenix
-   |
-   v
-FastAPI
-   |
-   v
-Orchestrator
-   |
-   v
-LLMRouter
-   |
-   v
-AgentRuntime
-   |
-   v
-Specialist
-   |
-   v
-Structured tool proposal
-   |
-   v
-SemanticGuard
-   |
-   v
-ToolGateway
-   |
-   +--------------------------+
-   |                          |
-   v                          v
-read / allowed          approval required
-   |                          |
-   v                          v
-MCP / provider          ApprovalManager
-   |                          |
-   +------------+-------------+
-                |
-                v
-        trusted execution
-```
-
-Specialists are domain roles and policy/tool definitions. They are not required to have separate model weights.
+Model execution is serialized through the GPU scheduler. Logical specialists do not require dedicated physical model weights.
 
 ---
 
 ## Current specialists
 
-Current repository definitions include:
+Current agent definitions include:
 
 ```text
 account-specialist
@@ -292,8 +218,6 @@ jira-specialist
 
 ### Account
 
-Current governed account operations include:
-
 ```text
 account_status
 unlock_user
@@ -304,21 +228,37 @@ disable_user
 
 ### Access
 
-Current access operations include:
-
 ```text
 check_access
 grant_access
 revoke_access
 ```
 
-Logical resources are resolved by trusted configuration rather than model-generated directory identifiers.
+### Ticketing
+
+Read operations:
+
+```text
+ticket_get
+ticket_search
+ticket_history
+ticket_comments
+```
+
+Governed mutations:
+
+```text
+ticket_add_comment
+ticket_create
+ticket_assign
+ticket_transition
+```
+
+Ticket mutations are approval-gated and bind provider-side state before execution where required.
 
 ### Developer workspace
 
-The developer specialist exposes governed workspace discovery, execution, service inspection, and Git operations.
-
-Examples include:
+Representative capabilities include:
 
 ```text
 process_exec
@@ -335,24 +275,9 @@ workspace_service_status
 workspace_service_logs
 ```
 
-### Ticketing
-
-Ticket-oriented capabilities include:
-
-```text
-ticket_get
-ticket_search
-ticket_history
-ticket_comments
-ticket_add_comment
-ticket_create
-ticket_assign
-ticket_transition
-```
+The generic process runner remains intentionally narrow. Domain-specific trusted capabilities are preferred over arbitrary shell access.
 
 ### Knowledge
-
-Knowledge and runbook capabilities are read-only:
 
 ```text
 knowledge_search
@@ -360,13 +285,13 @@ knowledge_get
 runbook_get
 ```
 
-Retrieving a runbook does not authorize execution of the actions described by that runbook.
+Knowledge retrieval never grants authority to execute actions described by a runbook.
 
 ---
 
 ## Governed Git
 
-Model-facing Git tools operate on logical repository identifiers such as:
+Git tools operate on trusted logical repository identifiers such as:
 
 ```text
 ai
@@ -374,9 +299,7 @@ backend
 frontend
 ```
 
-Physical repository paths are resolved by trusted application configuration.
-
-The model never receives authority to choose arbitrary host repository roots.
+Physical repository paths are resolved by application configuration.
 
 ### Read capabilities
 
@@ -401,48 +324,24 @@ workspace_git_commit
 workspace_git_push
 ```
 
-Git mutations use trusted fixed commands rather than generic model-provided shell execution.
-
 Important boundaries include:
 
-- exact repository selection;
-- exact path grounding where paths are model-visible;
-- no unrestricted shell;
+- no model-selected arbitrary repository root;
+- no unrestricted shell Git mutation;
 - no force push;
-- no model-selected arbitrary remote or refspec;
-- post-approval state revalidation;
+- no arbitrary remote/refspec selection;
+- exact path/repository grounding;
+- pre-approval repository-state binding;
 - post-execution verification;
-- fail-closed handling when remote side effects are uncertain.
+- fail-closed behavior when push outcome is ambiguous.
 
-`workspace_git_push` is a high-risk operation and binds trusted branch/HEAD/upstream/remote state before approval.
-
----
-
-## Atlassian foundation
-
-The Atlassian administration layer is separate from Jira project operations.
-
-Current read-only capabilities include:
-
-```text
-atlassian_credential_status
-atlassian_org_list
-atlassian_org_get
-atlassian_workspace_list
-atlassian_api_token_metadata
-```
-
-The provider owns trusted Atlassian URLs and credentials.
-
-Secret token values are never returned to the model.
-
-Workspace discovery means discovering existing Atlassian sites/product workspaces. It is not workspace creation.
+`workspace_git_push` is treated as a high-risk mutation.
 
 ---
 
-## Jira project administration
+## Jira and Atlassian
 
-The Jira integration uses typed semantic capabilities rather than arbitrary Jira HTTP access.
+The Jira layer exposes typed semantic capabilities rather than arbitrary HTTP access.
 
 The model does **not** receive:
 
@@ -455,6 +354,21 @@ provider credentials
 unrestricted JQL
 ```
 
+### Ticket operations
+
+```text
+ticket_get
+ticket_search
+ticket_history
+ticket_comments
+ticket_add_comment
+ticket_create
+ticket_assign
+ticket_transition
+```
+
+### Jira project operations
+
 Current project capabilities are:
 
 ```text
@@ -463,95 +377,133 @@ jira_project_get
 jira_project_create
 jira_project_update
 jira_project_archive
+jira_project_delete
 ```
 
-### Project reads
+`jira_project_create`, `jira_project_update`, `jira_project_archive`, and `jira_project_delete` are governed mutations.
 
-`jira_project_list` performs bounded provider-side project discovery.
+Archive and delete are high-risk administrative operations.
 
-`jira_project_get` retrieves exactly one project using the exact user-supplied project ID or key.
+`jira_project_delete`:
 
-### Project creation
+- requires explicit approval;
+- binds immutable project identity before approval;
+- rejects archived projects;
+- enables Jira provider undo;
+- does not permit model-requested permanent deletion;
+- verifies deleted state after execution.
 
-Model-facing input:
+### Atlassian administration reads
 
 ```text
-jira_project_create(
-    project_key,
-    project_name,
-    template
-)
+atlassian_credential_status
+atlassian_org_list
+atlassian_org_get
+atlassian_workspace_list
+atlassian_api_token_metadata
 ```
 
-Trusted code resolves:
-
-```text
-project type
-provider-native template key
-authenticated Jira lead identity
-REST path
-HTTP method
-credentials
-```
-
-Creation is approval-gated and verified by provider read-back.
-
-### Project rename
-
-Model-facing input:
-
-```text
-jira_project_update(
-    project_id_or_key,
-    new_name
-)
-```
-
-The current capability changes **only the project name**.
-
-It does not mutate:
-
-```text
-project key
-lead
-category
-workflow scheme
-permission scheme
-project type
-template
-```
-
-Trusted policy binds the exact pre-approval project identity and current name, revalidates them after approval, and verifies the renamed state after the provider mutation.
-
-### Project archive
-
-Model-facing input:
-
-```text
-jira_project_archive(
-    project_id_or_key
-)
-```
-
-Archive is a **high-risk** administrative mutation.
-
-Trusted policy binds:
-
-```text
-expected_project_id
-expected_project_key
-expected_project_name
-```
-
-Execution proves the project is still the approved live project, archives through the trusted provider, and then verifies archived lifecycle state.
-
-Project deletion is intentionally not part of the current project tool surface.
+Secret token values remain trusted-side.
 
 ---
 
-## Model architecture
+## Directory / LDAP
 
-Models are selected through logical profiles rather than hardcoded public contracts.
+Directory provider selection is configuration driven:
+
+```env
+DIRECTORY_BACKEND=mock
+```
+
+or:
+
+```env
+DIRECTORY_BACKEND=ldap
+```
+
+Current support includes account status, account lifecycle, lock handling, and logical group-backed access operations.
+
+Separate read/write bind identities are supported.
+
+Local Samba AD is available for integration testing.
+
+```bash
+python scripts/ldap_preflight.py
+```
+
+---
+
+## Durable approvals
+
+Default execution-safety store:
+
+```text
+.runtime/approvals.sqlite3
+```
+
+Approval state protects execution identity independently of the browser-facing Phoenix job state.
+
+Important properties:
+
+- exact capability and arguments persist before mutation;
+- execution state is persisted before provider side effects;
+- approved results can be replayed;
+- failed approvals are terminal;
+- concurrent approval attempts are serialized;
+- pending approvals survive restart;
+- ambiguous in-progress mutations are not automatically replayed.
+
+Phoenix remains the durable user-facing lifecycle owner.
+
+---
+
+## Phoenix completion handshake
+
+Phoenix dispatch:
+
+```text
+Phoenix
+   |
+   | POST /v1/jobs/execute
+   v
+FastAPI
+   |
+   | 202 Accepted
+   v
+background execution
+```
+
+Completion:
+
+```text
+AI result
+   |
+   v
+CompletionOutbox
+   |
+   v
+authenticated Phoenix callback
+   |
+   v
+Phoenix acknowledgement
+   |
+   v
+outbox deletion
+```
+
+Default outbox:
+
+```text
+.runtime/completion_outbox.sqlite3
+```
+
+Temporary Phoenix/network failures therefore do not silently discard completed AI results.
+
+---
+
+## Model runtime
+
+Logical model profiles select backend/runtime behavior:
 
 ```text
 logical model key
@@ -566,25 +518,10 @@ ModelRegistry
 backend factory
       |
       v
-LLM backend
+local model backend
 ```
 
-A specialist definition references a logical model key:
-
-```yaml
----
-name: account-specialist
-model: qwen2.5-0.5b-funccall
-tools:
-  - account_status
-  - unlock_user
-  - reset_password
-  - enable_user
-  - disable_user
----
-```
-
-Model profile configuration owns deployment-specific details such as:
+Profiles own deployment-specific details such as:
 
 ```text
 backend
@@ -596,7 +533,7 @@ device_map
 offload_folder
 ```
 
-Current supported quantization profile values include:
+Supported quantization profile values currently include:
 
 ```text
 auto
@@ -605,13 +542,7 @@ bnb4
 fp8
 ```
 
-The public Phoenix/frontend contract does not depend on model brand or checkpoint path.
-
----
-
-## GPU scheduling
-
-All model inference is mediated by:
+Runtime inference passes through:
 
 ```text
 InferenceCoordinator
@@ -621,190 +552,104 @@ GpuScheduler
         |
         v
 ModelManager
-        |
-        v
-LLM backend
 ```
 
-The current scheduler provides:
-
-- serialized admission;
-- priority ordering;
-- FIFO within equal priority;
-- non-preemptive execution;
-- blocking inference outside the asyncio event loop;
-- cancellation safety;
-- GPU/runtime metrics.
-
-Observed metrics include queue wait, execution time, total latency, loaded state, CUDA memory, generated-token count, and tokens/sec where supported.
-
-Residency/concurrency policy should be changed from evidence rather than GPU-name-specific hardcoding.
+Current scheduling behavior includes serialized accelerator admission, priority ordering, FIFO inside equal priority, cancellation safety, and runtime/GPU metrics.
 
 ---
 
-## MCP and trusted providers
+## Learning architecture
 
-FastAPI owns one persistent `MCPRuntime`.
-
-The MCP server registers trusted implementations for:
+The learning stack is deliberately separated from live execution authority.
 
 ```text
-directory / LDAP
-access mutations
-account lifecycle
-developer workspace
-Git
-ticketing
-assets
-knowledge
-Atlassian administration
-Jira project administration
+runtime evidence
+    |
+    v
+provenance / sanitation
+    |
+    v
+filtering / deduplication
+    |
+    v
+curation / review
+    |
+    v
+versioned dataset/materialization
+    |
+    v
+candidate training
+    |
+    v
+fixed evaluation / regression
+    |
+    v
+promotion gate
+    |
+    v
+adapter/model activation
 ```
 
-`tools/registry.py` and domain catalogs contain trusted capability metadata. They do not grant the model arbitrary provider access.
-
----
-
-## Active Directory / LDAP
-
-Directory provider selection is configuration driven:
-
-```env
-DIRECTORY_BACKEND=mock
-```
-
-or:
-
-```env
-DIRECTORY_BACKEND=ldap
-```
-
-Current LDAP-oriented support includes account status, lock state, account lifecycle operations, and group-backed logical access operations.
-
-Separate read and mutation credentials are supported.
-
-Local Samba AD may be used for integration testing.
-
-Preflight:
-
-```bash
-python scripts/ldap_preflight.py
-```
-
----
-
-## Durable approvals
-
-Default approval database:
+Current repository support includes:
 
 ```text
-.runtime/approvals.sqlite3
+runtime evidence and rewards
+structured Jira/Git/shell/task context
+corpus registry and materialization
+decontamination and replay
+reviewed datasets and preference data
+curriculum chapters/mastery/planning
+training membership
+Jira specialist SFT
+DPO / QLoRA infrastructure
+PPO infrastructure
+Phase 5 hybrid QLoRA
+continual-learning cycles and automation
+promotion gates and rollback-oriented model lifecycle
+developer holdout materialization
+candidate patch generation
+sandboxed developer behavioral evaluation
+training guard diagnostics
+adaptive underfit detection
 ```
 
-Execution-safety state:
+Raw model output is evidence, not automatically trusted training truth.
+
+### Current learning focus
+
+The developer learning/corpus bridge, grounded candidate generation, holdout materialization, sandboxed behavioral evaluation, and adaptive underfit diagnostics are implemented.
+
+The current next item is **LEARN-005**: train and gate the Jira specialist on contextual, paraphrased, and typo-tolerant language.
+
+Current bounded path:
 
 ```text
-pending
-   |
-   v
-executing
-  /     \
- v       v
-approved failed
+Jira hybrid SFT corpus
+    |
+    | 300 records
+    | 236 train / 64 validation
+    | all 14 Jira tools represented
+    v
+training preflight
+    |
+    | environment must match datasets==5.0.1
+    v
+bounded specialist training
+    |
+    v
+held-out behavioral gate
+    |
+    +-- correct tool selection
+    +-- argument extraction
+    +-- paraphrase robustness
+    +-- typo robustness
+    +-- read/mutation semantic distinction
+    +-- no authority leakage into model behavior
 ```
 
-Important behavior:
+The model is being trained to understand Jira semantics. Authorization remains deterministic in `SemanticGuard`, `ToolGateway`, approval state, and trusted providers.
 
-- exact tool and execution arguments are persisted before side effects;
-- `pending -> executing` is committed before provider execution;
-- approved results can be replayed;
-- failed approvals are terminal;
-- concurrent approval attempts are serialized;
-- pending approvals survive process restart;
-- ambiguous executing mutations are not automatically replayed.
-
-Phoenix remains responsible for the user-facing durable approval/job lifecycle. AI SQLite owns execution-safety state.
-
----
-
-## Phoenix completion handshake
-
-Phoenix dispatches a durable job to the AI service:
-
-```text
-Phoenix
-   |
-   | POST /v1/jobs/execute
-   v
-FastAPI
-   |
-   | 202 Accepted
-   v
-background execution
-```
-
-When execution completes:
-
-```text
-AI result
-   |
-   v
-CompletionOutbox
-   |
-   v
-authenticated Phoenix callback
-   |
-   v
-Phoenix ACK
-   |
-   v
-outbox deletion
-```
-
-Default outbox:
-
-```text
-.runtime/completion_outbox.sqlite3
-```
-
-The outbox prevents temporary Phoenix/network failure from silently losing completion delivery.
-
----
-
-## Learning and runtime evidence
-
-Runtime trajectories are evidence, not direct training data.
-
-The controlled adaptation path is:
-
-```text
-runtime trajectory
-    |
-    v
-provenance validation
-    |
-    v
-filter / deduplicate
-    |
-    v
-human corrections / preferences
-    |
-    v
-curated batch
-    |
-    v
-offline training
-    |
-    v
-evaluation / regression
-    |
-    v
-gated promotion
-```
-
-The live runtime does not silently retrain model weights from raw model output.
-
-Current evidence capture includes approval execution lineage and bounded runtime context suitable for later curation.
+A candidate is not promoted because training loss improves; held-out behavior must pass.
 
 ---
 
@@ -816,7 +661,7 @@ Create a local environment file:
 cp env.example .env
 ```
 
-Do not commit `.env`.
+Do not commit real credentials.
 
 Important configuration groups include:
 
@@ -856,7 +701,6 @@ JIRA_HTTP_TIMEOUT_SECONDS
 
 ATLASSIAN_ADMIN_API_KEY
 ATLASSIAN_ORG_ID
-ATLASSIAN_ADMIN_HTTP_TIMEOUT_SECONDS
 
 AD_HOST
 AD_PORT
@@ -873,31 +717,29 @@ LEARNING_TRAJECTORY_PATH
 LEARNING_CORRECTION_PATH
 ```
 
-Deployment-specific values belong in `Settings` / model profiles rather than scattered environment reads.
+Deployment-specific values belong in `Settings` and model profiles rather than scattered environment reads.
 
 ---
 
-## Installation
-
-Create or activate the Python environment used for the project, then install dependencies:
+## Install and run
 
 ```bash
 python -m pip install -r requirements.txt
 ```
 
-For the current local setup:
+Training dependencies are separated where possible:
+
+```bash
+python -m pip install -r requirements-training.txt
+```
+
+Current local environment:
 
 ```bash
 conda activate qwen-infra
 ```
 
-Some model profiles may require additional backend-specific dependencies such as bitsandbytes depending on the selected quantization/runtime.
-
----
-
-## Start the AI service
-
-Development launch:
+Start the AI service:
 
 ```bash
 python -m uvicorn api.app:app \
@@ -912,13 +754,11 @@ curl -s http://127.0.0.1:8000/ready \
   | python -m json.tool
 ```
 
-Phoenix should remain the public application boundary. Do not expose FastAPI directly as the browser-facing API.
+Phoenix remains the browser-facing application boundary.
 
 ---
 
-## Provider preflights
-
-Useful provider checks include:
+## Useful preflights
 
 ```bash
 python scripts/ldap_preflight.py
@@ -929,40 +769,40 @@ python scripts/jira_project_update_preflight.py
 python scripts/jira_project_archive_preflight.py
 ```
 
-Preflight scripts should remain read-only unless their filename and purpose explicitly describe an approval/execution proof.
+The repository also includes isolated approval/execution proof scripts for governed Jira mutations.
 
 ---
 
 ## Tests
 
-Run the full Python suite:
+Full fast suite:
 
 ```bash
 python -m pytest -q
 ```
 
-Run focused Jira tests:
+Jira-focused:
 
 ```bash
 python -m pytest -q \
   tests/unit/services/jira \
   tests/unit/tools/jira \
-  tests/unit/subagents/core/definitions/test_jira_specialist.py
+  tests/unit/tools/ticketing
 ```
 
-Run Git-focused unit tests:
+Git-focused:
 
 ```bash
 python -m pytest -q tests/unit/tools/git
 ```
 
-Check whitespace before committing:
+Whitespace:
 
 ```bash
 git diff --check
 ```
 
-Real-model and live-provider proofs are intentionally more expensive and should be run as controlled checkpoints rather than casually mixed into every fast unit-test cycle.
+Real-model, GPU, external-provider, and Docker behavioral evaluations are intentionally treated as controlled checkpoints rather than ordinary fast unit tests.
 
 ---
 
@@ -970,21 +810,21 @@ Real-model and live-provider proofs are intentionally more expensive and should 
 
 ```text
 api/
-    app.py
-    runtime.py
-
 agent/
-    approval_store.py
-    approvals.py
-    completion_outbox.py
-    mcp_client.py
-
 config/
-    settings.py
 
 learning/
+    cli/
+    code_corpus/
+    context/
+    continual/
+    curation/
+    curriculum/
+    datasets/
+    evaluation/
     evidence/
     integrations/
+    training/
 
 services/
     atlassian/
@@ -992,18 +832,15 @@ services/
     jira/
     knowledge/
     ticketing/
-    git_repositories.py
     process_runner.py
+    workspace_repositories.py
+    git_repositories.py
 
 subagents/
-    hub.py
     agents/
-    prompts/
     core/
-        orchestration/
-        tooling/
     llm/
-        runtime/
+    prompts/
 
 tools/
     account/
@@ -1016,81 +853,80 @@ tools/
     knowledge/
     ticketing/
     workspace/
-    registry.py
 
 scripts/
 tests/
 
 mcp_server.py
-requirements.txt
-env.example
 ```
 
 ---
 
-## Cross-repository development
+## Cross-repository SDLC visibility
 
-The three repositories are intentionally separate:
-
-```text
-Xenosians/agenticFrontend
-Xenosians/agenticBackend
-Xenosians/agenticAI
-```
-
-When changing a cross-service contract, verify all three boundaries:
+Cross-repository implementation status is tracked outside the AI runtime by the local `projectOps` workspace.
 
 ```text
-AI result shape
-    ↓
-Phoenix persistence / public contract
-    ↓
-Frontend decoding / rendering
+Git history from AI / backend / frontend
+        +
+explicit config/status_catalog.json
+        |
+        v
+projectOps board + weekly digest
+        |
+        +--> Notion SDLC board
+        |
+        +--> Gmail stakeholder report
 ```
 
-A tool can be correct inside the AI repository and still be broken end-to-end if a structured field is dropped by MCP serialization, Phoenix persistence, JSON Schema, or frontend decoding.
+Important boundary:
 
-Treat each serialization boundary as part of the contract.
+- Git activity is evidence, not an automatic declaration of completion;
+- status transitions remain explicit in `projectOps/config/status_catalog.json`;
+- the reporting workflow does not grant or execute Jira/Git/shell authority;
+- the reporting system does not require an LLM.
+
+The weekly reporting/scheduler infrastructure has been validated end-to-end and is tracked as implemented. The current engineering focus remains the Jira specialist learning gate described above.
 
 ---
 
 ## Current deliberate limitations
 
-The current system is still an evolving MVP.
+The system is still an evolving MVP.
 
-Known architectural/product gaps include:
+Current gaps include:
 
-- backend durable lifecycle does not yet expose first-class `denied` and `outcome_unknown` public states;
-- Jira project deletion is not yet exposed;
-- Jira/JSM provider coverage is still being expanded;
-- broad enterprise RBAC/ABAC is not yet implemented;
-- frontend capability discovery is not yet fully dynamic;
-- polling remains in the browser-facing flow;
-- some ITSM domains still use mock providers;
-- GPU scheduling is process-local;
-- no automatic live self-training;
+- Hub/specialist semantic robustness is not yet strong enough across all natural-language Jira/Git/shell requests;
+- developer corpus/evaluation alignment is still being hardened;
+- developer behavioral parser coverage is narrower than the upstream SWE corpus;
+- Phoenix public job lifecycle does not yet expose first-class `denied` and `outcome_unknown` states;
+- Jira/JSM provider coverage is still being expanded beyond the currently implemented ticket/project surface;
+- broad enterprise RBAC/ABAC is not complete;
+- some ITSM providers remain mock-backed;
+- frontend lifecycle updates currently use polling;
+- frontend capability discovery is not fully dynamic;
+- GPU scheduling is process-local and optimized for one local workstation;
+- continual learning is gated/offline-oriented rather than unrestricted live self-training;
 - deployment/bootstrap automation remains separate from runtime authorization.
 
-These are capability gaps, not reasons to weaken the execution boundary.
+These are capability/product gaps, not reasons to weaken execution safety.
 
 ---
 
 ## Development rules
 
-When extending the platform:
-
-1. Prefer direct conversational response when no tool is required.
-2. Prefer a typed read capability over a mutation.
-3. Prefer a domain-specific trusted mutation over generic process execution.
-4. Keep model-visible arguments minimal and user-grounded.
-5. Keep provider URLs, methods, credentials, IDs, and translation logic trusted-side.
-6. Bind mutable provider state before approval when stale execution would be dangerous.
-7. Revalidate trusted state immediately before the side effect.
-8. Verify provider state afterward.
-9. Never blindly retry an ambiguous remote mutation.
-10. Keep specialist free-form prompts capability-name-agnostic; exact capability IDs belong in the runtime/YAML tool list.
-11. Add tests at every serialization and authority boundary.
-12. Do not turn a successful HTTP response into `completed` unless the requested operation actually succeeded.
+1. Model output is semantic intent or a proposal, never authorization.
+2. Prefer domain-specific typed capabilities over arbitrary shell/HTTP access.
+3. Keep model-visible arguments minimal and user-grounded.
+4. Keep provider URLs, credentials, IDs, translation logic, and irreversible policy trusted-side.
+5. Bind mutable state before approving dangerous actions.
+6. Revalidate trusted state immediately before the side effect.
+7. Verify provider state afterward.
+8. Never blindly retry an ambiguous remote mutation.
+9. Add tests at serialization and authority boundaries.
+10. Keep learning-data provenance and evaluation isolated from production authority.
+11. Do not promote a candidate because training loss improved; require behavioral evaluation.
+12. Preserve the separation between semantic understanding and deterministic execution authority.
 
 ---
 
@@ -1099,12 +935,6 @@ When extending the platform:
 ```text
 Models understand intent.
 Trusted code owns authority.
-
-Hub intent is not authorization.
-Specialist output is not authorization.
-SemanticGuard is not authorization.
-Approval is meaningful only when bound to exact trusted execution state.
-Remote success is not final until provider truth is verified.
+Phoenix owns durable product state.
+Learning improves behavior only through governed evidence, evaluation and promotion.
 ```
-
-That boundary is the foundation of this repository.

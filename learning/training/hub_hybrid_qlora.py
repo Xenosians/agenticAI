@@ -29,14 +29,14 @@ from learning.paths import (
     REPOSITORY_ROOT,
     RUNTIME_LEARNING_ROOT,
 )
-from learning.training.phase5_contracts import (
+from learning.training.hub_training_contracts import (
     build_hub_training_environment,
     validate_hub_response_contract,
 )
-from learning.training.phase5_materializer import (
-    Phase5DpoRecord,
-    Phase5MaterializationManifest,
-    Phase5SftRecord,
+from learning.training.hub_training_materializer import (
+    HubDpoRecord,
+    HubTrainingMaterializationManifest,
+    HubSftRecord,
 )
 
 from subagents.core.definitions.loader import (
@@ -44,14 +44,14 @@ from subagents.core.definitions.loader import (
 )
 
 
-DEFAULT_PHASE5_TRAINING_ROOT = (
+DEFAULT_HUB_TRAINING_ROOT = (
     RUNTIME_LEARNING_ROOT
     / "phase5"
     / "training-runs"
 )
 
 
-class Phase5TrainingSettings(BaseModel):
+class HubTrainingSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     compute_dtype: str = "bfloat16"
@@ -134,7 +134,7 @@ class Phase5TrainingSettings(BaseModel):
     seed: int = 42
 
 
-class Phase5CheckpointObservation(BaseModel):
+class HubCheckpointObservation(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
         extra="forbid",
@@ -169,7 +169,7 @@ class Phase5CheckpointObservation(BaseModel):
     score: float
 
 
-class Phase5PreTrainingObservation(BaseModel):
+class HubPreTrainingObservation(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
         extra="forbid",
@@ -202,7 +202,7 @@ class Phase5PreTrainingObservation(BaseModel):
     score: float
 
 
-class Phase5TrainingRunManifest(BaseModel):
+class HubTrainingRunManifest(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
         extra="forbid",
@@ -241,12 +241,12 @@ class Phase5TrainingRunManifest(BaseModel):
     dpo_optimizer_steps: int
 
     pre_training_observation: (
-        Phase5PreTrainingObservation
+        HubPreTrainingObservation
         | None
     ) = None
 
     checkpoint_observations: list[
-        Phase5CheckpointObservation
+        HubCheckpointObservation
     ] = Field(default_factory=list)
 
     best_checkpoint_directory: str
@@ -355,11 +355,11 @@ def _clean_response(response: str) -> str:
 def _load_materialization(
     directory: Path,
 ) -> tuple[
-    Phase5MaterializationManifest,
-    list[Phase5SftRecord],
-    list[Phase5SftRecord],
-    list[Phase5DpoRecord],
-    list[Phase5DpoRecord],
+    HubTrainingMaterializationManifest,
+    list[HubSftRecord],
+    list[HubSftRecord],
+    list[HubDpoRecord],
+    list[HubDpoRecord],
 ]:
     directory = (
         resolve_portable_path(
@@ -378,7 +378,7 @@ def _load_materialization(
         )
 
     manifest = (
-        Phase5MaterializationManifest
+        HubTrainingMaterializationManifest
         .model_validate_json(
             manifest_path.read_text(
                 encoding="utf-8"
@@ -403,22 +403,22 @@ def _load_materialization(
         (
             "sft-train.jsonl",
             manifest.sft_train_sha256,
-            Phase5SftRecord,
+            HubSftRecord,
         ),
         (
             "sft-validation.jsonl",
             manifest.sft_validation_sha256,
-            Phase5SftRecord,
+            HubSftRecord,
         ),
         (
             "dpo-train.jsonl",
             manifest.dpo_train_sha256,
-            Phase5DpoRecord,
+            HubDpoRecord,
         ),
         (
             "dpo-validation.jsonl",
             manifest.dpo_validation_sha256,
-            Phase5DpoRecord,
+            HubDpoRecord,
         ),
     ]
 
@@ -593,7 +593,7 @@ def _load_model(
     *,
     model_path: Path,
     backend: str,
-    settings: Phase5TrainingSettings,
+    settings: HubTrainingSettings,
     seed_adapter_directory: Path | None = None,
 ) -> _Loaded:
     import torch
@@ -979,7 +979,7 @@ def _completion_logprob(
 def _sft_loss(
     *,
     loaded: _Loaded,
-    record: Phase5SftRecord,
+    record: HubSftRecord,
     max_length: int,
 ):
     (
@@ -1014,8 +1014,8 @@ def _sft_loss(
 def _dpo_loss(
     *,
     loaded: _Loaded,
-    record: Phase5DpoRecord,
-    settings: Phase5TrainingSettings,
+    record: HubDpoRecord,
+    settings: HubTrainingSettings,
 ):
     torch = loaded.torch
 
@@ -1113,7 +1113,7 @@ def _evaluate_losses(
     loaded: _Loaded,
     sft_records,
     dpo_records,
-    settings: Phase5TrainingSettings,
+    settings: HubTrainingSettings,
 ):
     torch = loaded.torch
 
@@ -1223,7 +1223,7 @@ def _contract_pass_rate(
     loaded: _Loaded,
     records,
     registry,
-    settings: Phase5TrainingSettings,
+    settings: HubTrainingSettings,
 ) -> float:
     if not records:
         return 0.0
@@ -1372,11 +1372,11 @@ def _best_observation(
 
 def _developer_fit_diagnosis(
     *,
-    pre_training_observation: Phase5PreTrainingObservation,
-    observations: list[Phase5CheckpointObservation],
-    best: Phase5CheckpointObservation,
+    pre_training_observation: HubPreTrainingObservation,
+    observations: list[HubCheckpointObservation],
+    best: HubCheckpointObservation,
     optimizer_steps: int,
-    settings: Phase5TrainingSettings,
+    settings: HubTrainingSettings,
 ) -> tuple[
     str,
     dict[str, Any],
@@ -1518,7 +1518,7 @@ def _resolve_contract_path(
 
 def _validate_target_training_environment(
     *,
-    materialization: Phase5MaterializationManifest,
+    materialization: HubTrainingMaterializationManifest,
     agent_directory: Path,
 ):
 
@@ -1670,11 +1670,11 @@ def _validate_target_training_environment(
 
 def _target_checkpoint_metrics(
     *,
-    materialization: Phase5MaterializationManifest,
+    materialization: HubTrainingMaterializationManifest,
     loaded,
     sft_validation,
     environment,
-    settings: Phase5TrainingSettings,
+    settings: HubTrainingSettings,
     eval_sft_loss: float | None,
     eval_dpo_loss: float | None,
 ) -> tuple[
@@ -1767,14 +1767,14 @@ def _target_checkpoint_metrics(
 
 def _evaluate_pre_training_observation(
     *,
-    materialization: Phase5MaterializationManifest,
+    materialization: HubTrainingMaterializationManifest,
     loaded,
     sft_validation,
     dpo_validation,
     environment,
-    settings: Phase5TrainingSettings,
+    settings: HubTrainingSettings,
     initialization: str,
-) -> Phase5PreTrainingObservation:
+) -> HubPreTrainingObservation:
 
     eval_sft, eval_dpo = (
         _evaluate_losses(
@@ -1809,7 +1809,7 @@ def _evaluate_pre_training_observation(
     )
 
     return (
-        Phase5PreTrainingObservation(
+        HubPreTrainingObservation(
             optimizer_step=0,
             initialization=(
                 initialization
@@ -1836,8 +1836,8 @@ def _evaluate_pre_training_observation(
 
 def _validate_sequence_budget(
     *,
-    materialization: Phase5MaterializationManifest,
-    settings: Phase5TrainingSettings,
+    materialization: HubTrainingMaterializationManifest,
+    settings: HubTrainingSettings,
 ) -> None:
 
     if (
@@ -1883,13 +1883,13 @@ def _validate_sequence_budget(
 def train_phase5_adapter(
     *,
     materialization_directory: Path,
-    settings: Phase5TrainingSettings,
+    settings: HubTrainingSettings,
     allow_training: bool,
     backend: str,
-    output_root: Path = DEFAULT_PHASE5_TRAINING_ROOT,
+    output_root: Path = DEFAULT_HUB_TRAINING_ROOT,
     agent_directory: Path,
     seed_adapter_directory: Path | None = None,
-) -> Phase5TrainingRunManifest:
+) -> HubTrainingRunManifest:
     if allow_training is not True:
         raise PermissionError(
             "Real training requires explicit allow_training=True."
@@ -2111,7 +2111,7 @@ def train_phase5_adapter(
             )
 
             observation = (
-                Phase5CheckpointObservation(
+                HubCheckpointObservation(
                     step=optimizer_steps,
                     checkpoint_directory=str(
                         checkpoint_dir
@@ -2549,7 +2549,7 @@ def train_phase5_adapter(
             )
         )
 
-        manifest = Phase5TrainingRunManifest(
+        manifest = HubTrainingRunManifest(
             run_id=run_id,
             created_at=_utc_now(),
             materialization_id=(
@@ -2645,16 +2645,16 @@ def train_phase5_adapter(
 
 
 
-def train_phase5_hub_adapter(
+def train_hub_adapter(
     *,
     materialization_directory: Path,
-    settings: Phase5TrainingSettings,
+    settings: HubTrainingSettings,
     allow_training: bool,
     backend: str,
-    output_root: Path = DEFAULT_PHASE5_TRAINING_ROOT,
+    output_root: Path = DEFAULT_HUB_TRAINING_ROOT,
     agent_directory: Path,
     seed_adapter_directory: Path | None = None,
-) -> Phase5TrainingRunManifest:
+) -> HubTrainingRunManifest:
     """
     Backwards-compatible Hub entry point.
 

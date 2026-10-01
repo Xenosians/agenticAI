@@ -74,7 +74,7 @@ class FakeService:
         }
 
 
-def test_all_j1_tools_are_read_only():
+def test_all_atlassian_tools_are_read_only():
     assert set(ATLASSIAN_TOOLS) == {
         "atlassian_credential_status",
         "atlassian_org_list",
@@ -92,7 +92,7 @@ def test_all_j1_tools_are_read_only():
     ]
 
 
-def test_mcp_registers_all_j1_tools():
+def test_mcp_registers_all_atlassian_tools():
     server = FakeServer()
     register_atlassian_tools(server, FakeService())
 

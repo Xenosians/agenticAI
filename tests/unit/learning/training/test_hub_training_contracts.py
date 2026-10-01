@@ -1,7 +1,7 @@
 from subagents.core.definitions.registry import AgentRegistry
 from subagents.core.definitions.types import AgentDefinition
 
-from learning.training.phase5_contracts import (
+from learning.training.hub_training_contracts import (
     validate_hub_response_contract,
 )
 

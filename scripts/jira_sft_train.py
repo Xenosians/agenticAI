@@ -74,7 +74,7 @@ def main() -> int:
     parser.add_argument(
         "--max-length",
         type=int,
-        default=1024,
+        default=1280,
     )
 
     parser.add_argument(

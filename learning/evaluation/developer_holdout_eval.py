@@ -54,9 +54,9 @@ from learning.paths import (
     EVALUATIONS_ROOT,
 )
 
-from learning.training.phase5_hybrid_qlora import (
-    Phase5TrainingRunManifest,
-    Phase5TrainingSettings,
+from learning.training.hub_hybrid_qlora import (
+    HubTrainingRunManifest,
+    HubTrainingSettings,
     _dtype,
     _fallback_ids,
     _input_device,
@@ -359,7 +359,7 @@ def _load_holdout(
 def _load_training_run(
     checkpoint,
 ) -> tuple[
-    Phase5TrainingRunManifest,
+    HubTrainingRunManifest,
     Path,
     str,
 ]:
@@ -386,7 +386,7 @@ def _load_training_run(
         )
 
     manifest = (
-        Phase5TrainingRunManifest
+        HubTrainingRunManifest
         .model_validate_json(
             manifest_path.read_text(
                 encoding="utf-8"
@@ -1086,7 +1086,7 @@ def evaluate_developer_holdout(
     )
 
     recipe = (
-        Phase5TrainingSettings(
+        HubTrainingSettings(
             max_length=(
                 max_length
             ),

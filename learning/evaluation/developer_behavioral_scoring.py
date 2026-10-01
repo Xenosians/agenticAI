@@ -32,6 +32,10 @@ from learning.evaluation.developer_behavioral_sandbox import (
     DeveloperBehavioralSandboxReport,
 )
 
+from learning.developer_contract import (
+    SUPPORTED_BEHAVIORAL_LOG_PARSERS,
+)
+
 from learning.paths import (
     EVALUATIONS_ROOT,
 )
@@ -43,10 +47,9 @@ DEFAULT_DEVELOPER_BEHAVIORAL_SCORE_ROOT = (
 )
 
 
-SUPPORTED_LOG_PARSERS = {
-    "parse_log_pytest",
-    "parse_log_elixir",
-}
+SUPPORTED_LOG_PARSERS = (
+    SUPPORTED_BEHAVIORAL_LOG_PARSERS
+)
 
 
 _TIMING_NORMALIZE_RES = [

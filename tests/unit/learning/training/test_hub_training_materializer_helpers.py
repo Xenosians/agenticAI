@@ -1,4 +1,4 @@
-from learning.training.phase5_materializer import (
+from learning.training.hub_training_materializer import (
     _assert_lineage_isolation,
 )
 

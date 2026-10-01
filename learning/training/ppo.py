@@ -27,11 +27,11 @@ from learning.paths import (
     REPOSITORY_ROOT,
     RUNTIME_LEARNING_ROOT,
 )
-from learning.training.phase5_contracts import (
+from learning.training.hub_training_contracts import (
     build_hub_training_environment,
     validate_hub_response_contract,
 )
-from learning.training.phase5_hybrid_qlora import (
+from learning.training.hub_hybrid_qlora import (
     _clean_response,
     _decode_generated,
     _encode_prompt_and_completion,

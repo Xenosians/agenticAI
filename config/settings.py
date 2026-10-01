@@ -748,8 +748,24 @@ class Settings(
     ) -> str | None:
         if value is None:
             return None
-        normalized = value.strip().lower().strip(".")
-        if not normalized or "." not in normalized:
+
+        normalized = (
+            value
+            .strip()
+            .lower()
+            .strip(".")
+        )
+
+        # Optional configuration may appear in .env as:
+        #
+        #   ACCOUNT_EMAIL_DOMAIN=
+        #
+        # Treat that the same as omission. LDAP-backed account creation
+        # may derive the domain from trusted directory configuration.
+        if not normalized:
+            return None
+
+        if "." not in normalized:
             raise ValueError(
                 "ACCOUNT_EMAIL_DOMAIN must be a DNS-style domain."
             )

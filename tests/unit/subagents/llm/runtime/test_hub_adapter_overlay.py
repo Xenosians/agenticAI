@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from subagents.llm.runtime.adapter_overlay import (
-    apply_phase5_adapter_overlay,
+    apply_hub_adapter_overlay,
 )
 
 
@@ -14,7 +14,7 @@ def test_no_pointer_returns_backend_unchanged(
 ):
     backend = _Backend()
 
-    returned = apply_phase5_adapter_overlay(
+    returned = apply_hub_adapter_overlay(
         backend=backend,
         model_key="hub-main",
         base_model_path=tmp_path,
@@ -35,7 +35,7 @@ def test_unpromoted_override_requires_explicit_eval_permission(
     backend = _Backend()
 
     try:
-        apply_phase5_adapter_overlay(
+        apply_hub_adapter_overlay(
             backend=backend,
             model_key="hub-main",
             base_model_path=tmp_path,
