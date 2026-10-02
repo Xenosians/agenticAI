@@ -113,32 +113,6 @@ class ResultCondition:
     )
 
 
-@dataclass(
-    frozen=True
-)
-class ResultCondition:
-    """
-    Deterministic condition over one earlier trusted specialist
-    result.
-
-    The condition controls workflow progression only.
-
-    It is NOT authorization.
-    """
-
-    source_agent: str
-
-    result_field: str
-
-    equals: (
-        str
-        | int
-        | float
-        | bool
-        | None
-    )
-
-
 @dataclass
 class SpecialistRequest:
     """

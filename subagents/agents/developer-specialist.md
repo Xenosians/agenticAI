@@ -33,7 +33,7 @@ tools:
   - workspace_git_unstage_files
   - workspace_git_create_branch
   - workspace_git_switch_branch
-model: hub-main
+model: developer-func-trained
 max_steps: 3
 ---
 

@@ -1,0 +1,250 @@
+{
+  "schema": "specialist-training-config.v1",
+  "specialist": "account-specialist",
+  "agent_definition": "subagents/agents/account-specialist.md",
+  "base_model_key": "qwen2.5-0.5b-funccall",
+  "candidate_model_key": "account-func-trained",
+  "worker_prompt_profile": "compact",
+  "max_new_tokens": 128,
+  "examples": [
+    {
+      "tool_name": "account_status",
+      "user_request": "Check account jdoe",
+      "arguments": {
+        "user_id": "jdoe"
+      },
+      "tags": [
+        "read",
+        "status"
+      ]
+    },
+    {
+      "tool_name": "account_status",
+      "user_request": "Is alice enabled or locked?",
+      "arguments": {
+        "user_id": "alice"
+      },
+      "tags": [
+        "read",
+        "status"
+      ]
+    },
+    {
+      "tool_name": "unlock_user",
+      "user_request": "Unlock jdoe",
+      "arguments": {
+        "user_id": "jdoe"
+      },
+      "tags": [
+        "mutation",
+        "unlock"
+      ]
+    },
+    {
+      "tool_name": "unlock_user",
+      "user_request": "Clear the lockout on alice",
+      "arguments": {
+        "user_id": "alice"
+      },
+      "tags": [
+        "mutation",
+        "unlock"
+      ]
+    },
+    {
+      "tool_name": "reset_password",
+      "user_request": "Reset jdoe's password",
+      "arguments": {
+        "user_id": "jdoe"
+      },
+      "tags": [
+        "mutation",
+        "password"
+      ]
+    },
+    {
+      "tool_name": "enable_user",
+      "user_request": "Enable account jdoe",
+      "arguments": {
+        "user_id": "jdoe"
+      },
+      "tags": [
+        "mutation",
+        "enable"
+      ]
+    },
+    {
+      "tool_name": "enable_user",
+      "user_request": "Reactivate alice's account",
+      "arguments": {
+        "user_id": "alice"
+      },
+      "tags": [
+        "mutation",
+        "enable"
+      ]
+    },
+    {
+      "tool_name": "disable_user",
+      "user_request": "Disable account jdoe",
+      "arguments": {
+        "user_id": "jdoe"
+      },
+      "tags": [
+        "mutation",
+        "disable"
+      ]
+    },
+    {
+      "tool_name": "disable_user",
+      "user_request": "Suspend alice's corporate account",
+      "arguments": {
+        "user_id": "alice"
+      },
+      "tags": [
+        "mutation",
+        "disable"
+      ]
+    },
+    {
+      "tool_name": "account_create",
+      "user_request": "Create a corporate account for Jane Doe in Engineering as Platform Engineer",
+      "arguments": {
+        "given_name": "Jane",
+        "family_name": "Doe",
+        "department": "Engineering",
+        "role": "Platform Engineer"
+      },
+      "tags": [
+        "mutation",
+        "create",
+        "identity"
+      ]
+    },
+    {
+      "tool_name": "account_create",
+      "user_request": "Onboard Arif Rahman in Infrastructure with role Systems Engineer",
+      "arguments": {
+        "given_name": "Arif",
+        "family_name": "Rahman",
+        "department": "Infrastructure",
+        "role": "Systems Engineer"
+      },
+      "tags": [
+        "mutation",
+        "create",
+        "identity"
+      ]
+    }
+  ],
+  "eval_cases": [
+    {
+      "name": "status only",
+      "user": "Is jdoe locked?",
+      "allowed_tools": [
+        "account_status"
+      ],
+      "allowed_arguments": {
+        "user_id": [
+          "jdoe"
+        ]
+      },
+      "expected_tool": "account_status",
+      "expected_arguments": {
+        "user_id": "jdoe"
+      }
+    },
+    {
+      "name": "unlock not enable",
+      "user": "Unlock jdoe, don't enable anything else",
+      "allowed_tools": [
+        "unlock_user"
+      ],
+      "allowed_arguments": {
+        "user_id": [
+          "jdoe"
+        ]
+      },
+      "expected_tool": "unlock_user",
+      "expected_arguments": {
+        "user_id": "jdoe"
+      }
+    },
+    {
+      "name": "enable not unlock",
+      "user": "Re-enable disabled account jdoe",
+      "allowed_tools": [
+        "enable_user"
+      ],
+      "allowed_arguments": {
+        "user_id": [
+          "jdoe"
+        ]
+      },
+      "expected_tool": "enable_user",
+      "expected_arguments": {
+        "user_id": "jdoe"
+      }
+    },
+    {
+      "name": "disable",
+      "user": "Deactivate alice's account",
+      "allowed_tools": [
+        "disable_user"
+      ],
+      "allowed_arguments": {
+        "user_id": [
+          "alice"
+        ]
+      },
+      "expected_tool": "disable_user",
+      "expected_arguments": {
+        "user_id": "alice"
+      }
+    },
+    {
+      "name": "password reset",
+      "user": "Reset alice's password",
+      "allowed_tools": [
+        "reset_password"
+      ],
+      "allowed_arguments": {
+        "user_id": [
+          "alice"
+        ]
+      },
+      "expected_tool": "reset_password",
+      "expected_arguments": {
+        "user_id": "alice"
+      }
+    },
+    {
+      "name": "account create exact fields",
+      "user": "Create an account for Maya Putri in Finance as Analyst",
+      "allowed_tools": [
+        "account_create"
+      ],
+      "allowed_arguments": {
+        "given_name": [
+          "Maya"
+        ],
+        "family_name": [
+          "Putri"
+        ],
+        "department": [
+          "Finance"
+        ],
+        "role": [
+          "Analyst"
+        ]
+      },
+      "expected_tool": "account_create",
+      "expected_arguments": {
+        "given_name": "Maya",
+        "family_name": "Putri",
+        "department": "Finance",
+        "role": "Analyst"
+      }
+    }
+  ]
+}

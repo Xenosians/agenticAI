@@ -45,6 +45,14 @@ class ModelProfileSettings(
         Path | None
     ) = None
 
+    # Optional PEFT/LoRA adapter layered over model_path at runtime.
+    #
+    # This lets specialist candidates share the base checkpoint
+    # instead of requiring a second fully merged model copy.
+    adapter_path: (
+        Path | None
+    ) = None
+
     enabled: bool = True
 
     # ============================================================
@@ -1366,6 +1374,24 @@ class Settings(
                 )
             )
 
+        adapter_path = (
+            profile.adapter_path
+        )
+
+        resolved_adapter_path = None
+
+        if adapter_path is not None:
+            resolved_adapter_path = (
+                self.require_path(
+                    adapter_path,
+                    (
+                        "MODEL_PROFILES"
+                        f"[{model_key}]"
+                        ".adapter_path"
+                    ),
+                )
+            )
+
         offload_folder = (
             profile.offload_folder
         )
@@ -1384,6 +1410,9 @@ class Settings(
                 update={
                     "model_path":
                         resolved_model_path,
+
+                    "adapter_path":
+                        resolved_adapter_path,
 
                     "offload_folder":
                         resolved_offload_folder,

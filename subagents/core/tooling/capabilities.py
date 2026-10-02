@@ -13,6 +13,10 @@ from subagents.core.definitions.types import (
     AgentDefinition,
 )
 
+from subagents.core.tooling.capability_contract import (
+    build_model_capability_contract,
+)
+
 from tools.registry import (
     get_tool,
 )
@@ -342,34 +346,30 @@ def build_capability_spec(
             "has an invalid description."
         )
 
-    capability: dict[
-        str,
-        Any,
-    ] = {
-        "name":
-            tool_name,
+    argument_schema = (
+        _build_argument_schema(
+            tool_name=(
+                tool_name
+            ),
 
-        "description":
-            description.strip(),
-    }
-
-    if include_arguments:
-
-        capability[
-            "argument_schema"
-        ] = (
-            _build_argument_schema(
-                tool_name=(
-                    tool_name
-                ),
-
-                tool=(
-                    tool
-                ),
-            )
+            tool=(
+                tool
+            ),
         )
 
-    return capability
+        if include_arguments
+
+        else None
+    )
+
+    return (
+        build_model_capability_contract(
+            tool_name=tool_name,
+            tool=tool,
+            description=description,
+            argument_schema=argument_schema,
+        )
+    )
 
 
 def build_agent_capability_catalog(

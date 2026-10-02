@@ -307,3 +307,97 @@ def apply_hub_adapter_overlay(
     )
 
     return backend
+
+
+def apply_profile_adapter_overlay(
+    *,
+    backend,
+    model_key: str,
+    adapter_path: Path | None,
+):
+    """
+    Apply a trusted model-profile PEFT adapter.
+
+    Unlike the Hub continual-learning overlay above, this path is
+    deployment configuration for a specific logical model profile.
+
+    Example:
+
+        developer-func-trained
+            model_path   = Ministral base
+            adapter_path = Developer LoRA
+
+    Promotion policy still lives outside this function.
+    """
+
+    if adapter_path is None:
+        return backend
+
+    adapter_directory = (
+        adapter_path
+        .expanduser()
+        .resolve()
+    )
+
+    if not adapter_directory.is_dir():
+        raise ValueError(
+            "Configured model adapter directory does not exist: "
+            f"{adapter_directory}"
+        )
+
+    required_files = [
+        adapter_directory
+        / "adapter_config.json",
+
+        adapter_directory
+        / "adapter_model.safetensors",
+    ]
+
+    missing = [
+        path.name
+        for path in required_files
+        if not path.is_file()
+    ]
+
+    if missing:
+        raise ValueError(
+            "Configured model adapter is incomplete: "
+            + ", ".join(missing)
+        )
+
+    if not hasattr(
+        backend,
+        "model",
+    ):
+        raise TypeError(
+            "Configured backend does not expose a model "
+            "for PEFT adapter overlay."
+        )
+
+    from peft import PeftModel
+
+    backend.model = (
+        PeftModel
+        .from_pretrained(
+            backend.model,
+            str(adapter_directory),
+            is_trainable=False,
+        )
+    )
+
+    backend.model.eval()
+
+    adapter_sha256 = (
+        _fingerprint_directory(
+            adapter_directory
+        )
+    )
+
+    print(
+        "[MODEL] Applied profile adapter "
+        f"model='{model_key}' "
+        f"path='{adapter_directory}' "
+        f"sha256='{adapter_sha256[:16]}...'"
+    )
+
+    return backend

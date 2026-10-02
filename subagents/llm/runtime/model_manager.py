@@ -9,6 +9,7 @@ from config import (
 
 from subagents.llm.runtime.adapter_overlay import (
     apply_hub_adapter_overlay,
+    apply_profile_adapter_overlay,
 )
 
 from subagents.llm.runtime.base import (
@@ -172,6 +173,16 @@ class ModelManager:
         backend = (
             build_model_backend(
                 profile
+            )
+        )
+
+        backend = (
+            apply_profile_adapter_overlay(
+                backend=backend,
+                model_key=model_key,
+                adapter_path=(
+                    profile.adapter_path
+                ),
             )
         )
 

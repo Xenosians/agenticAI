@@ -1,0 +1,452 @@
+{
+  "schema": "specialist-training-config.v1",
+  "specialist": "developer-specialist",
+  "agent_definition": "subagents/agents/developer-specialist.md",
+  "base_model_key": "hub-main",
+  "candidate_model_key": "developer-func-trained",
+  "worker_prompt_profile": "compact",
+  "max_new_tokens": 192,
+  "examples": [
+    {
+      "tool_name": "workspace_git_status",
+      "user_request": "Show git status for the backend repository",
+      "arguments": {
+        "repository": "backend"
+      },
+      "tags": [
+        "git",
+        "read",
+        "status"
+      ]
+    },
+    {
+      "tool_name": "workspace_git_branches",
+      "user_request": "List local Git branches in the AI repository",
+      "arguments": {
+        "repository": "ai"
+      },
+      "tags": [
+        "git",
+        "read",
+        "branches"
+      ]
+    },
+    {
+      "tool_name": "workspace_git_log",
+      "user_request": "Show recent commits for the frontend repository",
+      "arguments": {
+        "repository": "frontend"
+      },
+      "tags": [
+        "git",
+        "read",
+        "history"
+      ]
+    },
+    {
+      "tool_name": "workspace_git_diff",
+      "user_request": "Show the unstaged diff in backend",
+      "arguments": {
+        "repository": "backend"
+      },
+      "tags": [
+        "git",
+        "read",
+        "unstaged"
+      ]
+    },
+    {
+      "tool_name": "workspace_git_staged_diff",
+      "user_request": "Show the staged diff in AI",
+      "arguments": {
+        "repository": "ai"
+      },
+      "tags": [
+        "git",
+        "read",
+        "staged"
+      ]
+    },
+    {
+      "tool_name": "workspace_git_changed_files",
+      "user_request": "Which files changed in frontend?",
+      "arguments": {
+        "repository": "frontend"
+      },
+      "tags": [
+        "git",
+        "read",
+        "changed-files"
+      ]
+    },
+    {
+      "tool_name": "workspace_git_stage_files",
+      "user_request": "Stage lib/foo.ex and test/foo_test.exs in backend",
+      "arguments": {
+        "repository": "backend",
+        "paths": [
+          "lib/foo.ex",
+          "test/foo_test.exs"
+        ]
+      },
+      "tags": [
+        "git",
+        "mutation",
+        "exact-paths"
+      ]
+    },
+    {
+      "tool_name": "workspace_git_stage_all",
+      "user_request": "Stage all current changes in the AI repository",
+      "arguments": {
+        "repository": "ai"
+      },
+      "tags": [
+        "git",
+        "mutation",
+        "stage-all"
+      ]
+    },
+    {
+      "tool_name": "workspace_git_unstage_files",
+      "user_request": "Unstage src/app.nim in frontend",
+      "arguments": {
+        "repository": "frontend",
+        "paths": [
+          "src/app.nim"
+        ]
+      },
+      "tags": [
+        "git",
+        "mutation",
+        "unstage"
+      ]
+    },
+    {
+      "tool_name": "workspace_git_create_branch",
+      "user_request": "Create branch feature/account-flow in backend",
+      "arguments": {
+        "repository": "backend",
+        "branch_name": "feature/account-flow"
+      },
+      "tags": [
+        "git",
+        "mutation",
+        "branch-create"
+      ]
+    },
+    {
+      "tool_name": "workspace_git_switch_branch",
+      "user_request": "Switch the AI repository to branch main",
+      "arguments": {
+        "repository": "ai",
+        "branch_name": "main"
+      },
+      "tags": [
+        "git",
+        "mutation",
+        "branch-switch"
+      ]
+    },
+    {
+      "tool_name": "workspace_git_commit",
+      "user_request": "Commit staged backend changes with message feat: harden job api",
+      "arguments": {
+        "repository": "backend",
+        "commit_message": "feat: harden job api"
+      },
+      "tags": [
+        "git",
+        "mutation",
+        "commit",
+        "exact-text"
+      ]
+    },
+    {
+      "tool_name": "workspace_git_push",
+      "user_request": "Push the current backend branch",
+      "arguments": {
+        "repository": "backend"
+      },
+      "tags": [
+        "git",
+        "mutation",
+        "push"
+      ]
+    },
+    {
+      "tool_name": "workspace_read_text",
+      "user_request": "Read README.md from the AI repository",
+      "arguments": {
+        "repository": "ai",
+        "relative_path": "README.md"
+      },
+      "tags": [
+        "workspace",
+        "read"
+      ]
+    },
+    {
+      "tool_name": "workspace_list",
+      "user_request": "List the scripts directory in backend",
+      "arguments": {
+        "repository": "backend",
+        "relative_path": "scripts"
+      },
+      "tags": [
+        "workspace",
+        "list"
+      ]
+    },
+    {
+      "tool_name": "workspace_search",
+      "user_request": "Search the AI repository for SemanticGuard",
+      "arguments": {
+        "repository": "ai",
+        "query": "SemanticGuard"
+      },
+      "tags": [
+        "workspace",
+        "search"
+      ]
+    },
+    {
+      "tool_name": "workspace_service_logs",
+      "user_request": "Show recent logs for service phoenix",
+      "arguments": {
+        "service_name": "phoenix"
+      },
+      "tags": [
+        "runtime",
+        "logs"
+      ]
+    },
+    {
+      "tool_name": "workspace_process_snapshot",
+      "user_request": "Show the current bounded process snapshot",
+      "arguments": {},
+      "tags": [
+        "runtime",
+        "processes"
+      ]
+    }
+  ],
+  "eval_cases": [
+    {
+      "name": "status not log",
+      "user": "What's the current Git status of backend?",
+      "allowed_tools": [
+        "workspace_git_status"
+      ],
+      "allowed_arguments": {
+        "repository": [
+          "backend"
+        ]
+      },
+      "expected_tool": "workspace_git_status",
+      "expected_arguments": {
+        "repository": "backend"
+      }
+    },
+    {
+      "name": "branches not create",
+      "user": "Which local branches exist in ai?",
+      "allowed_tools": [
+        "workspace_git_branches"
+      ],
+      "allowed_arguments": {
+        "repository": [
+          "ai"
+        ]
+      },
+      "expected_tool": "workspace_git_branches",
+      "expected_arguments": {
+        "repository": "ai"
+      }
+    },
+    {
+      "name": "history not status",
+      "user": "Show me recent frontend commits",
+      "allowed_tools": [
+        "workspace_git_log"
+      ],
+      "allowed_arguments": {
+        "repository": [
+          "frontend"
+        ]
+      },
+      "expected_tool": "workspace_git_log",
+      "expected_arguments": {
+        "repository": "frontend"
+      }
+    },
+    {
+      "name": "unstaged contrast",
+      "user": "Show backend's unstaged patch",
+      "allowed_tools": [
+        "workspace_git_diff"
+      ],
+      "allowed_arguments": {
+        "repository": [
+          "backend"
+        ]
+      },
+      "expected_tool": "workspace_git_diff",
+      "expected_arguments": {
+        "repository": "backend"
+      }
+    },
+    {
+      "name": "staged contrast",
+      "user": "What's currently staged in backend? Show the patch.",
+      "allowed_tools": [
+        "workspace_git_staged_diff"
+      ],
+      "allowed_arguments": {
+        "repository": [
+          "backend"
+        ]
+      },
+      "expected_tool": "workspace_git_staged_diff",
+      "expected_arguments": {
+        "repository": "backend"
+      }
+    },
+    {
+      "name": "changed files contrast",
+      "user": "Just list the changed files in ai",
+      "allowed_tools": [
+        "workspace_git_changed_files"
+      ],
+      "allowed_arguments": {
+        "repository": [
+          "ai"
+        ]
+      },
+      "expected_tool": "workspace_git_changed_files",
+      "expected_arguments": {
+        "repository": "ai"
+      }
+    },
+    {
+      "name": "stage named paths",
+      "user": "Add lib/a.ex and lib/b.ex to the Git index in backend",
+      "allowed_tools": [
+        "workspace_git_stage_files"
+      ],
+      "allowed_arguments": {
+        "repository": [
+          "backend"
+        ],
+        "paths": [
+          "lib/a.ex",
+          "lib/b.ex"
+        ]
+      },
+      "expected_tool": "workspace_git_stage_files",
+      "expected_arguments": {
+        "repository": "backend",
+        "paths": [
+          "lib/a.ex",
+          "lib/b.ex"
+        ]
+      }
+    },
+    {
+      "name": "branch create",
+      "user": "Make a new backend branch named feature/e2e-mail",
+      "allowed_tools": [
+        "workspace_git_create_branch"
+      ],
+      "allowed_arguments": {
+        "repository": [
+          "backend"
+        ],
+        "branch_name": [
+          "feature/e2e-mail"
+        ]
+      },
+      "expected_tool": "workspace_git_create_branch",
+      "expected_arguments": {
+        "repository": "backend",
+        "branch_name": "feature/e2e-mail"
+      }
+    },
+    {
+      "name": "branch switch",
+      "user": "Check out the existing main branch in ai",
+      "allowed_tools": [
+        "workspace_git_switch_branch"
+      ],
+      "allowed_arguments": {
+        "repository": [
+          "ai"
+        ],
+        "branch_name": [
+          "main"
+        ]
+      },
+      "expected_tool": "workspace_git_switch_branch",
+      "expected_arguments": {
+        "repository": "ai",
+        "branch_name": "main"
+      }
+    },
+    {
+      "name": "commit exact",
+      "user": "Commit staged backend changes with message fix: bounded callback errors",
+      "allowed_tools": [
+        "workspace_git_commit"
+      ],
+      "allowed_arguments": {
+        "repository": [
+          "backend"
+        ],
+        "commit_message": [
+          "fix: bounded callback errors"
+        ]
+      },
+      "expected_tool": "workspace_git_commit",
+      "expected_arguments": {
+        "repository": "backend",
+        "commit_message": "fix: bounded callback errors"
+      }
+    },
+    {
+      "name": "push only",
+      "user": "Push the current frontend branch",
+      "allowed_tools": [
+        "workspace_git_push"
+      ],
+      "allowed_arguments": {
+        "repository": [
+          "frontend"
+        ]
+      },
+      "expected_tool": "workspace_git_push",
+      "expected_arguments": {
+        "repository": "frontend"
+      }
+    },
+    {
+      "name": "read exact path",
+      "user": "Read config/settings.py from ai",
+      "allowed_tools": [
+        "workspace_read_text"
+      ],
+      "allowed_arguments": {
+        "repository": [
+          "ai"
+        ],
+        "relative_path": [
+          "config/settings.py"
+        ]
+      },
+      "expected_tool": "workspace_read_text",
+      "expected_arguments": {
+        "repository": "ai",
+        "relative_path": "config/settings.py"
+      }
+    }
+  ]
+}

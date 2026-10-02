@@ -1,0 +1,205 @@
+{
+  "schema": "specialist-training-config.v1",
+  "specialist": "access-specialist",
+  "agent_definition": "subagents/agents/access-specialist.md",
+  "base_model_key": "qwen3-0.6b",
+  "candidate_model_key": "access-func-trained",
+  "worker_prompt_profile": "compact",
+  "max_new_tokens": 128,
+  "examples": [
+    {
+      "tool_name": "check_access",
+      "user_request": "Does jdoe have VPN access?",
+      "arguments": {
+        "user_id": "jdoe",
+        "resource": "VPN"
+      },
+      "tags": [
+        "read",
+        "check"
+      ]
+    },
+    {
+      "tool_name": "check_access",
+      "user_request": "Check alice's access to admin",
+      "arguments": {
+        "user_id": "alice",
+        "resource": "admin"
+      },
+      "tags": [
+        "read",
+        "check"
+      ]
+    },
+    {
+      "tool_name": "grant_access",
+      "user_request": "Grant jdoe access to VPN",
+      "arguments": {
+        "user_id": "jdoe",
+        "resource": "VPN"
+      },
+      "tags": [
+        "mutation",
+        "grant"
+      ]
+    },
+    {
+      "tool_name": "grant_access",
+      "user_request": "Give alice admin access",
+      "arguments": {
+        "user_id": "alice",
+        "resource": "admin"
+      },
+      "tags": [
+        "mutation",
+        "grant"
+      ]
+    },
+    {
+      "tool_name": "revoke_access",
+      "user_request": "Revoke jdoe's VPN access",
+      "arguments": {
+        "user_id": "jdoe",
+        "resource": "VPN"
+      },
+      "tags": [
+        "mutation",
+        "revoke"
+      ]
+    },
+    {
+      "tool_name": "revoke_access",
+      "user_request": "Remove alice's admin access",
+      "arguments": {
+        "user_id": "alice",
+        "resource": "admin"
+      },
+      "tags": [
+        "mutation",
+        "revoke"
+      ]
+    }
+  ],
+  "eval_cases": [
+    {
+      "name": "check not grant",
+      "user": "Does jdoe currently have VPN?",
+      "allowed_tools": [
+        "check_access"
+      ],
+      "allowed_arguments": {
+        "user_id": [
+          "jdoe"
+        ],
+        "resource": [
+          "VPN"
+        ]
+      },
+      "expected_tool": "check_access",
+      "expected_arguments": {
+        "user_id": "jdoe",
+        "resource": "VPN"
+      }
+    },
+    {
+      "name": "grant",
+      "user": "Give jdoe VPN access",
+      "allowed_tools": [
+        "grant_access"
+      ],
+      "allowed_arguments": {
+        "user_id": [
+          "jdoe"
+        ],
+        "resource": [
+          "VPN"
+        ]
+      },
+      "expected_tool": "grant_access",
+      "expected_arguments": {
+        "user_id": "jdoe",
+        "resource": "VPN"
+      }
+    },
+    {
+      "name": "revoke",
+      "user": "Remove jdoe from VPN access",
+      "allowed_tools": [
+        "revoke_access"
+      ],
+      "allowed_arguments": {
+        "user_id": [
+          "jdoe"
+        ],
+        "resource": [
+          "VPN"
+        ]
+      },
+      "expected_tool": "revoke_access",
+      "expected_arguments": {
+        "user_id": "jdoe",
+        "resource": "VPN"
+      }
+    },
+    {
+      "name": "check explicit no mutation",
+      "user": "Don't change anything, just check whether alice has admin",
+      "allowed_tools": [
+        "check_access"
+      ],
+      "allowed_arguments": {
+        "user_id": [
+          "alice"
+        ],
+        "resource": [
+          "admin"
+        ]
+      },
+      "expected_tool": "check_access",
+      "expected_arguments": {
+        "user_id": "alice",
+        "resource": "admin"
+      }
+    },
+    {
+      "name": "grant contrast",
+      "user": "Add alice to admin access",
+      "allowed_tools": [
+        "grant_access"
+      ],
+      "allowed_arguments": {
+        "user_id": [
+          "alice"
+        ],
+        "resource": [
+          "admin"
+        ]
+      },
+      "expected_tool": "grant_access",
+      "expected_arguments": {
+        "user_id": "alice",
+        "resource": "admin"
+      }
+    },
+    {
+      "name": "revoke contrast",
+      "user": "Withdraw alice's admin access",
+      "allowed_tools": [
+        "revoke_access"
+      ],
+      "allowed_arguments": {
+        "user_id": [
+          "alice"
+        ],
+        "resource": [
+          "admin"
+        ]
+      },
+      "expected_tool": "revoke_access",
+      "expected_arguments": {
+        "user_id": "alice",
+        "resource": "admin"
+      }
+    }
+  ]
+}
