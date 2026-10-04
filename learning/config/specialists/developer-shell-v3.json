@@ -1,0 +1,797 @@
+{
+  "schema": "specialist-training-config.v1",
+  "specialist": "developer-specialist",
+  "agent_definition": "subagents/agents/developer-specialist.md",
+  "base_model_key": "developer-func-trained",
+  "candidate_model_key": "developer-func-trained-shell-v3",
+  "worker_prompt_profile": "compact",
+  "max_new_tokens": 192,
+  "examples": [
+    {
+      "tool_name": "workspace_read_text",
+      "user_request": "Read config/settings.py from the AI repository",
+      "arguments": {
+        "repository": "ai",
+        "relative_path": "config/settings.py"
+      },
+      "tags": [
+        "workspace",
+        "read",
+        "exact-path"
+      ]
+    },
+    {
+      "tool_name": "workspace_read_text",
+      "user_request": "Can you chek the backend README.md?",
+      "arguments": {
+        "repository": "backend",
+        "relative_path": "README.md"
+      },
+      "tags": [
+        "workspace",
+        "read",
+        "typo"
+      ]
+    },
+    {
+      "tool_name": "workspace_list",
+      "user_request": "List the scripts directory in backend",
+      "arguments": {
+        "repository": "backend",
+        "relative_path": "scripts"
+      },
+      "tags": [
+        "workspace",
+        "list"
+      ]
+    },
+    {
+      "tool_name": "workspace_list",
+      "user_request": "Show me what's under src in frontend",
+      "arguments": {
+        "repository": "frontend",
+        "relative_path": "src"
+      },
+      "tags": [
+        "workspace",
+        "list",
+        "paraphrase"
+      ]
+    },
+    {
+      "tool_name": "workspace_search",
+      "user_request": "Search the AI repository for SemanticGuard",
+      "arguments": {
+        "repository": "ai",
+        "query": "SemanticGuard"
+      },
+      "tags": [
+        "workspace",
+        "search"
+      ]
+    },
+    {
+      "tool_name": "workspace_search",
+      "user_request": "Seach backend for QueueWorker",
+      "arguments": {
+        "repository": "backend",
+        "query": "QueueWorker"
+      },
+      "tags": [
+        "workspace",
+        "search",
+        "typo"
+      ]
+    },
+    {
+      "tool_name": "workspace_file_info",
+      "user_request": "Show file info for README.md in frontend",
+      "arguments": {
+        "repository": "frontend",
+        "relative_path": "README.md"
+      },
+      "tags": [
+        "workspace",
+        "file-info"
+      ]
+    },
+    {
+      "tool_name": "workspace_project_info",
+      "user_request": "Inspect the current project and tell me which governed test/build operations are available",
+      "arguments": {},
+      "tags": [
+        "workspace",
+        "project-info",
+        "read"
+      ]
+    },
+    {
+      "tool_name": "workspace_project_info",
+      "user_request": "Detect the project type under learning",
+      "arguments": {
+        "relative_path": "learning"
+      },
+      "tags": [
+        "workspace",
+        "project-info",
+        "relative-path"
+      ]
+    },
+    {
+      "tool_name": "workspace_run_tests",
+      "user_request": "Run the project's trusted test command",
+      "arguments": {},
+      "tags": [
+        "workspace",
+        "tests",
+        "execution"
+      ]
+    },
+    {
+      "tool_name": "workspace_run_tests",
+      "user_request": "Run teh tests under tests/unit/learning",
+      "arguments": {
+        "relative_path": "tests/unit/learning"
+      },
+      "tags": [
+        "workspace",
+        "tests",
+        "typo"
+      ]
+    },
+    {
+      "tool_name": "workspace_run_build",
+      "user_request": "Build or check the current project using the trusted build command",
+      "arguments": {},
+      "tags": [
+        "workspace",
+        "build",
+        "execution"
+      ]
+    },
+    {
+      "tool_name": "workspace_run_build",
+      "user_request": "Run the governed build for the src project directory",
+      "arguments": {
+        "relative_path": "src"
+      },
+      "tags": [
+        "workspace",
+        "build",
+        "relative-path"
+      ]
+    },
+    {
+      "tool_name": "workspace_process_snapshot",
+      "user_request": "Show the current bounded process snapshot",
+      "arguments": {},
+      "tags": [
+        "runtime",
+        "processes",
+        "read"
+      ]
+    },
+    {
+      "tool_name": "workspace_service_status",
+      "user_request": "Check the declared workspace services status",
+      "arguments": {},
+      "tags": [
+        "runtime",
+        "service",
+        "status",
+        "read"
+      ]
+    },
+    {
+      "tool_name": "workspace_service_logs",
+      "user_request": "Show recent logs for service phoenix",
+      "arguments": {
+        "service_name": "phoenix"
+      },
+      "tags": [
+        "runtime",
+        "service",
+        "logs",
+        "read"
+      ]
+    },
+    {
+      "tool_name": "workspace_service_logs",
+      "user_request": "Tail the recent logs for ai-service under deploy",
+      "arguments": {
+        "service_name": "ai-service",
+        "relative_path": "deploy"
+      },
+      "tags": [
+        "runtime",
+        "service",
+        "logs",
+        "relative-path"
+      ]
+    },
+    {
+      "tool_name": "workspace_mkdir",
+      "user_request": "Create a folder named scratch",
+      "arguments": {
+        "directory_name": "scratch"
+      },
+      "tags": [
+        "workspace",
+        "mutation",
+        "mkdir",
+        "semantic"
+      ]
+    },
+    {
+      "tool_name": "workspace_mkdir",
+      "user_request": "Make a new directory called artifacts",
+      "arguments": {
+        "directory_name": "artifacts"
+      },
+      "tags": [
+        "workspace",
+        "mutation",
+        "mkdir",
+        "paraphrase"
+      ]
+    },
+    {
+      "tool_name": "process_exec",
+      "user_request": "Run the bounded native command `pwd`.",
+      "arguments": {
+        "executable": "pwd",
+        "args": []
+      },
+      "tags": [
+        "shell",
+        "exact-command",
+        "bounded"
+      ]
+    },
+    {
+      "tool_name": "process_exec",
+      "user_request": "Execute `ls` through the approved developer process runner.",
+      "arguments": {
+        "executable": "ls",
+        "args": []
+      },
+      "tags": [
+        "shell",
+        "exact-command",
+        "bounded"
+      ]
+    },
+    {
+      "tool_name": "process_exec",
+      "user_request": "Run the bounded native command `mkdir scratch-native`.",
+      "arguments": {
+        "executable": "mkdir",
+        "args": [
+          "scratch-native"
+        ]
+      },
+      "tags": [
+        "shell",
+        "exact-command",
+        "bounded",
+        "mutation"
+      ]
+    },
+    {
+      "tool_name": "process_exec",
+      "user_request": "Execute `git branch --list --no-color` through the approved developer process runner.",
+      "arguments": {
+        "executable": "git",
+        "args": [
+          "branch",
+          "--list",
+          "--no-color"
+        ]
+      },
+      "tags": [
+        "shell",
+        "git",
+        "exact-command",
+        "bounded"
+      ]
+    },
+    {
+      "tool_name": "workspace_git_status",
+      "user_request": "Show git status for the backend repository",
+      "arguments": {
+        "repository": "backend"
+      },
+      "tags": [
+        "git",
+        "read",
+        "status"
+      ]
+    },
+    {
+      "tool_name": "workspace_git_branches",
+      "user_request": "List local Git branches in the AI repository",
+      "arguments": {
+        "repository": "ai"
+      },
+      "tags": [
+        "git",
+        "read",
+        "branches"
+      ]
+    },
+    {
+      "tool_name": "workspace_git_log",
+      "user_request": "Show recent commits for the frontend repository",
+      "arguments": {
+        "repository": "frontend"
+      },
+      "tags": [
+        "git",
+        "read",
+        "history"
+      ]
+    },
+    {
+      "tool_name": "workspace_git_diff",
+      "user_request": "Show the unstaged diff in backend",
+      "arguments": {
+        "repository": "backend"
+      },
+      "tags": [
+        "git",
+        "read",
+        "unstaged"
+      ]
+    },
+    {
+      "tool_name": "workspace_git_staged_diff",
+      "user_request": "Show the staged diff in AI",
+      "arguments": {
+        "repository": "ai"
+      },
+      "tags": [
+        "git",
+        "read",
+        "staged"
+      ]
+    },
+    {
+      "tool_name": "workspace_git_changed_files",
+      "user_request": "Which files changed in frontend?",
+      "arguments": {
+        "repository": "frontend"
+      },
+      "tags": [
+        "git",
+        "read",
+        "changed-files"
+      ]
+    },
+    {
+      "tool_name": "workspace_git_stage_files",
+      "user_request": "Stage lib/foo.ex and test/foo_test.exs in backend",
+      "arguments": {
+        "repository": "backend",
+        "paths": [
+          "lib/foo.ex",
+          "test/foo_test.exs"
+        ]
+      },
+      "tags": [
+        "git",
+        "mutation",
+        "stage",
+        "exact-paths"
+      ]
+    },
+    {
+      "tool_name": "workspace_git_stage_all",
+      "user_request": "Stage all current changes in the AI repository",
+      "arguments": {
+        "repository": "ai"
+      },
+      "tags": [
+        "git",
+        "mutation",
+        "stage-all"
+      ]
+    },
+    {
+      "tool_name": "workspace_git_unstage_files",
+      "user_request": "Unstage src/app.nim in frontend",
+      "arguments": {
+        "repository": "frontend",
+        "paths": [
+          "src/app.nim"
+        ]
+      },
+      "tags": [
+        "git",
+        "mutation",
+        "unstage"
+      ]
+    },
+    {
+      "tool_name": "workspace_git_create_branch",
+      "user_request": "Create branch feature/shell-v3 in backend",
+      "arguments": {
+        "repository": "backend",
+        "branch_name": "feature/shell-v3"
+      },
+      "tags": [
+        "git",
+        "mutation",
+        "branch-create"
+      ]
+    },
+    {
+      "tool_name": "workspace_git_switch_branch",
+      "user_request": "Switch the AI repository to branch main",
+      "arguments": {
+        "repository": "ai",
+        "branch_name": "main"
+      },
+      "tags": [
+        "git",
+        "mutation",
+        "branch-switch"
+      ]
+    },
+    {
+      "tool_name": "workspace_git_commit",
+      "user_request": "Commit staged backend changes with message feat: harden shell semantics",
+      "arguments": {
+        "repository": "backend",
+        "commit_message": "feat: harden shell semantics"
+      },
+      "tags": [
+        "git",
+        "mutation",
+        "commit",
+        "exact-text"
+      ]
+    },
+    {
+      "tool_name": "workspace_git_push",
+      "user_request": "Push the current backend branch",
+      "arguments": {
+        "repository": "backend"
+      },
+      "tags": [
+        "git",
+        "mutation",
+        "push"
+      ]
+    }
+  ],
+  "eval_cases": [
+    {
+      "name": "read file not search",
+      "user": "Open config/settings.py in ai and show its text",
+      "allowed_tools": [
+        "workspace_read_text"
+      ],
+      "allowed_arguments": {
+        "repository": [
+          "ai"
+        ],
+        "relative_path": [
+          "config/settings.py"
+        ]
+      },
+      "expected_tool": "workspace_read_text",
+      "expected_arguments": {
+        "repository": "ai",
+        "relative_path": "config/settings.py"
+      }
+    },
+    {
+      "name": "list not search",
+      "user": "Wat files are under scripts in backend?",
+      "allowed_tools": [
+        "workspace_list"
+      ],
+      "allowed_arguments": {
+        "repository": [
+          "backend"
+        ],
+        "relative_path": [
+          "scripts"
+        ]
+      },
+      "expected_tool": "workspace_list",
+      "expected_arguments": {
+        "repository": "backend",
+        "relative_path": "scripts"
+      }
+    },
+    {
+      "name": "search typo",
+      "user": "Seach ai for completion_outbox_path",
+      "allowed_tools": [
+        "workspace_search"
+      ],
+      "allowed_arguments": {
+        "repository": [
+          "ai"
+        ],
+        "query": [
+          "completion_outbox_path"
+        ]
+      },
+      "expected_tool": "workspace_search",
+      "expected_arguments": {
+        "repository": "ai",
+        "query": "completion_outbox_path"
+      }
+    },
+    {
+      "name": "file info not read",
+      "user": "I only need metadata about frontend README.md, don't read the contents",
+      "allowed_tools": [
+        "workspace_file_info"
+      ],
+      "allowed_arguments": {
+        "repository": [
+          "frontend"
+        ],
+        "relative_path": [
+          "README.md"
+        ]
+      },
+      "expected_tool": "workspace_file_info",
+      "expected_arguments": {
+        "repository": "frontend",
+        "relative_path": "README.md"
+      }
+    },
+    {
+      "name": "project info not tests",
+      "user": "Inspect this project and tell me what kind of project it is and what governed commands are available; don't run anything",
+      "allowed_tools": [
+        "workspace_project_info"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "workspace_project_info",
+      "expected_arguments": {}
+    },
+    {
+      "name": "tests dedicated not process exec",
+      "user": "Run the project's tests",
+      "allowed_tools": [
+        "workspace_run_tests"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "workspace_run_tests",
+      "expected_arguments": {}
+    },
+    {
+      "name": "tests typo dedicated",
+      "user": "run teh tests in tests/unit/learning",
+      "allowed_tools": [
+        "workspace_run_tests"
+      ],
+      "allowed_arguments": {
+        "relative_path": [
+          "tests/unit/learning"
+        ]
+      },
+      "expected_tool": "workspace_run_tests",
+      "expected_arguments": {
+        "relative_path": "tests/unit/learning"
+      }
+    },
+    {
+      "name": "build dedicated not process exec",
+      "user": "Run the trusted build/check for this project",
+      "allowed_tools": [
+        "workspace_run_build"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "workspace_run_build",
+      "expected_arguments": {}
+    },
+    {
+      "name": "process snapshot not service status",
+      "user": "Show me the bounded process snapshot, no command lines",
+      "allowed_tools": [
+        "workspace_process_snapshot"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "workspace_process_snapshot",
+      "expected_arguments": {}
+    },
+    {
+      "name": "service status not logs",
+      "user": "Are the declared workspace services up? Just show status",
+      "allowed_tools": [
+        "workspace_service_status"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "workspace_service_status",
+      "expected_arguments": {}
+    },
+    {
+      "name": "service logs exact service",
+      "user": "Show the recent logs for phoenix",
+      "allowed_tools": [
+        "workspace_service_logs"
+      ],
+      "allowed_arguments": {
+        "service_name": [
+          "phoenix"
+        ]
+      },
+      "expected_tool": "workspace_service_logs",
+      "expected_arguments": {
+        "service_name": "phoenix"
+      }
+    },
+    {
+      "name": "semantic mkdir dedicated",
+      "user": "Create a folder named shell-eval",
+      "allowed_tools": [
+        "workspace_mkdir"
+      ],
+      "allowed_arguments": {
+        "directory_name": [
+          "shell-eval"
+        ]
+      },
+      "expected_tool": "workspace_mkdir",
+      "expected_arguments": {
+        "directory_name": "shell-eval"
+      }
+    },
+    {
+      "name": "explicit native pwd",
+      "user": "Execute the exact native command `pwd` through the approved process runner",
+      "allowed_tools": [
+        "process_exec"
+      ],
+      "allowed_arguments": {
+        "executable": [
+          "pwd"
+        ]
+      },
+      "expected_tool": "process_exec",
+      "expected_arguments": {
+        "executable": "pwd",
+        "args": []
+      },
+      "allowed_extra_arguments": [
+        "cwd",
+        "timeout_seconds"
+      ]
+    },
+    {
+      "name": "explicit native ls",
+      "user": "Run the exact bounded command `ls`",
+      "allowed_tools": [
+        "process_exec"
+      ],
+      "allowed_arguments": {
+        "executable": [
+          "ls"
+        ]
+      },
+      "expected_tool": "process_exec",
+      "expected_arguments": {
+        "executable": "ls",
+        "args": []
+      },
+      "allowed_extra_arguments": [
+        "cwd",
+        "timeout_seconds"
+      ]
+    },
+    {
+      "name": "semantic git status not native git",
+      "user": "What's the current Git status of backend?",
+      "allowed_tools": [
+        "workspace_git_status"
+      ],
+      "allowed_arguments": {
+        "repository": [
+          "backend"
+        ]
+      },
+      "expected_tool": "workspace_git_status",
+      "expected_arguments": {
+        "repository": "backend"
+      }
+    },
+    {
+      "name": "git history contrast",
+      "user": "Show me the latest frontend commits",
+      "allowed_tools": [
+        "workspace_git_log"
+      ],
+      "allowed_arguments": {
+        "repository": [
+          "frontend"
+        ]
+      },
+      "expected_tool": "workspace_git_log",
+      "expected_arguments": {
+        "repository": "frontend"
+      }
+    },
+    {
+      "name": "git staged diff contrast",
+      "user": "Show only the currently staged patch in backend",
+      "allowed_tools": [
+        "workspace_git_staged_diff"
+      ],
+      "allowed_arguments": {
+        "repository": [
+          "backend"
+        ]
+      },
+      "expected_tool": "workspace_git_staged_diff",
+      "expected_arguments": {
+        "repository": "backend"
+      }
+    },
+    {
+      "name": "git stage paths contrast",
+      "user": "Add lib/a.ex and lib/b.ex to the Git index in backend",
+      "allowed_tools": [
+        "workspace_git_stage_files"
+      ],
+      "allowed_arguments": {
+        "repository": [
+          "backend"
+        ],
+        "paths": [
+          "lib/a.ex",
+          "lib/b.ex"
+        ]
+      },
+      "expected_tool": "workspace_git_stage_files",
+      "expected_arguments": {
+        "repository": "backend",
+        "paths": [
+          "lib/a.ex",
+          "lib/b.ex"
+        ]
+      }
+    },
+    {
+      "name": "git commit not push",
+      "user": "Commit the staged backend changes with message fix: shell semantic gate",
+      "allowed_tools": [
+        "workspace_git_commit"
+      ],
+      "allowed_arguments": {
+        "repository": [
+          "backend"
+        ],
+        "commit_message": [
+          "fix: shell semantic gate"
+        ]
+      },
+      "expected_tool": "workspace_git_commit",
+      "expected_arguments": {
+        "repository": "backend",
+        "commit_message": "fix: shell semantic gate"
+      }
+    },
+    {
+      "name": "git push not commit",
+      "user": "Push the current frontend branch",
+      "allowed_tools": [
+        "workspace_git_push"
+      ],
+      "allowed_arguments": {
+        "repository": [
+          "frontend"
+        ]
+      },
+      "expected_tool": "workspace_git_push",
+      "expected_arguments": {
+        "repository": "frontend"
+      }
+    }
+  ]
+}

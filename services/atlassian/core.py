@@ -317,6 +317,7 @@ def _provider_status(exc: AtlassianProviderError) -> str:
     if exc.code in {
         "credential_not_configured",
         "organization_not_configured",
+        "resource_not_configured",
         "authorization_failed",
         "bad_request",
     }:
@@ -334,9 +335,11 @@ class AtlassianAdminService:
         *,
         credentials: AtlassianCredentialBroker,
         client: AtlassianAdminClient,
+        jira_resource_ari: str | None = None,
     ) -> None:
         self.credentials = credentials
         self.client = client
+        self.jira_resource_ari = _optional_string(jira_resource_ari)
 
     def credential_status(self) -> dict[str, Any]:
         return self.credentials.redacted_status()
@@ -522,6 +525,65 @@ class AtlassianAdminService:
                 "next_cursor_available": False,
                 "error": str(exc),
             }
+
+    def invite_jira_user(
+        self,
+        *,
+        email: str,
+    ) -> dict[str, Any]:
+        try:
+            normalized_email = _optional_string(email)
+            if normalized_email is None or "@" not in normalized_email or any(c.isspace() for c in normalized_email):
+                raise ValueError("email must be one explicit email address.")
+            normalized_email = normalized_email.lower()
+            resolved_org = self.credentials.resolve_org_id(None)
+            resource_ari = self.jira_resource_ari
+            if resource_ari is None:
+                raise AtlassianProviderError(
+                    code="resource_not_configured",
+                    message="ATLASSIAN_JIRA_RESOURCE_ARI is not configured.",
+                )
+            if not resource_ari.startswith("ari:cloud:jira::site/"):
+                raise AtlassianProviderError(
+                    code="resource_not_configured",
+                    message="ATLASSIAN_JIRA_RESOURCE_ARI must identify a Jira cloud site.",
+                )
+            payload = self.client.post_json(
+                f"/admin/v2/orgs/{quote(resolved_org, safe='')}/users/invite",
+                operation="Jira user invitation",
+                json_body={
+                    "emails": [normalized_email],
+                    "permissionRules": [{"resource": resource_ari, "role": "atlassian/user"}],
+                    "sendNotification": True,
+                    "notificationText": "Your Jira access was provisioned through the governed ITSM onboarding workflow.",
+                },
+            )
+            if not isinstance(payload, dict) or not isinstance(payload.get("data"), list) or not payload["data"] or not isinstance(payload["data"][0], dict):
+                raise AtlassianProviderError(code="invalid_response", message="Atlassian returned an invalid user invitation response.")
+            item = payload["data"][0]
+            return {
+                "ok": True,
+                "status": "success",
+                "email": _optional_string(item.get("email")) or normalized_email,
+                "invitation_id": _optional_string(item.get("id")),
+                "organization_id": resolved_org,
+                "resource_ari": resource_ari,
+                "notification_sent_by_provider": True,
+                "error": None,
+            }
+        except (AtlassianProviderError, ValueError) as exc:
+            status = _provider_status(exc) if isinstance(exc, AtlassianProviderError) else "denied"
+            return {
+                "ok": False,
+                "status": status,
+                "email": email if isinstance(email, str) else None,
+                "invitation_id": None,
+                "organization_id": None,
+                "resource_ari": None,
+                "notification_sent_by_provider": False,
+                "error": str(exc),
+            }
+
 
     def list_api_token_metadata(
         self,
@@ -833,4 +895,5 @@ def build_atlassian_admin_service(
     return AtlassianAdminService(
         credentials=credentials,
         client=client,
+        jira_resource_ari=settings.atlassian_jira_resource_ari,
     )

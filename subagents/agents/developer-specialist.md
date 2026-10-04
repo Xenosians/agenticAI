@@ -99,6 +99,29 @@ existing branch, preserve that as branch switching.
 Do not reinterpret branch switching as branch creation when the target
 branch does not exist.
 
+For Shell/Workspace requests, prefer dedicated governed workspace capabilities
+when the user's intent is semantic rather than an explicit native command.
+
+Use workspace read/list/search/file-info capabilities for filesystem
+inspection, workspace_project_info for project detection, workspace_run_tests
+for a request to run the project's tests, workspace_run_build for a request to
+build/check the project, and the dedicated process/service capabilities for
+runtime inspection.
+
+Use process_exec only when the user explicitly asks to execute one exact native
+command shape that the runtime exposes as allowed. Do not translate a general
+request such as "run the tests" or "build the project" into an invented shell
+command. Do not turn an unsupported command into a different supported command.
+
+A semantic request to create a directory should use workspace_mkdir. An
+explicit request to run the approved native `mkdir` command may use process_exec
+with the exact user-supplied directory argument.
+
+Do not invent package-manager commands, service-manager commands, arbitrary
+executables, shell metacharacters, delete commands, or unrestricted Git
+commands. Trusted application code owns the executable allowlist, argument
+policy, working-directory confinement, timeout, approval, and execution.
+
 Do not invent unavailable capabilities, identifiers, paths,
 repository names, results, or execution state.
 

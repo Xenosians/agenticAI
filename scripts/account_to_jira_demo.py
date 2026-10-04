@@ -101,7 +101,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Interactive MVP proof: governed account creation -> encrypted "
-            "SurrealDB persistence -> separately governed Jira ticket creation."
+            "SurrealDB persistence -> separately governed Jira product-access invitation."
         )
     )
     parser.add_argument("--requester", required=True)
@@ -109,7 +109,6 @@ def main() -> None:
     parser.add_argument("--family-name", required=True)
     parser.add_argument("--department")
     parser.add_argument("--role")
-    parser.add_argument("--jira-project", required=True)
     parser.add_argument("--poll-seconds", type=float, default=1.0)
     parser.add_argument("--timeout-seconds", type=float, default=180.0)
     args = parser.parse_args()
@@ -173,47 +172,36 @@ def main() -> None:
         print(f"verified account email: {email}")
         print("temporary credential plaintext is not returned by this workflow.")
 
-        jira_summary = f"Provision corporate access for {email}"
-        jira_message = (
-            f"Create Jira ticket in {args.jira_project} with summary {jira_summary}"
-        )
+        # Invite the verified corporate account to Jira product access.
+        jira_message = f"Invite {email} to Jira product access."
         jira_job_id = create_job(client, base_url, args.requester, jira_message)
-        print(f"jira job: {jira_job_id}")
+        print(f"jira access job: {jira_job_id}")
 
         jira_job = wait_for_state(
-            client,
-            base_url,
-            jira_job_id,
+            client, base_url, jira_job_id,
             target={"waiting_approval", *TERMINAL},
-            poll_seconds=args.poll_seconds,
-            timeout_seconds=args.timeout_seconds,
+            poll_seconds=args.poll_seconds, timeout_seconds=args.timeout_seconds,
         )
-
         if jira_job.get("status") != "waiting_approval":
-            print(f"jira job stopped in status: {jira_job.get('status')}")
+            print("jira access job stopped in status:", jira_job.get("status"))
             sys.exit(1)
 
-        print(f"jira proposal: {jira_job.get('proposed_tool')}")
-        if not confirm("Approve this exact Jira ticket creation?"):
-            print("Jira ticket creation not approved.")
+        print("jira access proposal:", jira_job.get("proposed_tool"))
+        if not confirm("Approve this exact Jira product-access invitation?"):
+            print("Jira product-access invitation not approved.")
             return
 
         jira_approved = approve_job(client, base_url, jira_job_id)
         if jira_approved.get("status") != "completed":
             jira_approved = wait_for_state(
-                client,
-                base_url,
-                jira_job_id,
-                target=TERMINAL,
-                poll_seconds=args.poll_seconds,
-                timeout_seconds=args.timeout_seconds,
+                client, base_url, jira_job_id, target=TERMINAL,
+                poll_seconds=args.poll_seconds, timeout_seconds=args.timeout_seconds,
             )
-
-        print(f"jira job final status: {jira_approved.get('status')}")
+        print("jira access final status:", jira_approved.get("status"))
         if jira_approved.get("status") != "completed":
             sys.exit(1)
 
-        print("ACCOUNT -> SURREALDB -> JIRA DEMO: PASS")
+        print("ACCOUNT -> SURREALDB -> JIRA ACCESS DEMO: PASS")
 
 
 if __name__ == "__main__":

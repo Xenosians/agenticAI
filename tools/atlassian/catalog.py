@@ -66,6 +66,14 @@ def _token_metadata(
     )
 
 
+
+
+def _user_invite(result: dict[str, Any]) -> str:
+    if not result.get("ok"):
+        return ("Jira product-access invitation did not complete. " + str(result.get("error") or "")).strip()
+    email = result.get("email") or "the requested account"
+    return f"Jira product access invitation was created for {email}. Atlassian will send the provider invitation email."
+
 ATLASSIAN_TOOLS = {
     "atlassian_credential_status": {
         "description": (
@@ -161,5 +169,21 @@ ATLASSIAN_TOOLS = {
             },
         },
         "result_formatter": _token_metadata,
+    },
+    "atlassian_user_invite": {
+        "description": (
+            "Invite exactly one explicitly supplied email address to the trusted Jira cloud product. "
+            "Organization identity, Jira site resource and product role come only from trusted deployment configuration."
+        ),
+        "risk": "high",
+        "requires_approval": True,
+        "grounded_arguments": ["email"],
+        "parameters": {
+            "email": {
+                "type": "str",
+                "description": "Exact email explicitly supplied by the user or returned by a verified account-creation result.",
+            },
+        },
+        "result_formatter": _user_invite,
     },
 }

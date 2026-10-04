@@ -80,6 +80,19 @@ class TokenMetadataResult(BaseModel):
     error: str | None = None
 
 
+
+
+class UserInviteResult(BaseModel):
+    ok: bool
+    status: str
+    email: str | None = None
+    invitation_id: str | None = None
+    organization_id: str | None = None
+    resource_ari: str | None = None
+    notification_sent_by_provider: bool = False
+    error: str | None = None
+
+
 def register_atlassian_tools(server: MCPServer, service: AtlassianAdminService) -> None:
     @server.tool()
     def atlassian_credential_status() -> CredentialStatusResult:
@@ -120,3 +133,10 @@ def register_atlassian_tools(server: MCPServer, service: AtlassianAdminService) 
                 limit=25 if limit is None else limit,
             )
         )
+
+    @server.tool()
+    def atlassian_user_invite(
+        email: str,
+    ) -> UserInviteResult:
+        return UserInviteResult(**service.invite_jira_user(email=email))
+

@@ -211,9 +211,12 @@ class SpecialistSftTrainingManifest(BaseModel):
     candidate_model_key: str
     worker_prompt_profile: str
     base_model_path: str
+    base_adapter_path: str | None = None
+    base_adapter_sha256: str | None = None
+    continued_from_adapter: bool = False
     output_directory: str
     adapter_directory: str
-    merged_model_directory: str
+    merged_model_directory: str | None = None
     corpus_directory: str
     corpus_train_sha256: str
     corpus_validation_sha256: str
@@ -227,7 +230,7 @@ class SpecialistSftTrainingManifest(BaseModel):
     total_parameters: int
     trainable_ratio: float
     adapter_sha256: str
-    merged_model_sha256: str
+    merged_model_sha256: str | None = None
     training_versions: dict[str, str]
 
 
@@ -261,6 +264,76 @@ def resolve_worker_prompt_profile(
     return _normalize_prompt_profile(
         base_profile.worker_prompt_profile
     )
+
+
+def _resolve_training_profile_paths(
+    profile,
+    *,
+    label: str,
+) -> tuple[Path, Path | None]:
+    # Resolve base checkpoint and optional promoted PEFT adapter.
+    # The adapter is training lineage, never authorization.
+    if profile.model_path is None:
+        raise ValueError(
+            f"{label} model profile has no model_path."
+        )
+
+    model_path = (
+        profile.model_path
+        .expanduser()
+        .resolve()
+    )
+
+    if not model_path.is_dir():
+        raise ValueError(
+            f"{label} model directory does not exist: "
+            f"{model_path}"
+        )
+
+    raw_adapter = getattr(
+        profile,
+        "adapter_path",
+        None,
+    )
+
+    if raw_adapter is None:
+        return model_path, None
+
+    adapter_path = (
+        raw_adapter
+        .expanduser()
+        .resolve()
+    )
+
+    if not adapter_path.is_dir():
+        raise ValueError(
+            f"{label} adapter directory does not exist: "
+            f"{adapter_path}"
+        )
+
+    config_path = (
+        adapter_path
+        / "adapter_config.json"
+    )
+
+    weights = [
+        adapter_path / "adapter_model.safetensors",
+        adapter_path / "adapter_model.bin",
+    ]
+
+    if (
+        not config_path.is_file()
+        or not any(
+            candidate.is_file()
+            for candidate in weights
+        )
+    ):
+        raise ValueError(
+            f"{label} adapter is incomplete: "
+            f"{adapter_path}"
+        )
+
+    return model_path, adapter_path
 
 
 def canonical_tool_call(
@@ -1079,17 +1152,13 @@ def preflight_specialist_sft(
         manifest.base_model_key
     )
 
-    if profile.model_path is None:
-        raise ValueError(
-            "Base specialist model profile has no model_path."
-        )
-
-    model_path = profile.model_path.expanduser().resolve()
-
-    if not model_path.is_dir():
-        raise ValueError(
-            f"Base model directory does not exist: {model_path}"
-        )
+    (
+        model_path,
+        base_adapter_path,
+    ) = _resolve_training_profile_paths(
+        profile,
+        label="Base specialist",
+    )
 
     from transformers import AutoTokenizer
 
@@ -1185,6 +1254,21 @@ def preflight_specialist_sft(
         "base_model_key": manifest.base_model_key,
         "candidate_model_key": manifest.candidate_model_key,
         "base_model_path": str(model_path),
+        "base_adapter_path": (
+            str(base_adapter_path)
+            if base_adapter_path is not None
+            else None
+        ),
+        "base_adapter_sha256": (
+            fingerprint_directory(
+                base_adapter_path
+            )
+            if base_adapter_path is not None
+            else None
+        ),
+        "continued_from_adapter": (
+            base_adapter_path is not None
+        ),
         "model_class": (
             specialist_training_model_class_name(
                 model_path
@@ -1378,17 +1462,21 @@ def train_specialist_sft(
         corpus_manifest.base_model_key
     )
 
-    if profile.model_path is None:
-        raise ValueError(
-            "Specialist base profile has no model_path."
-        )
+    (
+        base_model_path,
+        base_adapter_path,
+    ) = _resolve_training_profile_paths(
+        profile,
+        label="Specialist base",
+    )
 
-    base_model_path = profile.model_path.expanduser().resolve()
-
-    if not base_model_path.is_dir():
-        raise ValueError(
-            f"Specialist base model path does not exist: {base_model_path}"
+    base_adapter_sha256 = (
+        fingerprint_directory(
+            base_adapter_path
         )
+        if base_adapter_path is not None
+        else None
+    )
 
     from peft import (
         LoraConfig,
@@ -1493,17 +1581,54 @@ def train_specialist_sft(
         use_gradient_checkpointing=True,
     )
 
-    model = get_peft_model(
-        model,
-        LoraConfig(
-            r=lora_r,
-            lora_alpha=lora_alpha,
-            lora_dropout=lora_dropout,
-            bias="none",
-            task_type="CAUSAL_LM",
-            target_modules=lora_targets,
-        ),
-    )
+    if base_adapter_path is not None:
+        print(
+            "specialist continuation adapter:",
+            base_adapter_path,
+        )
+
+        model = PeftModel.from_pretrained(
+            model,
+            str(base_adapter_path),
+            is_trainable=True,
+        )
+
+        active_config = (
+            model.peft_config.get(
+                "default"
+            )
+        )
+
+        effective_lora_r = int(
+            getattr(
+                active_config,
+                "r",
+                lora_r,
+            )
+        )
+        effective_lora_alpha = int(
+            getattr(
+                active_config,
+                "lora_alpha",
+                lora_alpha,
+            )
+        )
+
+    else:
+        model = get_peft_model(
+            model,
+            LoraConfig(
+                r=lora_r,
+                lora_alpha=lora_alpha,
+                lora_dropout=lora_dropout,
+                bias="none",
+                task_type="CAUSAL_LM",
+                target_modules=lora_targets,
+            ),
+        )
+
+        effective_lora_r = lora_r
+        effective_lora_alpha = lora_alpha
 
     trainable_parameters = sum(
         parameter.numel()
@@ -1524,10 +1649,6 @@ def train_specialist_sft(
     adapter_directory = (
         run_directory
         / "adapter"
-    )
-    merged_directory = (
-        run_directory
-        / "merged"
     )
     trainer_directory = (
         run_directory
@@ -1769,50 +1890,21 @@ def train_specialist_sft(
 
     del trainer
     del model
-
-    gc.collect()
-    torch.cuda.empty_cache()
-
-    merge_base = _load_specialist_base_model(
-        model_path=base_model_path,
-        dtype=torch.float16,
-        device_map={"": "cpu"},
-        low_cpu_mem_usage=True,
-    )
-
-    merge_model = PeftModel.from_pretrained(
-        merge_base,
-        str(adapter_directory),
-        is_trainable=False,
-    )
-
-    merged = merge_model.merge_and_unload(
-        safe_merge=True
-    )
-
-    if hasattr(merged, "config"):
-        merged.config.use_cache = True
-
-    merged.save_pretrained(
-        merged_directory,
-        safe_serialization=True,
-        max_shard_size="256MB",
-    )
-    tokenizer.save_pretrained(
-        merged_directory
-    )
-
-    del merged
-    del merge_model
-    del merge_base
     del tokenizer
 
     gc.collect()
     torch.cuda.empty_cache()
 
-    merged_sha256 = fingerprint_directory(
-        merged_directory
-    )
+    # ADAPTER_NATIVE_SPECIALIST_ARTIFACT_V1
+    #
+    # The canonical specialist artifact is the trained PEFT adapter
+    # plus its immutable base-model path. Specialist training must not
+    # materialize another full copy of the base model merely to make the
+    # candidate runnable.
+    #
+    # Full-model merging is an optional export concern and belongs in a
+    # separate explicit export operation, never in training finalization.
+
 
     manifest = SpecialistSftTrainingManifest(
         created_at=_utc_now(),
@@ -1824,9 +1916,20 @@ def train_specialist_sft(
             corpus_manifest.worker_prompt_profile
         ),
         base_model_path=str(base_model_path),
+        base_adapter_path=(
+            str(base_adapter_path)
+            if base_adapter_path is not None
+            else None
+        ),
+        base_adapter_sha256=(
+            base_adapter_sha256
+        ),
+        continued_from_adapter=(
+            base_adapter_path is not None
+        ),
         output_directory=str(run_directory),
         adapter_directory=str(adapter_directory),
-        merged_model_directory=str(merged_directory),
+        merged_model_directory=None,
         corpus_directory=str(
             corpus_directory.expanduser().resolve()
         ),
@@ -1836,8 +1939,8 @@ def train_specialist_sft(
         max_steps=max_steps,
         learning_rate=learning_rate,
         max_length=max_length,
-        lora_r=lora_r,
-        lora_alpha=lora_alpha,
+        lora_r=effective_lora_r,
+        lora_alpha=effective_lora_alpha,
         trainable_parameters=trainable_parameters,
         total_parameters=total_parameters,
         trainable_ratio=(
@@ -1847,7 +1950,7 @@ def train_specialist_sft(
             else 0.0
         ),
         adapter_sha256=adapter_sha256,
-        merged_model_sha256=merged_sha256,
+        merged_model_sha256=None,
         training_versions=versions,
     )
 
@@ -1894,10 +1997,16 @@ def train_specialist_sft(
                 "training_manifest": str(
                     manifest_path
                 ),
-                "merged_model_directory": str(
-                    merged_directory
+                "artifact_mode": "adapter-native",
+                "base_model_path": str(
+                    base_model_path
                 ),
-                "merged_model_sha256": merged_sha256,
+                "adapter_directory": str(
+                    adapter_directory
+                ),
+                "adapter_sha256": adapter_sha256,
+                "merged_model_directory": None,
+                "merged_model_sha256": None,
             },
             ensure_ascii=False,
             indent=2,
@@ -1933,24 +2042,34 @@ def register_candidate_profile(
         )
     )
 
-    merged_model_directory = Path(
-        manifest.merged_model_directory
+    base_model_directory = Path(
+        manifest.base_model_path
     ).expanduser().resolve()
 
-    if not merged_model_directory.is_dir():
+    if not base_model_directory.is_dir():
         raise ValueError(
-            "Trained merged model directory does not exist: "
-            f"{merged_model_directory}"
+            "Specialist base model directory does not exist: "
+            f"{base_model_directory}"
+        )
+
+    adapter_directory = Path(
+        manifest.adapter_directory
+    ).expanduser().resolve()
+
+    if not adapter_directory.is_dir():
+        raise ValueError(
+            "Trained specialist adapter directory does not exist: "
+            f"{adapter_directory}"
         )
 
     if (
         fingerprint_directory(
-            merged_model_directory
+            adapter_directory
         )
-        != manifest.merged_model_sha256
+        != manifest.adapter_sha256
     ):
         raise ValueError(
-            "Merged model fingerprint does not match "
+            "Specialist adapter fingerprint does not match "
             "the training manifest."
         )
 
@@ -2000,8 +2119,21 @@ def register_candidate_profile(
     candidate_profile = dict(
         base_profile
     )
+
+    # Adapter-native specialist serving:
+    #
+    #     immutable base model
+    #       +
+    #     trained successor adapter
+    #
+    # If the base profile already has an adapter because this training
+    # continued a specialist, replace it with the newly trained successor
+    # adapter. Do not stack the predecessor and successor adapters.
     candidate_profile["model_path"] = str(
-        merged_model_directory
+        base_model_directory
+    )
+    candidate_profile["adapter_path"] = str(
+        adapter_directory
     )
     candidate_profile["enabled"] = True
 

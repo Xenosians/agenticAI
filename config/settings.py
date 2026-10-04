@@ -662,6 +662,10 @@ class Settings(
         str | None
     ) = None
 
+    atlassian_jira_resource_ari: (
+        str | None
+    ) = None
+
     atlassian_admin_http_timeout_seconds: float = Field(
         default=10.0,
         gt=0,
