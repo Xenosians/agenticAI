@@ -1165,6 +1165,7 @@ def preflight_specialist_sft(
     tokenizer = AutoTokenizer.from_pretrained(
         str(model_path),
         local_files_only=True,
+        fix_mistral_regex=True,
     )
 
     prompt_lengths = []
@@ -1494,6 +1495,7 @@ def train_specialist_sft(
     tokenizer = AutoTokenizer.from_pretrained(
         str(base_model_path),
         local_files_only=True,
+        fix_mistral_regex=True,
     )
 
     if tokenizer.pad_token_id is None:

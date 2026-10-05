@@ -11,10 +11,53 @@ def parse_tool_calls(
 
     try:
         parsed = json.loads(response)
+
     except json.JSONDecodeError as exc:
-        raise ValueError(
-            "Worker returned invalid JSON."
-        ) from exc
+        normalized = response.strip()
+
+        # Narrow deterministic recovery for one observed small-model
+        # serialization failure:
+        #
+        #   [{"arguments": {...}, "name": "tool"}
+        #
+        # The object itself is complete, but the outer JSON array is
+        # missing exactly one closing bracket.
+        #
+        # We never infer or modify:
+        #   - tool name
+        #   - arguments
+        #   - braces
+        #   - quotes
+        #   - semantic content
+        #
+        # Existing validation below remains authoritative.
+        repaired = None
+
+        if (
+            normalized.startswith("[")
+            and normalized.endswith("}")
+        ):
+            candidate = normalized + "]"
+
+            try:
+                candidate_parsed = json.loads(
+                    candidate
+                )
+            except json.JSONDecodeError:
+                candidate_parsed = None
+
+            if isinstance(
+                candidate_parsed,
+                list,
+            ):
+                repaired = candidate_parsed
+
+        if repaired is None:
+            raise ValueError(
+                "Worker returned invalid JSON."
+            ) from exc
+
+        parsed = repaired
 
     if not isinstance(parsed, list):
         raise ValueError(

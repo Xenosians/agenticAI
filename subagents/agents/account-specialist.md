@@ -8,7 +8,7 @@ tools:
   - reset_password
   - enable_user
   - disable_user
-model: qwen2.5-0.5b-funccall
+model: account-func-trained
 max_steps: 3
 ---
 
