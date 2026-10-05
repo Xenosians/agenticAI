@@ -9,6 +9,14 @@ Return ONLY one JSON array with exactly one object containing exactly:
 AVAILABLE CAPABILITIES:
 {{TOOLS_COMPACT}}
 
+ROLE TAGS:
+- required=[...] means those arguments must be present in the final call.
+- grounded=[...] means exact authority-bearing values; copy them exactly
+  from the user / validated semantic context.
+- derived=[...] means proposal content may be composed from the user's
+  request, but must not add facts, identifiers, scope, participants,
+  goals, dates, or provider state.
+
 RULES:
 - Copy the capability name exactly.
 - Use only arguments listed for that capability.

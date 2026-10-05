@@ -78,7 +78,6 @@ def test_ticket_mutation_risk_and_approval_contract():
 
         "ticket_create": [
             "project_key",
-            "summary",
             "ticket_type",
         ],
 
@@ -141,6 +140,46 @@ def test_ticket_mutation_risk_and_approval_contract():
             ]
             == grounded_arguments
         )
+
+
+def test_ticket_create_argument_role_contract():
+
+    tool = (
+        get_tool(
+            "ticket_create"
+        )
+    )
+
+    assert tool is not None
+
+    assert (
+        tool[
+            "required_arguments"
+        ]
+        == [
+            "project_key",
+            "summary",
+        ]
+    )
+
+    assert (
+        tool[
+            "grounded_arguments"
+        ]
+        == [
+            "project_key",
+            "ticket_type",
+        ]
+    )
+
+    assert (
+        tool[
+            "derived_arguments"
+        ]
+        == [
+            "summary",
+        ]
+    )
 
 
 def test_semantic_guard_allows_exact_ticket_transition():
@@ -384,7 +423,7 @@ def test_semantic_guard_blocks_wrong_ticket_assignee():
     )
 
 
-def test_semantic_guard_blocks_rewritten_ticket_summary():
+def test_semantic_guard_allows_derived_ticket_summary():
 
     agent = (
         ticket_agent()
@@ -397,8 +436,7 @@ def test_semantic_guard_blocks_rewritten_ticket_summary():
     intent = (
         SemanticIntent(
             summary=(
-                "Create a ticket in ITSM titled "
-                "'Laptop onboarding failure'."
+                "Create the requested ticket."
             ),
 
             effect=(
@@ -411,13 +449,10 @@ def test_semantic_guard_blocks_rewritten_ticket_summary():
 
             forbidden_tools=[],
 
+            # Only authority-bearing exact values are bound here.
             allowed_arguments={
                 "project_key": [
                     "ITSM",
-                ],
-
-                "summary": [
-                    "Laptop onboarding failure",
                 ],
             },
 
@@ -448,17 +483,46 @@ def test_semantic_guard_blocks_rewritten_ticket_summary():
                     "ITSM",
 
                 "summary":
-                    "Employee laptop is broken",
+                    "Laptop onboarding failure",
             },
         )
     )
 
     assert (
         decision.allowed
+        is True
+    )
+
+    empty = (
+        guard.evaluate(
+            agent=(
+                agent
+            ),
+
+            intent=(
+                intent
+            ),
+
+            tool_name=(
+                "ticket_create"
+            ),
+
+            arguments={
+                "project_key":
+                    "ITSM",
+
+                "summary":
+                    "",
+            },
+        )
+    )
+
+    assert (
+        empty.allowed
         is False
     )
 
     assert (
-        decision.decision_code
-        == "semantic_argument_not_allowed"
+        empty.decision_code
+        == "semantic_derived_argument_invalid"
     )

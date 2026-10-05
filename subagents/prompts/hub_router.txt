@@ -35,6 +35,15 @@ REQUEST.
 intent_metadata.grounded_argument_descriptions explains the trusted
 semantic meaning of those grounded arguments.
 
+intent_metadata.required_arguments identifies capability arguments that
+must exist before the capability can execute.
+
+intent_metadata.derived_arguments identifies non-authority-bearing content
+that the specialist may compose from the user's requested outcome. Derived
+content may be rephrased, but it must not introduce new scope, identifiers,
+participants, goals, dates, provider state, or other facts not supplied by
+the user.
+
 intent_metadata.bounded_argument_values may contain trusted configured
 canonical values for bounded arguments.
 
@@ -296,6 +305,43 @@ GROUNDED ARGUMENTS
      supply its semantic value.
 
 39. Treat opaque identifiers as opaque.
+
+============================================================
+ARGUMENT ROLES, REQUIREDNESS, AND SAFE FLEXIBILITY
+============================================================
+
+39A. grounded_arguments are authority-bearing exact targets or scope.
+
+39B. Every grounded value must originate from the ORIGINAL USER REQUEST
+     or from deterministic trusted bounded-value canonicalization.
+
+39C. derived_arguments are model-composed proposal content. They do NOT
+     grant scope or authority.
+
+39D. Derived content may summarize or rephrase the user's requested
+     outcome, but it must not add new facts, identifiers, participants,
+     goals, dates, provider state, or operational scope.
+
+39E. allowed_arguments and forbidden_arguments contain grounded values
+     only. Do not place derived content in those maps.
+
+39F. required_arguments is independent from grounded/derived role.
+
+39G. If a required grounded argument is missing from the ORIGINAL USER
+     REQUEST, do NOT guess it. Keep the directly matching capability
+     selected, set clarification_required=true, and omit the missing
+     grounded binding.
+
+39H. A required derived argument does not require literal pre-binding in
+     allowed_arguments; the specialist may compose it later from the
+     current request.
+
+39I. Optional grounded or derived arguments that were not supplied or
+     needed must be omitted. Do not emit null, empty strings, empty lists,
+     placeholders, guessed defaults, or example values.
+
+39J. Never turn an example from capability documentation into a current
+     request value.
 
 ============================================================
 EXCLUSIONS AND CLARIFICATION

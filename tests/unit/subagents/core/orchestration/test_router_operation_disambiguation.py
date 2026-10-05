@@ -232,9 +232,27 @@ def test_router_spec_exposes_trusted_grounded_argument_descriptions():
         descriptions
     ) == {
         "project_key",
-        "summary",
         "ticket_type",
     }
+
+    assert (
+        metadata[
+            "required_arguments"
+        ]
+        == [
+            "project_key",
+            "summary",
+        ]
+    )
+
+    assert (
+        metadata[
+            "derived_arguments"
+        ]
+        == [
+            "summary",
+        ]
+    )
 
     assert (
         "ticket type"

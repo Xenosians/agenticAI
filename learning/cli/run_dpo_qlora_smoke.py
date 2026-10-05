@@ -144,39 +144,29 @@ def _runtime_messages(
     task_instructions: str,
 ) -> list[dict[str, str]]:
     """
-    Reproduce AgentRuntime specialist message construction exactly.
+    Reproduce the current AgentRuntime model-facing message shape.
+
+    Free-form routing instructions remain provenance/audit metadata,
+    but are deliberately NOT injected into the specialist prompt.
     """
 
-    messages = [
+    return [
         {
-            "role": "system",
-            "content": system_prompt,
+            "role":
+                "system",
+
+            "content":
+                system_prompt,
         },
+
         {
-            "role": "user",
-            "content": user_request,
+            "role":
+                "user",
+
+            "content":
+                user_request,
         },
     ]
-
-    normalized_instructions = (
-        task_instructions.strip()
-    )
-
-    if normalized_instructions:
-
-        messages.append(
-            {
-                "role": "user",
-                "content": (
-                    "Additional task context "
-                    "from the routing stage:\n"
-                    f"{normalized_instructions}"
-                ),
-            }
-        )
-
-    return messages
-
 
 def _record(
     *,

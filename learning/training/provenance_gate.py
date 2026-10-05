@@ -412,8 +412,17 @@ def build_current_specialist_messages(
         str,
     ]
 ]:
+    """
+    Reconstruct the CURRENT specialist model-facing message shape.
 
-    messages = [
+    Free-form routing/task instructions remain provenance and audit
+    metadata, but they are deliberately not injected into the worker
+    prompt.
+
+    This must remain aligned with AgentRuntime.
+    """
+
+    return [
         {
             "role":
                 "system",
@@ -430,33 +439,6 @@ def build_current_specialist_messages(
                 record.user_request,
         },
     ]
-
-    normalized_instructions = (
-        _normalized_task_instructions(
-            record
-        )
-    )
-
-    if (
-        normalized_instructions
-        is not None
-    ):
-
-        messages.append(
-            {
-                "role":
-                    "user",
-
-                "content":
-                    (
-                        "Additional task context "
-                        "from the routing stage:\n"
-                        f"{normalized_instructions}"
-                    ),
-            }
-        )
-
-    return messages
 
 
 # ============================================================

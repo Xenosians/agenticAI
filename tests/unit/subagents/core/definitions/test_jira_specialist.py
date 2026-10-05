@@ -52,7 +52,7 @@ def test_load_real_jira_specialist():
     # protocol evaluation passes.
     assert (
         agent.model
-        == "hub-main"
+        == "jira-func-trained"
     )
 
     assert (

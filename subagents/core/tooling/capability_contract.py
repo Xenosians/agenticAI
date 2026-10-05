@@ -114,6 +114,12 @@ def build_model_capability_contract(
         value=tool.get("required_arguments", []),
     )
 
+    derived_arguments = _string_list(
+        tool_name=tool_name,
+        field_name="derived_arguments",
+        value=tool.get("derived_arguments", []),
+    )
+
     trusted_policy_arguments = _string_list(
         tool_name=tool_name,
         field_name="trusted_policy_arguments",
@@ -162,6 +168,44 @@ def build_model_capability_contract(
                 + ", ".join(unknown_required)
             )
 
+    semantic_role_overlap = sorted(
+        set(grounded_arguments)
+        & set(derived_arguments)
+    )
+
+    if semantic_role_overlap:
+        raise ValueError(
+            f"Capability '{tool_name}' cannot mark the same argument "
+            "as both grounded and derived: "
+            + ", ".join(semantic_role_overlap)
+        )
+
+    unclassified_required = sorted(
+        set(required_arguments)
+        - set(grounded_arguments)
+        - set(derived_arguments)
+    )
+
+    if unclassified_required:
+        raise ValueError(
+            f"Capability '{tool_name}' has required arguments without "
+            "a grounded or derived semantic role: "
+            + ", ".join(unclassified_required)
+        )
+
+    if schema is not None:
+        unknown_derived = [
+            name
+            for name in derived_arguments
+            if name not in schema
+        ]
+
+        if unknown_derived:
+            raise ValueError(
+                f"Capability '{tool_name}' derives unknown arguments: "
+                + ", ".join(unknown_derived)
+            )
+
     contract: dict[str, Any] = {
         "schema": CAPABILITY_CONTRACT_SCHEMA,
         "contract_version": CAPABILITY_CONTRACT_VERSION,
@@ -172,6 +216,7 @@ def build_model_capability_contract(
         "requires_approval": requires_approval,
         "grounded_arguments": grounded_arguments,
         "required_arguments": required_arguments,
+        "derived_arguments": derived_arguments,
         "condition_fields": condition_fields,
         "policy_owns_preconditions": policy_owns_preconditions,
         "trusted_policy_arguments": trusted_policy_arguments,

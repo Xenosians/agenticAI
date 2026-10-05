@@ -301,25 +301,6 @@ def valid_execution_provenance(
         else None
     )
 
-    if (
-        normalized_instructions
-        is not None
-    ):
-
-        messages.append(
-            {
-                "role":
-                    "user",
-
-                "content":
-                    (
-                        "Additional task context "
-                        "from the routing stage:\n"
-                        f"{normalized_instructions}"
-                    ),
-            }
-        )
-
     return (
         build_specialist_execution_provenance(
             agent=(
@@ -665,18 +646,35 @@ def test_argument_correction_materializes_for_target_specialist(
     )
 
     assert (
-        payload[
-            "prompt_messages"
-        ][
-            2
-        ][
-            "content"
-        ]
-        == (
-            "Additional task context "
-            "from the routing stage:\n"
-            "Check the requested account."
+        len(
+            payload[
+                "prompt_messages"
+            ]
         )
+        == 2
+    )
+
+    prompt_text = (
+        "\n".join(
+            message[
+                "content"
+            ]
+
+            for message
+            in payload[
+                "prompt_messages"
+            ]
+        )
+    )
+
+    assert (
+        "Additional task context"
+        not in prompt_text
+    )
+
+    assert (
+        "Check the requested account."
+        not in prompt_text
     )
 
     assert (

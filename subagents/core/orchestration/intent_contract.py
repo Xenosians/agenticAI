@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from typing import (
     Any,
     Callable,
@@ -256,6 +258,123 @@ def trusted_grounded_argument_descriptions(
 
     return (
         descriptions
+    )
+
+
+def _trusted_argument_role(
+    *,
+    tool_name: str,
+    tool: dict,
+    field_name: str,
+) -> list[str]:
+    # Generic trusted capability argument-role metadata.
+    value = tool.get(field_name, [])
+
+    if not isinstance(value, list):
+        raise ValueError(
+            f"Capability '{tool_name}' has invalid {field_name} metadata."
+        )
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(
+                f"Capability '{tool_name}' contains an invalid "
+                f"{field_name} entry."
+            )
+
+        name = item.strip()
+        if name in seen:
+            continue
+
+        seen.add(name)
+        normalized.append(name)
+
+    return normalized
+
+
+def trusted_required_arguments(
+    *,
+    tool_name: str,
+    tool: dict,
+) -> list[str]:
+    return _trusted_argument_role(
+        tool_name=tool_name,
+        tool=tool,
+        field_name="required_arguments",
+    )
+
+
+def trusted_derived_arguments(
+    *,
+    tool_name: str,
+    tool: dict,
+) -> list[str]:
+    return _trusted_argument_role(
+        tool_name=tool_name,
+        tool=tool,
+        field_name="derived_arguments",
+    )
+
+
+def _grounded_value_appears_in_request(
+    value: str,
+    user_request: str,
+) -> bool:
+    """
+    Verify that one authority-bearing grounded value originates
+    literally in the current user request.
+
+    Important ordering:
+
+        literal user value
+            ↓
+        request-origin validation
+            ↓
+        trusted bounded canonicalization
+
+    Canonicalization is deliberately NOT performed here.
+
+    This is generic. It does not know about Jira, accounts,
+    repositories, projects, or any domain-specific identifier.
+    """
+
+    if (
+        not isinstance(
+            value,
+            str,
+        )
+        or not value.strip()
+        or not isinstance(
+            user_request,
+            str,
+        )
+        or not user_request.strip()
+    ):
+        return False
+
+    identifier_chars = (
+        r"A-Za-z0-9._/\\-"
+    )
+
+    pattern = (
+        rf"(?<![{identifier_chars}])"
+        rf"{re.escape(value)}"
+        rf"(?="
+        rf"$"
+        rf"|[\s,;:!?()\[\]{{}}\"'`]"
+        rf"|\.(?=\s|$)"
+        rf")"
+    )
+
+    return (
+        re.search(
+            pattern,
+            user_request,
+        )
+        is not None
     )
 
 
@@ -657,6 +776,28 @@ def build_router_semantic_agent_spec(
                     ),
                 ),
 
+            "required_arguments":
+                trusted_required_arguments(
+                    tool_name=(
+                        tool_name
+                    ),
+
+                    tool=(
+                        tool
+                    ),
+                ),
+
+            "derived_arguments":
+                trusted_derived_arguments(
+                    tool_name=(
+                        tool_name
+                    ),
+
+                    tool=(
+                        tool
+                    ),
+                ),
+
             "grounded_argument_descriptions":
                 trusted_grounded_argument_descriptions(
                     tool_name=(
@@ -805,6 +946,17 @@ def _normalize_argument_map(
         # that entry is strictly narrower than accepting a fabricated
         # value and cannot widen execution authority.
         if values is None:
+            continue
+
+        if (
+            isinstance(
+                values,
+                list,
+            )
+            and not values
+        ):
+            # Empty model-side semantic bindings are absence, not a
+            # requirement that the worker must emit an empty value.
             continue
 
         if not isinstance(
@@ -1099,6 +1251,10 @@ def parse_semantic_intent(
     *,
     agent: AgentDefinition,
     tool_lookup: ToolLookup = get_tool,
+    user_request: (
+        str
+        | None
+    ) = None,
 ) -> (
     SemanticIntent
     | None
@@ -1356,6 +1512,8 @@ def parse_semantic_intent(
     allowed_tool_effects: set[str] = set()
 
     grounded_argument_names: set[str] = set()
+    required_argument_names: set[str] = set()
+    derived_argument_names: set[str] = set()
 
     for tool_name in allowed_tools:
 
@@ -1379,6 +1537,30 @@ def parse_semantic_intent(
 
         grounded_argument_names.update(
             trusted_grounded_arguments(
+                tool_name=(
+                    tool_name
+                ),
+
+                tool=(
+                    tool
+                ),
+            )
+        )
+
+        required_argument_names.update(
+            trusted_required_arguments(
+                tool_name=(
+                    tool_name
+                ),
+
+                tool=(
+                    tool
+                ),
+            )
+        )
+
+        derived_argument_names.update(
+            trusted_derived_arguments(
                 tool_name=(
                     tool_name
                 ),
@@ -1449,15 +1631,202 @@ def parse_semantic_intent(
             )
 
     # ========================================================
+    # TRUSTED ARGUMENT ROLES
+    # ========================================================
+
+    semantic_role_overlap = (
+        grounded_argument_names
+        & derived_argument_names
+    )
+
+    if semantic_role_overlap:
+        raise ValueError(
+            "Capability metadata marks arguments as both grounded "
+            "and derived: "
+            + ", ".join(
+                sorted(
+                    semantic_role_overlap
+                )
+            )
+        )
+
+    unclassified_required = (
+        required_argument_names
+        - grounded_argument_names
+        - derived_argument_names
+    )
+
+    if unclassified_required:
+        raise ValueError(
+            "Required capability arguments are missing a trusted "
+            "grounded or derived semantic role: "
+            + ", ".join(
+                sorted(
+                    unclassified_required
+                )
+            )
+        )
+
+
+    # ========================================================
+    # CURRENT-REQUEST ORIGIN VALIDATION
+    #
+    # Do this BEFORE bounded-value canonicalization.
+    #
+    # This prevents:
+    #
+    #     user says:
+    #         internal meeting
+    #
+    #     Hub invents:
+    #         project_key = INTERNAL
+    #
+    # from becoming trusted merely because a configured enum happens
+    # to contain INTERNAL.
+    #
+    # This remains domain-independent.
+    # ========================================================
+
+    raw_allowed_arguments = {
+        argument_name:
+            list(
+                values
+            )
+
+        for (
+            argument_name,
+            values,
+        )
+        in allowed_arguments.items()
+    }
+
+    raw_forbidden_arguments = {
+        argument_name:
+            list(
+                values
+            )
+
+        for (
+            argument_name,
+            values,
+        )
+        in forbidden_arguments.items()
+    }
+
+
+    if user_request is not None:
+
+        if not isinstance(
+            user_request,
+            str,
+        ):
+            raise ValueError(
+                "user_request must be a string when semantic "
+                "grounding validation is enabled."
+            )
+
+
+        def current_request_bindings(
+            argument_map: dict[
+                str,
+                list[str],
+            ],
+            *,
+            allow_casefold_match: bool,
+        ) -> dict[
+            str,
+            list[str],
+        ]:
+
+            narrowed: dict[
+                str,
+                list[str],
+            ] = {}
+
+            request_for_match = (
+                user_request.casefold()
+                if allow_casefold_match
+                else user_request
+            )
+
+            for (
+                argument_name,
+                values,
+            ) in argument_map.items():
+
+                if (
+                    argument_name
+                    not in grounded_argument_names
+                ):
+                    continue
+
+                current_values: list[str] = []
+
+                for item in values:
+
+                    candidate = (
+                        item.casefold()
+                        if allow_casefold_match
+                        else item
+                    )
+
+                    if (
+                        _grounded_value_appears_in_request(
+                            candidate,
+                            request_for_match,
+                        )
+                    ):
+                        current_values.append(
+                            item
+                        )
+
+                if current_values:
+                    narrowed[
+                        argument_name
+                    ] = (
+                        current_values
+                    )
+
+            return narrowed
+
+
+        # Allowed bindings can authorize concrete execution scope.
+        # Require strict literal request origin.
+        allowed_arguments = (
+            current_request_bindings(
+                raw_allowed_arguments,
+                allow_casefold_match=False,
+            )
+        )
+
+        # Forbidden bindings only reduce authority.
+        # Case-only normalization is therefore safe and avoids losing
+        # explicit exclusions such as "Alice" -> "alice".
+        forbidden_arguments = (
+            current_request_bindings(
+                raw_forbidden_arguments,
+                allow_casefold_match=True,
+            )
+        )
+
+
+    # ========================================================
     # TRUSTED BOUNDED-VALUE CANONICALIZATION
     #
-    # This happens only after:
-    #     - capability identity validation
-    #     - specialist allowlist validation
-    #     - effect validation
-    #     - grounded argument validation
+    # Only values that already survived exact current-request
+    # origin validation reach this point.
     #
-    # No unbounded value is transformed.
+    # Example:
+    #
+    #     user literal: "kan"
+    #         ↓
+    #     proven present
+    #         ↓
+    #     trusted enum: ["KAN"]
+    #         ↓
+    #     canonical: "KAN"
+    #
+    # No fuzzy/synonym/model normalization occurs.
     # ========================================================
 
     bounded_values = (
@@ -1499,6 +1868,38 @@ def parse_semantic_intent(
             ),
         )
     )
+
+
+    # ========================================================
+    # REQUIRED EXACT VALUES
+    #
+    # Required + grounded means:
+    #
+    #     execution cannot safely continue without an exact
+    #     authority-bearing value.
+    #
+    # Missing values cause clarification.
+    #
+    # Required + derived values are different:
+    #
+    #     they may be composed later by the specialist.
+    # ========================================================
+
+    missing_required_arguments = sorted(
+        (
+            required_argument_names
+            & grounded_argument_names
+        )
+        - set(
+            allowed_arguments
+        )
+    )
+
+    if missing_required_arguments:
+        clarification_required = (
+            True
+        )
+
 
     # ========================================================
     # CONFLICT CHECK AFTER CANONICALIZATION
@@ -1572,6 +1973,10 @@ def parse_semantic_intent(
 
             clarification_required=(
                 clarification_required
+            ),
+
+            missing_required_arguments=(
+                missing_required_arguments
             ),
         )
     )

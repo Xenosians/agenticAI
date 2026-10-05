@@ -130,12 +130,36 @@ def build_compact_capability_text(
             )
         ]
 
+        role_fragments: list[str] = []
+
+        for role_name, role_key in [
+            ("required", "required_arguments"),
+            ("grounded", "grounded_arguments"),
+            ("derived", "derived_arguments"),
+        ]:
+            role_values = capability.get(role_key, [])
+
+            if isinstance(role_values, list) and role_values:
+                role_fragments.append(
+                    role_name
+                    + "=["
+                    + ",".join(str(item) for item in role_values)
+                    + "]"
+                )
+
+        role_suffix = (
+            " {" + "; ".join(role_fragments) + "}"
+            if role_fragments
+            else ""
+        )
+
         lines.append(
             f"- {name}("
             + ", ".join(
                 arguments
             )
             + ")"
+            + role_suffix
         )
 
     return (

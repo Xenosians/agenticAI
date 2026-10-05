@@ -440,10 +440,18 @@ TICKETING_TOOLS = {
             "expected_ticket_type_name",
         ],
 
-        "grounded_arguments": [
+        "required_arguments": [
             "project_key",
             "summary",
+        ],
+
+        "grounded_arguments": [
+            "project_key",
             "ticket_type",
+        ],
+
+        "derived_arguments": [
+            "summary",
         ],
 
         "parameters": {
@@ -461,8 +469,11 @@ TICKETING_TOOLS = {
                     "str",
 
                 "description": (
-                    "Exact requested ticket summary/title. "
-                    "Do not rewrite or invent it."
+                    "Concise ticket summary derived only from the "
+                    "user's requested outcome. Rephrasing is allowed, "
+                    "but do not add facts, scope, participants, goals, "
+                    "identifiers, dates, or provider state that the "
+                    "user did not supply."
                 ),
             },
 

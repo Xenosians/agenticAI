@@ -39,6 +39,16 @@ def fake_tool_lookup(
                     "Read alpha state."
                 ),
 
+            "risk":
+                "read",
+
+            "requires_approval":
+                False,
+
+            "grounded_arguments": [
+                "identifier",
+            ],
+
             "parameters": {
                 "identifier": {
                     "type":
@@ -55,6 +65,16 @@ def fake_tool_lookup(
                 (
                     "Search beta records."
                 ),
+
+            "risk":
+                "read",
+
+            "requires_approval":
+                False,
+
+            "grounded_arguments": [
+                "query",
+            ],
 
             "parameters": {
                 "query": {
@@ -73,6 +93,16 @@ def fake_tool_lookup(
                     "Inspect one configured "
                     "repository."
                 ),
+
+            "risk":
+                "read",
+
+            "requires_approval":
+                False,
+
+            "grounded_arguments": [
+                "repository",
+            ],
 
             "parameters": {
                 "repository": {

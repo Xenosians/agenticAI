@@ -74,8 +74,19 @@ class FakeService:
         }
 
 
-def test_all_atlassian_tools_are_read_only():
-    assert set(ATLASSIAN_TOOLS) == {
+def test_atlassian_tool_risk_contracts():
+    assert set(
+        ATLASSIAN_TOOLS
+    ) == {
+        "atlassian_credential_status",
+        "atlassian_org_list",
+        "atlassian_org_get",
+        "atlassian_workspace_list",
+        "atlassian_api_token_metadata",
+        "atlassian_user_invite",
+    }
+
+    read_only_tools = {
         "atlassian_credential_status",
         "atlassian_org_list",
         "atlassian_org_get",
@@ -83,14 +94,57 @@ def test_all_atlassian_tools_are_read_only():
         "atlassian_api_token_metadata",
     }
 
-    for tool in ATLASSIAN_TOOLS.values():
-        assert tool["risk"] == "read"
-        assert tool["requires_approval"] is False
+    for tool_name in read_only_tools:
+        tool = (
+            ATLASSIAN_TOOLS[
+                tool_name
+            ]
+        )
 
-    assert ATLASSIAN_TOOLS["atlassian_api_token_metadata"]["grounded_arguments"] == [
-        "account_id"
-    ]
+        assert (
+            tool[
+                "risk"
+            ]
+            == "read"
+        )
 
+        assert (
+            tool[
+                "requires_approval"
+            ]
+            is False
+        )
+
+    invite = (
+        ATLASSIAN_TOOLS[
+            "atlassian_user_invite"
+        ]
+    )
+
+    assert (
+        invite[
+            "risk"
+        ]
+        == "high"
+    )
+
+    assert (
+        invite[
+            "requires_approval"
+        ]
+        is True
+    )
+
+    assert (
+        ATLASSIAN_TOOLS[
+            "atlassian_api_token_metadata"
+        ][
+            "grounded_arguments"
+        ]
+        == [
+            "account_id"
+        ]
+    )
 
 def test_mcp_registers_all_atlassian_tools():
     server = FakeServer()

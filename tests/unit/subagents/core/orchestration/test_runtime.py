@@ -239,7 +239,7 @@ def test_runtime_executes_account_specialist():
         inference_call[
             "model_key"
         ]
-        == "qwen2.5-0.5b-funccall"
+        == "account-func-trained"
     )
 
     messages = (
@@ -366,23 +366,30 @@ def test_runtime_returns_model_failure():
     )
 
 
-def test_runtime_passes_additional_instructions():
+def test_runtime_keeps_additional_instructions_audit_only():
     (
         runtime,
         inference,
         _gateway,
     ) = build_runtime()
 
+    instructions = (
+        "Preserve the identifier exactly."
+    )
+
     task = AgentTask(
         task_id="task-004",
+
         agent_name=(
             "account-specialist"
         ),
+
         user_request=(
             "Check jdoe."
         ),
+
         instructions=(
-            "Preserve the identifier exactly."
+            instructions
         ),
     )
 
@@ -398,25 +405,36 @@ def test_runtime_passes_additional_instructions():
     ), result.error
 
     messages = (
-        inference.calls[0][
+        inference.calls[
+            0
+        ][
             "messages"
         ]
     )
 
-    assert (
-        messages[2][
-            "role"
-        ]
-        == "user"
+    joined = (
+        "\n".join(
+            str(
+                message.get(
+                    "content",
+                    "",
+                )
+            )
+
+            for message
+            in messages
+        )
     )
 
     assert (
-        "Preserve the identifier exactly."
-        in messages[2][
-            "content"
-        ]
+        instructions
+        not in joined
     )
 
+    assert (
+        result.task_id
+        == "task-004"
+    )
 
 def test_runtime_rejects_invalid_worker_json():
     (

@@ -72,7 +72,7 @@ def test_load_real_account_specialist():
         "disable_user",
     }
 
-    assert agent.model == "qwen2.5-0.5b-funccall"
+    assert agent.model == "account-func-trained"
     assert agent.max_steps == 3
 
     prompt = (

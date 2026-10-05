@@ -96,5 +96,5 @@ def test_jira_production_model_is_not_auto_promoted_by_candidate_alignment():
 
     assert (
         agent.model
-        == "hub-main"
+        == "jira-func-trained"
     )

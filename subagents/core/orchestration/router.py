@@ -634,6 +634,10 @@ class LLMRouter:
                         agent=(
                             agent
                         ),
+
+                        user_request=(
+                            user_request
+                        ),
                     )
                 )
 

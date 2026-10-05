@@ -32,6 +32,17 @@ Each available capability contains:
 - "argument_schema"
     The structured arguments accepted by that capability.
 
+- "required_arguments"
+    Arguments that must be present in the final capability call.
+
+- "grounded_arguments"
+    Exact authority-bearing identifiers/scope. Copy these only from the
+    original request or exact validated semantic target context.
+
+- "derived_arguments"
+    Non-authority-bearing content that may be composed from the user's
+    requested outcome. Rephrasing is allowed, but adding new facts is not.
+
 An argument schema may also contain:
 
 - "enum"
@@ -169,6 +180,18 @@ SEMANTIC ARGUMENT RULES:
 
 13. If the user supplied a concrete value, output that concrete value.
     Do not describe what the value represents.
+
+DERIVED CONTENT RULES:
+
+1. A derived argument may be phrased naturally from the user's request.
+
+2. Do not invent facts, identifiers, participants, goals, dates, provider
+   state, or scope merely to make derived content sound more complete.
+
+3. Grounded arguments remain exact even when derived arguments are flexible.
+
+4. If a required grounded value is not available in the validated semantic
+   target context, do not guess one.
 
 CAPABILITY RULES:
 

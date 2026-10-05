@@ -75,6 +75,13 @@ class SemanticIntent:
 
     clarification_required: bool = False
 
+    # Trusted runtime-derived evidence describing required exact
+    # arguments that were not safely grounded by the current request.
+    # This is evidence, never model authority.
+    missing_required_arguments: list[str] = field(
+        default_factory=list
+    )
+
 
 @dataclass(
     frozen=True

@@ -15,7 +15,9 @@ from subagents.core.definitions.types import (
 )
 
 from subagents.core.orchestration.intent_contract import (
+    trusted_derived_arguments,
     trusted_grounded_arguments,
+    trusted_required_arguments,
     trusted_tool_effect,
 )
 
@@ -151,6 +153,30 @@ def _runtime_grounded_values(
         None,
         False,
     )
+
+
+def _runtime_derived_value_valid(
+    value: Any,
+) -> bool:
+    # Derived content is model-composed proposal data, not authority.
+    # Exact equality is intentionally not required, but empty/null values
+    # still fail closed.
+    if value is None:
+        return False
+
+    if isinstance(value, str):
+        return bool(value.strip())
+
+    if isinstance(value, list):
+        return bool(value) and all(
+            _runtime_derived_value_valid(item)
+            for item in value
+        )
+
+    if isinstance(value, dict):
+        return bool(value)
+
+    return isinstance(value, (int, float, bool))
 
 
 class SemanticGuard:
@@ -368,6 +394,30 @@ class SemanticGuard:
                 )
             )
 
+            required_arguments = (
+                trusted_required_arguments(
+                    tool_name=(
+                        tool_name
+                    ),
+
+                    tool=(
+                        tool
+                    ),
+                )
+            )
+
+            derived_arguments = (
+                trusted_derived_arguments(
+                    tool_name=(
+                        tool_name
+                    ),
+
+                    tool=(
+                        tool
+                    ),
+                )
+            )
+
         except ValueError as exc:
 
             return (
@@ -419,8 +469,40 @@ class SemanticGuard:
             )
         )
 
+        required_set = set(required_arguments)
+        derived_set = set(derived_arguments)
+
+        if grounded_set & derived_set:
+            return self._deny(
+                "semantic_tool_metadata_invalid",
+                (
+                    "Trusted capability metadata marks an argument "
+                    "as both grounded and derived."
+                ),
+            )
+
+        if required_set - grounded_set - derived_set:
+            return self._deny(
+                "semantic_tool_metadata_invalid",
+                (
+                    "Trusted capability metadata contains a required "
+                    "argument without a semantic role."
+                ),
+            )
+
         # ========================================================
-        # EXPLICIT BINDINGS MUST BE PRESENT
+        # REQUIRED ARGUMENTS
+        # ========================================================
+
+        for argument_name in required_arguments:
+            if argument_name not in arguments:
+                return self._deny(
+                    "semantic_required_argument_missing",
+                    "The specialist omitted a required capability argument.",
+                )
+
+        # ========================================================
+        # EXPLICIT GROUNDED BINDINGS MUST BE PRESENT
         # ========================================================
 
         for argument_name in (
@@ -448,6 +530,25 @@ class SemanticGuard:
                             "Hub intent."
                         ),
                     )
+                )
+
+        # ========================================================
+        # DERIVED CONTENT
+        # ========================================================
+
+        for argument_name in derived_arguments:
+            if argument_name not in arguments:
+                continue
+
+            if not _runtime_derived_value_valid(
+                arguments[argument_name]
+            ):
+                return self._deny(
+                    "semantic_derived_argument_invalid",
+                    (
+                        "A derived capability argument must contain "
+                        "a non-empty structured value."
+                    ),
                 )
 
         # ========================================================

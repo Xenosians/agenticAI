@@ -178,6 +178,41 @@ class Orchestrator:
 
         return False
 
+    @staticmethod
+    def _clarification_answer(
+        semantic_intent,
+    ) -> str:
+        missing = [
+            name.replace("_", " ").strip()
+            for name in (
+                getattr(
+                    semantic_intent,
+                    "missing_required_arguments",
+                    [],
+                )
+                or []
+            )
+            if isinstance(name, str) and name.strip()
+        ]
+
+        if len(missing) == 1:
+            return (
+                "Please provide the required "
+                f"{missing[0]} before I continue."
+            )
+
+        if missing:
+            return (
+                "Please provide the following required values before I continue: "
+                + ", ".join(missing)
+                + "."
+            )
+
+        return (
+            "I need a little more information before I can safely "
+            "continue with that request."
+        )
+
     def _evaluate_condition(
         self,
         condition: ResultCondition,
@@ -617,7 +652,7 @@ class Orchestrator:
                             delegation.agent_name
                         ),
 
-                        status="error",
+                        status="clarification_required",
 
                         task_instructions=(
                             delegation.instructions
@@ -627,15 +662,17 @@ class Orchestrator:
                             delegation.semantic_intent
                         ),
 
+                        answer=(
+                            self._clarification_answer(
+                                delegation.semantic_intent
+                            )
+                        ),
+
                         outcome_code=(
                             "semantic_clarification_required"
                         ),
 
-                        error=(
-                            "The request requires clarification "
-                            "before a governed capability can be "
-                            "executed."
-                        ),
+                        error=None,
                     )
                 )
 
@@ -681,6 +718,11 @@ class Orchestrator:
                     semantic_intent=(
                         delegation.semantic_intent
                     ),
+
+                    context={
+                        "conversation_context":
+                            conversation_context,
+                    },
                 )
             )
 
@@ -767,6 +809,24 @@ class Orchestrator:
 
             overall_status = (
                 "partial_error"
+            )
+
+            answer = (
+                self
+                ._compose_deterministic_answer(
+                    results
+                )
+            )
+
+        elif (
+            "clarification_required"
+            in statuses
+        ):
+
+            # Clarification is a successful conversational outcome.
+            # No governed mutation was attempted.
+            overall_status = (
+                "success"
             )
 
             answer = (
@@ -917,6 +977,7 @@ class Orchestrator:
                 in {
                     "success",
                     "approval_required",
+                    "clarification_required",
                 }
                 and result.answer
             ):
