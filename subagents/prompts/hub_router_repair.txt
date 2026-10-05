@@ -69,6 +69,23 @@ REPAIR RULES
     for an explicitly requested mutation, or by substituting container
     inspection for a member-resource search/create/mutation.
 
+17. allowed_arguments and forbidden_arguments contain only trusted
+    grounded arguments.
+
+18. Never place an argument listed in intent_metadata.derived_arguments
+    into allowed_arguments or forbidden_arguments.
+
+19. required_arguments describes existence, not authority. A required
+    derived argument is produced later by the specialist. A required
+    grounded argument must come from the current user request.
+
+20. If a required grounded argument is missing, require clarification.
+    Never invent a value from nearby descriptive language.
+
+21. Specialist instructions must be one short physical line. Do not
+    emit bullets, literal newlines, fallback values, defaults, expected
+    results, or invented fields inside instructions.
+
 Return only the corrected JSON object.
 No markdown.
 No explanation.
@@ -95,6 +112,11 @@ Before emitting JSON, verify all of the following:
 - Specialist instructions must not invent assignee, reporter, ticket
   type, priority, labels, ownership, or any other semantic field that
   the current user did not request.
+- Arguments listed in intent_metadata.derived_arguments NEVER belong
+  in allowed_arguments or forbidden_arguments.
+- Missing required grounded arguments require clarification.
+- instructions must be one physical line with no bullets or embedded
+  newlines.
 - effect must exactly match the trusted intent_metadata.effect of the
   selected allowed capability.
 

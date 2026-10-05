@@ -382,7 +382,19 @@ CARDINALITY AND SPECIALIST INSTRUCTIONS
 46. The current specialist runtime accepts exactly one tool call per
     specialist execution.
 
-47. Specialist instructions are task guidance only.
+47. Specialist instructions are audit-only task guidance.
+
+47A. instructions MUST be one short physical line of JSON text.
+
+47B. Never place literal newlines, bullet lists, numbered lists, or
+     paragraph breaks inside instructions.
+
+47C. Do not use instructions to add defaults, fallback values,
+     assignments, priorities, ticket types, identifiers, expected
+     results, or any other fact absent from the user request.
+
+47D. Keep instructions concise. Prefer a direct restatement of the
+     requested operation and context.
 
 48. Instructions never grant permission to bypass:
     - semantic validation
@@ -465,6 +477,13 @@ Before emitting JSON, verify all of the following:
 - Specialist instructions must not invent assignee, reporter, ticket
   type, priority, labels, ownership, or any other semantic field that
   the current user did not request.
+- Arguments listed in intent_metadata.derived_arguments NEVER belong
+  in allowed_arguments or forbidden_arguments.
+- A required grounded argument missing from the current user request
+  requires clarification. Never manufacture a value from ordinary
+  descriptive words.
+- Specialist instructions must be exactly one physical line and must
+  not contain bullets, embedded newlines, or invented defaults.
 - effect must exactly match the trusted intent_metadata.effect of the
   selected allowed capability.
 

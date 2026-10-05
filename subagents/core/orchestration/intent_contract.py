@@ -1610,6 +1610,35 @@ def parse_semantic_intent(
             "must use effect='unknown'."
         )
 
+
+    # Known derived arguments are non-authoritative proposal content.
+    #
+    # A Hub may incorrectly place one into an authority-bearing
+    # semantic argument map. Because the argument identity itself is
+    # trusted capability metadata, narrowing that mistake to ABSENCE is
+    # safe.
+    #
+    # Unknown argument names are deliberately NOT removed here. They
+    # continue into the grounded-argument validator and fail closed.
+    for argument_map in (
+        allowed_arguments,
+        forbidden_arguments,
+    ):
+
+        for argument_name in list(
+            argument_map
+        ):
+
+            if (
+                argument_name
+                in derived_argument_names
+            ):
+
+                argument_map.pop(
+                    argument_name,
+                    None,
+                )
+
     for argument_name in (
         set(
             allowed_arguments

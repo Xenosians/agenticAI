@@ -36,6 +36,10 @@ from subagents.core.orchestration.semantic_guard import (
     SemanticGuard,
 )
 
+from subagents.core.orchestration.semantic_binding import (
+    bind_authoritative_grounded_arguments,
+)
+
 from subagents.core.tooling.gateway import (
     ToolGateway,
 )
@@ -810,6 +814,102 @@ class AgentRuntime:
             f"tool='{tool_name}' "
             f"arguments={arguments}"
         )
+
+        # ========================================================
+        # AUTHORITATIVE GROUNDED ARGUMENT BINDING
+        #
+        # Model output is a proposal, never authorization.
+        #
+        # The validated semantic contract owns single-valued grounded
+        # targets. The worker may propose or accidentally drift, but it
+        # cannot rewrite those authority-bearing values.
+        #
+        # This layer is capability-metadata-driven and contains no
+        # Jira/Git/Shell/account/ticket special cases.
+        # ========================================================
+
+        if (
+            task.semantic_intent
+            is not None
+        ):
+
+            try:
+
+                semantic_binding = (
+                    bind_authoritative_grounded_arguments(
+                        intent=(
+                            task.semantic_intent
+                        ),
+
+                        tool_name=(
+                            tool_name
+                        ),
+
+                        arguments=(
+                            arguments
+                        ),
+                    )
+                )
+
+            except ValueError as exc:
+
+                print(
+                    "[SEMANTIC_BINDING] Failed closed "
+                    f"agent='{agent.name}' "
+                    f"tool='{tool_name}' "
+                    f"error={exc}"
+                )
+
+                return (
+                    AgentResult(
+                        task_id=(
+                            task.task_id
+                        ),
+
+                        agent_name=(
+                            task.agent_name
+                        ),
+
+                        status="error",
+
+                        proposed_tool=(
+                            tool_name
+                        ),
+
+                        proposed_arguments=(
+                            arguments
+                        ),
+
+                        outcome_code=(
+                            "semantic_binding_error"
+                        ),
+
+                        error=(
+                            "Semantic target binding failed closed."
+                        ),
+                    )
+                )
+
+            arguments = (
+                semantic_binding
+                .arguments
+            )
+
+            for event in (
+                semantic_binding
+                .events
+            ):
+
+                print(
+                    "[SEMANTIC_BINDING] "
+                    f"agent='{agent.name}' "
+                    f"tool='{tool_name}' "
+                    f"argument='{event.argument_name}' "
+                    f"action='{event.action}' "
+                    f"worker_value={event.worker_value!r} "
+                    f"bound_value={event.bound_value!r} "
+                    f"source='{event.source}'"
+                )
 
         # ========================================================
         # SEMANTIC GUARD
