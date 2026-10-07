@@ -96,63 +96,13 @@ def _string_list(tool_name: str, tool: Mapping[str, Any], field: str) -> list[st
     return result
 
 
-def _legacy_resource_type(name: str) -> str:
-    # Compatibility normalization only. Authorization does not depend on this.
-    parts = [part for part in name.split("_") if part]
-    if not parts:
-        return "capability"
-
-    if parts[0] == "palo" and len(parts) > 1 and parts[1] == "alto":
-        return "network.firewall"
-
-    if parts[0] in {"jira", "workspace"} and len(parts) > 1:
-        return ".".join(parts[:2])
-
-    if parts[0] == "ticket":
-        return "ticket"
-
-    return parts[0]
-
-
-def _legacy_operation_kind(name: str, effect: str) -> str:
-    # Generic naming convention fallback for legacy catalogs. New capabilities
-    # may declare operation_kind explicitly. This value never authorizes work;
-    # policy and Gateway remain deterministic.
-    tokens = set(name.lower().split("_"))
-
-    if tokens & {"create", "mkdir", "provision"}:
-        return "create"
-    if tokens & {"delete", "remove", "revoke", "archive"}:
-        return "delete"
-    if tokens & {"search", "list", "find"}:
-        return "search"
-    if effect == "read" or tokens & {
-        "get",
-        "read",
-        "status",
-        "history",
-        "comments",
-        "info",
-        "diff",
-        "show",
-        "check",
-        "lookup",
-        "resolve",
-        "whoami",
-        "me",
-    }:
-        return "read"
-    if tokens & {"update", "assign", "transition", "rename", "write", "stage", "enable", "unlock", "reset"}:
-        return "update"
-    return "action"
-
-
 def _normalize_effect(tool_name: str, tool: Mapping[str, Any], risk: str) -> str:
     explicit = tool.get("effect")
-    if isinstance(explicit, str) and explicit.strip():
-        effect = explicit.strip().lower()
-    else:
-        effect = "read" if risk == "read" else "mutation"
+    if not isinstance(explicit, str) or not explicit.strip():
+        raise ValueError(
+            f"Capability '{tool_name}' requires explicit effect metadata."
+        )
+    effect = explicit.strip().lower()
 
     if effect not in VALID_EFFECTS:
         raise ValueError(f"Capability '{tool_name}' has unsupported effect={effect!r}.")
@@ -355,15 +305,17 @@ def build_capability_contract(tool_name: str, tool: Mapping[str, Any]) -> Capabi
 
     resource_type = tool.get("resource_type")
     if not isinstance(resource_type, str) or not resource_type.strip():
-        resource_type = _legacy_resource_type(tool_name)
-    else:
-        resource_type = resource_type.strip().lower()
+        raise ValueError(
+            f"Capability '{tool_name}' requires explicit resource_type metadata."
+        )
+    resource_type = resource_type.strip().lower()
 
     operation_kind = tool.get("operation_kind")
     if not isinstance(operation_kind, str) or not operation_kind.strip():
-        operation_kind = _legacy_operation_kind(tool_name, effect)
-    else:
-        operation_kind = operation_kind.strip().lower()
+        raise ValueError(
+            f"Capability '{tool_name}' requires explicit operation_kind metadata."
+        )
+    operation_kind = operation_kind.strip().lower()
 
     if operation_kind not in VALID_OPERATION_KINDS:
         raise ValueError(
@@ -382,9 +334,10 @@ def build_capability_contract(tool_name: str, tool: Mapping[str, Any]) -> Capabi
 
     permission = tool.get("permission")
     if not isinstance(permission, str) or not permission.strip():
-        permission = f"{resource_type}.{operation_kind}"
-    else:
-        permission = permission.strip().lower()
+        raise ValueError(
+            f"Capability '{tool_name}' requires explicit permission metadata."
+        )
+    permission = permission.strip().lower()
 
     return CapabilityContract(
         name=tool_name,

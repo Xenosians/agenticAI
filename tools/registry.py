@@ -58,6 +58,10 @@ from tools.ticketing.catalog import (
     TICKETING_TOOLS,
 )
 
+from tools.semantic_catalog import (
+    apply_capability_semantics,
+)
+
 from tools.workspace.catalog import (
     WORKSPACE_REPOSITORY_PARAMETER,
     resolve_workspace_argument_values,
@@ -563,6 +567,12 @@ TOOLS.update(
 
 TOOLS.update(
     TICKETING_TOOLS
+)
+
+
+# SRS 1.8: explicit capability semantics; no tool-name inference.
+apply_capability_semantics(
+    TOOLS
 )
 
 

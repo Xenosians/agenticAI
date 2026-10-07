@@ -17,6 +17,8 @@ def test_requiredness_comes_from_executable_signature():
             "requires_approval": False,
             "operation_kind": "read",
             "resource_type": "example",
+            "effect": "read",
+            "permission": "example.read",
             "grounded_arguments": ["target"],
             "parameters": {
                 "target": {"type": "str"},
@@ -44,6 +46,8 @@ def test_catalog_requiredness_cannot_disagree_with_runtime_signature():
                 "requires_approval": False,
                 "operation_kind": "read",
                 "resource_type": "example",
+                "effect": "read",
+                "permission": "example.read",
                 "required_arguments": ["target", "limit"],
                 "grounded_arguments": ["target"],
                 "parameters": {
@@ -67,6 +71,8 @@ def test_semantic_roles_are_independent_from_requiredness():
             "requires_approval": True,
             "operation_kind": "create",
             "resource_type": "ticket",
+            "effect": "mutation",
+            "permission": "ticket.create",
             "grounded_arguments": ["project", "ticket_type"],
             "derived_arguments": ["summary"],
             "parameters": {
@@ -99,6 +105,8 @@ def test_read_effect_cannot_use_mutating_crud_kind():
                 "requires_approval": False,
                 "operation_kind": "update",
                 "resource_type": "example",
+                "effect": "read",
+                "permission": "example.update",
                 "parameters": {
                     "target": {"type": "str"},
                 },
@@ -125,6 +133,8 @@ def test_trusted_policy_arguments_are_execution_only_not_model_parameters():
             "requires_approval": True,
             "operation_kind": "create",
             "resource_type": "account",
+            "effect": "mutation",
+            "permission": "account.create",
             "grounded_arguments": [
                 "given_name",
                 "family_name",
@@ -181,6 +191,8 @@ def test_trusted_policy_argument_must_exist_in_executable_signature():
                 "requires_approval": True,
                 "operation_kind": "update",
                 "resource_type": "example",
+                "effect": "mutation",
+                "permission": "example.update",
                 "grounded_arguments": ["target"],
                 "trusted_policy_arguments": ["policy_value"],
                 "parameters": {
