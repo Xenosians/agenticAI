@@ -1,6 +1,7 @@
 import sys
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import tools.developer.execution as developer
 
@@ -19,21 +20,14 @@ def configure_workspace(
 ):
     monkeypatch.setattr(
         developer,
-        "resolve_cwd",
-        lambda relative_path: (
-            root
-            if relative_path
-            in {
-                ".",
-                "",
-            }
-            else (
-                root
-                / relative_path
-            ).resolve()
+        "resolve_workspace_repository",
+        lambda repository=None: (
+            SimpleNamespace(
+                name="ai",
+                path=root,
+            )
         ),
     )
-
 
 def test_detects_python_project(
     tmp_path,

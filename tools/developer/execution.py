@@ -14,8 +14,11 @@ from typing import (
 
 from services.process_runner import (
     MAX_TRUSTED_TIMEOUT_SECONDS,
-    resolve_cwd,
     run_trusted_process,
+)
+
+from services.workspace_repositories import (
+    resolve_workspace_repository,
 )
 
 
@@ -223,6 +226,24 @@ PROJECT_STRATEGIES: tuple[
 )
 
 
+def _default_repository_root() -> Path:
+    """
+    Resolve the trusted default logical developer repository.
+
+    Physical filesystem paths remain trusted runtime
+    configuration and are never supplied by the model.
+    """
+
+    target = (
+        resolve_workspace_repository()
+    )
+
+    return (
+        target.path
+        .resolve()
+    )
+
+
 def _resolve_project_directory(
     relative_path: str,
 ) -> tuple[
@@ -245,18 +266,56 @@ def _resolve_project_directory(
     if not relative_path:
         relative_path = "."
 
-    try:
-        project_dir = (
-            resolve_cwd(
-                relative_path
-            )
-        )
+    requested = Path(
+        relative_path
+    )
 
-    except ValueError as exc:
+    if requested.is_absolute():
         return (
             None,
-            str(
-                exc
+            (
+                "Developer project paths must be "
+                "repository-relative."
+            ),
+        )
+
+    try:
+        root = (
+            _default_repository_root()
+        )
+
+        project_dir = (
+            root
+            / requested
+        ).resolve()
+
+    except (
+        ValueError,
+        OSError,
+    ) as exc:
+        return (
+            None,
+            str(exc),
+        )
+
+    if (
+        project_dir != root
+        and root not in project_dir.parents
+    ):
+        return (
+            None,
+            (
+                "Developer project path is outside "
+                "the configured repository."
+            ),
+        )
+
+    if not project_dir.is_dir():
+        return (
+            None,
+            (
+                "Developer project directory "
+                "does not exist."
             ),
         )
 
@@ -264,7 +323,6 @@ def _resolve_project_directory(
         project_dir,
         None,
     )
-
 
 def _detect_project(
     project_dir: Path,
@@ -386,9 +444,7 @@ def workspace_project_info(
         }
 
     root = (
-        resolve_cwd(
-            "."
-        )
+        _default_repository_root()
     )
 
     normalized_path = (
@@ -539,9 +595,7 @@ def _run_project_operation(
     )
 
     root = (
-        resolve_cwd(
-            "."
-        )
+        _default_repository_root()
     )
 
     project_path = (
