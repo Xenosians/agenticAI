@@ -21,6 +21,10 @@ from tools.registry import (
     get_tool,
 )
 
+from tools.capability_contract import (
+    required_arguments_for,
+)
+
 
 ToolLookup = Callable[
     [
@@ -300,10 +304,12 @@ def trusted_required_arguments(
     tool_name: str,
     tool: dict,
 ) -> list[str]:
-    return _trusted_argument_role(
-        tool_name=tool_name,
-        tool=tool,
-        field_name="required_arguments",
+    # Requiredness is an executable/API contract property, not a model
+    # decision. Explicit catalog metadata wins; otherwise the registered
+    # MCP Python signature supplies required-vs-optional semantics.
+    return required_arguments_for(
+        tool_name,
+        tool,
     )
 
 

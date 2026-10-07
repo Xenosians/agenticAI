@@ -318,3 +318,146 @@ def test_model_manager_lru_refreshes_when_loaded_model_is_reused(
         "first",
         "third",
     }
+
+
+
+def test_model_manager_can_evict_unpinned_hub_on_single_model_deployment(
+    monkeypatch,
+    tmp_path,
+):
+    """
+    Constrained deployments may keep only one large model resident.
+
+    The Hub participates in ordinary LRU residency when model_pin_hub
+    is false.
+
+    No model identity or specialist name receives a special eviction
+    branch.
+    """
+
+    def fake_build(
+        profile,
+    ):
+        return (
+            FakeBackend(
+                profile.model_path.name
+            )
+        )
+
+    monkeypatch.setattr(
+        model_manager_module,
+        "build_model_backend",
+        fake_build,
+    )
+
+    settings = (
+        Settings(
+            _env_file=None,
+
+            hub_model_key=(
+                "hub-main"
+            ),
+
+            model_max_loaded_models=1,
+
+            model_pin_hub=False,
+
+            model_pinned_keys=[],
+
+            model_profiles={
+                "hub-main":
+                    _profile(
+                        tmp_path,
+                        "hub-main",
+                    ),
+
+                "developer-worker":
+                    _profile(
+                        tmp_path,
+                        "developer-worker",
+                    ),
+            },
+        )
+    )
+
+    manager = (
+        ModelManager(
+            settings=settings,
+        )
+    )
+
+    hub = (
+        manager.load(
+            "hub-main"
+        )
+    )
+
+    assert (
+        manager.list_loaded_models()
+        == [
+            "hub-main",
+        ]
+    )
+
+    worker = (
+        manager.load(
+            "developer-worker"
+        )
+    )
+
+    assert (
+        hub.closed
+        is True
+    )
+
+    assert (
+        worker.closed
+        is False
+    )
+
+    assert (
+        manager.list_loaded_models()
+        == [
+            "developer-worker",
+        ]
+    )
+
+    snapshot = (
+        manager
+        .residency_snapshot()
+    )
+
+    assert (
+        snapshot.max_loaded_models
+        == 1
+    )
+
+    assert (
+        snapshot.pinned_models
+        == ()
+    )
+
+    # Loading the Hub again reverses residency using the exact same
+    # generic mechanism.
+    hub_again = (
+        manager.load(
+            "hub-main"
+        )
+    )
+
+    assert (
+        worker.closed
+        is True
+    )
+
+    assert (
+        hub_again.closed
+        is False
+    )
+
+    assert (
+        manager.list_loaded_models()
+        == [
+            "hub-main",
+        ]
+    )

@@ -40,6 +40,10 @@ from tools.knowledge.catalog import (
     KNOWLEDGE_TOOLS,
 )
 
+from tools.palo_alto.catalog import (
+    PALO_ALTO_TOOLS,
+)
+
 from tools.presentation import (
     format_access_check_result,
     format_account_status_result,
@@ -546,6 +550,10 @@ TOOLS.update(
 
 TOOLS.update(
     KNOWLEDGE_TOOLS
+)
+
+TOOLS.update(
+    PALO_ALTO_TOOLS
 )
 
 

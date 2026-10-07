@@ -150,6 +150,75 @@ def _resolve_checkpoint_id(
     return checkpoint_id.strip(), False
 
 
+def active_hub_overlay_target_model_key(
+    *,
+    active_pointer_path: Path = DEFAULT_ACTIVE_POINTER,
+    checkpoint_root: Path = DEFAULT_CHECKPOINT_ROOT,
+) -> str | None:
+    """
+    Return the logical model key targeted by the currently active Hub
+    continual-learning adapter, if one is configured and well-formed.
+
+    ModelManager uses this only as a conservative serving optimization guard;
+    promotion/authorization semantics remain owned by apply_hub_adapter_overlay.
+    """
+    pointer_path = (
+        active_pointer_path
+        .expanduser()
+        .resolve()
+    )
+
+    if not pointer_path.is_file():
+        return None
+
+    pointer = _read_json(
+        pointer_path
+    )
+
+    checkpoint_id = pointer.get(
+        "checkpoint_id"
+    )
+
+    if (
+        not isinstance(
+            checkpoint_id,
+            str,
+        )
+        or not checkpoint_id.strip()
+    ):
+        return None
+
+    manifest_path = (
+        checkpoint_root
+        .expanduser()
+        .resolve()
+        / checkpoint_id.strip()
+        / "manifest.json"
+    )
+
+    if not manifest_path.is_file():
+        return None
+
+    manifest = _read_json(
+        manifest_path
+    )
+
+    target = manifest.get(
+        "target_model_key"
+    )
+
+    if (
+        isinstance(
+            target,
+            str,
+        )
+        and target.strip()
+    ):
+        return target.strip()
+
+    return None
+
+
 def apply_hub_adapter_overlay(
     *,
     backend,
@@ -299,6 +368,12 @@ def apply_hub_adapter_overlay(
 
     backend.model.eval()
 
+    setattr(
+        backend,
+        "_hub_overlay_applied",
+        True,
+    )
+
     print(
         "[MODEL] Applied Hub adapter "
         f"checkpoint='{checkpoint_id}' "
@@ -329,6 +404,24 @@ def apply_profile_adapter_overlay(
 
     Promotion policy still lives outside this function.
     """
+
+    # Profile-switchable backends own adapter lifecycle so a logical
+    # Hub/Developer switch can reuse one already-loaded physical base.
+    activate_profile_adapter = getattr(
+        backend,
+        "activate_profile_adapter",
+        None,
+    )
+
+    if callable(
+        activate_profile_adapter
+    ):
+        activate_profile_adapter(
+            model_key,
+            adapter_path,
+        )
+
+        return backend
 
     if adapter_path is None:
         return backend

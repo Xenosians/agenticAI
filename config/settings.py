@@ -520,6 +520,20 @@ class Settings(
         "hub-main"
     )
 
+    # ============================================================
+    # PALO ALTO NETWORKS PAN-OS (read-only E2E v1)
+    # ============================================================
+
+    palo_alto_base_url: str | None = None
+    palo_alto_api_key: str | None = None
+    palo_alto_verify_tls: bool = True
+    palo_alto_timeout_seconds: float = Field(
+        default=10.0,
+        gt=0.0,
+        le=60.0,
+    )
+    palo_alto_allow_insecure_http: bool = False
+
     model_profiles: dict[
         str,
         ModelProfileSettings,
@@ -542,6 +556,56 @@ class Settings(
     model_max_loaded_models: int = Field(
         default=2,
         ge=1,
+    )
+
+    # ============================================================
+    # MODEL SERVING CACHE / PHYSICAL-BASE REUSE
+    #
+    # Logical model identities remain unchanged. These settings only
+    # control deployment/runtime materialization.
+    # ============================================================
+
+    model_shared_base_enabled: bool = (
+        False
+    )
+
+    model_artifact_cache_enabled: bool = (
+        False
+    )
+
+    model_artifact_cache_root: Path = (
+        PROJECT_ROOT
+        .parent
+        / "model-cache"
+    )
+
+    model_artifact_cache_materialize_quantized: bool = (
+        True
+    )
+
+    model_artifact_cache_prefetch: bool = (
+        False
+    )
+
+    # Release unused CUDA allocator blocks after inference while
+    # retaining all live model tensors.
+    #
+    # Useful on constrained accelerators where physical model reuse
+    # intentionally keeps the base model resident between requests.
+    model_trim_accelerator_cache_after_generation: bool = (
+        False
+    )
+
+    # Keep the Hub permanently resident when deployment capacity
+    # permits it.
+    #
+    # Constrained deployments may disable this and use the same
+    # generic LRU residency mechanism for the Hub as for specialists.
+    #
+    # This is a deployment/resource policy only. It does not affect
+    # routing, semantics, authorization, or model identity.
+    model_pin_hub: bool = (
+        True
     )
 
     # The configured HUB_MODEL_KEY is always pinned by ModelManager.

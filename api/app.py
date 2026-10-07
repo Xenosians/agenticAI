@@ -84,6 +84,10 @@ from subagents.llm.runtime.scheduler import (
     GpuScheduler,
 )
 
+from services.palo_alto import (
+    palo_alto_integration_status,
+)
+
 
 # ============================================================
 # Request models
@@ -1803,4 +1807,15 @@ async def approve(
             approval_result[
                 "result"
             ],
+    }
+
+@app.get("/v1/integrations")
+async def integration_status(request: Request):
+    runtime = require_ready_runtime(request)
+    return {
+        "integrations": [
+            palo_alto_integration_status(
+                runtime.settings
+            )
+        ]
     }

@@ -233,6 +233,54 @@ class ModelRegistry:
                 is not None
             )
 
+    def move_loaded_backend(
+        self,
+        source_name: str,
+        target_name: str,
+    ) -> LLMBackend:
+        """
+        Transfer one live backend between logical registry entries without
+        closing it.
+
+        ModelManager may use this only after proving both logical profiles
+        share the same physical base. This operation never changes execution
+        authority; it changes only process-local model ownership.
+        """
+        with self._lock:
+            source = self._models.get(
+                source_name
+            )
+
+            target = self._models.get(
+                target_name
+            )
+
+            if source is None:
+                raise KeyError(
+                    f"Model '{source_name}' is not registered."
+                )
+
+            if target is None:
+                raise KeyError(
+                    f"Model '{target_name}' is not registered."
+                )
+
+            if source.backend is None:
+                raise RuntimeError(
+                    f"Model '{source_name}' is not loaded."
+                )
+
+            if target.backend is not None:
+                raise RuntimeError(
+                    f"Model '{target_name}' is already loaded."
+                )
+
+            backend = source.backend
+            source.backend = None
+            target.backend = backend
+
+            return backend
+
     # ========================================================
     # UNLOAD
     # ========================================================

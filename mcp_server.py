@@ -10,6 +10,10 @@ from mcp.server import (
     MCPServer,
 )
 
+from tools.runtime_schema import (
+    ContractAwareMCPServer,
+)
+
 from config import (
     Settings,
 )
@@ -55,6 +59,10 @@ from services.process_runner import (
     run_process,
 )
 
+from services.palo_alto import (
+    build_palo_alto_service,
+)
+
 from services.ticketing import (
     TicketMutationService,
     TicketService,
@@ -95,8 +103,20 @@ from tools.knowledge.mcp import (
     register_knowledge_tools,
 )
 
+from tools.palo_alto.mcp import (
+    register_palo_alto_tools,
+)
+
 from tools.ticketing.mcp import (
     register_ticketing_tools,
+)
+
+from tools.capability_contract import (
+    validate_capability_registry,
+)
+
+from tools.registry import (
+    TOOLS as CAPABILITY_CATALOG,
 )
 
 from tools.workspace import (
@@ -400,7 +420,7 @@ def create_mcp_server(
     )
 
     server = (
-        MCPServer(
+        ContractAwareMCPServer(
             "ITSM Tools"
         )
     )
@@ -697,11 +717,29 @@ def create_mcp_server(
     )
 
     # ============================================================
+    # PALO ALTO NETWORKS PAN-OS — READ ONLY E2E V1
+    # ============================================================
+
+    register_palo_alto_tools(
+        server,
+        build_palo_alto_service(
+            runtime_settings
+        ),
+    )
+
+    # ============================================================
     # GOVERNED DEVELOPER CAPABILITIES
     # ============================================================
 
     register_developer_tools(
         server
+    )
+
+    # Fail closed if the model-facing catalog disagrees with the
+    # actual executable function signatures.
+    validate_capability_registry(
+        CAPABILITY_CATALOG,
+        require_runtime_schema=True,
     )
 
     return (

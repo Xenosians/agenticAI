@@ -8,8 +8,14 @@ from config import (
 )
 
 from subagents.llm.runtime.adapter_overlay import (
+    active_hub_overlay_target_model_key,
     apply_hub_adapter_overlay,
     apply_profile_adapter_overlay,
+)
+
+from subagents.llm.runtime.artifact_cache import (
+    ModelArtifactCache,
+    physical_model_signature,
 )
 
 from subagents.llm.runtime.base import (
@@ -19,6 +25,10 @@ from subagents.llm.runtime.base import (
 
 from subagents.llm.runtime.factory import (
     build_model_backend,
+)
+
+from subagents.llm.runtime.memory import (
+    release_unused_accelerator_memory,
 )
 
 from subagents.llm.runtime.registry import (
@@ -87,6 +97,26 @@ class ModelManager:
             allow_unpromoted_checkpoint_override
         )
 
+        self.artifact_cache = (
+            ModelArtifactCache(
+                settings
+                .model_artifact_cache_root,
+                materialize_quantized=(
+                    settings
+                    .model_artifact_cache_materialize_quantized
+                ),
+                prefetch=(
+                    settings
+                    .model_artifact_cache_prefetch
+                ),
+            )
+            if (
+                settings
+                .model_artifact_cache_enabled
+            )
+            else None
+        )
+
         self.residency = (
             ModelResidencyController(
                 max_loaded_models=(
@@ -96,8 +126,17 @@ class ModelManager:
 
                 pinned_model_keys=(
                     [
-                        settings
-                        .hub_model_key,
+                        *(
+                            [
+                                settings
+                                .hub_model_key,
+                            ]
+                            if (
+                                settings
+                                .model_pin_hub
+                            )
+                            else []
+                        ),
 
                         *settings
                         .model_pinned_keys,
@@ -170,11 +209,61 @@ class ModelManager:
             f"backend='{profile.backend}'"
         )
 
-        backend = (
-            build_model_backend(
+        cache_resolution = (
+            self.artifact_cache.resolve(
                 profile
             )
+            if (
+                self.artifact_cache
+                is not None
+                and profile.model_path
+                is not None
+                and (
+                    profile.backend
+                    == "ministral"
+                )
+                and (
+                    profile.quantization
+                    == "bnb4"
+                )
+            )
+            else None
         )
+
+        if (
+            cache_resolution
+            is None
+        ):
+            backend = (
+                build_model_backend(
+                    profile
+                )
+            )
+
+        else:
+            backend = (
+                build_model_backend(
+                    profile,
+                    model_path_override=(
+                        cache_resolution.path
+                    ),
+                )
+            )
+
+        if (
+            self.artifact_cache
+            is not None
+            and cache_resolution
+            is not None
+            and not cache_resolution.hit
+        ):
+            self.artifact_cache.materialize(
+                profile=profile,
+                backend=backend,
+                cache_key=(
+                    cache_resolution.key
+                ),
+            )
 
         backend = (
             apply_profile_adapter_overlay(
@@ -339,6 +428,174 @@ class ModelManager:
 
         return evicted
 
+    def _find_shareable_loaded_model(
+        self,
+        target_model_key: str,
+    ) -> str | None:
+        if not (
+            self.settings
+            .model_shared_base_enabled
+        ):
+            return None
+
+        target_profile = (
+            self.settings
+            .require_model_profile(
+                target_model_key
+            )
+        )
+
+        target_signature = (
+            physical_model_signature(
+                target_profile
+            )
+        )
+
+        if not target_signature:
+            return None
+
+        dynamic_hub_target = (
+            active_hub_overlay_target_model_key()
+        )
+
+        for source_model_key in (
+            self.registry
+            .list_loaded_models()
+        ):
+            if (
+                source_model_key
+                == target_model_key
+            ):
+                continue
+
+            # A dynamic Hub continual-learning adapter is not yet part of the
+            # shared-profile switcher. Fail closed to ordinary reload for only
+            # the logical model it targets.
+            if dynamic_hub_target in {
+                source_model_key,
+                target_model_key,
+            }:
+                continue
+
+            source_profile = (
+                self.settings
+                .require_model_profile(
+                    source_model_key
+                )
+            )
+
+            if (
+                physical_model_signature(
+                    source_profile
+                )
+                != target_signature
+            ):
+                continue
+
+            backend = (
+                self.registry
+                .get(
+                    source_model_key
+                )
+            )
+
+            supports = getattr(
+                backend,
+                "supports_profile_switching",
+                None,
+            )
+
+            if (
+                not callable(
+                    supports
+                )
+                or not supports()
+            ):
+                continue
+
+            if getattr(
+                backend,
+                "_hub_overlay_applied",
+                False,
+            ):
+                continue
+
+            return source_model_key
+
+        return None
+
+    def _switch_shared_backend(
+        self,
+        *,
+        source_model_key: str,
+        target_model_key: str,
+    ) -> LLMBackend:
+        source_profile = (
+            self.settings
+            .require_model_profile(
+                source_model_key
+            )
+        )
+
+        target_profile = (
+            self.settings
+            .require_model_profile(
+                target_model_key
+            )
+        )
+
+        backend = (
+            self.registry
+            .move_loaded_backend(
+                source_model_key,
+                target_model_key,
+            )
+        )
+
+        try:
+            activate = getattr(
+                backend,
+                "activate_profile_adapter",
+            )
+
+            activate(
+                target_model_key,
+                target_profile.adapter_path,
+            )
+
+        except Exception:
+            self.registry.move_loaded_backend(
+                target_model_key,
+                source_model_key,
+            )
+
+            # Best-effort restore of the previously-good logical profile.
+            try:
+                activate(
+                    source_model_key,
+                    source_profile.adapter_path,
+                )
+            except Exception:
+                pass
+
+            raise
+
+        self.residency.forget(
+            source_model_key
+        )
+
+        self.residency.touch(
+            target_model_key
+        )
+
+        print(
+            "[MODEL] Shared-base switch "
+            f"source='{source_model_key}' "
+            f"target='{target_model_key}'"
+        )
+
+        return backend
+
     # ========================================================
     # LIFECYCLE
     # ========================================================
@@ -365,6 +622,29 @@ class ModelManager:
                     model_key
                 )
             ):
+                reusable_model_key = (
+                    self
+                    ._find_shareable_loaded_model(
+                        model_key
+                    )
+                )
+
+                if (
+                    reusable_model_key
+                    is not None
+                ):
+                    return (
+                        self
+                        ._switch_shared_backend(
+                            source_model_key=(
+                                reusable_model_key
+                            ),
+                            target_model_key=(
+                                model_key
+                            ),
+                        )
+                    )
+
                 self._prepare_residency_for_load(
                     model_key
                 )
@@ -419,6 +699,29 @@ class ModelManager:
 
             return unloaded
 
+    def _post_generation_cleanup(
+        self,
+        model_key: str,
+    ) -> None:
+        # Completed generation means this physical/logical model is hot.
+        self.residency.touch(
+            model_key
+        )
+
+        # Shared-base serving deliberately retains live model tensors.
+        # Only unused allocator blocks / unreachable temporary tensors
+        # are reclaimed here.
+        if (
+            self.settings
+            .model_trim_accelerator_cache_after_generation
+        ):
+            release_unused_accelerator_memory()
+
+            print(
+                "[MODEL] Released unused accelerator cache "
+                f"after generation model='{model_key}'"
+            )
+
     # ========================================================
     # GENERATION
     # ========================================================
@@ -448,9 +751,7 @@ class ModelManager:
             )
 
         finally:
-            # A completed generation is the strongest indication
-            # that this model is currently hot.
-            self.residency.touch(
+            self._post_generation_cleanup(
                 model_key
             )
 
@@ -492,6 +793,6 @@ class ModelManager:
             )
 
         finally:
-            self.residency.touch(
+            self._post_generation_cleanup(
                 model_key
             )

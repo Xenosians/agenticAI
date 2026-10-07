@@ -56,6 +56,10 @@ def require_local_model_path(
 
 def build_model_backend(
     profile: ModelProfileSettings,
+    *,
+    model_path_override: (
+        Path | None
+    ) = None,
 ) -> LLMBackend:
     """
     Construct one backend from a logical model profile.
@@ -84,7 +88,18 @@ def build_model_backend(
     )
 
     model_path = (
-        require_local_model_path(
+        (
+            Path(
+                model_path_override
+            )
+            .expanduser()
+            .resolve()
+        )
+        if (
+            model_path_override
+            is not None
+        )
+        else require_local_model_path(
             profile
         )
     )

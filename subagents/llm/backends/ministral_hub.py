@@ -1,3 +1,4 @@
+import hashlib
 import json
 import re
 
@@ -185,6 +186,17 @@ class MinistralHubBackend(
             )
         )
 
+        if (
+            self.quantization
+            == "bnb4"
+            and self._checkpoint_is_prequantized_bnb4(
+                self.model_path
+            )
+        ):
+            resolved_quantization = (
+                "bnb4-prequantized"
+            )
+
         print(
             "[MODEL] Ministral runtime "
             f"quantization='{resolved_quantization}' "
@@ -266,6 +278,189 @@ class MinistralHubBackend(
 
         self.model.eval()
 
+        # Logical-profile adapter state layered on one physical base.
+        self._active_profile_adapter: (
+            str | None
+        ) = None
+
+        self._hub_overlay_applied: bool = (
+            False
+        )
+
+    def supports_profile_switching(
+        self,
+    ) -> bool:
+        return True
+
+    @staticmethod
+    def _profile_adapter_name(
+        adapter_path: Path,
+    ) -> str:
+        digest = hashlib.sha256(
+            str(
+                adapter_path
+                .expanduser()
+                .resolve()
+            ).encode(
+                "utf-8"
+            )
+        ).hexdigest()
+
+        return (
+            "profile-"
+            + digest[:16]
+        )
+
+    def activate_profile_adapter(
+        self,
+        model_key: str,
+        adapter_path: (
+            str
+            | Path
+            | None
+        ),
+    ) -> None:
+        """
+        Select a logical model profile on the already-loaded physical base.
+
+        adapter_path=None means base-model inference. If a PEFT wrapper is
+        already installed, generation temporarily disables adapters for that
+        logical profile instead of reconstructing the multi-gigabyte base.
+        """
+        if adapter_path is None:
+            self._active_profile_adapter = (
+                None
+            )
+
+            print(
+                "[MODEL] Activated shared-base profile "
+                f"model='{model_key}' adapter=None"
+            )
+
+            return
+
+        adapter_directory = (
+            Path(
+                adapter_path
+            )
+            .expanduser()
+            .resolve()
+        )
+
+        if not adapter_directory.is_dir():
+            raise ValueError(
+                "Configured model adapter directory does not exist: "
+                f"{adapter_directory}"
+            )
+
+        from peft import PeftModel
+
+        adapter_name = (
+            self._profile_adapter_name(
+                adapter_directory
+            )
+        )
+
+        if not isinstance(
+            self.model,
+            PeftModel,
+        ):
+            self.model = (
+                PeftModel
+                .from_pretrained(
+                    self.model,
+                    str(
+                        adapter_directory
+                    ),
+                    adapter_name=(
+                        adapter_name
+                    ),
+                    is_trainable=False,
+                )
+            )
+
+        elif (
+            adapter_name
+            not in self.model.peft_config
+        ):
+            try:
+                self.model.load_adapter(
+                    str(
+                        adapter_directory
+                    ),
+                    adapter_name=(
+                        adapter_name
+                    ),
+                    is_trainable=False,
+                    low_cpu_mem_usage=True,
+                )
+
+            except TypeError:
+                self.model.load_adapter(
+                    str(
+                        adapter_directory
+                    ),
+                    adapter_name=(
+                        adapter_name
+                    ),
+                    is_trainable=False,
+                )
+
+        try:
+            self.model.set_adapter(
+                adapter_name,
+                inference_mode=True,
+            )
+
+        except TypeError:
+            self.model.set_adapter(
+                adapter_name
+            )
+
+        self.model.eval()
+
+        self._active_profile_adapter = (
+            adapter_name
+        )
+
+        print(
+            "[MODEL] Activated shared-base profile "
+            f"model='{model_key}' "
+            f"adapter='{adapter_name}'"
+        )
+
+    def _generate_with_active_profile(
+        self,
+        **kwargs,
+    ):
+        try:
+            from peft import PeftModel
+        except ImportError:
+            PeftModel = ()
+
+        if (
+            isinstance(
+                self.model,
+                PeftModel,
+            )
+            and self._active_profile_adapter
+            is None
+        ):
+            with self.model.disable_adapter():
+                return (
+                    self.model
+                    .generate(
+                        **kwargs
+                    )
+                )
+
+        return (
+            self.model
+            .generate(
+                **kwargs
+            )
+        )
+
     @staticmethod
     def _resolve_torch_dtype(
         value: str,
@@ -299,6 +494,78 @@ class MinistralHubBackend(
                 "Unsupported compute dtype: "
                 f"{value}"
             ) from exc
+
+    @staticmethod
+    def _checkpoint_is_prequantized_bnb4(
+        model_path: Path,
+    ) -> bool:
+        config_path = (
+            model_path
+            / "config.json"
+        )
+
+        if not config_path.is_file():
+            return False
+
+        try:
+            config = json.loads(
+                config_path.read_text(
+                    encoding="utf-8"
+                )
+            )
+        except (
+            OSError,
+            json.JSONDecodeError,
+        ):
+            return False
+
+        quant = config.get(
+            "quantization_config"
+        )
+
+        if not isinstance(
+            quant,
+            dict,
+        ):
+            return False
+
+        if quant.get(
+            "load_in_4bit"
+        ) is True:
+            return True
+
+        if quant.get(
+            "_load_in_4bit"
+        ) is True:
+            return True
+
+        method = quant.get(
+            "quant_method"
+        )
+
+        if isinstance(
+            method,
+            str,
+        ):
+            normalized = (
+                method
+                .strip()
+                .lower()
+            )
+
+            return (
+                "bitsandbytes"
+                in normalized
+                and (
+                    "4"
+                    in normalized
+                    or quant.get(
+                        "_load_in_4bit"
+                    ) is True
+                )
+            )
+
+        return False
 
     @staticmethod
     def _checkpoint_quantization(
@@ -409,7 +676,10 @@ class MinistralHubBackend(
             .lower()
         )
 
-        if normalized == "none":
+        if normalized in {
+            "none",
+            "bnb4-prequantized",
+        }:
             return None
 
         if normalized == "fp8":
@@ -585,8 +855,8 @@ class MinistralHubBackend(
         )
 
         output = (
-            self.model
-            .generate(
+            self
+            ._generate_with_active_profile(
                 **tokenized,
 
                 max_new_tokens=(

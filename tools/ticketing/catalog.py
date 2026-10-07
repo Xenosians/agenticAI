@@ -153,6 +153,10 @@ TICKETING_TOOLS = {
         "requires_approval":
             False,
 
+        "required_arguments": [
+            "ticket_key",
+        ],
+
         "grounded_arguments": [
             "ticket_key",
         ],
@@ -271,6 +275,10 @@ TICKETING_TOOLS = {
         "requires_approval":
             False,
 
+        "required_arguments": [
+            "ticket_key",
+        ],
+
         "grounded_arguments": [
             "ticket_key",
         ],
@@ -318,6 +326,10 @@ TICKETING_TOOLS = {
 
         "requires_approval":
             False,
+
+        "required_arguments": [
+            "ticket_key",
+        ],
 
         "grounded_arguments": [
             "ticket_key",
@@ -377,6 +389,11 @@ TICKETING_TOOLS = {
             "expected_project_id",
             "expected_project_key",
             "expected_project_name",
+        ],
+
+        "required_arguments": [
+            "ticket_key",
+            "comment",
         ],
 
         "grounded_arguments": [
@@ -522,6 +539,11 @@ TICKETING_TOOLS = {
             "expected_assignee_display_name",
         ],
 
+        "required_arguments": [
+            "ticket_key",
+            "assignee",
+        ],
+
         "grounded_arguments": [
             "ticket_key",
             "assignee",
@@ -585,6 +607,11 @@ TICKETING_TOOLS = {
             "expected_transition_name",
             "expected_target_status_id",
             "expected_target_status_name",
+        ],
+
+        "required_arguments": [
+            "ticket_key",
+            "status",
         ],
 
         "grounded_arguments": [
