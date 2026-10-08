@@ -50,14 +50,7 @@ class PaloAltoService:
     def _op(self, command_xml: str) -> ET.Element:
         response = self.client.post(
             f"{self.base_url}/api",
-            params={
-                "type": "op",
-                "cmd": command_xml,
-            },
-            headers={
-                "X-PAN-KEY":
-                    self.config.api_key,
-            },
+            params={"type": "op", "cmd": command_xml},
         )
         response.raise_for_status()
 

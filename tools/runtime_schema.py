@@ -83,19 +83,6 @@ def runtime_registered_tools() -> list[str]:
         return sorted(_SCHEMAS)
 
 
-def clear_runtime_schemas() -> None:
-    """
-    Clear captured executable schemas.
-
-    Intended for isolated contract tests and deterministic registry
-    reconstruction. Production capability declarations remain owned by
-    create_mcp_server().
-    """
-
-    with _LOCK:
-        _SCHEMAS.clear()
-
-
 class ContractAwareMCPServer(MCPServer):
     """
     MCPServer wrapper that captures executable Python signatures.

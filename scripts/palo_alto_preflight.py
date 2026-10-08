@@ -1,27 +1,5 @@
 from __future__ import annotations
 
-
-import sys
-
-from pathlib import Path
-
-
-REPOSITORY_ROOT = (
-    Path(__file__)
-    .resolve()
-    .parents[1]
-)
-
-if (
-    str(REPOSITORY_ROOT)
-    not in sys.path
-):
-    sys.path.insert(
-        0,
-        str(REPOSITORY_ROOT),
-    )
-
-
 from config import get_settings
 from services.palo_alto import build_palo_alto_service, palo_alto_integration_status
 

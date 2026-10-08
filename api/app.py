@@ -735,6 +735,7 @@ def valid_completion_ack(
         "completed",
         "waiting_approval",
         "failed",
+        "reconciliation_required",
     }
 
     if (
@@ -1691,6 +1692,82 @@ async def execute_durable_job(
 # ============================================================
 
 
+def _approval_result_error(
+    approval_result: dict[str, object],
+) -> str | None:
+    direct = approval_result.get("error")
+    if isinstance(direct, str) and direct.strip():
+        return direct.strip()
+
+    result = approval_result.get("result")
+    if isinstance(result, dict):
+        nested = result.get("error") or result.get("message")
+        if isinstance(nested, str) and nested.strip():
+            return nested.strip()
+
+    return None
+
+
+def build_approval_protocol_payload(
+    approval_id: str,
+    approval_result: dict[str, object],
+) -> dict[str, object]:
+    """Build the explicit cross-service approval outcome contract.
+
+    HTTP success means the approval protocol request was processed.
+    It does not mean the approved side effect succeeded.
+
+    execution_status is authoritative for Phoenix:
+      succeeded  -> completed
+      failed     -> failed
+      unresolved -> reconciliation_required
+    """
+
+    approval = approval_result.get("approval")
+    if not isinstance(approval, dict):
+        raise ValueError(
+            "Approval execution did not return durable approval state."
+        )
+
+    approval_status = approval.get("status")
+    status_map = {
+        "approved": "succeeded",
+        "failed": "failed",
+        "executing": "unresolved",
+    }
+    execution_status = status_map.get(approval_status)
+    if execution_status is None:
+        raise ValueError(
+            "Approval execution returned a non-terminal authority state: "
+            f"{approval_status!r}."
+        )
+
+    execution_result = approval_result.get("result")
+    if execution_result is not None and not isinstance(execution_result, dict):
+        raise ValueError(
+            "Approval execution result must be an object or null."
+        )
+
+    error = _approval_result_error(approval_result)
+    if execution_status == "failed" and error is None:
+        error = "Approved action execution failed."
+    if execution_status == "unresolved" and error is None:
+        error = (
+            "Approved action outcome is unresolved. Automatic retry is "
+            "disabled pending trusted reconciliation."
+        )
+
+    return {
+        "approval_id": approval_id,
+        "protocol_status": "processed",
+        "execution_status": execution_status,
+        "approval_status": approval_status,
+        "replayed": approval_result.get("replayed") is True,
+        "result": execution_result,
+        "error": error,
+    }
+
+
 @app.post(
     "/v1/approvals/"
     "{approval_id}/approve"
@@ -1699,115 +1776,47 @@ async def approve(
     approval_id: str,
     request: Request,
 ) -> dict:
-    runtime = (
-        require_ready_runtime(
-            request
-        )
-    )
+    runtime = require_ready_runtime(request)
 
     approval_result = (
-        await
-        runtime
-        .approvals
-        .approve_approval(
+        await runtime.approvals.approve_approval(
             approval_id
         )
     )
 
-    # ========================================================
-    # POST-APPROVAL LEARNING EVIDENCE
-    #
-    # ApprovalManager remains authoritative.
-    #
-    # Learning observes the result only AFTER the approval
-    # execution attempt has completed.
-    #
-    # Any learning failure is non-fatal and cannot change the
-    # authoritative approval response.
-    # ========================================================
-
+    # Learning remains observational only.
     try:
-
-        evidence_records = (
-            capture_approval_execution_evidence(
-                hooks=(
-                    runtime
-                    .learning_hooks
-                ),
-
-                trajectory_path=(
-                    runtime
-                    .trajectory_recorder
-                    .path
-                ),
-
-                approval_id=(
-                    approval_id
-                ),
-
-                approval_result=(
-                    approval_result
-                ),
-            )
+        evidence_records = capture_approval_execution_evidence(
+            hooks=runtime.learning_hooks,
+            trajectory_path=runtime.trajectory_recorder.path,
+            approval_id=approval_id,
+            approval_result=approval_result,
         )
-
         if evidence_records:
-
             print(
                 "[LEARNING] Captured approval execution "
                 f"approval_id={approval_id} "
-                "context_records="
-                f"{len(evidence_records)}"
+                f"context_records={len(evidence_records)}"
             )
-
     except Exception as exc:
-
         print(
-            "[LEARNING] Approval execution evidence "
-            "capture failed "
-            f"approval_id={approval_id} "
-            f"error={exc!r}"
+            "[LEARNING] Approval execution evidence capture failed "
+            f"approval_id={approval_id} error={exc!r}"
         )
 
-    if not approval_result.get(
-        "ok"
-    ):
-        error = (
-            approval_result.get(
-                "error"
-            )
-            or approval_result
-            .get(
-                "result",
-                {},
-            )
-            .get(
-                "error"
-            )
-            or (
-                "Approval execution failed."
-            )
-        )
-
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                error
-            ),
-        )
-
-    return {
-        "approval_id":
+    # Known durable execution outcomes are protocol success (HTTP 2xx).
+    # Malformed/non-authoritative state remains a protocol failure (409).
+    try:
+        return build_approval_protocol_payload(
             approval_id,
+            approval_result,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        ) from exc
 
-        "status":
-            "executed",
-
-        "result":
-            approval_result[
-                "result"
-            ],
-    }
 
 @app.get("/v1/integrations")
 async def integration_status(request: Request):
