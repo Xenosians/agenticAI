@@ -33,6 +33,13 @@ def build_knowledge_service(
             MockKnowledgeService()
         )
 
+    if backend == "local":
+        from pathlib import Path
+        from .local import LocalKnowledgeService
+        if not settings.knowledge_snapshot_path or not settings.knowledge_snapshot_sha256:
+            raise RuntimeError("Local knowledge requires a reviewed snapshot path and SHA256.")
+        return LocalKnowledgeService(Path(settings.knowledge_snapshot_path), settings.knowledge_snapshot_sha256)
+
     raise RuntimeError(
         "Unsupported knowledge backend: "
         f"{backend}"

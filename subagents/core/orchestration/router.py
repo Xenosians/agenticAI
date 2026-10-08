@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from subagents.core.orchestration.router_catalog import render_router_catalog
 
 from config import (
     get_settings,
@@ -151,12 +152,7 @@ class LLMRouter:
                 )
             ]
 
-        specialists_json = (
-            json.dumps(
-                specialists,
-                indent=2,
-            )
-        )
+        specialists_json = render_router_catalog(specialists)
 
         base_template = (
             load_prompt(

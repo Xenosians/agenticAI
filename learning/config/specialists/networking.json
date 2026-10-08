@@ -1,0 +1,549 @@
+{
+  "schema": "specialist-training-config.v1",
+  "specialist": "networking-specialist",
+  "agent_definition": "subagents/agents/networking-specialist.md",
+  "base_model_key": "networking-base",
+  "candidate_model_key": "networking-func-trained",
+  "worker_prompt_profile": "compact",
+  "max_new_tokens": 96,
+  "examples": [
+    {
+      "tool_name": "network_system_info",
+      "user_request": "What firmware does the OpenWrt router run?",
+      "arguments": {},
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_system_info",
+      "user_request": "Read the router hostname and release.",
+      "arguments": {},
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_system_info",
+      "user_request": "Identify the configured network appliance.",
+      "arguments": {},
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_system_info",
+      "user_request": "Show OpenWrt hardware and software identity.",
+      "arguments": {},
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_system_info",
+      "user_request": "Which OpenWrt version is installed?",
+      "arguments": {},
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_system_info",
+      "user_request": "Tell me the router operating system version.",
+      "arguments": {},
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_system_info",
+      "user_request": "Inspect the network device board information.",
+      "arguments": {},
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_system_info",
+      "user_request": "Report the firewall hostname without changing it.",
+      "arguments": {},
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_system_info",
+      "user_request": "Check the router model and build.",
+      "arguments": {},
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_system_info",
+      "user_request": "Fetch the OpenWrt device identity.",
+      "arguments": {},
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_system_info",
+      "user_request": "I need an inventory entry for the configured router.",
+      "arguments": {},
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_system_info",
+      "user_request": "Read the appliance firmware release.",
+      "arguments": {},
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_firewall_config",
+      "user_request": "Read the configured firewall rules.",
+      "arguments": {},
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_firewall_config",
+      "user_request": "Show the OpenWrt firewall zones.",
+      "arguments": {},
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_firewall_config",
+      "user_request": "Inspect firewall policy without making changes.",
+      "arguments": {},
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_firewall_config",
+      "user_request": "List the firewall configuration.",
+      "arguments": {},
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_firewall_config",
+      "user_request": "What forwarding rules are configured?",
+      "arguments": {},
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_firewall_config",
+      "user_request": "Review the configured traffic filtering policy.",
+      "arguments": {},
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_firewall_config",
+      "user_request": "Retrieve the firewall zones and redirects.",
+      "arguments": {},
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_firewall_config",
+      "user_request": "Show policy configuration, do not apply it.",
+      "arguments": {},
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_firewall_config",
+      "user_request": "Audit the configured OpenWrt firewall settings.",
+      "arguments": {},
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_firewall_config",
+      "user_request": "Read current UCI firewall configuration.",
+      "arguments": {},
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_firewall_config",
+      "user_request": "Display configured rules without a commit.",
+      "arguments": {},
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_firewall_config",
+      "user_request": "Which zones exist in the firewall configuration?",
+      "arguments": {},
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_interface_status",
+      "user_request": "Inspect the lan interface status.",
+      "arguments": {
+        "interface": "lan"
+      },
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_interface_status",
+      "user_request": "Is logical interface lan up?",
+      "arguments": {
+        "interface": "lan"
+      },
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_interface_status",
+      "user_request": "Read addresses and state for lan.",
+      "arguments": {
+        "interface": "lan"
+      },
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_interface_status",
+      "user_request": "Check lan connectivity state without changing it.",
+      "arguments": {
+        "interface": "lan"
+      },
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_interface_status",
+      "user_request": "Inspect the wan interface status.",
+      "arguments": {
+        "interface": "wan"
+      },
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_interface_status",
+      "user_request": "Is logical interface wan up?",
+      "arguments": {
+        "interface": "wan"
+      },
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_interface_status",
+      "user_request": "Read addresses and state for wan.",
+      "arguments": {
+        "interface": "wan"
+      },
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_interface_status",
+      "user_request": "Check wan connectivity state without changing it.",
+      "arguments": {
+        "interface": "wan"
+      },
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_interface_status",
+      "user_request": "Inspect the guest interface status.",
+      "arguments": {
+        "interface": "guest"
+      },
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_interface_status",
+      "user_request": "Is logical interface guest up?",
+      "arguments": {
+        "interface": "guest"
+      },
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_interface_status",
+      "user_request": "Read addresses and state for guest.",
+      "arguments": {
+        "interface": "guest"
+      },
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_interface_status",
+      "user_request": "Check guest connectivity state without changing it.",
+      "arguments": {
+        "interface": "guest"
+      },
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_interface_status",
+      "user_request": "Inspect the vpn interface status.",
+      "arguments": {
+        "interface": "vpn"
+      },
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_interface_status",
+      "user_request": "Is logical interface vpn up?",
+      "arguments": {
+        "interface": "vpn"
+      },
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_interface_status",
+      "user_request": "Read addresses and state for vpn.",
+      "arguments": {
+        "interface": "vpn"
+      },
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_interface_status",
+      "user_request": "Check vpn connectivity state without changing it.",
+      "arguments": {
+        "interface": "vpn"
+      },
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_interface_status",
+      "user_request": "Inspect the management interface status.",
+      "arguments": {
+        "interface": "management"
+      },
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_interface_status",
+      "user_request": "Is logical interface management up?",
+      "arguments": {
+        "interface": "management"
+      },
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_interface_status",
+      "user_request": "Read addresses and state for management.",
+      "arguments": {
+        "interface": "management"
+      },
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_interface_status",
+      "user_request": "Check management connectivity state without changing it.",
+      "arguments": {
+        "interface": "management"
+      },
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_interface_status",
+      "user_request": "Inspect the dmz interface status.",
+      "arguments": {
+        "interface": "dmz"
+      },
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_interface_status",
+      "user_request": "Is logical interface dmz up?",
+      "arguments": {
+        "interface": "dmz"
+      },
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_interface_status",
+      "user_request": "Read addresses and state for dmz.",
+      "arguments": {
+        "interface": "dmz"
+      },
+      "tags": [
+        "authored-networking-v1"
+      ]
+    },
+    {
+      "tool_name": "network_interface_status",
+      "user_request": "Check dmz connectivity state without changing it.",
+      "arguments": {
+        "interface": "dmz"
+      },
+      "tags": [
+        "authored-networking-v1"
+      ]
+    }
+  ],
+  "eval_cases": [
+    {
+      "name": "firmware-paraphrase",
+      "user": "Give me the release identity of our OpenWrt box.",
+      "allowed_tools": [
+        "network_system_info"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "network_system_info",
+      "expected_arguments": {}
+    },
+    {
+      "name": "inventory-terse",
+      "user": "Router board inventory please.",
+      "allowed_tools": [
+        "network_system_info"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "network_system_info",
+      "expected_arguments": {}
+    },
+    {
+      "name": "rules-paraphrase",
+      "user": "Inspect the stored firewall policy; do not deploy anything.",
+      "allowed_tools": [
+        "network_firewall_config"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "network_firewall_config",
+      "expected_arguments": {}
+    },
+    {
+      "name": "zones-terse",
+      "user": "Configured filtering zones?",
+      "allowed_tools": [
+        "network_firewall_config"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "network_firewall_config",
+      "expected_arguments": {}
+    },
+    {
+      "name": "interface-unseen",
+      "user": "Show the status of interface uplink.",
+      "allowed_tools": [
+        "network_interface_status"
+      ],
+      "allowed_arguments": {
+        "interface": [
+          "uplink"
+        ]
+      },
+      "expected_tool": "network_interface_status",
+      "expected_arguments": {
+        "interface": "uplink"
+      }
+    },
+    {
+      "name": "interface-typo",
+      "user": "Chek interface iot status please.",
+      "allowed_tools": [
+        "network_interface_status"
+      ],
+      "allowed_arguments": {
+        "interface": [
+          "iot"
+        ]
+      },
+      "expected_tool": "network_interface_status",
+      "expected_arguments": {
+        "interface": "iot"
+      }
+    },
+    {
+      "name": "interface-context",
+      "user": "The logical interface is lab_net. Read its current state.",
+      "allowed_tools": [
+        "network_interface_status"
+      ],
+      "allowed_arguments": {
+        "interface": [
+          "lab_net"
+        ]
+      },
+      "expected_tool": "network_interface_status",
+      "expected_arguments": {
+        "interface": "lab_net"
+      }
+    },
+    {
+      "name": "contrast",
+      "user": "Read wan state, not the firewall rule configuration.",
+      "allowed_tools": [
+        "network_interface_status"
+      ],
+      "allowed_arguments": {
+        "interface": [
+          "wan"
+        ]
+      },
+      "expected_tool": "network_interface_status",
+      "expected_arguments": {
+        "interface": "wan"
+      }
+    }
+  ]
+}

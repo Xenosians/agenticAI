@@ -87,6 +87,7 @@ from subagents.llm.runtime.scheduler import (
 from services.palo_alto import (
     palo_alto_integration_status,
 )
+from services.openwrt import openwrt_integration_status
 
 
 # ============================================================
@@ -214,6 +215,9 @@ def completion_status(
             "waiting_approval"
         )
 
+    if hub_status in {"denied", "outcome_unknown"}:
+        return hub_status
+
     if hub_status in {
         "success",
         "no_route",
@@ -334,6 +338,7 @@ def completion_payload(
         str,
         Any,
     ] = {
+        "contract_version": 2,
         "attempt":
             payload.attempt,
 
@@ -731,12 +736,20 @@ def valid_completion_ack(
         )
     )
 
+    version = entry.payload.get("contract_version", 1)
+    if type(version) is not int or version not in (1, 2) or body.get("contract_version", 1) != version:
+        return False
+
     valid_statuses = {
         "completed",
         "waiting_approval",
         "failed",
         "reconciliation_required",
     }
+
+    if version == 2:
+        valid_statuses.discard("reconciliation_required")
+        valid_statuses.update({"denied", "outcome_unknown"})
 
     if (
         durable_status
@@ -1825,6 +1838,7 @@ async def integration_status(request: Request):
         "integrations": [
             palo_alto_integration_status(
                 runtime.settings
-            )
+            ),
+            openwrt_integration_status(runtime.settings),
         ]
     }

@@ -62,6 +62,8 @@ from services.process_runner import (
 from services.palo_alto import (
     build_palo_alto_service,
 )
+from services.openwrt import build_openwrt_service
+from tools.networking.mcp import register_networking_tools
 
 from services.ticketing import (
     TicketMutationService,
@@ -726,6 +728,7 @@ def create_mcp_server(
             runtime_settings
         ),
     )
+    register_networking_tools(server, build_openwrt_service(runtime_settings))
 
     # ============================================================
     # GOVERNED DEVELOPER CAPABILITIES

@@ -38,6 +38,7 @@ def fake_tool_lookup(
 
     tools = {
         "workspace_git_status": {
+            "parameters": {"repository": {"type": "str"}},
             "risk":
                 "read",
 
@@ -50,6 +51,7 @@ def fake_tool_lookup(
         },
 
         "ticket_get": {
+            "parameters": {"ticket_key": {"type": "str"}},
             "risk":
                 "read",
 

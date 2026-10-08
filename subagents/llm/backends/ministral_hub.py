@@ -854,6 +854,8 @@ class MinistralHubBackend(
             ]
         )
 
+        print(f"[INFERENCE_INPUT] model={self.model_path.name!r} prompt_tokens={input_length} max_new_tokens={max_new_tokens}", flush=True)
+
         output = (
             self
             ._generate_with_active_profile(

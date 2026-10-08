@@ -50,7 +50,14 @@ class PaloAltoService:
     def _op(self, command_xml: str) -> ET.Element:
         response = self.client.post(
             f"{self.base_url}/api",
-            params={"type": "op", "cmd": command_xml},
+            params={
+                "type": "op",
+                "cmd": command_xml,
+            },
+            headers={
+                "X-PAN-KEY":
+                    self.config.api_key,
+            },
         )
         response.raise_for_status()
 
@@ -80,9 +87,16 @@ class PaloAltoService:
 
     def system_info(self) -> dict:
         root = self._op(SYSTEM_INFO_COMMAND)
-        result = root.find("./result")
+        result = root.find("./result/system")
         if result is None:
-            raise RuntimeError("PAN-OS system-info response has no result node.")
+            raise RuntimeError("PAN-OS system-info response has no result/system node.")
+
+        required_fields = ("hostname", "model", "sw-version")
+        missing = [field for field in required_fields if self._text(result, field) is None]
+        if missing:
+            raise RuntimeError(
+                "PAN-OS system-info response is missing required fields: " + ", ".join(missing)
+            )
 
         return {
             "ok": True,

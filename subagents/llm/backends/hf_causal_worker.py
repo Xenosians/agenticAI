@@ -344,6 +344,8 @@ class HFCausalWorkerBackend(
             .pad_token_id
         )
 
+        print(f"[INFERENCE_INPUT] model={self.model_path.name!r} prompt_tokens={input_length} max_new_tokens={max_new_tokens}", flush=True)
+
         if pad_token_id is None:
             pad_token_id = (
                 self.tokenizer

@@ -12,6 +12,11 @@ from subagents.core.orchestration.intent_contract import (
 
 TOOLS = {
     "inspect_repository": {
+        "effect": "read",
+        "resource_type": "repository",
+        "operation_kind": "read",
+        "permission": "repository.read",
+        "required_arguments": ["repository"],
         "description": (
             "Inspect one configured logical repository."
         ),
@@ -45,6 +50,11 @@ TOOLS = {
     },
 
     "check_resource": {
+        "effect": "read",
+        "resource_type": "resource",
+        "operation_kind": "read",
+        "permission": "resource.read",
+        "required_arguments": ["resource"],
         "description": (
             "Check one exact resource."
         ),

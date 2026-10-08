@@ -10,6 +10,11 @@ from subagents.core.orchestration.semantic_guard import (
 
 TOOLS = {
     "inspect_thing": {
+        "effect": "read",
+        "resource_type": "thing",
+        "operation_kind": "read",
+        "permission": "thing.read",
+        "required_arguments": ["thing_id"],
         "description":
             "Inspect a thing.",
 
@@ -32,6 +37,11 @@ TOOLS = {
     },
 
     "change_thing": {
+        "effect": "mutation",
+        "resource_type": "thing",
+        "operation_kind": "update",
+        "permission": "thing.update",
+        "required_arguments": ["thing_id"],
         "description":
             "Change a thing.",
 

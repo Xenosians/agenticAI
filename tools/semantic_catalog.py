@@ -12,6 +12,9 @@ SEMANTIC_FIELDS = (
 
 
 CAPABILITY_SEMANTICS: dict[str, dict[str, str]] = {
+    "network_system_info": {"resource_type": "network.device", "operation_kind": "read", "effect": "read", "permission": "network.device.read"},
+    "network_interface_status": {"resource_type": "network.interface", "operation_kind": "read", "effect": "read", "permission": "network.interface.read"},
+    "network_firewall_config": {"resource_type": "network.firewall", "operation_kind": "read", "effect": "read", "permission": "network.firewall.read"},
     "account_create": {"resource_type": "account", "operation_kind": "create", "effect": "mutation", "permission": "account.create"},
     "account_status": {"resource_type": "account", "operation_kind": "read", "effect": "read", "permission": "account.read"},
     "asset_assign": {"resource_type": "asset", "operation_kind": "action", "effect": "mutation", "permission": "asset.assign"},

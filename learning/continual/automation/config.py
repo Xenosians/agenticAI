@@ -87,7 +87,7 @@ class ContinualAutomationSettings(BaseModel):
         ge=1,
     )
 
-    ppo_suite: str = "core.v1"
+    ppo_suite: str = "router-training-v1"
     eval_suite: str = "core.v1"
 
     single_gpu_idle_only: bool = True

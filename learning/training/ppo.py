@@ -49,6 +49,7 @@ DEFAULT_PPO_ROOT = (
 
 class SandboxPPOSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    min_free_vram_gib: float = Field(default=12.0, ge=2.0)
 
     max_episodes: int = Field(
         default=4,
@@ -612,10 +613,14 @@ def run_sandbox_sequence_ppo(
     """
     Bounded sequence-level PPO.
 
-    Episodes come only from version-controlled orchestrator evaluation cases.
+    Episodes come only from dedicated version-controlled training cases.
     Rewards are deterministic comparisons against expected routing contracts.
     There is no live Jira/LDAP/Git/tool execution in this function.
     """
+    import torch as preflight_torch
+    if not preflight_torch.cuda.is_available() or preflight_torch.cuda.mem_get_info()[0] / 1024**3 < settings.min_free_vram_gib:
+        raise RuntimeError("PPO resource preflight failed before model loading.")
+
     checkpoint_store = (
         AdapterCheckpointStore()
     )
@@ -649,11 +654,15 @@ def run_sandbox_sequence_ppo(
     eval_path = (
         REPOSITORY_ROOT
         / "learning"
-        / "evaluation"
-        / "evals"
+        / "config"
+        / "ppo-training"
         / f"{suite}.jsonl"
     )
 
+    # Training episodes must never be read from the held-out evaluation directory.
+    training_root = (REPOSITORY_ROOT / "learning" / "config" / "ppo-training").resolve()
+    if not eval_path.resolve().is_relative_to(training_root):
+        raise ValueError("PPO suite must remain inside the training episode directory.")
     cases = [
         case
         for case in (

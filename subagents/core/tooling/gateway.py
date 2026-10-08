@@ -629,6 +629,21 @@ class ToolGateway:
             )
 
         # ========================================================
+        # MODEL ARGUMENT SHAPE
+        # MCP/Pydantic providers may ignore extra arguments. Reject them here
+        # before policy, approval creation, or provider execution can mask an
+        # invalid model proposal. Trusted policy-only arguments are added later.
+        # ========================================================
+        parameters = tool.get("parameters", {})
+        if not isinstance(parameters, dict) or not isinstance(arguments, dict):
+            return gateway_result(ok=False, status="denied",
+                decision_code="invalid_argument_shape", error="Tool arguments and parameter schema must be objects.")
+        unknown_arguments = set(arguments) - set(parameters)
+        if unknown_arguments:
+            return gateway_result(ok=False, status="denied",
+                decision_code="unknown_arguments", error="Proposal contains arguments outside the trusted capability schema.")
+
+        # ========================================================
         # USER-REQUEST GROUNDING
         # ========================================================
 

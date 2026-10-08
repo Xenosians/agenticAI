@@ -300,12 +300,12 @@ def test_router_prompt_contains_generic_trusted_intent_metadata(
     )
 
     assert (
-        '"effect": "read"'
+        '"effect":"read"'
         in prompt
     )
 
     assert (
-        '"effect": "mutation"'
+        '"effect":"mutation"'
         in prompt
     )
 

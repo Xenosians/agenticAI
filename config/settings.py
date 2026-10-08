@@ -534,6 +534,13 @@ class Settings(
     )
     palo_alto_allow_insecure_http: bool = False
 
+    openwrt_base_url: str | None = None
+    openwrt_username: str | None = None
+    openwrt_password: str | None = None
+    openwrt_verify_tls: bool = True
+    openwrt_allow_loopback_http: bool = False
+    openwrt_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+
     model_profiles: dict[
         str,
         ModelProfileSettings,
@@ -689,6 +696,8 @@ class Settings(
     # KNOWLEDGE / RUNBOOK PROVIDER
     # ============================================================
 
+    knowledge_snapshot_path: str | None = None
+    knowledge_snapshot_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     knowledge_backend: str = (
         "mock"
     )
@@ -947,6 +956,7 @@ class Settings(
 
         supported = {
             "mock",
+            "local",
         }
 
         if normalized not in supported:

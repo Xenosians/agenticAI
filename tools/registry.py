@@ -43,6 +43,7 @@ from tools.knowledge.catalog import (
 from tools.palo_alto.catalog import (
     PALO_ALTO_TOOLS,
 )
+from tools.networking.catalog import NETWORKING_TOOLS
 
 from tools.presentation import (
     format_access_check_result,
@@ -571,6 +572,8 @@ TOOLS.update(
 
 
 # SRS 1.8: explicit capability semantics; no tool-name inference.
+TOOLS.update(NETWORKING_TOOLS)
+
 apply_capability_semantics(
     TOOLS
 )

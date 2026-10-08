@@ -14,6 +14,7 @@ VALID_KNOWLEDGE_KINDS = {
 class KnowledgeDocument(
     BaseModel
 ):
+    provenance: dict[str, str] = Field(default_factory=dict)
     provider: str
 
     document_id: str
@@ -31,6 +32,7 @@ class KnowledgeDocument(
 class KnowledgeSearchHit(
     BaseModel
 ):
+    provenance: dict[str, str] = Field(default_factory=dict)
     provider: str
 
     document_id: str

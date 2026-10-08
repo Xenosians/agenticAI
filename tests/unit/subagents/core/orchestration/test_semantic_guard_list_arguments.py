@@ -9,6 +9,11 @@ from subagents.core.orchestration.semantic_guard import (
 
 
 TOOL = {
+    "effect": "mutation",
+    "resource_type": "git.index",
+    "operation_kind": "update",
+    "permission": "git.index.stage",
+    "required_arguments": ["repository", "paths"],
     "description":
         "Stage explicitly selected files.",
 

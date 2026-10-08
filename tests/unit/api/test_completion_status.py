@@ -12,7 +12,7 @@ def test_governed_denial_is_not_completed():
                     "denied",
             }
         )
-        == "failed"
+        == "denied"
     )
 
 

@@ -189,6 +189,7 @@ def test_git_like_list_mutation_stops_at_approval():
 
     tools = {
         "workspace_git_stage_files": {
+            "parameters": {"repository": {"type": "str"}, "paths": {"type": "list[str]"}},
             "risk":
                 "low",
 

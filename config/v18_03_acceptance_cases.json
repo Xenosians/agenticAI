@@ -61,6 +61,33 @@
       "expected_tool": "ticket_search"
     },
     {
+      "id": "openwrt-system-info-read",
+      "enabled": true,
+      "kind": "read",
+      "requires_integration": "openwrt",
+      "prompt": "Read the OpenWrt router hardware identity and firmware release. Do not change its configuration.",
+      "expected_terminal_status": ["completed"],
+      "expected_tool": "network_system_info"
+    },
+    {
+      "id": "openwrt-interface-read",
+      "enabled": true,
+      "kind": "read",
+      "requires_integration": "openwrt",
+      "prompt": "Read the status of OpenWrt logical interface lan. Do not change it.",
+      "expected_terminal_status": ["completed"],
+      "expected_tool": "network_interface_status"
+    },
+    {
+      "id": "openwrt-firewall-read",
+      "enabled": true,
+      "kind": "read",
+      "requires_integration": "openwrt",
+      "prompt": "Inspect the saved OpenWrt firewall configuration. Do not deploy or change anything.",
+      "expected_terminal_status": ["completed"],
+      "expected_tool": "network_firewall_config"
+    },
+    {
       "id": "palo-alto-system-info-read",
       "enabled": true,
       "kind": "read",

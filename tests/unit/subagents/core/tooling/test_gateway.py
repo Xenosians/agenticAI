@@ -25,6 +25,7 @@ ACCOUNT_AGENT = AgentDefinition(
 
 TOOLS = {
     "account_status": {
+        "parameters": {"user_id": {"type": "str"}},
         "risk":
             "read",
 
@@ -37,6 +38,7 @@ TOOLS = {
     },
 
     "unlock_user": {
+        "parameters": {"user_id": {"type": "str"}},
         "risk":
             "high",
 
@@ -703,6 +705,7 @@ def test_policy_may_bind_declared_trusted_execution_arguments():
                 "target",
             ],
 
+            "parameters": {"target": {"type": "str"}},
             "trusted_policy_arguments": [
                 "expected_version",
             ],
@@ -856,6 +859,7 @@ def test_policy_cannot_change_original_execution_argument():
                 "target",
             ],
 
+            "parameters": {"target": {"type": "str"}},
             "trusted_policy_arguments": [
                 "expected_version",
             ],
@@ -996,6 +1000,7 @@ def test_policy_cannot_add_undeclared_execution_argument():
                 "target",
             ],
 
+            "parameters": {"target": {"type": "str"}},
             "trusted_policy_arguments":
                 [],
 

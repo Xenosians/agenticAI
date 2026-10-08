@@ -24,7 +24,12 @@ FRONTEND_REPO = Path("/mnt/c/project/agenticFrontend")
 
 DEFAULT_CASE_FILE = AI_REPO / "config/v18_03_acceptance_cases.json"
 DEFAULT_BACKEND_URL = "http://127.0.0.1:4000"
-TERMINAL = {"completed", "failed", "waiting_approval"}
+TERMINAL = {
+    "completed",
+    "failed",
+    "waiting_approval",
+    "reconciliation_required",
+}
 
 
 class AcceptanceFailure(RuntimeError):
@@ -40,6 +45,10 @@ def _run(
     *,
     cwd: Path,
 ) -> None:
+    # subprocess cwd does not trigger interactive direnv hooks. Keep the
+    # backend configuration scoped to its process rather than the AI runtime.
+    if cwd == BACKEND_REPO:
+        command = ["direnv", "exec", str(BACKEND_REPO), *command]
     print("+", " ".join(command))
     subprocess.run(
         command,
@@ -835,11 +844,36 @@ def run_live(
                     )
                 )
 
-                if terminal.get(
+                post_approval_status = terminal.get(
                     "status"
-                ) != "completed":
+                )
+
+                expected_post_approval = case.get(
+                    "expected_post_approval_status"
+                )
+
+                if isinstance(
+                    expected_post_approval,
+                    list,
+                ):
+                    if (
+                        post_approval_status
+                        not in expected_post_approval
+                    ):
+                        raise AcceptanceFailure(
+                            f"{case_id}: expected post-approval "
+                            f"status {expected_post_approval}, "
+                            f"got {post_approval_status!r}."
+                        )
+                elif post_approval_status not in {
+                    "completed",
+                    "failed",
+                    "reconciliation_required",
+                }:
                     raise AcceptanceFailure(
-                        f"{case_id}: approved job did not complete."
+                        f"{case_id}: approved job reached "
+                        f"unexpected state "
+                        f"{post_approval_status!r}."
                     )
 
             print(

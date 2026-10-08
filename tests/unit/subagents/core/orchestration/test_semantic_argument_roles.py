@@ -12,6 +12,10 @@ from subagents.core.tooling.capability_contract import build_model_capability_co
 def create_tool():
     return {
         "description": "Create one thing.",
+        "effect": "mutation",
+        "resource_type": "thing",
+        "operation_kind": "create",
+        "permission": "thing.create",
         "risk": "medium",
         "requires_approval": True,
         "required_arguments": ["target", "summary"],
