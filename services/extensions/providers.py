@@ -94,6 +94,232 @@ def get_provider_preset(
     )
 
 
+# ---------------------------------------------------------------------------
+# Concrete connection presets
+#
+# These describe how a provider is reached. They contain no credentials.
+#
+# For harness-backed profiles the model field is stored as:
+#
+#     provider/model-id
+#
+# Example:
+#
+#     openrouter/openrouter/free
+#
+# The harness later separates that into:
+#
+#     provider = openrouter
+#     model    = openrouter/free
+#
+# ---------------------------------------------------------------------------
+
+_CONNECTION_PRESETS: tuple[
+    dict[str, object],
+    ...
+] = (
+    {
+        "id":
+            "groq-http",
+
+        "name":
+            "Groq · Direct",
+
+        "backend":
+            "http",
+
+        "provider":
+            "groq",
+
+        "url":
+            "https://api.groq.com/openai/v1",
+
+        "model":
+            "openai/gpt-oss-120b",
+
+        "requires_api_key":
+            True,
+
+        "credential_label":
+            "Groq API key",
+
+        "description":
+            (
+                "Direct OpenAI-compatible inference "
+                "through Groq."
+            ),
+    },
+    {
+        "id":
+            "openrouter-http",
+
+        "name":
+            "OpenRouter · Direct",
+
+        "backend":
+            "http",
+
+        "provider":
+            "openrouter",
+
+        "url":
+            "https://openrouter.ai/api/v1",
+
+        "model":
+            "openrouter/free",
+
+        "requires_api_key":
+            True,
+
+        "credential_label":
+            "OpenRouter API key",
+
+        "description":
+            (
+                "Direct inference through "
+                "OpenRouter's free-model router."
+            ),
+    },
+    {
+        "id":
+            "pi-groq",
+
+        "name":
+            "Pi · Groq",
+
+        "backend":
+            "pi",
+
+        "provider":
+            "groq",
+
+        "url":
+            "",
+
+        "model":
+            "groq/openai/gpt-oss-120b",
+
+        "requires_api_key":
+            True,
+
+        "credential_label":
+            "Groq API key",
+
+        "description":
+            (
+                "Isolated Pi inference harness "
+                "using Groq as its provider."
+            ),
+    },
+    {
+        "id":
+            "pi-openrouter",
+
+        "name":
+            "Pi · OpenRouter Free",
+
+        "backend":
+            "pi",
+
+        "provider":
+            "openrouter",
+
+        "url":
+            "",
+
+        "model":
+            "openrouter/openrouter/free",
+
+        "requires_api_key":
+            True,
+
+        "credential_label":
+            "OpenRouter API key",
+
+        "description":
+            (
+                "Isolated Pi inference harness "
+                "using OpenRouter's free router."
+            ),
+    },
+    {
+        "id":
+            "opencode-groq",
+
+        "name":
+            "OpenCode · Groq",
+
+        "backend":
+            "opencode",
+
+        "provider":
+            "groq",
+
+        "url":
+            "",
+
+        "model":
+            "groq/openai/gpt-oss-120b",
+
+        "requires_api_key":
+            True,
+
+        "credential_label":
+            "Groq API key",
+
+        "description":
+            (
+                "Isolated OpenCode harness "
+                "using Groq as its provider."
+            ),
+    },
+    {
+        "id":
+            "opencode-openrouter",
+
+        "name":
+            "OpenCode · OpenRouter Free",
+
+        "backend":
+            "opencode",
+
+        "provider":
+            "openrouter",
+
+        "url":
+            "",
+
+        "model":
+            "openrouter/openrouter/free",
+
+        "requires_api_key":
+            True,
+
+        "credential_label":
+            "OpenRouter API key",
+
+        "description":
+            (
+                "Isolated OpenCode harness "
+                "using OpenRouter's free router."
+            ),
+    },
+)
+
+
+def connection_presets(
+) -> list[dict[str, object]]:
+    """Return detached public connection metadata."""
+
+    return [
+        dict(
+            item
+        )
+        for item
+        in _CONNECTION_PRESETS
+    ]
+
+
 def provider_origins() -> set[str]:
     """Return exact origins admitted by built-in provider presets."""
     origins: set[str] = set()

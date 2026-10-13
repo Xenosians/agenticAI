@@ -1,10 +1,10 @@
-"""Bounded inference transports.
+"""Bounded direct HTTP inference transport.
 
 Provider responses are data, never execution authority.
 
 This module deliberately sends ordinary chat-completion requests without
 provider-native tools. Jira, Git, shell, directory and other side effects must
-continue through Agentic ITSM's own specialist -> SemanticGuard -> ToolGateway
+continue through Agentic ITSM's specialist -> SemanticGuard -> ToolGateway
 boundary.
 """
 
@@ -16,22 +16,36 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from services.extensions.providers import provider_origins
+from services.extensions.budget import (
+    DEFAULT_HTTP_REQUEST_TOKEN_BUDGET,
+    prepare_external_request,
+)
+
+from services.extensions.diagnostics import (
+    ExternalProviderError,
+    classify_external_failure,
+    sanitize_diagnostic,
+)
+
+from services.extensions.providers import (
+    provider_origins,
+)
 
 
-# Origins that are supported by another extension backend or are useful for
-# manually configured compatible endpoints, but are not exposed as a quick
-# provider preset.
 _STATIC_ORIGINS = {
     "https://opencode.ai",
     "https://generativelanguage.googleapis.com",
     "https://api.mistral.ai",
 }
 
+
 DEFAULT_ORIGINS = (
     provider_origins()
     | _STATIC_ORIGINS
 )
+
+
+MAX_PROVIDER_ERROR_BYTES = 64_000
 
 
 def _configured_origins() -> set[str]:
@@ -42,7 +56,8 @@ def _configured_origins() -> set[str]:
 
     return {
         entry.strip().rstrip("/")
-        for entry in value.split(",")
+        for entry
+        in value.split(",")
         if entry.strip()
     }
 
@@ -50,14 +65,21 @@ def _configured_origins() -> set[str]:
 def validate_url(
     url: str,
 ) -> str:
-    if not isinstance(url, str):
+    if not isinstance(
+        url,
+        str,
+    ):
         raise ValueError(
             "Provider endpoint must be text"
         )
 
-    normalized = url.strip()
+    normalized = (
+        url.strip()
+    )
 
-    parts = urlsplit(normalized)
+    parts = urlsplit(
+        normalized
+    )
 
     if (
         parts.username
@@ -67,12 +89,14 @@ def validate_url(
         or not parts.hostname
     ):
         raise ValueError(
-            "Use an endpoint URL without credentials, "
-            "query parameters or fragments"
+            "Use an endpoint URL without "
+            "credentials, query parameters "
+            "or fragments"
         )
 
     origin = (
-        f"{parts.scheme}://{parts.netloc}"
+        f"{parts.scheme}://"
+        f"{parts.netloc}"
     )
 
     origins = (
@@ -82,19 +106,54 @@ def validate_url(
 
     if origin not in origins:
         raise ValueError(
-            "Endpoint origin is not in the server's "
+            "Endpoint origin is not in "
+            "the server's "
             "EXTENSION_ALLOWED_ORIGINS"
         )
 
     if (
-        parts.scheme != "https"
-        and parts.hostname != "127.0.0.1"
+        parts.scheme
+        != "https"
+        and parts.hostname
+        != "127.0.0.1"
     ):
         raise ValueError(
-            "Remote endpoints require HTTPS"
+            "Remote endpoints "
+            "require HTTPS"
         )
 
-    return normalized.rstrip("/")
+    return normalized.rstrip(
+        "/"
+    )
+
+
+async def _read_response(
+    response,
+    *,
+    max_bytes: int,
+) -> bytes:
+    content = bytearray()
+
+    async for chunk in (
+        response
+        .aiter_bytes()
+    ):
+        content.extend(
+            chunk
+        )
+
+        if (
+            len(content)
+            > max_bytes
+        ):
+            raise ValueError(
+                "Provider response "
+                "exceeds size limit"
+            )
+
+    return bytes(
+        content
+    )
 
 
 async def request_json(
@@ -104,61 +163,132 @@ async def request_json(
     api_key: str = "",
     max_bytes: int = 2_000_000,
 ):
-    url = validate_url(url)
+    url = validate_url(
+        url
+    )
 
     headers = {
-        "Accept": "application/json",
+        "Accept":
+            "application/json",
     }
 
     if api_key:
-        headers["Authorization"] = (
+        headers[
+            "Authorization"
+        ] = (
             f"Bearer {api_key}"
         )
 
     try:
-        async with httpx.AsyncClient(
-            timeout=90,
-            follow_redirects=False,
-            trust_env=False,
+        async with (
+            httpx.AsyncClient(
+                timeout=90,
+                follow_redirects=False,
+                trust_env=False,
+            )
         ) as client:
             async with client.stream(
                 (
                     "POST"
-                    if payload is not None
+                    if payload
+                    is not None
                     else "GET"
                 ),
                 url,
                 json=payload,
                 headers=headers,
             ) as response:
-                if response.status_code != 200:
-                    raise ValueError(
-                        "Provider returned HTTP "
-                        f"{response.status_code}; "
-                        "check access, quota and endpoint"
+                if (
+                    response.status_code
+                    != 200
+                ):
+                    content = (
+                        await _read_response(
+                            response,
+                            max_bytes=(
+                                MAX_PROVIDER_ERROR_BYTES
+                            ),
+                        )
                     )
 
-                content = bytearray()
-
-                async for chunk in response.aiter_bytes():
-                    content.extend(chunk)
-
-                    if len(content) > max_bytes:
-                        raise ValueError(
-                            "Provider response exceeds "
-                            "size limit"
+                    diagnostic = (
+                        sanitize_diagnostic(
+                            content.decode(
+                                "utf-8",
+                                errors="replace",
+                            ),
+                            secrets=[
+                                api_key,
+                            ],
                         )
+                    )
 
-    except httpx.HTTPError:
-        raise ValueError(
-            "Provider connection failed"
+                    category = (
+                        classify_external_failure(
+                            diagnostic,
+                            status_code=(
+                                response
+                                .status_code
+                            ),
+                        )
+                    )
+
+                    print(
+                        "[PROVIDER] Request rejected "
+                        f"status={response.status_code} "
+                        f"category={category} "
+                        f"detail={diagnostic!r}"
+                    )
+
+                    raise ExternalProviderError(
+                        category,
+                        status_code=(
+                            response
+                            .status_code
+                        ),
+                    )
+
+                content = (
+                    await _read_response(
+                        response,
+                        max_bytes=(
+                            max_bytes
+                        ),
+                    )
+                )
+
+    except ExternalProviderError:
+        raise
+
+    except httpx.HTTPError as exc:
+        diagnostic = (
+            sanitize_diagnostic(
+                repr(
+                    exc
+                ),
+                secrets=[
+                    api_key,
+                ],
+            )
+        )
+
+        print(
+            "[PROVIDER] Connection failure "
+            f"detail={diagnostic!r}"
+        )
+
+        raise ExternalProviderError(
+            "provider_connection_failed"
         ) from None
 
     try:
-        return json.loads(content)
+        return json.loads(
+            content
+        )
+
     except json.JSONDecodeError:
-        raise ValueError(
-            "Provider returned invalid JSON"
+        raise ExternalProviderError(
+            "provider_malformed_response"
         ) from None
 
 
@@ -167,55 +297,111 @@ async def remote_generate(
     messages: list[dict],
     max_tokens: int,
 ) -> str:
+    budget = (
+        prepare_external_request(
+            profile,
+            messages,
+            max_tokens,
+            default_request_budget=(
+                DEFAULT_HTTP_REQUEST_TOKEN_BUDGET
+            ),
+        )
+    )
+
+    print(
+        "[PROVIDER] Request budget "
+        f"model={profile.get('model')!r} "
+        "estimated_input="
+        f"{budget.estimated_input_tokens} "
+        "output_cap="
+        f"{budget.max_output_tokens} "
+        "estimated_request="
+        f"{budget.estimated_request_tokens} "
+        "budget="
+        f"{budget.request_token_budget} "
+        "dropped_messages="
+        f"{budget.dropped_messages}"
+    )
+
     # Intentionally DO NOT add:
     #
-    #   tools
-    #   tool_choice
-    #   provider-native code execution
-    #   provider-native browser/search tools
+    # tools
+    # tool_choice
+    # functions
+    # provider-native code execution
+    # provider-native browser/search
     #
-    # A remote model is an inference engine, not an authorization boundary.
+    # A remote model is an inference engine,
+    # not an authorization boundary.
     body = {
-        "model": profile["model"],
-        "messages": messages,
-        "max_tokens": min(
-            max_tokens,
-            8192,
-        ),
-        "stream": False,
+        "model":
+            profile[
+                "model"
+            ],
+
+        "messages":
+            budget.messages,
+
+        "max_tokens":
+            budget.max_output_tokens,
+
+        "stream":
+            False,
     }
 
     data = await request_json(
-        profile["url"] + "/chat/completions",
+        (
+            profile[
+                "url"
+            ]
+            + "/chat/completions"
+        ),
         payload=body,
-        api_key=profile.get(
-            "api_key",
-            "",
+        api_key=(
+            profile.get(
+                "api_key",
+                "",
+            )
         ),
     )
 
     try:
-        choice = data["choices"][0]
+        choice = (
+            data[
+                "choices"
+            ][0]
+        )
 
         content = (
-            choice["message"]["content"]
+            choice[
+                "message"
+            ][
+                "content"
+            ]
         )
 
         if (
-            choice.get("finish_reason")
+            choice.get(
+                "finish_reason"
+            )
             == "length"
         ):
             raise ValueError(
-                "Provider output was truncated; "
-                "no tool proposal accepted"
+                "Provider output was "
+                "truncated; no tool "
+                "proposal accepted"
             )
 
         if (
-            not isinstance(content, str)
+            not isinstance(
+                content,
+                str,
+            )
             or not content.strip()
         ):
             raise ValueError(
-                "Provider did not return text"
+                "Provider did not "
+                "return text"
             )
 
         return content
@@ -225,6 +411,6 @@ async def remote_generate(
         IndexError,
         TypeError,
     ):
-        raise ValueError(
-            "Unsupported provider response"
+        raise ExternalProviderError(
+            "provider_malformed_response"
         ) from None

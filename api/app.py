@@ -517,10 +517,26 @@ async def send_job_heartbeat(
     runtime: ApplicationRuntime,
     job_id: str,
     attempt: int,
+    *,
+    source: str = "execution",
+    heartbeat_id: str = "-",
+    sequence: int | None = None,
 ) -> bool:
     settings = (
         runtime.settings
     )
+
+    context = (
+        f"job_id={job_id} "
+        f"attempt={attempt} "
+        f"source={source} "
+        f"heartbeat_id={heartbeat_id}"
+    )
+
+    if sequence is not None:
+        context += (
+            f" sequence={sequence}"
+        )
 
     url = (
         f"{settings.require_phoenix_base_url()}"
@@ -542,9 +558,7 @@ async def send_job_heartbeat(
             .phoenix_client
             .post(
                 url,
-                headers=(
-                    headers
-                ),
+                headers=headers,
                 json={
                     "attempt":
                         attempt,
@@ -555,11 +569,12 @@ async def send_job_heartbeat(
     except Exception as exc:
         print(
             "[HEARTBEAT] Delivery failed "
-            f"job_id={job_id} "
-            f"attempt={attempt} "
+            f"{context} "
             f"error={exc!r}"
         )
 
+        # A transient heartbeat transport error does not itself establish that
+        # Phoenix revoked the execution lease.
         return True
 
     body = (
@@ -574,27 +589,19 @@ async def send_job_heartbeat(
         < 300
     ):
         if valid_heartbeat_ack(
-            job_id=(
-                job_id
-            ),
-            attempt=(
-                attempt
-            ),
-            body=(
-                body
-            ),
+            job_id=job_id,
+            attempt=attempt,
+            body=body,
         ):
             print(
                 "[HEARTBEAT] Lease renewed "
-                f"job_id={job_id} "
-                f"attempt={attempt}"
+                f"{context}"
             )
 
         else:
             print(
                 "[HEARTBEAT] Invalid success response "
-                f"job_id={job_id} "
-                f"attempt={attempt} "
+                f"{context} "
                 f"response={body!r}"
             )
 
@@ -625,8 +632,7 @@ async def send_job_heartbeat(
     ):
         print(
             "[HEARTBEAT] Lease ownership ended "
-            f"job_id={job_id} "
-            f"attempt={attempt} "
+            f"{context} "
             f"response={body}"
         )
 
@@ -634,8 +640,7 @@ async def send_job_heartbeat(
 
     print(
         "[HEARTBEAT] Renewal rejected "
-        f"job_id={job_id} "
-        f"attempt={attempt} "
+        f"{context} "
         f"status={response.status_code} "
         f"response={body!r}"
     )
@@ -647,23 +652,48 @@ async def job_heartbeat_worker(
     runtime: ApplicationRuntime,
     payload: JobExecuteRequest,
 ) -> None:
+    heartbeat_id = (
+        uuid.uuid4()
+        .hex[
+            :12
+        ]
+    )
+
     print(
         "[HEARTBEAT] Worker started "
         f"job_id={payload.job_id} "
-        f"attempt={payload.attempt}"
+        f"attempt={payload.attempt} "
+        "source=execution "
+        f"heartbeat_id={heartbeat_id}"
     )
+
+    sequence = 0
 
     try:
         while True:
+            sequence += 1
+
             should_continue = (
                 await send_job_heartbeat(
                     runtime,
                     payload.job_id,
                     payload.attempt,
+                    source="execution",
+                    heartbeat_id=heartbeat_id,
+                    sequence=sequence,
                 )
             )
 
             if not should_continue:
+                print(
+                    "[HEARTBEAT] Worker ended "
+                    f"job_id={payload.job_id} "
+                    f"attempt={payload.attempt} "
+                    "source=execution "
+                    f"heartbeat_id={heartbeat_id} "
+                    "reason=lease_ownership_ended"
+                )
+
                 return
 
             await asyncio.sleep(
@@ -676,7 +706,10 @@ async def job_heartbeat_worker(
         print(
             "[HEARTBEAT] Worker stopped "
             f"job_id={payload.job_id} "
-            f"attempt={payload.attempt}"
+            f"attempt={payload.attempt} "
+            "source=execution "
+            f"heartbeat_id={heartbeat_id} "
+            "reason=cancelled"
         )
 
         raise
@@ -981,6 +1014,10 @@ async def outbox_delivery_worker(
                     runtime,
                     entry.job_id,
                     entry.attempt,
+                    source="outbox_completion",
+                    heartbeat_id=(
+                        f"outbox-{entry.attempt}"
+                    ),
                 )
 
                 await deliver_outbox_entry(

@@ -28,6 +28,85 @@ def public_resource(row):
     return {key: value for key, value in row.items() if key not in {"api_key", "content", "model_path"}}
 
 
+_HOSTED_HARNESS_PROVIDERS = {
+    "groq",
+    "openrouter",
+    "anthropic",
+    "google",
+    "mistral",
+    "openai",
+    "xai",
+    "cerebras",
+    "opencode",
+}
+
+
+def _connection_provider(
+    backend: str,
+    model: str,
+) -> str:
+    if backend not in {
+        "pi",
+        "opencode",
+    }:
+        return ""
+
+    provider, separator, identifier = (
+        model.partition(
+            "/"
+        )
+    )
+
+    if (
+        not separator
+        or not provider
+        or not identifier
+    ):
+        raise ValueError(
+            "Harness models require an explicit "
+            "provider/model identifier"
+        )
+
+    return provider
+
+
+def _model_connection_requires_credential(
+    backend: str,
+    model: str,
+    url: str = "",
+) -> bool:
+    if backend == "http":
+        from urllib.parse import urlsplit
+
+        normalized = validate_url(
+            url
+        )
+
+        hostname = (
+            urlsplit(
+                normalized
+            )
+            .hostname
+        )
+
+        # Local OpenAI-compatible endpoints remain keyless.
+        return hostname != "127.0.0.1"
+
+    if backend in {
+        "pi",
+        "opencode",
+    }:
+        return (
+            _connection_provider(
+                backend,
+                model,
+            )
+            in _HOSTED_HARNESS_PROVIDERS
+        )
+
+    return False
+
+
 def upload_root(owner: str, identity: str):
     if not re.fullmatch(r"[a-f0-9]{32}", identity):
         raise ValueError("Invalid upload identity")
@@ -90,10 +169,14 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
     store = extension_store()
     if action == "list":
         from tools.registry import TOOLS
-        from services.extensions.providers import provider_presets
+        from services.extensions.providers import (
+            connection_presets,
+            provider_presets,
+        )
         return {"schema": "extension-catalog.v1", "resources": [public_resource(r) for r in store.list(owner)],
                 "selected": store.selected(owner),
                 "provider_presets": provider_presets(),
+                "connection_presets": connection_presets(),
                 "local_profiles": [{"id": key, "backend": profile.backend} for key, profile in settings.model_profiles.items() if profile.enabled and not key.startswith("user-upload-")],
                 "capabilities": [{"id": name, "description": tool.get("description", ""),
                                   "effect": tool.get("effect"), "permission": tool.get("permission")}
@@ -102,26 +185,160 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
                 "connections": [{"id": "rag", "state": "ready", "contract": "owner-retrieval.v1"},
                                 {"id": "n8n", "state": "prepared", "contract": "governed-workflow.v1"}]}
     if action == "model":
-        backend = payload.get("backend")
-        if backend not in {"http", "local", "opencode", "pi"}:
-            raise ValueError("Choose a supported model or harness backend")
-        name, model = payload.get("name", "").strip(), payload.get("model", "").strip()
-        if not name or not model or len(model) > 300 or model.startswith("-"):
-            raise ValueError("Model name and identifier are required")
-        profile = {"name": name[:120], "backend": backend, "model": model, "state": "ready"}
+        backend = payload.get(
+            "backend"
+        )
+
+        if backend not in {
+            "http",
+            "local",
+            "opencode",
+            "pi",
+        }:
+            raise ValueError(
+                "Choose a supported model "
+                "or harness backend"
+            )
+
+        name = (
+            payload.get(
+                "name",
+                "",
+            )
+            .strip()
+        )
+
+        model = (
+            payload.get(
+                "model",
+                "",
+            )
+            .strip()
+        )
+
+        api_key = (
+            payload.get(
+                "api_key",
+                "",
+            )
+            or ""
+        )
+
+        if (
+            not name
+            or not model
+            or len(
+                model
+            ) > 300
+            or model.startswith(
+                "-"
+            )
+        ):
+            raise ValueError(
+                "Model name and identifier "
+                "are required"
+            )
+
+        profile = {
+            "name":
+                name[:120],
+
+            "backend":
+                backend,
+
+            "model":
+                model,
+
+            "state":
+                "ready",
+        }
+
         if backend == "http":
-            profile["url"] = validate_url(payload.get("url", ""))
-        if backend == "local" and (model not in settings.model_profiles or model.startswith("user-upload-") or not settings.model_profiles[model].enabled):
-            raise ValueError("Choose an installed local profile or upload a model first")
-        if backend in {"opencode", "pi"}:
-            harness_binary(backend)
-        if backend == "pi" and payload.get("api_key"):
-            from services.extensions.harness import pi_credential_env
-            pi_credential_env(model)
-        if backend == "opencode" and payload.get("api_key"):
-            from services.extensions.harness import harness_provider
-            harness_provider(model)
-        return public_resource(store.put(owner, "model", profile, payload.get("api_key", "")))
+            profile[
+                "url"
+            ] = validate_url(
+                payload.get(
+                    "url",
+                    "",
+                )
+            )
+
+        if backend == "local":
+            if (
+                model
+                not in settings.model_profiles
+                or model.startswith(
+                    "user-upload-"
+                )
+                or not settings
+                .model_profiles[
+                    model
+                ]
+                .enabled
+            ):
+                raise ValueError(
+                    "Choose an installed local "
+                    "profile or upload a model first"
+                )
+
+        if backend == "pi":
+            # Validate the stored provider/model shape
+            # even before the first inference request.
+            from services.extensions.harness import (
+                pi_credential_env,
+            )
+
+            pi_credential_env(
+                model
+            )
+
+        elif backend == "opencode":
+            from services.extensions.harness import (
+                harness_provider,
+            )
+
+            harness_provider(
+                model
+            )
+
+        if (
+            backend
+            != "local"
+            and _model_connection_requires_credential(
+                backend,
+                model,
+                profile.get(
+                    "url",
+                    "",
+                ),
+            )
+            and not api_key.strip()
+        ):
+            raise ValueError(
+                "The selected hosted provider "
+                "requires an API key"
+            )
+
+        if backend in {
+            "opencode",
+            "pi",
+        }:
+            # Installation is checked only after the
+            # connection itself has passed admission.
+            harness_binary(
+                backend
+            )
+
+        return public_resource(
+            store.put(
+                owner,
+                "model",
+                profile,
+                api_key,
+            )
+        )
+
+
     if action == "select":
         store.select(owner, payload.get("model_id") or None, payload.get("dataset_id") or None)
         return store.selected(owner)
@@ -129,17 +346,90 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
         store.delete(owner, payload["id"])
         return {"deleted": True}
     if action == "probe":
-        profile = store.get(owner, payload["id"], secret=True)
+        profile = store.get(
+            owner,
+            payload["id"],
+            secret=True,
+        )
+
         if profile["kind"] != "model":
-            raise ValueError("Select a model connection")
+            raise ValueError(
+                "Select a model connection"
+            )
+
         if profile["backend"] == "http":
-            from services.extensions.transport import remote_generate
-            text = await remote_generate(profile, [{"role": "user", "content": "What is 17 plus 25? Reply briefly."}], 128)
-        elif profile["backend"] in {"opencode", "pi"}:
-            text = await harness_generate(profile, [{"role": "user", "content": "What is 17 plus 25? Reply briefly."}], 128)
-        else:
-            return {"state": "configured", "message": "Local inference uses the existing GPU scheduler; test through a chat job."}
-        return {"state": "reachable", "response": text[:2000]}
+            # Connectivity probes deliberately use a different contract
+            # from runtime inference. A provider that authenticates and
+            # processes the request is reachable even when a reasoning-heavy
+            # model spends the small probe budget before visible output.
+            #
+            # Actual chat/agent inference continues through remote_generate()
+            # and still rejects truncated or missing visible output.
+            from services.extensions.probe import remote_probe
+
+            return await remote_probe(
+                profile,
+                max_tokens=256,
+            )
+
+        if profile["backend"] in {
+            "opencode",
+            "pi",
+        }:
+            text = await harness_generate(
+                profile,
+                [
+                    {
+                        "role":
+                            "user",
+
+                        "content":
+                            (
+                                "Reply with exactly: "
+                                "HARNESS_OK"
+                            ),
+                    }
+                ],
+                256,
+            )
+
+            return {
+                "schema":
+                    "provider-probe.v1",
+
+                "state":
+                    "reachable",
+
+                "probe_complete":
+                    True,
+
+                "response":
+                    text[:2000],
+
+                "message":
+                    (
+                        "Harness connection is reachable "
+                        "and returned visible output."
+                    ),
+            }
+
+        return {
+            "schema":
+                "provider-probe.v1",
+
+            "state":
+                "configured",
+
+            "probe_complete":
+                False,
+
+            "message":
+                (
+                    "Local inference uses the existing GPU "
+                    "scheduler; test it through a chat job."
+                ),
+        }
+
     if action == "dataset":
         fields = {key: payload.get(key) for key in ("name", "text", "source", "license", "purpose", "reviewed")}
         if not all(isinstance(fields[k], str) for k in ("name", "text", "source", "license", "purpose")):

@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field, ConfigDict
 
 from config import get_settings
 from services.extensions.service import command
+from services.extensions.probe import ProviderProbeError
 
 
 router = APIRouter()
@@ -29,6 +30,20 @@ async def extensions(body: ExtensionCommand, request: Request):
     require_internal(request)
     try:
         return await command(body.owner, body.action, body.payload, get_settings())
+    except ProviderProbeError as exc:
+        # Only curated probe diagnostics may cross the public boundary.
+        # Raw provider response bodies and credentials are never forwarded.
+        raise HTTPException(
+            422,
+            exc.public_detail(),
+        ) from None
+
     except (ValueError, KeyError, TypeError):
         # Public responses must never interpolate stored tokens or raw provider bodies.
-        raise HTTPException(422, "Extension request rejected. Check fields, resource ownership, admission and endpoint access.") from None
+        raise HTTPException(
+            422,
+            (
+                "Extension request rejected. Check fields, "
+                "resource ownership, admission and endpoint access."
+            ),
+        ) from None
