@@ -16,14 +16,14 @@ def test_versioned_callback_survives_outbox_restart(tmp_path, status):
     outbox.put("job-1", 1, payload)
     entry = CompletionOutbox(tmp_path / "outbox.db").list_pending()[0]
     ack = {"job_id": "job-1", "status": expected, "acknowledgement": "applied", "contract_version": 2}
-    assert valid_completion_ack(entry, ack)
-    assert not valid_completion_ack(entry, {**ack, "contract_version": 3})
-    assert not valid_completion_ack(entry, {**ack, "job_id": "other"})
-    assert not valid_completion_ack(entry, {k:v for k,v in ack.items() if k != "contract_version"})
-    assert valid_completion_ack(entry, {**ack, "status": "outcome_unknown", "acknowledgement": "duplicate"})
-    assert not valid_completion_ack(entry, {**ack, "status": "processing"})
+    assert valid_completion_ack(entry=entry, body=ack)
+    assert not valid_completion_ack(entry=entry, body={**ack, "contract_version": 3})
+    assert not valid_completion_ack(entry=entry, body={**ack, "job_id": "other"})
+    assert not valid_completion_ack(entry=entry, body={k:v for k,v in ack.items() if k != "contract_version"})
+    assert valid_completion_ack(entry=entry, body={**ack, "status": "outcome_unknown", "acknowledgement": "duplicate"})
+    assert not valid_completion_ack(entry=entry, body={**ack, "status": "processing"})
 
 def test_legacy_outbox_ack_is_still_supported():
     entry = SimpleNamespace(job_id="old", payload={"status": "failed"})
-    assert valid_completion_ack(entry, {"job_id": "old", "status": "reconciliation_required", "acknowledgement": "duplicate"})
-    assert not valid_completion_ack(entry, {"job_id": "old", "status": "outcome_unknown", "acknowledgement": "duplicate"})
+    assert valid_completion_ack(entry=entry, body={"job_id": "old", "status": "reconciliation_required", "acknowledgement": "duplicate"})
+    assert not valid_completion_ack(entry=entry, body={"job_id": "old", "status": "outcome_unknown", "acknowledgement": "duplicate"})

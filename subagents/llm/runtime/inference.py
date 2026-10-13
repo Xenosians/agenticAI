@@ -103,6 +103,23 @@ class InferenceCoordinator:
         max_new_tokens: int,
         priority: int,
     ) -> str:
+        from services.extensions.context import selected_profile, with_retrieval
+        messages = with_retrieval(model_key, messages)
+        profile = selected_profile(model_key)
+        if profile:
+            backend = profile["backend"]
+            if backend == "http":
+                from services.extensions.transport import remote_generate
+                return await remote_generate(profile, messages, max_new_tokens)
+            if backend in {"opencode", "pi"}:
+                from services.extensions.harness import harness_generate
+                return await harness_generate(profile, messages, max_new_tokens)
+            if backend == "local":
+                model_key = profile["model"]
+            elif backend == "uploaded":
+                model_key = self.model_manager.register_user_model(profile)
+            else:
+                raise ValueError("Unsupported selected model backend")
         if not (
             self.model_manager
             .exists(
@@ -263,6 +280,18 @@ class InferenceCoordinator:
         self,
         model_key: str,
     ) -> None:
+        from services.extensions.context import selected_profile
+        profile = selected_profile(model_key)
+        if profile:
+            backend = profile["backend"]
+            if backend in {"http", "opencode", "pi"}:
+                return  # Remote inference has no local weights to warm.
+            if backend == "local":
+                model_key = profile["model"]
+            elif backend == "uploaded":
+                model_key = self.model_manager.register_user_model(profile)
+            else:
+                raise ValueError("Unsupported selected model backend")
         if not (
             self.model_manager
             .exists(

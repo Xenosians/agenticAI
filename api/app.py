@@ -1053,15 +1053,9 @@ async def execute_job(
             )
         )
 
-        result = (
-            await
-            runtime.hub.run(
-                payload.message,
-                context=(
-                    conversation_context
-                ),
-            )
-        )
+        from services.extensions.context import owner_execution
+        with owner_execution(payload.user_id, payload.message) as (profile, has_dataset):
+            result = await runtime.hub.run(payload.message, context=conversation_context)
 
         result_dict = (
             asdict(
@@ -1087,6 +1081,8 @@ async def execute_job(
         # ========================================================
 
         try:
+            if profile is not None or has_dataset:
+                raise ValueError("User extensions are excluded from automatic training capture")
             trajectory = (
                 runtime
                 .trajectory_recorder
@@ -1605,18 +1601,17 @@ async def run_agent(
     payload: AgentRunRequest,
     request: Request,
 ) -> dict:
+    from api.extensions import require_internal
+    require_internal(request)
     runtime = (
         require_ready_runtime(
             request
         )
     )
 
-    result = (
-        await
-        runtime.hub.run(
-            payload.message
-        )
-    )
+    from services.extensions.context import owner_execution
+    with owner_execution(payload.user_id, payload.message):
+        result = await runtime.hub.run(payload.message)
 
     return {
         "request_id":
@@ -1647,6 +1642,8 @@ async def execute_durable_job(
     payload: JobExecuteRequest,
     request: Request,
 ) -> dict:
+    from api.extensions import require_internal
+    require_internal(request)
     runtime = (
         require_ready_runtime(
             request
@@ -1842,3 +1839,7 @@ async def integration_status(request: Request):
             openwrt_integration_status(runtime.settings),
         ]
     }
+
+
+from api.extensions import router as extension_router
+app.include_router(extension_router)

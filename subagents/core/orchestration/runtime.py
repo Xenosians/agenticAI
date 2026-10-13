@@ -628,6 +628,10 @@ class AgentRuntime:
         # MODEL GENERATION
         # ========================================================
 
+        from services.extensions.context import selected_profile
+        if selected_profile(agent.model) is not None:
+            task.execution_provenance = None
+
         try:
 
             response = (

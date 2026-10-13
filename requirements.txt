@@ -16,6 +16,9 @@ ldap3>=2.9
 pydantic-settings>=2,<3
 python-dotenv>=1.0
 httpx>=0.27,<1
+# Private extension credentials and safe uploaded model inspection
+cryptography>=43
+safetensors>=0.4
 # Continual learning / LoRA training
 peft
 

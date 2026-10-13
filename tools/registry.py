@@ -529,51 +529,20 @@ TOOLS = {
 }
 
 
-TOOLS.update(
-    ACCOUNT_TOOLS
-)
-
-TOOLS.update(
-    ACCESS_TOOLS
-)
-
-TOOLS.update(
-    ATLASSIAN_TOOLS
-)
-
-TOOLS.update(
-    ASSET_TOOLS
-)
-
-TOOLS.update(
-    DEVELOPER_TOOLS
-)
-
-TOOLS.update(
-    GIT_TOOLS
-)
-
-TOOLS.update(
-    KNOWLEDGE_TOOLS
-)
-
-TOOLS.update(
-    PALO_ALTO_TOOLS
-)
+def merge_capability_catalog(target: dict, catalog: dict):
+    duplicates = set(target).intersection(catalog)
+    if duplicates:
+        raise ValueError("Duplicate capability registration: " + ", ".join(sorted(duplicates)))
+    target.update(catalog)
 
 
-TOOLS.update(
-    JIRA_TOOLS
-)
-
-TOOLS.update(
-    TICKETING_TOOLS
-)
+for catalog in (ACCOUNT_TOOLS, ACCESS_TOOLS, ATLASSIAN_TOOLS, ASSET_TOOLS,
+                DEVELOPER_TOOLS, GIT_TOOLS, KNOWLEDGE_TOOLS, PALO_ALTO_TOOLS,
+                JIRA_TOOLS, TICKETING_TOOLS, NETWORKING_TOOLS):
+    merge_capability_catalog(TOOLS, catalog)
 
 
 # SRS 1.8: explicit capability semantics; no tool-name inference.
-TOOLS.update(NETWORKING_TOOLS)
-
 apply_capability_semantics(
     TOOLS
 )

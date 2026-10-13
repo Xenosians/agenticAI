@@ -158,6 +158,14 @@ class ModelManager:
     # REGISTRATION
     # ========================================================
 
+    def register_user_model(self, profile: dict) -> str:
+        key = "user-upload-" + profile["id"]
+        with self._residency_lock:
+            if key not in self.settings.model_profiles:
+                self.settings.model_profiles[key] = ModelProfileSettings(backend="hf-causal", model_path=profile["model_path"], quantization="bnb4", worker_prompt_profile="compact")
+                self.registry.register_lazy(key, lambda: self._build_backend(key))
+        return key
+
     def _register_profiles(
         self,
     ) -> None:

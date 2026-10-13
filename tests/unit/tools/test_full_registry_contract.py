@@ -1,10 +1,19 @@
 from mcp_server import create_mcp_server
 from tools.capability_contract import validate_capability_registry
 from tools.registry import TOOLS
+from tools.registry import merge_capability_catalog
+import pytest
 from tools.runtime_schema import (
     clear_runtime_schemas,
     runtime_registered_tools,
 )
+
+
+def test_duplicate_registration_cannot_silently_replace_an_executor_contract():
+    original = {"read": {"effect": "read"}}
+    with pytest.raises(ValueError, match="Duplicate capability"):
+        merge_capability_catalog(original, {"read": {"effect": "mutation"}})
+    assert original["read"]["effect"] == "read"
 
 
 def test_all_registered_capabilities_have_standard_contract():
