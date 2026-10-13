@@ -1,87 +1,17 @@
-from pydantic import (
-    BaseModel,
-    Field,
-    ValidationError,
-)
+from pydantic import ValidationError
 
 from mcp.server import (
     MCPServer,
 )
 
 from services.knowledge import (
+    KnowledgeDocument as KnowledgeDocumentMCPResult,
+    KnowledgeLookupResult as KnowledgeLookupMCPResult,
+    KnowledgeSearchHit as KnowledgeSearchHitMCPResult,
     KnowledgeSearchQuery,
+    KnowledgeSearchResult as KnowledgeSearchMCPResult,
     KnowledgeService,
 )
-
-
-class KnowledgeDocumentMCPResult(
-    BaseModel
-):
-    provider: str
-
-    document_id: str
-    kind: str
-
-    title: str
-    summary: str
-    content: str
-
-    tags: list[str] = Field(
-        default_factory=list
-    )
-
-
-class KnowledgeSearchHitMCPResult(
-    BaseModel
-):
-    provider: str
-
-    document_id: str
-    kind: str
-
-    title: str
-    summary: str
-
-    tags: list[str] = Field(
-        default_factory=list
-    )
-
-
-class KnowledgeLookupMCPResult(
-    BaseModel
-):
-    ok: bool
-    status: str
-
-    document: (
-        KnowledgeDocumentMCPResult
-        | None
-    ) = None
-
-    error: (
-        str | None
-    ) = None
-
-
-class KnowledgeSearchMCPResult(
-    BaseModel
-):
-    ok: bool
-    status: str
-
-    hits: list[
-        KnowledgeSearchHitMCPResult
-    ] = Field(
-        default_factory=list
-    )
-
-    count: int = 0
-
-    truncated: bool = False
-
-    error: (
-        str | None
-    ) = None
 
 
 def register_knowledge_tools(

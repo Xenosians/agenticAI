@@ -5,13 +5,12 @@ authenticated caller identity. Retrieved text never grants tool authority.
 """
 import hashlib
 import json
-import re
-import sqlite3
 from pathlib import Path
 
 from .base import KnowledgeService
 from .types import KnowledgeDocument, KnowledgeLookupResult, KnowledgeSearchHit, KnowledgeSearchQuery, KnowledgeSearchResult
 from learning.evidence.sanitizer import sanitize_text
+from services.retrieval.fts import FtsRecord, search_fts
 
 
 class LocalKnowledgeService(KnowledgeService):
@@ -46,20 +45,18 @@ class LocalKnowledgeService(KnowledgeService):
             raise ValueError("Knowledge snapshot is empty.")
 
     def search(self, query: KnowledgeSearchQuery) -> KnowledgeSearchResult:
-        tokens = re.findall(r"\w+", query.query, flags=re.UNICODE)
-        if not tokens:
-            return KnowledgeSearchResult(ok=True, status="success")
-        # A per-call connection avoids crossing MCP worker thread boundaries.
-        with sqlite3.connect(":memory:") as db:
-            db.execute("CREATE VIRTUAL TABLE docs USING fts5(id UNINDEXED, kind UNINDEXED, title, summary, content, tags)")
-            db.executemany("INSERT INTO docs VALUES(?,?,?,?,?,?)", [
-                (d.document_id, d.kind, d.title, d.summary, d.content, " ".join(d.tags))
-                for d in self.documents.values()])
-            expression = " OR ".join('"' + token + '"' for token in tokens)
-            rows = db.execute("SELECT id FROM docs WHERE docs MATCH ? AND (? IS NULL OR kind = ?) ORDER BY bm25(docs), id LIMIT ?",
-                (expression, query.kind, query.kind, query.limit + 1)).fetchall()
-        hits = [KnowledgeSearchHit.model_validate(self.documents[row[0]].model_dump()) for row in rows[:query.limit]]
-        return KnowledgeSearchResult(ok=True, status="success", hits=hits, count=len(hits), truncated=len(rows) > query.limit)
+        # Only documents that passed this service's public snapshot admission
+        # enter the shared search mechanics. Search itself grants no access.
+        matches = search_fts(
+            (FtsRecord(d.document_id, d.content, kind=d.kind, title=d.title,
+                       summary=d.summary, tags=tuple(d.tags))
+             for d in self.documents.values()),
+            query.query, limit=query.limit, kind=query.kind,
+        )
+        hits = [KnowledgeSearchHit.model_validate(self.documents[identity].model_dump())
+                for identity in matches.identifiers]
+        return KnowledgeSearchResult(ok=True, status="success", hits=hits,
+                                     count=len(hits), truncated=matches.truncated)
 
     def _get(self, identity: str, kind: str) -> KnowledgeLookupResult:
         document = self.documents.get(identity)

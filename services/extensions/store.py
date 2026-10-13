@@ -143,18 +143,29 @@ class ExtensionStore:
                         "purpose": purpose, "sha256": digest, "state": "ready", "content": content})
 
     def search(self, owner: str, identity: str, query: str, limit=5) -> list[dict]:
+        from services.retrieval.fts import FtsRecord, search_fts
+        from services.extensions.retrieval import dataset_chunks, make_hit
+        resource = self._retrieval_resource(owner, identity)
+        chunks = dataset_chunks(resource["content"]["text"])
+        # Authorization above selects the corpus; the shared FTS engine never
+        # receives another owner's records or makes permission decisions.
+        matches = search_fts([FtsRecord(identifier=str(i), content=text)
+            for i, text in enumerate(chunks, 1)], query,
+            limit=min(max(int(limit), 1), 10), max_query_tokens=32)
+        return [make_hit(resource, int(index), chunks[int(index)-1]) for index in matches.identifiers]
+
+    def _retrieval_resource(self, owner: str, identity: str) -> dict:
         resource = self.get(owner, identity)
-        if resource["kind"] != "dataset" or resource.get("purpose") != "rag":
-            raise ValueError("Not a retrieval dataset")
-        words = re.findall(r"\w+", query)[:32]
-        if not words:
-            return []
-        # FTS runs only over this caller's selected dataset, never a shared corpus.
-        chunks = [resource["content"]["text"][i:i+2000] for i in range(0, len(resource["content"]["text"]), 1800)]
-        with sqlite3.connect(":memory:") as db:
-            db.execute("CREATE VIRTUAL TABLE docs USING fts5(content)")
-            db.executemany("INSERT INTO docs(content) VALUES (?)", [(chunk,) for chunk in chunks])
-            rows = db.execute("SELECT rowid,content FROM docs WHERE docs MATCH ? ORDER BY rank LIMIT ?",
-                              (" OR ".join('"'+word+'"' for word in words), min(max(int(limit), 1), 10))).fetchall()
-        return [{"content": row[1], "source": resource["source"], "dataset_id": identity,
-                 "chunk": row[0], "sha256": resource["sha256"], "trust": "untrusted_retrieval"} for row in rows]
+        if resource["kind"] != "dataset" or resource.get("purpose") != "rag" or resource.get("state") != "ready":
+            raise ValueError("Not an admitted retrieval dataset")
+        return resource
+
+    def resolve(self, owner: str, identity: str, chunk: int, sha256: str) -> dict:
+        from services.extensions.retrieval import dataset_chunks, make_hit
+        resource = self._retrieval_resource(owner, identity)
+        if sha256 != resource["sha256"]:
+            raise ValueError("Retrieved reference belongs to a different dataset version")
+        chunks = dataset_chunks(resource["content"]["text"])
+        if type(chunk) is not int or not 1 <= chunk <= len(chunks):
+            raise ValueError("Retrieved chunk does not exist")
+        return make_hit(resource, chunk, chunks[chunk-1])

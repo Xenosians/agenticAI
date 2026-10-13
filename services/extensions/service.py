@@ -90,8 +90,10 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
     store = extension_store()
     if action == "list":
         from tools.registry import TOOLS
+        from services.extensions.providers import provider_presets
         return {"schema": "extension-catalog.v1", "resources": [public_resource(r) for r in store.list(owner)],
                 "selected": store.selected(owner),
+                "provider_presets": provider_presets(),
                 "local_profiles": [{"id": key, "backend": profile.backend} for key, profile in settings.model_profiles.items() if profile.enabled and not key.startswith("user-upload-")],
                 "capabilities": [{"id": name, "description": tool.get("description", ""),
                                   "effect": tool.get("effect"), "permission": tool.get("permission")}
