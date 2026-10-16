@@ -150,6 +150,13 @@ class InferenceCoordinator:
             stage_label = InferenceStage(stage).value
             repair_label = InferenceStage(repair_of).value if repair_of is not None else None
             adapter = "local"
+            from services.job_progress import report_progress
+            progress_stage = {
+                "CONTROL_ROUTING": "routing", "SEMANTIC_ROUTING": "routing",
+                "SPECIALIST_REASONING": "planning", "SYNTHESIS": "synthesizing",
+            }.get(repair_label or stage_label)
+            if operation == "generate" and progress_stage:
+                report_progress(progress_stage)
             profile = selected_profile(stage=stage, repair_of=repair_of)
             if operation == "generate":
                 messages = with_retrieval(messages, stage=stage, repair_of=repair_of)

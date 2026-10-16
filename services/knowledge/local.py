@@ -27,7 +27,7 @@ class LocalKnowledgeService(KnowledgeService):
                 raise ValueError("Knowledge records must be JSON objects.")
             if row.get("visibility") != "public" or row.get("reviewed") is not True:
                 raise ValueError("Only reviewed public documents are admitted.")
-            if not row.get("source") or not row.get("license"):
+            if any(not isinstance(row.get(key), str) or not row[key].strip() for key in ("source", "license")):
                 raise ValueError("Knowledge provenance and license are required.")
             document = KnowledgeDocument.model_validate({**row, "provider": "local-fts5",
                 "provenance": {"source": row["source"], "license": row["license"],
@@ -35,9 +35,12 @@ class LocalKnowledgeService(KnowledgeService):
                     "content_sha256": hashlib.sha256(str(row.get("content", "")).encode()).hexdigest()}})
             if document.kind not in {"knowledge", "runbook"} or not document.content.strip():
                 raise ValueError("Invalid knowledge kind or empty content.")
+            if not document.document_id.strip() or not document.title.strip():
+                raise ValueError("Knowledge identity and title must not be empty.")
             if document.document_id in self.documents:
                 raise ValueError("Duplicate document identity.")
-            text = "\n".join([document.title, document.summary, document.content, *document.tags])
+            text = "\n".join([document.title, document.summary, document.content, *document.tags,
+                              row["source"], row["license"]])
             if sanitize_text(text) != text:
                 raise ValueError("Knowledge contains privacy/secret scanner findings.")
             self.documents[document.document_id] = document

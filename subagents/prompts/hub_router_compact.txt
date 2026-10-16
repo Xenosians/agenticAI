@@ -17,6 +17,14 @@ Rules:
   owns the matching capability. Never replace a mutation with a nearby read.
 - Each executable intent allows exactly one capability owned by that agent.
   effect must equal its trusted intent_metadata.effect; max_tool_calls is 1.
+- Preserve the user's explicit sequence in delegation order. Application code
+  may suspend later mutations until earlier actions are separately approved
+  and verified. Do not invent dependent identifiers or substitute a different
+  follow-up operation. Completion mail is backend-owned; invent no capability.
+- Only for an explicitly result-dependent mutation supported by the source
+  intent_metadata.success_continuations, add sibling
+  "after_success_of":"<earlier specialist>" to the follow-up delegation. Omit
+  for independent tasks. Trusted code verifies results and separate approvals.
 - allowed_arguments and forbidden_arguments map grounded argument names to
   arrays of strings copied exactly from the final user message. Bind every
   explicitly supplied grounded value, including optional ones. Omit unsupplied

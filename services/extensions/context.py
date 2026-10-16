@@ -23,11 +23,17 @@ retrieval_evidence: ContextVar[
     default=[],
 )
 
+# Resource identifiers only. Continuations pin the original owner selection
+# without serializing API credentials or changing the user's preferences.
+execution_selection: ContextVar[dict | None] = ContextVar("execution_selection", default=None)
+
 
 @contextmanager
 def owner_execution(
     owner: str,
     message: str,
+    *,
+    selection: dict | None = None,
 ):
     from services.extensions.service import (
         extension_store,
@@ -37,11 +43,12 @@ def owner_execution(
         extension_store()
     )
 
-    selection = (
-        store.selected(
-            owner
-        )
-    )
+    selection = dict(store.selected(owner) if selection is None else selection)
+    if set(selection) != {"model_id", "dataset_id"} or any(
+        value is not None and (not isinstance(value, str) or not value)
+        for value in selection.values()
+    ):
+        raise ValueError("Invalid saved execution selection.")
 
     profile = (
         store.get(
@@ -83,6 +90,8 @@ def owner_execution(
         )
     )
 
+    selection_token = execution_selection.set(selection)
+
     try:
         yield (
             profile,
@@ -94,6 +103,7 @@ def owner_execution(
         )
 
     finally:
+        execution_selection.reset(selection_token)
         retrieval_evidence.reset(
             evidence_token
         )

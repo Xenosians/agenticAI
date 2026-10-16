@@ -472,6 +472,17 @@ class Orchestrator:
                 )
             )
 
+        # The bounded onboarding workflow suspends before the second mutation.
+        # Its exact validated delegation is persisted by the API alongside the
+        # first approval, before Phoenix can expose approval controls.
+        from agent.onboarding import account_ticket_plan, can_suspend_onboarding, encode_plan, unsupported_dependency
+        onboarding = account_ticket_plan(delegations)
+        if unsupported_dependency(delegations, onboarding):
+            message = "The requested dependent execution plan is not supported safely. No action was executed."
+            return HubResult(status="error", user_request=user_request, error=message, answer=message)
+        if onboarding is not None:
+            delegations = delegations[:1]
+
         results: list[
             AgentResult
         ] = []
@@ -954,6 +965,12 @@ class Orchestrator:
                 ),
             )
         )
+
+        if can_suspend_onboarding(onboarding, results):
+            # Private pending plan is ignored by dataclasses.asdict(), synthesis
+            # and training serialization. Only the API persists it with owner
+            # and durable job identity, never a model-selected owner.
+            setattr(hub_result, "_pending_onboarding", encode_plan(onboarding))
 
         return (
             hub_result

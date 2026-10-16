@@ -5,6 +5,7 @@ from pathlib import (
 import tools.git as git_tools
 
 from services.git_repositories import (
+    GitRepositoryRegistry,
     GitRepositoryTarget,
 )
 
@@ -313,7 +314,14 @@ def test_unstaged_and_staged_commands_are_distinct(
     )
 
 
-def test_staged_diff_exposes_bounded_repository_values():
+def test_staged_diff_exposes_bounded_repository_values(tmp_path, monkeypatch):
+
+    registry = GitRepositoryRegistry(
+        root=tmp_path,
+        repositories={"ai": tmp_path / "ai", "custom-library": tmp_path / "library"},
+        default_repository="ai",
+    )
+    monkeypatch.setattr("tools.git.catalog.build_git_repository_registry", lambda: registry)
 
     spec = (
         build_capability_spec(
@@ -335,7 +343,6 @@ def test_staged_diff_exposes_bounded_repository_values():
         ]
         == [
             "ai",
-            "backend",
-            "frontend",
+            "custom-library",
         ]
     )

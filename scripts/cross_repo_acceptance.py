@@ -480,6 +480,25 @@ class BrowserPathClient:
             response.json(), expected_id=job_id,
         )
 
+    def reject_job(
+        self,
+        job_id: str,
+    ) -> dict[str, Any]:
+        if self.job_api_version != 2:
+            raise AcceptanceFailure(
+                "Human rejection acceptance requires the v2 job contract."
+            )
+        response = self.client.post(
+            f"/api/v2/jobs/{job_id}/reject",
+            headers=self._mutation_headers(),
+            json={},
+        )
+        response.raise_for_status()
+        return self.contracts.validate_job(
+            response.json(),
+            expected_id=job_id,
+        )
+
     def assert_approval_replay_rejected(self, job_id: str, *, status: str) -> None:
         response = self.client.post(
             f"/api/v{self.job_api_version}/jobs/{job_id}/approve",
@@ -501,6 +520,39 @@ class BrowserPathClient:
             matching_statuses.add("outcome_unknown")
         if payload.get("status") not in matching_statuses:
             raise AcceptanceFailure("Approval replay reported a different terminal state.")
+
+    def assert_rejection_replay_rejected(
+        self,
+        job_id: str,
+        *,
+        status: str,
+    ) -> None:
+        response = self.client.post(
+            f"/api/v2/jobs/{job_id}/reject",
+            headers=self._mutation_headers(),
+            json={},
+        )
+        if response.status_code != 409:
+            raise AcceptanceFailure(
+                "Terminal rejection replay was not rejected with HTTP 409."
+            )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise AcceptanceFailure(
+                "Rejection replay returned a non-object rejection."
+            ) from exc
+        if (
+            not isinstance(payload, dict)
+            or payload.get("error") != "job_not_waiting_approval"
+        ):
+            raise AcceptanceFailure(
+                "Rejection replay lacked a terminal-state rejection."
+            )
+        if payload.get("status") != status:
+            raise AcceptanceFailure(
+                "Rejection replay reported a different terminal state."
+            )
 
     def get_history(self, chat_id: str) -> dict[str, Any]:
         response = self.client.get(
@@ -649,6 +701,48 @@ def _assert_case(
     if not isinstance(workers, list) or any(not isinstance(worker, dict) for worker in workers):
         raise AcceptanceFailure("Job contains invalid worker evidence.")
 
+    security_fail_closed = (
+        case.get("expect_no_authority_delegation")
+        is True
+    )
+
+    if security_fail_closed:
+        if status != "failed":
+            raise AcceptanceFailure(
+                "Security fail-closed case did not terminate as failed."
+            )
+
+        if job.get("selected_agent") is not None:
+            raise AcceptanceFailure(
+                "Ambiguous mutation delegated authority to a specialist."
+            )
+
+        if job.get("proposed_tool") is not None or tool is not None:
+            raise AcceptanceFailure(
+                "Ambiguous mutation produced a tool proposal."
+            )
+
+        if result is not None:
+            raise AcceptanceFailure(
+                "Ambiguous mutation produced application execution results."
+            )
+
+        durable_error = job.get("error")
+        if not isinstance(durable_error, str) or not durable_error.strip():
+            raise AcceptanceFailure(
+                "Security fail-closed case lacks a durable refusal reason."
+            )
+
+        expected_error = case.get("expected_error_contains")
+        if (
+            isinstance(expected_error, str)
+            and expected_error
+            and expected_error.lower() not in durable_error.lower()
+        ):
+            raise AcceptanceFailure(
+                "Security fail-closed case returned an unexpected refusal reason."
+            )
+
     if case.get("require_tool_result") is True:
         expected = case.get("expected_tool")
         evidence = [worker for worker in workers
@@ -664,16 +758,18 @@ def _assert_case(
     if case.get("forbid_tool_execution") is True:
         if any(worker.get("tool_result") is not None for worker in workers):
             raise AcceptanceFailure("Fail-closed case contains executed tool evidence.")
-        if not isinstance(result, dict) or not isinstance(result.get("results"), list):
-            raise AcceptanceFailure("Fail-closed case lacks structured resolution evidence.")
-        answer = result.get("answer")
-        if not isinstance(answer, str) or not answer.strip():
-            raise AcceptanceFailure("Fail-closed case lacks an application answer.")
-        safe_workers = all(worker.get("status") in {"clarification_required", "denied"}
-                           for worker in workers)
-        no_route = not workers and result.get("routes") == []
-        if not ((workers and safe_workers) or no_route):
-            raise AcceptanceFailure("Fail-closed case lacks a clarification, denial, or empty plan.")
+
+        if not security_fail_closed:
+            if not isinstance(result, dict) or not isinstance(result.get("results"), list):
+                raise AcceptanceFailure("Fail-closed case lacks structured resolution evidence.")
+            answer = result.get("answer")
+            if not isinstance(answer, str) or not answer.strip():
+                raise AcceptanceFailure("Fail-closed case lacks an application answer.")
+            safe_workers = all(worker.get("status") in {"clarification_required", "denied"}
+                               for worker in workers)
+            no_route = not workers and result.get("routes") == []
+            if not ((workers and safe_workers) or no_route):
+                raise AcceptanceFailure("Fail-closed case lacks a clarification, denial, or empty plan.")
 
     expected_tool = case.get(
         "expected_tool"
@@ -854,6 +950,140 @@ def _assert_approval_execution(
             raise AcceptanceFailure("Completed approval lacks a successful structured tool result.")
         if not isinstance(result.get("answer"), str) or not result["answer"].strip():
             raise AcceptanceFailure("Completed approval lacks a visible durable answer.")
+
+
+def _assert_rejection_execution(
+    original: dict[str, Any],
+    resolved: dict[str, Any],
+    case: dict[str, Any],
+) -> None:
+    _assert_proposal_binding(original, resolved)
+    expected = case.get("expected_post_rejection_status", ["denied"])
+    if (
+        not isinstance(expected, list)
+        or not expected
+        or resolved.get("status") not in expected
+    ):
+        raise AcceptanceFailure(
+            "Rejected job did not reach its explicit terminal outcome."
+        )
+
+    proposal = original.get("proposed_tool")
+    approval_id = proposal.get("approval_id") if isinstance(proposal, dict) else None
+    result = resolved.get("result")
+    outcome = result.get("approval_execution") if isinstance(result, dict) else None
+
+    if not isinstance(approval_id, str) or not approval_id or not isinstance(outcome, dict):
+        raise AcceptanceFailure(
+            "Rejected job lacks persisted approval decision evidence."
+        )
+    if (
+        outcome.get("approval_id") != approval_id
+        or outcome.get("protocol_status") != "processed"
+        or outcome.get("execution_status") != "rejected"
+        or outcome.get("approval_status") != "rejected"
+        or not isinstance(outcome.get("replayed"), bool)
+    ):
+        raise AcceptanceFailure(
+            "Rejected job has an inconsistent authority outcome."
+        )
+    if outcome.get("result") is not None:
+        raise AcceptanceFailure(
+            "Human rejection unexpectedly contains tool execution evidence."
+        )
+    if not isinstance(outcome.get("error"), str) or not outcome["error"].strip():
+        raise AcceptanceFailure(
+            "Human rejection lacks a durable explanation."
+        )
+
+    workers = result.get("results", []) if isinstance(result, dict) else []
+    if (
+        not isinstance(workers, list)
+        or any(
+            not isinstance(worker, dict) or worker.get("tool_result") is not None
+            for worker in workers
+        )
+    ):
+        raise AcceptanceFailure(
+            "Human rejection contains executed tool evidence."
+        )
+    if not isinstance(result.get("answer"), str) or not result["answer"].strip():
+        raise AcceptanceFailure(
+            "Human rejection lacks a visible durable answer."
+        )
+    if not isinstance(resolved.get("error"), str) or not resolved["error"].strip():
+        raise AcceptanceFailure(
+            "Denied job lacks its durable rejection reason."
+        )
+
+
+def _execute_rejection_case(
+    client: BrowserPathClient,
+    case: dict[str, Any],
+    original: dict[str, Any],
+    *,
+    poll_seconds: float,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    if case.get("allow_reject") is not True:
+        raise AcceptanceFailure(
+            "Automatic rejection requires explicit allow_reject=true."
+        )
+    if client.job_api_version != 2:
+        raise AcceptanceFailure(
+            "Human rejection acceptance requires --job-api-version 2."
+        )
+
+    original = deepcopy(original)
+    job_id = original["job_id"]
+
+    response = client.reject_job(job_id)
+    _assert_proposal_binding(original, response)
+
+    resolved = client.wait_for_terminal(job_id, poll_seconds=poll_seconds)
+    _assert_rejection_execution(original, resolved, case)
+
+    reopened = client.get_job(job_id)
+    _assert_rejection_execution(original, reopened, case)
+    if reopened != resolved:
+        raise AcceptanceFailure(
+            "Rejected terminal job changed when reopened."
+        )
+
+    client.assert_approval_replay_rejected(
+        job_id,
+        status=reopened["status"],
+    )
+    client.assert_rejection_replay_rejected(
+        job_id,
+        status=reopened["status"],
+    )
+
+    after_replay = client.get_job(job_id)
+    if after_replay != reopened:
+        raise AcceptanceFailure(
+            "Rejected decision replay changed the durable terminal job."
+        )
+
+    proposal = original["proposed_tool"]
+    return after_replay, {
+        "decision": "reject",
+        "original_job_id": job_id,
+        "approval_id": proposal["approval_id"],
+        "proposal_sha256": hashlib.sha256(
+            json.dumps(
+                proposal,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest(),
+        "proposal_binding_preserved": True,
+        "no_tool_execution_verified": True,
+        "terminal_reopen_unchanged": True,
+        "approve_replay_http_status": 409,
+        "reject_replay_http_status": 409,
+        "terminal_after_replay_unchanged": True,
+    }
 
 
 def _execute_approval_case(
@@ -1085,31 +1315,57 @@ def run_live(
 
             _assert_job_context(terminal, chat_id=chat_id, message=prompt)
 
-            _assert_case(
-                case,
-                terminal,
-                job_api_version=args.job_api_version,
-            )
+            try:
+                _assert_case(
+                    case,
+                    terminal,
+                    job_api_version=args.job_api_version,
+                )
+            except Exception as case_exc:
+                diagnostic = {
+                    "id": case_id,
+                    "outcome": "failed",
+                    "job_id": job_id,
+                    "status": terminal.get("status"),
+                    "selected_agent": terminal.get("selected_agent"),
+                    "tool": _tool_name(terminal),
+                    "durable_error": terminal.get("error"),
+                    "error_type": type(case_exc).__name__,
+                    "error": str(case_exc)[:500],
+                }
+                results.append(diagnostic)
+
+                print(f"[FAIL] {case_id}")
+                print("  job_id:", job_id)
+                print("  status:", terminal.get("status"))
+                print("  selected_agent:", terminal.get("selected_agent"))
+                print("  tool:", _tool_name(terminal))
+                if terminal.get("error"):
+                    print("  durable_error:", terminal.get("error"))
+
+                raise
 
             execution_checks = None
             if (
-                terminal.get(
-                    "status"
+                terminal.get("status") == "waiting_approval"
+                and case.get("kind") == "rejection_gate"
+            ):
+                print("  rejecting explicitly safe acceptance proposal")
+                terminal, execution_checks = _execute_rejection_case(
+                    client,
+                    case,
+                    terminal,
+                    poll_seconds=args.poll_interval,
                 )
-                == "waiting_approval"
+            elif (
+                terminal.get("status") == "waiting_approval"
                 and args.execute_approvals
             ):
-                if (
-                    case.get(
-                        "allow_execute"
-                    )
-                    is not True
-                ):
+                if case.get("allow_execute") is not True:
                     raise AcceptanceFailure(
                         f"{case_id}: --execute-approvals was supplied, "
                         "but this case is not explicitly allow_execute=true."
                     )
-
                 print("  approving explicitly allowed case")
                 terminal, execution_checks = _execute_approval_case(
                     client, case, terminal, poll_seconds=args.poll_interval,
@@ -1147,14 +1403,17 @@ def run_live(
             )
 
     except Exception as exc:
-        results.append(
-            {
-                "id": "__runner__",
-                "outcome": "failed",
-                "error_type": type(exc).__name__,
-                "error": str(exc)[:500],
-            }
-        )
+        # Case-level assertion failures already carry their bounded durable
+        # diagnostic. Reserve __runner__ for failures outside a concrete case.
+        if not results or results[-1].get("outcome") != "failed":
+            results.append(
+                {
+                    "id": "__runner__",
+                    "outcome": "failed",
+                    "error_type": type(exc).__name__,
+                    "error": str(exc)[:500],
+                }
+            )
         raise
 
     finally:

@@ -88,6 +88,18 @@ DELEGATION RULES
 5. Multiple specialists may be selected only when the request genuinely
    spans multiple specialist domains.
 
+   When the user explicitly requests sequential operations, preserve that
+   order in delegations. Application code may suspend later mutations until
+   earlier actions are separately approved and verified. Never invent a
+   dependent identifier or substitute a different follow-up operation.
+   Completion notifications are backend-owned; do not invent a mail capability.
+
+   For an explicitly result-dependent mutation sequence supported by the source
+   capability's intent_metadata.success_continuations, add sibling field
+   "after_success_of":"<earlier specialist name>" to the follow-up delegation.
+   Omit it for independent tasks. This requests ordering only; trusted code
+   verifies the earlier result and requires a separate follow-up approval.
+
 6. Never invent a specialist.
 
 7. Never invent a capability.

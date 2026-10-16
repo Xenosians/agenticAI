@@ -797,6 +797,16 @@ class LLMRouter:
                     agent_name
                 )
 
+            from agent.onboarding import parse_onboarding_dependency
+            try:
+                after_success_of = parse_onboarding_dependency(
+                    delegation.get("after_success_of"), prior_delegations=validated,
+                    target_intent=semantic_intent, condition=condition,
+                )
+            except ValueError as exc:
+                self._contract_error(f"Invalid mutation continuation: {exc}")
+                continue
+
             validated.append(
                 SpecialistRequest(
                     agent_name=(
@@ -814,6 +824,7 @@ class LLMRouter:
                     condition=(
                         condition
                     ),
+                    after_success_of=after_success_of,
                 )
             )
 

@@ -858,7 +858,17 @@ def build_router_semantic_agent_spec(
                         tool
                     ),
                 ),
+
         }
+
+        successors = tool.get("success_continuations", [])
+        if (not isinstance(successors, list) or any(
+            not isinstance(name, str) or not name or tool_lookup(name) is None
+            for name in successors
+        )):
+            raise ValueError("Invalid trusted success_continuations metadata.")
+        if successors:
+            capability["intent_metadata"]["success_continuations"] = list(dict.fromkeys(successors))
 
     return spec
 

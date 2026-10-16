@@ -179,15 +179,15 @@ credentials. A connection probe alone is not an ITSM execution test.
   one unconditional delegation per specialist. An explicit validated result
   condition can add one conditional mutation; condition chains and loops are
   rejected. This is not an unrestricted recursive agent loop.
-- The remaining durable acceptance work is a real authenticated request through
-  Phoenix, persisted approval and decision handling, tool execution, completion
-  delivery and the browser's final state. Denial and ambiguous mutation outcomes
-  also need evidence at that boundary; unknown outcomes must not be blindly retried.
-- Existing `denied` outcomes represent policy denial. Human rejection/cancellation
-  of a saved pending approval still needs an explicit durable lifecycle; this
-  implementation does not claim that feature. The cross-repository runner now
-  validates canonical v2 responses by default; its pending proposal check does
-  not prove approved execution, human rejection, or unknown-outcome recovery.
+- The remaining durable acceptance work is release evidence across the real
+  authenticated product path: approved disposable execution, completion delivery,
+  browser restoration, and controlled ambiguous-outcome handling. Unknown mutation
+  outcomes must never be blindly retried.
+- Human rejection now has an explicit durable v2 lifecycle. AI atomically competes
+  `pending -> rejected` against execution, Phoenix projects the authoritative
+  outcome as `denied`, and the browser restores the saved rejection after reload.
+  The cross-repository suite includes a safe rejection case that executes no tool.
+  This does not by itself prove approved execution or unknown-outcome recovery.
 - Hosted inference remains subject to cumulative account quotas and output
   truncation. Structured failure categories expose these causes; they do not
   automatically retry requests or reinterpret incomplete output as success.

@@ -89,11 +89,13 @@ def test_v2_read_and_approval_use_v2_but_creation_uses_v1():
         client.create_job(chat_id="chat-test", message="Fixture request")
         client.get_job("job-test")
         client.approve_job("job-test")
+        client.reject_job("job-test")
     finally:
         client.close()
     assert requests == [
         ("POST", "/api/v1/jobs"), ("GET", "/api/v2/jobs/job-test"),
         ("POST", "/api/v2/jobs/job-test/approve"),
+        ("POST", "/api/v2/jobs/job-test/reject"),
     ]
 
 
@@ -227,6 +229,72 @@ def test_fail_closed_case_cannot_pass_because_the_runtime_failed():
         acceptance._assert_case(case, payload)
 
 
+def test_ambiguous_mutation_security_failure_proves_no_authority_was_created():
+    case = {
+        "expected_terminal_status": ["failed"],
+        "forbid_tool_execution": True,
+        "forbid_waiting_approval": True,
+        "forbid_approval_tool": "unlock_user",
+        "expect_no_authority_delegation": True,
+        "expected_error_contains": (
+            "could not be safely interpreted into a valid governed execution plan"
+        ),
+    }
+
+    payload = job_payload("failed")
+    payload["selected_agent"] = None
+    payload["proposed_tool"] = None
+    payload["result"] = None
+    payload["error"] = (
+        "The request could not be safely interpreted into a valid governed execution plan."
+    )
+
+    acceptance._assert_case(case, payload)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"selected_agent": "account-specialist"},
+        {
+            "proposed_tool": {
+                "tool": "unlock_user",
+                "arguments": {"user_id": "alice"},
+                "approval_id": "approval-unsafe",
+            }
+        },
+        {
+            "result": {
+                "routes": [],
+                "results": [],
+                "answer": "Unexpected application result",
+            }
+        },
+        {"error": "AI provider timed out."},
+    ],
+)
+def test_security_fail_closed_case_rejects_failure_that_does_not_prove_predelegation_refusal(
+    mutation,
+):
+    case = {
+        "expected_terminal_status": ["failed"],
+        "forbid_tool_execution": True,
+        "expect_no_authority_delegation": True,
+        "expected_error_contains": (
+            "could not be safely interpreted into a valid governed execution plan"
+        ),
+    }
+
+    payload = job_payload("failed")
+    payload["error"] = (
+        "The request could not be safely interpreted into a valid governed execution plan."
+    )
+    payload.update(mutation)
+
+    with pytest.raises(acceptance.AcceptanceFailure):
+        acceptance._assert_case(case, payload)
+
+
 def test_fail_closed_case_requires_a_visible_safe_resolution():
     case = {"expected_terminal_status": ["completed"], "forbid_tool_execution": True}
     payload = job_payload("completed")
@@ -264,6 +332,7 @@ def test_shipped_cases_have_explicit_outcomes_and_visible_coverage_limits():
     assert config["coverage_limits"]
     assert all(case["require_tool_result"] for case in cases if case["kind"] == "read")
     assert all(not case.get("allow_execute") for case in cases)
+    assert any(case.get("kind") == "rejection_gate" and case.get("allow_reject") is True for case in cases)
 
 
 def test_skipped_selected_case_writes_incomplete_report_and_fails(monkeypatch, tmp_path):
@@ -363,6 +432,26 @@ def completed_approval():
         "execution_status": "succeeded", "approval_status": "approved", "replayed": False,
         "result": {"ok": True, "status": "success", "created": True}, "error": None,
     }}
+    return job
+
+
+def rejected_approval():
+    job = pending_approval()
+    job["status"] = "denied"
+    message = "Action rejected by the user. No tool was executed."
+    job["error"] = message
+    job["result"] = {
+        "answer": message,
+        "approval_execution": {
+            "approval_id": "approval-test",
+            "protocol_status": "processed",
+            "execution_status": "rejected",
+            "approval_status": "rejected",
+            "replayed": False,
+            "result": None,
+            "error": message,
+        },
+    }
     return job
 
 
@@ -525,6 +614,84 @@ def test_approval_execution_fails_on_changed_binding_result_or_accepted_replay(f
         with pytest.raises(acceptance.AcceptanceFailure):
             acceptance._execute_approval_case(
                 client, {"allow_execute": True}, pending_approval(), poll_seconds=0.001,
+            )
+    finally:
+        client.close()
+
+
+def test_human_rejection_is_durable_executes_no_tool_and_replays_conflict():
+    requests = []
+    resolved = rejected_approval()
+    reject_posts = 0
+
+    def handler(request):
+        nonlocal reject_posts
+        requests.append((request.method, request.url.path))
+        if request.method == "POST":
+            assert request.headers["X-CSRF-Token"] == "test-csrf"
+            if request.url.path.endswith("/reject"):
+                reject_posts += 1
+                if reject_posts > 1:
+                    return httpx.Response(
+                        409,
+                        json={
+                            "error": "job_not_waiting_approval",
+                            "status": "denied",
+                        },
+                    )
+            elif request.url.path.endswith("/approve"):
+                return httpx.Response(
+                    409,
+                    json={
+                        "error": "job_not_waiting_approval",
+                        "status": "denied",
+                    },
+                )
+        return httpx.Response(200, json=deepcopy(resolved))
+
+    client = client_for(handler)
+    original = pending_approval()
+    try:
+        result, checks = acceptance._execute_rejection_case(
+            client,
+            {
+                "allow_reject": True,
+                "expected_post_rejection_status": ["denied"],
+            },
+            original,
+            poll_seconds=0.001,
+        )
+    finally:
+        client.close()
+
+    assert original == pending_approval()
+    assert result == resolved
+    assert checks["decision"] == "reject"
+    assert checks["no_tool_execution_verified"] is True
+    assert checks["proposal_binding_preserved"] is True
+    assert len(checks["proposal_sha256"]) == 64
+    assert "private-fixture-directory" not in json.dumps(checks)
+    assert requests == [
+        ("POST", "/api/v2/jobs/job-test/reject"),
+        ("GET", "/api/v2/jobs/job-test"),
+        ("GET", "/api/v2/jobs/job-test"),
+        ("POST", "/api/v2/jobs/job-test/approve"),
+        ("POST", "/api/v2/jobs/job-test/reject"),
+        ("GET", "/api/v2/jobs/job-test"),
+    ]
+
+
+def test_rejection_requires_explicit_safe_case_opt_in():
+    client = client_for(
+        lambda request: pytest.fail("Rejection was not explicitly enabled")
+    )
+    try:
+        with pytest.raises(acceptance.AcceptanceFailure, match="allow_reject"):
+            acceptance._execute_rejection_case(
+                client,
+                {},
+                pending_approval(),
+                poll_seconds=0.001,
             )
     finally:
         client.close()

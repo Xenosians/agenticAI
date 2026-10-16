@@ -976,6 +976,9 @@ class ToolGateway:
         # AUTO-APPROVED EXECUTION
         # ========================================================
 
+        from services.job_progress import report_progress
+        report_progress("executing")
+
         result = (
             await self.mcp.call_tool(
                 tool_name,

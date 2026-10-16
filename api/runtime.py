@@ -115,6 +115,8 @@ class ApplicationRuntime:
         default_factory=dict
     )
 
+    workflow_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
+
     outbox_task: (
         asyncio.Task
         | None

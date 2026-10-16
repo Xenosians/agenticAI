@@ -561,6 +561,11 @@ class AgentRuntime:
                 }
             )
 
+        from agent.onboarding import VerifiedAccountEvidence, account_evidence_prompt
+        evidence = task.context.get("verified_account")
+        if isinstance(evidence, VerifiedAccountEvidence):
+            messages.append({"role": "user", "content": account_evidence_prompt(evidence)})
+
         # ========================================================
         # EXECUTION PROVENANCE
         # ========================================================

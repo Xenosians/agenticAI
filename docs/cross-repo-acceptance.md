@@ -25,6 +25,7 @@ The live runner uses the same Phoenix endpoints used by the Nim/Karax frontend:
 - `GET /api/v2/jobs/:id`
 - `GET /api/v2/chats/:id/history`
 - `POST /api/v2/jobs/:id/approve` only when explicit execution is enabled.
+- `POST /api/v2/jobs/:id/reject` for the shipped safe human-rejection case.
 
 Reads and approval responses must satisfy the canonical backend JSON schemas.
 Use `--job-api-version 1` only for legacy contract checks; job creation continues
@@ -38,9 +39,15 @@ against the job; there is currently no separate backend history JSON schema.
 
 ## Safety
 
-The shipped mutation case verifies that the job reaches
+The shipped mutation proposal case verifies that the job reaches
 `waiting_approval`, but has `allow_execute=false`. It is therefore never
 executed by the shipped suite.
+
+A separate shipped rejection case creates another pending proposal and sends the
+explicit v2 reject decision. It requires `allow_reject=true`, verifies the durable
+`rejected -> denied` projection, verifies that no tool result exists, reopens the
+terminal job, and proves both later approve and reject submissions receive HTTP 409.
+Rejection is therefore exercised without executing the proposed mutation.
 
 For a separately reviewed disposable fixture, copy the case manifest, set only
 the intended case's `allow_execute=true`, and pass both `--case` and
@@ -163,3 +170,35 @@ python scripts/cross_repo_acceptance.py \
 
 Do not pass `--execute-approvals` unless an acceptance manifest has been
 reviewed and a specific case is explicitly marked `allow_execute=true`.
+
+## Ambiguous mutation security fail-closed proof
+
+An ambiguous mutation passes this security case only when durable state proves
+that authority was never created:
+
+```text
+status = failed
+selected_agent = null
+proposed_tool = null
+result = null
+durable error = governed-plan refusal
+```
+
+The runner does not treat arbitrary runtime failures as security success.
+Provider timeouts, delegated specialists, tool proposals, approvals, or
+application results fail this case.
+
+Security invariant:
+
+```text
+ambiguous required mutation target
+-> no unique trusted grounding
+-> no valid governed execution plan
+-> no authority delegation
+-> no proposal
+-> no approval
+-> no tool execution
+```
+
+The `failed` label is state-machine semantics; the security property is the
+absence of delegated authority and executable evidence.

@@ -156,6 +156,10 @@ class SpecialistRequest:
         | None
     ) = None
 
+    # Explicit model-proposed dependency; trusted workflow definitions admit
+    # supported pairs. It never grants permission or skips a later approval.
+    after_success_of: str | None = None
+
 
 @dataclass
 class AgentTask:

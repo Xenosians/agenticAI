@@ -98,6 +98,9 @@ from services.openwrt import openwrt_integration_status
 # ============================================================
 
 
+from agent.onboarding import WorkflowContinuation
+
+
 class ApprovalProtocolResponse(BaseModel):
     approval_id: str
     protocol_status: Literal["processed"]
@@ -106,6 +109,7 @@ class ApprovalProtocolResponse(BaseModel):
     replayed: bool
     result: dict[str, Any] | None
     error: str | None
+    continuation: WorkflowContinuation | None = None
 
 
 class AgentRunRequest(
@@ -1104,14 +1108,21 @@ async def execute_job(
         )
 
         from services.extensions.context import owner_execution
-        with owner_execution(payload.user_id, payload.message) as (profile, has_dataset):
-            result = await runtime.hub.run(payload.message, context=conversation_context)
+        from services.job_progress import job_progress
+        async with job_progress(runtime.settings, job_id, payload.attempt):
+            with owner_execution(payload.user_id, payload.message) as (profile, has_dataset):
+                result = await runtime.hub.run(payload.message, context=conversation_context)
+                from api.workflows import persist_workflow_continuation
+                workflow = persist_workflow_continuation(runtime, payload, result)
 
         result_dict = (
             asdict(
                 result
             )
         )
+
+        if workflow is not None:
+            result_dict["workflow"] = workflow
 
         print(
             "[JOB] AI finished "
@@ -1664,6 +1675,10 @@ async def run_agent(
     with owner_execution(payload.user_id, payload.message):
         result = await runtime.hub.run(payload.message)
 
+    if getattr(result, "_pending_onboarding", None) is not None:
+        await runtime.approvals.reject_approval(result.results[0].approval_id)
+        raise HTTPException(status_code=409, detail="Use durable jobs for dependent operations.")
+
     return {
         "request_id":
             uuid.uuid4().hex,
@@ -1837,6 +1852,7 @@ def build_approval_protocol_payload(
     "/v1/approvals/"
     "{approval_id}/approve",
     response_model=ApprovalProtocolResponse,
+    response_model_exclude_unset=True,
 )
 async def approve(
     approval_id: str,
@@ -1875,10 +1891,12 @@ async def approve(
     # Known durable execution outcomes are protocol success (HTTP 2xx).
     # Malformed/non-authoritative state remains a protocol failure (409).
     try:
-        return build_approval_protocol_payload(
+        protocol_payload = build_approval_protocol_payload(
             approval_id,
             approval_result,
         )
+        from api.workflows import continue_after_approval
+        return await continue_after_approval(runtime, approval_id, protocol_payload)
     except ValueError as exc:
         raise HTTPException(
             status_code=409,
@@ -1889,6 +1907,7 @@ async def approve(
 @app.post(
     "/v1/approvals/{approval_id}/reject",
     response_model=ApprovalProtocolResponse,
+    response_model_exclude_unset=True,
 )
 async def reject(approval_id: str, request: Request) -> dict:
     from api.extensions import require_internal

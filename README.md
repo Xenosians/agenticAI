@@ -2,7 +2,7 @@
 
 Python/FastAPI service for the Agentic Developer Hub and ITSM platform. It turns chat requests into specialist proposals, validates them against server-side policy, and executes supported tools after any required approval.
 
-This is an evolving local-first application. Model output is a proposal, never authorization.
+This is an evolving local-first **MVP candidate**. Model output is a proposal, never authorization. SRS 1.8 remains the authoritative MVP trust and execution baseline until the release gate is signed off.
 
 ## Features
 
@@ -10,6 +10,7 @@ This is an evolving local-first application. Model output is a proposal, never a
 - Compact routing for selected model connections: local catalog search narrows the prompt, while the full registry still validates every proposed tool action.
 - Typed tools for LDAP/Jira integrations, workspace inspection, builds/tests, and governed Git changes. Provider availability depends on configuration.
 - Durable approvals that retain the exact proposed action, plus a completion outbox for reliable delivery to Phoenix.
+- A bounded account → Jira ticket → completion mail workflow on durable jobs, with verified account data, separate approvals, and saved continuation recovery.
 - Local Transformers models, quantization profiles, LoRA adapters, and serialized GPU scheduling.
 - Per-account model connections: compatible chat-completion APIs, including Groq; installed local profiles; and Pi/OpenCode inference adapters.
 - Shared provider usage queues, editable quota settings, and verified reasoning controls for supported connections.
@@ -90,7 +91,7 @@ The [tool acceptance matrix](docs/tool-acceptance-matrix.md) inventories all 65 
 
 ## Current boundaries
 
-- This is an MVP with model-dependent routing and argument accuracy; configured integrations are not proof of live connectivity.
+- This is an MVP candidate with model-dependent routing and argument accuracy; configured integrations are not proof of live connectivity, and release status depends on the cross-repository acceptance gate.
 - Dataset retrieval uses local full-text search, not embeddings or an external vector database.
 - The n8n/workflow surface validates manifests only. It neither runs workflows nor registers webhooks.
 - Uploaded models reject custom executable code and pickle weights. Format admission does not guarantee inference quality or sufficient GPU memory.
@@ -100,8 +101,10 @@ The [tool acceptance matrix](docs/tool-acceptance-matrix.md) inventories all 65 
 ## More detail
 
 - [User models, harnesses, datasets, and workflow validation](docs/user-extensions.md)
+- [Account → Jira ticket → mailer](docs/account-ticket-workflow.md)
 - [Compact routing, inference stages, and ITSM verification](docs/compact-routing.md)
 - [Cross-repository acceptance checks](docs/cross-repo-acceptance.md)
+- [MVP release gate](docs/mvp-release-gate.md)
 - [Architecture and trust model](ARCHITECTURE.md)
 - [Security policy](SECURITY.md)
 - [Capability learning architecture](docs/CAPABILITY_LEARNING_ARCHITECTURE.md)

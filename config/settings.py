@@ -386,6 +386,8 @@ class Settings(
     # PHOENIX CALLBACK TRANSPORT
     # ============================================================
 
+    job_websocket_enabled: bool = True
+
     phoenix_base_url: (
         str | None
     ) = None

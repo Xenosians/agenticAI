@@ -189,6 +189,7 @@ def format_account_create_approval(
 ACCOUNT_TOOLS = {
     **MAILBOX_TOOLS,
     "account_create": {
+        "success_continuations": ["ticket_create"],
         "description": (
             "Create one corporate directory account from explicitly supplied business "
             "identity fields. Trusted policy derives the username, corporate email, "
