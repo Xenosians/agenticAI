@@ -4,6 +4,8 @@ from contextvars import ContextVar
 from contextlib import contextmanager
 import json
 
+from subagents.llm.runtime.stages import InferenceStage, resolve_stage_policy
+
 
 # Immutable snapshot per request.
 # Never rewrite another user's selection.
@@ -102,21 +104,18 @@ def owner_execution(
 
 
 def with_retrieval(
-    model_key: str,
     messages: list[dict],
+    *,
+    stage: InferenceStage | str,
+    repair_of: InferenceStage | str | None = None,
 ) -> list[dict]:
+    policy = resolve_stage_policy(stage, repair_of)
     hits = (
         retrieval_evidence.get()
     )
 
-    # Networking remains on its dedicated model/evaluation path and never
-    # receives account-private retrieval context.
-    if (
-        not hits
-        or model_key.startswith(
-            "networking-"
-        )
-    ):
+    # Trusted caller intent controls disclosure, independently of model names.
+    if not hits or not policy.allow_retrieval:
         return messages
 
     from services.extensions.retrieval import (
@@ -171,16 +170,9 @@ def with_retrieval(
 
 
 def selected_profile(
-    model_key: str,
-):
-    profile = (
-        execution_profile.get()
-    )
-
-    # Networking remains on its existing model and promotion path.
-    if model_key.startswith(
-        "networking-"
-    ):
-        return None
-
-    return profile
+    *,
+    stage: InferenceStage | str,
+    repair_of: InferenceStage | str | None = None,
+) -> dict | None:
+    policy = resolve_stage_policy(stage, repair_of)
+    return execution_profile.get() if policy.allow_selected else None

@@ -153,6 +153,12 @@ KNOWLEDGE_TOOLS = {
         "grounded_arguments":
             [],
 
+        # Search phrasing is composed from the user's information need;
+        # it is not an exact identifier that grants execution authority.
+        "derived_arguments": [
+            "query",
+        ],
+
         "parameters": {
             "query": {
                 "type":

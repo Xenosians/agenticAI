@@ -7,10 +7,12 @@ This is an evolving local-first application. Model output is a proposal, never a
 ## Features
 
 - Hub and specialist routing for directory accounts, access, tickets, Jira, developer workspaces, knowledge, assets, and networking.
+- Compact routing for selected model connections: local catalog search narrows the prompt, while the full registry still validates every proposed tool action.
 - Typed tools for LDAP/Jira integrations, workspace inspection, builds/tests, and governed Git changes. Provider availability depends on configuration.
 - Durable approvals that retain the exact proposed action, plus a completion outbox for reliable delivery to Phoenix.
 - Local Transformers models, quantization profiles, LoRA adapters, and serialized GPU scheduling.
 - Per-account model connections: compatible chat-completion APIs, including Groq; installed local profiles; and Pi/OpenCode inference adapters.
+- Shared provider usage queues, editable quota settings, and verified reasoning controls for supported connections.
 - Validated uploads of local safetensors model folders, private reference datasets, and reviewed JSONL training data.
 - Local full-text retrieval for reference datasets, with source and trust metadata kept separate from execution authority.
 - Training/evaluation infrastructure for curated datasets, candidate adapters, behavioral checks, and promotion gates.
@@ -72,6 +74,8 @@ The frontend lets signed-in users save, probe, and select their own model connec
 
 Pi and OpenCode provide inference only: their native tool execution is disabled. Application policy, approvals, and ToolGateway continue to govern tools. The networking specialist keeps its existing model and receives no additional private dataset context.
 
+The MVP focuses on completing supported ITSM actions through this guarded tool path. Explicit inference stages keep broad catalog routing local and apply separate routing/reasoning budgets to external adapters. See [compact routing and verification](docs/compact-routing.md) for current evidence and remaining acceptance work.
+
 Reference uploads accept text/Markdown; training uploads accept reviewed JSONL. Importing training data does not start training or promote a model. Private model/dataset jobs are excluded from automatic shared training capture. See [user extensions](docs/user-extensions.md) for formats, upload limits, allowed origins, storage, and API commands.
 
 ## Tests
@@ -81,6 +85,8 @@ python -m pytest -q tests/unit
 ```
 
 Real-model, GPU, provider, and container integration checks require their own configured environments. A successful connection probe confirms that request only; it is not a tool-use or model-quality evaluation.
+
+The [tool acceptance matrix](docs/tool-acceptance-matrix.md) inventories all 65 tools and separates proposal, approval, execution, and durable app-flow evidence. Fixtures alone never count as model or tool success.
 
 ## Current boundaries
 
@@ -94,8 +100,10 @@ Real-model, GPU, provider, and container integration checks require their own co
 ## More detail
 
 - [User models, harnesses, datasets, and workflow validation](docs/user-extensions.md)
+- [Compact routing, inference stages, and ITSM verification](docs/compact-routing.md)
+- [Cross-repository acceptance checks](docs/cross-repo-acceptance.md)
 - [Architecture and trust model](ARCHITECTURE.md)
 - [Security policy](SECURITY.md)
 - [Capability learning architecture](docs/CAPABILITY_LEARNING_ARCHITECTURE.md)
-- [Training methods](docs/srs18-training-methods.md)
+- [Training methods](docs/training-methods.md)
 - [PAN-OS lab setup](docs/palo_alto_lab_setup.md)

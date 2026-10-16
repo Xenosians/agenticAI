@@ -12,6 +12,7 @@ VALID_APPROVAL_STATUSES = {
     "executing",
     "approved",
     "failed",
+    "rejected",
 }
 
 
@@ -36,13 +37,10 @@ class ApprovalStore:
 
     State machine:
 
-        pending
+        pending -> rejected
           |
           v
-        executing
-         /     \\
-        v       v
-    approved   failed
+        executing -> approved / failed
 
     An approval left in "executing" after a process crash is
     intentionally NOT returned to "pending" automatically.
@@ -68,31 +66,75 @@ class ApprovalStore:
         )
 
         with self._connect() as connection:
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS approvals (
-                    approval_id TEXT PRIMARY KEY,
-                    tool TEXT NOT NULL,
-                    arguments TEXT NOT NULL,
-                    risk TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    result TEXT,
-                    created_at TEXT NOT NULL
-                        DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TEXT NOT NULL
-                        DEFAULT CURRENT_TIMESTAMP,
+            # SQLite does not implicitly begin a transaction for DDL. Hold the
+            # writer claim across inspection, copy and replacement so another
+            # process can neither migrate nor decide an approval midway.
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'approvals'"
+            ).fetchone()
+            if existing is None:
+                self._create_table(connection, "approvals")
+            elif "'rejected'" not in existing["sql"]:
+                self._migrate_rejection_constraint(connection)
 
-                    CHECK (
-                        status IN (
-                            'pending',
-                            'executing',
-                            'approved',
-                            'failed'
-                        )
+    @staticmethod
+    def _create_table(connection: sqlite3.Connection, name: str) -> None:
+        if name not in {"approvals", "approvals_with_rejection"}:
+            raise ValueError("Invalid approval table name")
+        connection.execute(
+            f"""
+            CREATE TABLE {name} (
+                approval_id TEXT PRIMARY KEY,
+                tool TEXT NOT NULL,
+                arguments TEXT NOT NULL,
+                risk TEXT NOT NULL,
+                status TEXT NOT NULL,
+                result TEXT,
+                created_at TEXT NOT NULL
+                    DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL
+                    DEFAULT CURRENT_TIMESTAMP,
+
+                CHECK (
+                    status IN (
+                        'pending',
+                        'executing',
+                        'approved',
+                        'failed',
+                        'rejected'
                     )
                 )
-                """
             )
+            """
+        )
+
+    def _migrate_rejection_constraint(self, connection: sqlite3.Connection) -> None:
+        # Rebuilding is required to extend an existing SQLite CHECK. Keep raw
+        # stored JSON and timestamps byte-for-byte, including executing rows
+        # whose side effects may already have happened. DDL and row copying are
+        # one transaction; a crash leaves either the old or the complete table.
+        dependent_schema = connection.execute(
+            """
+            SELECT sql FROM sqlite_master
+            WHERE tbl_name = 'approvals' AND type IN ('index', 'trigger')
+              AND sql IS NOT NULL
+            """
+        ).fetchall()
+        self._create_table(connection, "approvals_with_rejection")
+        connection.execute(
+            """
+            INSERT INTO approvals_with_rejection (
+                approval_id, tool, arguments, risk, status, result, created_at, updated_at
+            )
+            SELECT approval_id, tool, arguments, risk, status, result, created_at, updated_at
+            FROM approvals
+            """
+        )
+        connection.execute("DROP TABLE approvals")
+        connection.execute("ALTER TABLE approvals_with_rejection RENAME TO approvals")
+        for definition in dependent_schema:
+            connection.execute(definition["sql"])
 
     # ============================================================
     # Create
@@ -262,6 +304,23 @@ class ApprovalStore:
                 ),
             )
 
+            return cursor.rowcount == 1
+
+    def reject_pending(self, approval_id: str) -> bool:
+        """Compete with execution for the pending state without touching tools.
+
+        Only one of pending -> rejected and pending -> executing may win,
+        including callers using different store instances or processes.
+        """
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE approvals
+                SET status = 'rejected', updated_at = CURRENT_TIMESTAMP
+                WHERE approval_id = ? AND status = 'pending'
+                """,
+                (approval_id,),
+            )
             return cursor.rowcount == 1
 
     # ============================================================

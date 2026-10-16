@@ -586,7 +586,7 @@
       "allowed_tools": [
         "process_exec"
       ],
-      "allowed_arguments": {},
+      "allowed_arguments": {"executable": ["git"]},
       "expected_tool": "process_exec",
       "expected_arguments": {
         "args": [
@@ -603,7 +603,7 @@
       "allowed_tools": [
         "process_exec"
       ],
-      "allowed_arguments": {},
+      "allowed_arguments": {"executable": ["ls"]},
       "expected_tool": "process_exec",
       "expected_arguments": {
         "args": [],
@@ -616,7 +616,7 @@
       "allowed_tools": [
         "process_exec"
       ],
-      "allowed_arguments": {},
+      "allowed_arguments": {"executable": ["mkdir"]},
       "expected_tool": "process_exec",
       "expected_arguments": {
         "args": [
@@ -631,7 +631,7 @@
       "allowed_tools": [
         "process_exec"
       ],
-      "allowed_arguments": {},
+      "allowed_arguments": {"executable": ["pwd"]},
       "expected_tool": "process_exec",
       "expected_arguments": {
         "args": [],

@@ -13,8 +13,10 @@ from .mock import (
 from .mutations import (
     AssetMutationService,
     MockAssetMutationService,
+    SQLiteAssetMutationService,
     build_asset_mutation_service,
 )
+from .sqlite import SQLiteAssetService, InventoryImportError, validate_inventory_records
 
 from .types import (
     AssetLookupResult,
@@ -35,6 +37,10 @@ __all__ = [
     "AssetService",
     "MockAssetMutationService",
     "MockAssetService",
+    "SQLiteAssetService",
+    "SQLiteAssetMutationService",
+    "InventoryImportError",
+    "validate_inventory_records",
     "build_asset_mutation_service",
     "build_asset_service",
 ]

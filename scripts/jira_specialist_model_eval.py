@@ -40,6 +40,8 @@ from learning.evidence.execution_provenance import (
     build_specialist_execution_provenance,
 )
 
+from subagents.llm.runtime.stages import InferenceStage
+
 from subagents.core.definitions.loader import (
     load_agent_definition,
 )
@@ -118,7 +120,6 @@ CASES = [
         "allowed_tools": ["ticket_search"],
         "allowed_arguments": {
             "project_key": ["OPS"],
-            "text": ["database timeout"],
         },
         "expected_tool": "ticket_search",
         "expected_arguments": {
@@ -592,7 +593,8 @@ async def main() -> int:
         # production warm-up and generation. ModelManager applies the
         # same residency policy before constructing the backend.
         await inference.warm(
-            MODEL_KEY
+            MODEL_KEY,
+            stage=InferenceStage.SPECIALIST_REASONING,
         )
 
         for index, case in enumerate(
@@ -642,6 +644,7 @@ async def main() -> int:
             started_at = time.perf_counter()
 
             raw = await inference.generate(
+                stage=InferenceStage.SPECIALIST_REASONING,
                 model_key=MODEL_KEY,
                 messages=messages,
                 max_new_tokens=MAX_NEW_TOKENS,

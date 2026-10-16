@@ -6,6 +6,8 @@ from config import (
     get_settings,
 )
 
+from subagents.llm.runtime.stages import InferenceStage
+
 from subagents.core.definitions.loader import (
     load_agent_directory,
 )
@@ -106,7 +108,8 @@ def router_runtime():
         runner.run(
             inference.warm(
                 settings
-                .hub_model_key
+                .hub_model_key,
+                stage=InferenceStage.CONTROL_ROUTING,
             )
         )
 

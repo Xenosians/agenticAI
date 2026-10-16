@@ -10,6 +10,7 @@ from .base import (
 from .mock import (
     MockAssetService,
 )
+from .sqlite import SQLiteAssetService
 
 from .types import (
     AssetMutationResult,
@@ -362,9 +363,23 @@ class MockAssetMutationService(
         )
 
 
+class SQLiteAssetMutationService(AssetMutationService):
+    def __init__(self, assets: SQLiteAssetService) -> None:
+        self.assets = assets
+
+    def assign_asset(self, asset_id: str, user_id: str) -> AssetMutationResult:
+        return self.assets.assign_asset(asset_id, user_id)
+
+    def unassign_asset(self, asset_id: str) -> AssetMutationResult:
+        return self.assets.unassign_asset(asset_id)
+
+
 def build_asset_mutation_service(
     assets: AssetService,
 ) -> AssetMutationService:
+
+    if isinstance(assets, SQLiteAssetService):
+        return SQLiteAssetMutationService(assets)
 
     if isinstance(
         assets,

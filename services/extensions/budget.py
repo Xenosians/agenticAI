@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 import os
+import re
 
 
 DEFAULT_HTTP_REQUEST_TOKEN_BUDGET = 7000
@@ -35,7 +36,273 @@ MAX_OUTPUT_TOKEN_CAP = 16_384
 class ExternalInferenceBudgetError(
     ValueError
 ):
-    pass
+    """Fail-closed budget error with content-free accounting metadata."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        request_token_budget: int | None = None,
+        output_tokens: int | None = None,
+        input_budget: int | None = None,
+        mandatory_tokens: int | None = None,
+        system_tokens: int | None = None,
+        newest_tokens: int | None = None,
+        message_count: int | None = None,
+    ) -> None:
+        super().__init__(
+            message
+        )
+
+        self.request_token_budget = (
+            request_token_budget
+        )
+
+        self.output_tokens = (
+            output_tokens
+        )
+
+        self.input_budget = (
+            input_budget
+        )
+
+        self.mandatory_tokens = (
+            mandatory_tokens
+        )
+
+        self.system_tokens = (
+            system_tokens
+        )
+
+        self.newest_tokens = (
+            newest_tokens
+        )
+
+        self.message_count = (
+            message_count
+        )
+
+
+# Provider-aware request envelopes.
+#
+# These are application safety envelopes, NOT claims about model context
+# windows. They intentionally leave headroom for provider/harness framing.
+#
+# Groq's currently exercised account tier has shown an 8k TPM boundary, so
+# harness requests remain materially below that value.
+_PROVIDER_REQUEST_BUDGETS: dict[
+    tuple[str, str],
+    int,
+] = {
+    ("http", "groq"):
+        7000,
+
+    ("harness", "groq"):
+        6000,
+
+    ("http", "openrouter"):
+        9000,
+
+    ("harness", "openrouter"):
+        8000,
+}
+
+
+def external_provider(
+    profile: dict,
+    *,
+    backend: str,
+) -> str:
+    """Return a public provider label without inspecting credentials."""
+
+    if backend == "http":
+        try:
+            from urllib.parse import urlsplit
+
+            hostname = (
+                urlsplit(
+                    str(
+                        profile.get(
+                            "url",
+                            "",
+                        )
+                    )
+                )
+                .hostname
+                or ""
+            ).lower()
+
+        except (
+            TypeError,
+            ValueError,
+        ):
+            hostname = ""
+
+        if hostname == "api.groq.com":
+            return "groq"
+
+        if hostname == "openrouter.ai":
+            return "openrouter"
+
+        return "custom"
+
+    if backend in {
+        "pi",
+        "opencode",
+    }:
+        model = str(
+            profile.get(
+                "model",
+                "",
+            )
+        )
+
+        provider, separator, _ = (
+            model.partition(
+                "/"
+            )
+        )
+
+        if (
+            separator
+            and provider
+        ):
+            return provider
+
+    return "unknown"
+
+
+def _policy_budget_value(
+    value: object,
+    *,
+    label: str,
+) -> int:
+    try:
+        resolved = int(
+            value
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+        raise ExternalInferenceBudgetError(
+            f"Invalid {label}"
+        ) from None
+
+    if not (
+        MIN_REQUEST_TOKEN_BUDGET
+        <= resolved
+        <= MAX_REQUEST_TOKEN_BUDGET
+    ):
+        raise ExternalInferenceBudgetError(
+            f"{label} outside supported range"
+        )
+
+    return resolved
+
+
+def default_external_request_budget(
+    profile: dict,
+    *,
+    backend: str,
+) -> int:
+    """Resolve a conservative backend/provider-specific default.
+
+    Precedence here is:
+
+        provider/backend environment override
+        backend-family environment override
+        built-in provider policy
+        generic backend default
+
+    `prepare_external_request()` still gives an explicit profile
+    `request_token_budget` and the legacy
+    EXTERNAL_INFERENCE_REQUEST_TOKEN_BUDGET final precedence.
+    """
+
+    provider = external_provider(
+        profile,
+        backend=backend,
+    )
+
+    family = (
+        "http"
+        if backend == "http"
+        else "harness"
+    )
+
+    provider_env = (
+        "EXTERNAL_"
+        + re.sub(
+            r"[^A-Z0-9]+",
+            "_",
+            provider.upper(),
+        )
+        + "_"
+        + family.upper()
+        + "_REQUEST_TOKEN_BUDGET"
+    )
+
+    family_env = (
+        "EXTERNAL_HTTP_REQUEST_TOKEN_BUDGET"
+        if family == "http"
+        else "EXTERNAL_HARNESS_REQUEST_TOKEN_BUDGET"
+    )
+
+    for key in (
+        provider_env,
+        family_env,
+    ):
+        value = os.environ.get(
+            key
+        )
+
+        if value is not None:
+            return _policy_budget_value(
+                value,
+                label=key,
+            )
+
+    generic_default = (
+        DEFAULT_HTTP_REQUEST_TOKEN_BUDGET
+        if family == "http"
+        else DEFAULT_HARNESS_REQUEST_TOKEN_BUDGET
+    )
+
+    return (
+        _PROVIDER_REQUEST_BUDGETS.get(
+            (
+                family,
+                provider,
+            ),
+            generic_default,
+        )
+    )
+
+
+def log_external_budget_rejection(
+    exc: "ExternalInferenceBudgetError",
+    *,
+    backend: str,
+    provider: str,
+    model: str,
+) -> None:
+    """Emit counts only. Never emit prompt content or credentials."""
+
+    print(
+        "[INFERENCE_BUDGET] Rejected "
+        f"backend={backend} "
+        f"provider={provider} "
+        f"model={model!r} "
+        f"request_budget={exc.request_token_budget} "
+        f"output_cap={exc.output_tokens} "
+        f"input_budget={exc.input_budget} "
+        f"mandatory_tokens={exc.mandatory_tokens} "
+        f"system_tokens={exc.system_tokens} "
+        f"newest_tokens={exc.newest_tokens} "
+        f"messages={exc.message_count}"
+    )
 
 
 @dataclass(
@@ -235,7 +502,24 @@ def prepare_external_request(
     if input_budget <= 0:
         raise ExternalInferenceBudgetError(
             "External request budget leaves "
-            "no input capacity"
+            "no input capacity",
+            request_token_budget=(
+                request_budget
+            ),
+            output_tokens=(
+                output_tokens
+            ),
+            input_budget=(
+                input_budget
+            ),
+            mandatory_tokens=0,
+            system_tokens=0,
+            newest_tokens=0,
+            message_count=(
+                len(
+                    messages
+                )
+            ),
         )
 
     canonical: list[
@@ -301,11 +585,54 @@ def prepare_external_request(
         in mandatory_indices
     )
 
+    system_tokens = sum(
+        estimate_message_tokens(
+            message
+        )
+        for message
+        in canonical
+        if message[
+            "role"
+        ]
+        == "system"
+    )
+
+    newest_tokens = (
+        estimate_message_tokens(
+            canonical[
+                -1
+            ]
+        )
+    )
+
     if used > input_budget:
         raise ExternalInferenceBudgetError(
             "Mandatory model instructions "
             "and newest request exceed the "
-            "external provider input budget"
+            "external provider input budget",
+            request_token_budget=(
+                request_budget
+            ),
+            output_tokens=(
+                output_tokens
+            ),
+            input_budget=(
+                input_budget
+            ),
+            mandatory_tokens=(
+                used
+            ),
+            system_tokens=(
+                system_tokens
+            ),
+            newest_tokens=(
+                newest_tokens
+            ),
+            message_count=(
+                len(
+                    canonical
+                )
+            ),
         )
 
     # Prefer recent conversation context.

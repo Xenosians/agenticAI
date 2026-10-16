@@ -35,6 +35,8 @@ from learning.paths import (
     TRAJECTORIES_PATH,
 )
 
+from subagents.llm.runtime.stages import InferenceStage
+
 from subagents.core.tooling.gateway import (
     ToolGateway,
 )
@@ -338,7 +340,8 @@ async def _run(
         )
 
         await inference.warm(
-            settings.hub_model_key
+            settings.hub_model_key,
+            stage=InferenceStage.CONTROL_ROUTING,
         )
 
         hub = (

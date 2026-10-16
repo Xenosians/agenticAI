@@ -1,0 +1,20 @@
+services:
+  mailbox:
+    image: foxcpp/maddy:0.9.6@sha256:e1074e92a452b84d1135ebe8ab831c5f541d33dcbd39e38fab740a53bbf2f97c
+    container_name: itsm-mailbox-lab
+    environment:
+      MADDY_DOMAIN: ${MAILBOX_LAB_DOMAIN:-itsm.test}
+    ports:
+      - "127.0.0.1:${MAILBOX_SMTP_PORT:-1587}:587"
+      - "127.0.0.1:${MAILBOX_IMAP_PORT:-1143}:143"
+    volumes:
+      - ./maddy.conf:/data/maddy.conf:ro
+      - mailbox_data:/data
+    networks:
+      - mailbox_lab
+    restart: unless-stopped
+networks:
+  mailbox_lab:
+    driver: bridge
+volumes:
+  mailbox_data:

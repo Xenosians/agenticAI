@@ -3,8 +3,8 @@ from tools.capability_contract import validate_capability_registry
 from tools.registry import TOOLS
 from tools.registry import merge_capability_catalog
 import pytest
+from tools import runtime_schema
 from tools.runtime_schema import (
-    clear_runtime_schemas,
     runtime_registered_tools,
 )
 
@@ -16,11 +16,11 @@ def test_duplicate_registration_cannot_silently_replace_an_executor_contract():
     assert original["read"]["effect"] == "read"
 
 
-def test_all_registered_capabilities_have_standard_contract():
+def test_all_registered_capabilities_have_standard_contract(monkeypatch):
     # Other contract unit tests intentionally register synthetic capabilities.
     # Rebuild this audit from a clean runtime-schema namespace so this test
     # represents only production MCP capabilities.
-    clear_runtime_schemas()
+    monkeypatch.setattr(runtime_schema, "_SCHEMAS", {})
 
     # Registration captures executable Python signatures without starting
     # the MCP transport. Requiredness therefore comes from real callables.
@@ -68,3 +68,6 @@ def test_all_registered_capabilities_have_standard_contract():
         assert set(contract.grounded_arguments).isdisjoint(
             contract.derived_arguments
         )
+        assert set(contract.required_arguments) <= (
+            set(contract.grounded_arguments) | set(contract.derived_arguments)
+        ), f"{contract.name} has required arguments without a trusted semantic role"

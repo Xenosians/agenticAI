@@ -11,7 +11,7 @@ class CaptureInference:
     def __init__(self):
         self.messages = None
 
-    async def generate(self, *, model_key, messages, max_new_tokens, priority):
+    async def generate(self, *, model_key, messages, max_new_tokens, priority, stage, repair_of=None):
         self.messages = messages
         return "[]"
 
@@ -73,3 +73,38 @@ def test_free_form_router_metadata_is_audit_only():
     assert dangerous not in joined
     assert "create an internal meeting ticket in KAN next sunday" in joined
     assert '"project_key": ["KAN"]' in joined
+
+
+def test_selected_worker_budget_preserves_current_request_and_target_contract(monkeypatch):
+    from types import SimpleNamespace
+    from services.extensions.budget import prepare_external_request
+    from services.extensions.context import execution_profile
+
+    registry = AgentRegistry()
+    registry.register(AgentDefinition(name="account-specialist", description="Account checks",
+                                      model="account-model", tools=["account_status"]))
+    inference = CaptureInference()
+    provenance_calls = []
+    monkeypatch.setattr("subagents.core.orchestration.runtime.build_specialist_execution_provenance",
+                        lambda **kwargs: provenance_calls.append(kwargs))
+    runtime = AgentRuntime(agent_registry=registry, inference=inference, tool_gateway=NeverGateway(),
+                           model_profile_resolver=lambda key: SimpleNamespace(worker_prompt_profile="standard"),
+                           max_new_tokens=32)
+    task = AgentTask(task_id="bounded-worker", agent_name="account-specialist",
+                     user_request="Check account status for alice",
+                     context={"conversation_context": [{"role": "user", "content": "history " * 10000}]},
+                     semantic_intent=SemanticIntent(summary="Check account", effect="read",
+                         allowed_tools=["account_status"], forbidden_tools=[],
+                         allowed_arguments={"user_id": ["alice"]}, forbidden_arguments={},
+                         max_tool_calls=1, clarification_required=False))
+    token = execution_profile.set({"backend": "http", "model": "test"})
+    try:
+        asyncio.run(runtime.run(task))
+    finally:
+        execution_profile.reset(token)
+    budget = prepare_external_request({}, inference.messages, 32, default_request_budget=6000)
+    assert budget.messages[-1] == {"role": "user", "content": task.user_request}
+    assert any(message["role"] == "system" and '"user_id": ["alice"]' in message["content"]
+               for message in budget.messages)
+    assert not any("history history" in message["content"] for message in budget.messages)
+    assert provenance_calls == []  # Never hash/misattribute local weights for an external call.

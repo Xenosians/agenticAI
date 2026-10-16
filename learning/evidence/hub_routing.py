@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -289,6 +290,7 @@ def capture_hub_routing_generation(
     repair_error: str | None,
     max_new_tokens: int,
     response: str,
+    _model_identity: HubModelIdentity | None = None,
 ) -> HubRoutingAttemptEvidence:
     if not messages:
         raise ValueError("Hub routing messages must not be empty.")
@@ -345,9 +347,13 @@ def capture_hub_routing_generation(
         created_at=_utc_now(),
         mode=("repair" if repair_mode else "normal"),
         include_workflow_protocol=include_workflow_protocol,
-        model_identity=build_hub_model_identity(
-            model_key=model_key,
-            model_profile_resolver=model_profile_resolver,
+        model_identity=(
+            _model_identity
+            if _model_identity is not None
+            else build_hub_model_identity(
+                model_key=model_key,
+                model_profile_resolver=model_profile_resolver,
+            )
         ),
         max_new_tokens=max_new_tokens,
         system_prompt_sha256=_sha256_text(system_prompt),
@@ -386,6 +392,47 @@ def capture_hub_routing_generation(
     )
 
     return attempt
+
+
+async def capture_hub_routing_generation_async(
+    *,
+    model_key: str,
+    model_profile_resolver: ModelProfileResolver | None,
+    specialists: list[dict[str, Any]],
+    messages: list[dict[str, str]],
+    context_messages: list[dict[str, str]],
+    user_request: str,
+    repair_mode: bool,
+    include_workflow_protocol: bool,
+    repair_error: str | None,
+    max_new_tokens: int,
+    response: str,
+) -> HubRoutingAttemptEvidence:
+    """Fingerprint checkpoints off-loop, then activate evidence in this task.
+
+    A cold identity can read every checkpoint weight file. Only that pure
+    computation runs in a thread: activating the attempt must remain in the
+    caller's Context so subsequent parse, repair and recorder calls see it.
+    """
+    model_identity = await asyncio.to_thread(
+        build_hub_model_identity,
+        model_key=model_key,
+        model_profile_resolver=model_profile_resolver,
+    )
+    return capture_hub_routing_generation(
+        model_key=model_key,
+        model_profile_resolver=model_profile_resolver,
+        specialists=specialists,
+        messages=messages,
+        context_messages=context_messages,
+        user_request=user_request,
+        repair_mode=repair_mode,
+        include_workflow_protocol=include_workflow_protocol,
+        repair_error=repair_error,
+        max_new_tokens=max_new_tokens,
+        response=response,
+        _model_identity=model_identity,
+    )
 
 
 def set_current_hub_routing_parsed_output(

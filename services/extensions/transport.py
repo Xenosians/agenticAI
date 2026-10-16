@@ -16,8 +16,15 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from services.extensions.admission import admit_external_request, record_external_usage
+from services.extensions.options import reasoning_effort
+from services.extensions.response_format import HttpResponseFormat, supported_http_response_formats
+
 from services.extensions.budget import (
-    DEFAULT_HTTP_REQUEST_TOKEN_BUDGET,
+    ExternalInferenceBudgetError,
+    default_external_request_budget,
+    external_provider,
+    log_external_budget_rejection,
     prepare_external_request,
 )
 
@@ -296,20 +303,52 @@ async def remote_generate(
     profile: dict,
     messages: list[dict],
     max_tokens: int,
+    *,
+    response_format: HttpResponseFormat | None = None,
 ) -> str:
-    budget = (
-        prepare_external_request(
+    if response_format is not None and (
+        not isinstance(response_format, HttpResponseFormat)
+        or response_format not in supported_http_response_formats(profile)
+    ):
+        raise ValueError("Unsupported HTTP response format for the selected provider/model.")
+    effort = reasoning_effort(profile)
+    provider = external_provider(
+        profile,
+        backend="http",
+    )
+
+    try:
+        budget = prepare_external_request(
             profile,
             messages,
             max_tokens,
             default_request_budget=(
-                DEFAULT_HTTP_REQUEST_TOKEN_BUDGET
+                default_external_request_budget(
+                    profile,
+                    backend="http",
+                )
             ),
         )
-    )
+
+    except ExternalInferenceBudgetError as exc:
+        log_external_budget_rejection(
+            exc,
+            backend="http",
+            provider=provider,
+            model=str(
+                profile.get(
+                    "model",
+                    "",
+                )
+            ),
+        )
+
+        raise
 
     print(
         "[PROVIDER] Request budget "
+        "backend=http "
+        f"provider={provider} "
         f"model={profile.get('model')!r} "
         "estimated_input="
         f"{budget.estimated_input_tokens} "
@@ -349,6 +388,14 @@ async def remote_generate(
             False,
     }
 
+    if effort is not None:
+        body["reasoning_effort"] = effort
+
+    if response_format is not None:
+        body["response_format"] = {"type": response_format.value}
+
+    admission = await admit_external_request(profile, budget.estimated_request_tokens)
+
     data = await request_json(
         (
             profile[
@@ -364,6 +411,10 @@ async def remote_generate(
             )
         ),
     )
+
+    usage = data.get("usage") if isinstance(data, dict) else None
+    if isinstance(usage, dict):
+        record_external_usage(admission, usage.get("total_tokens"))
 
     try:
         choice = (
@@ -386,11 +437,7 @@ async def remote_generate(
             )
             == "length"
         ):
-            raise ValueError(
-                "Provider output was "
-                "truncated; no tool "
-                "proposal accepted"
-            )
+            raise ExternalProviderError("provider_output_truncated")
 
         if (
             not isinstance(
@@ -399,10 +446,7 @@ async def remote_generate(
             )
             or not content.strip()
         ):
-            raise ValueError(
-                "Provider did not "
-                "return text"
-            )
+            raise ExternalProviderError("provider_empty_response")
 
         return content
 

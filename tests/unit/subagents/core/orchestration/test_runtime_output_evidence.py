@@ -34,6 +34,8 @@ class FakeInference:
         messages,
         max_new_tokens,
         priority,
+        stage,
+        repair_of=None,
     ):
 
         return (

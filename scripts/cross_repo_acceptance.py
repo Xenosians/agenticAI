@@ -2,38 +2,96 @@
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import getpass
+import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
 import time
-import uuid
 
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import httpx
+from jsonschema import Draft202012Validator, FormatChecker
 
 
-AI_REPO = Path("/mnt/c/project/agenticaiPersonal/itsm-agent")
-BACKEND_REPO = Path("/mnt/c/project/agenticBackend/itsm_backend")
-FRONTEND_REPO = Path("/mnt/c/project/agenticFrontend")
+AI_REPO = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = AI_REPO.parents[1]
 
-DEFAULT_CASE_FILE = AI_REPO / "config/v18_03_acceptance_cases.json"
+
+def _acceptance_env(name: str, default: str | None = None) -> str | None:
+    """Prefer descriptive settings while accepting existing local fixtures."""
+    value = os.getenv(name)
+    if value is None and name.startswith("ACCEPTANCE_"):
+        value = os.getenv("V18_03_" + name.removeprefix("ACCEPTANCE_"))
+    return default if value is None else value
+
+
+BACKEND_REPO = Path(_acceptance_env(
+    "ACCEPTANCE_BACKEND_REPO", str(PROJECT_ROOT / "agenticBackend/itsm_backend")
+))
+FRONTEND_REPO = Path(_acceptance_env(
+    "ACCEPTANCE_FRONTEND_REPO", str(PROJECT_ROOT / "agenticFrontend")
+))
+
+DEFAULT_CASE_FILE = AI_REPO / "config/cross_repo_acceptance_cases.json"
 DEFAULT_BACKEND_URL = "http://127.0.0.1:4000"
-TERMINAL = {
-    "completed",
-    "failed",
-    "waiting_approval",
-    "reconciliation_required",
-}
+DEFAULT_JOB_API_VERSION = 2
 
 
 class AcceptanceFailure(RuntimeError):
     pass
+
+
+class PublicJobContracts:
+    """Use the same canonical schemas as Phoenix, without copying them here."""
+
+    def __init__(self, version: int, contracts_dir: Path) -> None:
+        if version not in {1, 2}:
+            raise ValueError("Job API version must be 1 or 2.")
+        self.version = version
+        self.create = self._load(contracts_dir / "v1/public/job-create-response.schema.json")
+        self.job = self._load(contracts_dir / f"v{version}/public/job-response.schema.json")
+        self.proposal = self._load(contracts_dir / "v1/common/tool-proposal.schema.json")
+        statuses = set(self.job.schema["properties"]["status"]["enum"])
+        self.terminal_statuses = statuses - {"pending", "processing"}
+
+    @staticmethod
+    def _load(path: Path) -> Draft202012Validator:
+        try:
+            schema = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise AcceptanceFailure(f"Cannot read canonical public contract: {path}") from exc
+        Draft202012Validator.check_schema(schema)
+        return Draft202012Validator(schema, format_checker=FormatChecker())
+
+    @staticmethod
+    def validate(validator: Draft202012Validator, payload: Any, label: str) -> dict[str, Any]:
+        error = next(validator.iter_errors(payload), None)
+        if error is not None:
+            # Do not include schema exception text: it embeds response content.
+            location = ".".join(str(part) for part in error.absolute_path) or "$"
+            raise AcceptanceFailure(
+                f"Invalid {label} contract at {location} ({error.validator})."
+            )
+        return payload
+
+    def validate_job(self, payload: Any, *, expected_id: str) -> dict[str, Any]:
+        job = self.validate(self.job, _job_payload(payload), f"v{self.version} job")
+        if job["job_id"] != expected_id:
+            raise AcceptanceFailure("Backend returned a different job identifier.")
+        if job["proposed_tool"] is not None:
+            self.validate(self.proposal, job["proposed_tool"], "tool proposal")
+        if job["status"] == "waiting_approval":
+            proposal = job["proposed_tool"]
+            if not isinstance(proposal, dict) or not proposal.get("approval_id"):
+                raise AcceptanceFailure("Approval state has no persisted proposal identifier.")
+        return job
 
 
 def _now_token() -> str:
@@ -58,7 +116,7 @@ def _run(
 
 
 def run_repo_gate() -> None:
-    print("V18-03 repository gate")
+    print("Cross-repository gate")
     print("======================")
 
     _run(
@@ -115,7 +173,7 @@ def run_repo_gate() -> None:
     output_dir = (
         FRONTEND_REPO
         / ".runtime"
-        / "v18_03"
+        / "cross-repo-acceptance"
     )
     output_dir.mkdir(
         parents=True,
@@ -156,7 +214,7 @@ def _expand_prompt(
 
     def replace(match: re.Match[str]) -> str:
         name = match.group(1)
-        env_value = os.getenv(name)
+        env_value = _acceptance_env(name)
         if env_value is None:
             raise AcceptanceFailure(
                 f"Required environment value {name} is missing."
@@ -241,11 +299,19 @@ class BrowserPathClient:
         backend_url: str,
         *,
         timeout_seconds: float,
+        job_api_version: int = DEFAULT_JOB_API_VERSION,
+        contracts_dir: Path = BACKEND_REPO / "contracts",
+        transport: httpx.BaseTransport | None = None,
     ) -> None:
+        if timeout_seconds <= 0:
+            raise ValueError("Timeout must be positive.")
+        self.contracts = PublicJobContracts(job_api_version, contracts_dir)
+        self.job_api_version = job_api_version
         self.client = httpx.Client(
             base_url=backend_url.rstrip("/"),
             follow_redirects=True,
             timeout=20.0,
+            transport=transport,
         )
         self.timeout_seconds = timeout_seconds
         self.csrf_token: str | None = None
@@ -317,8 +383,8 @@ class BrowserPathClient:
             )
 
         chat_id = (
-            chat.get("id")
-            or chat.get("chat_id")
+            chat.get("chat_id")
+            or chat.get("id")
         )
         if not isinstance(chat_id, str) or not chat_id:
             raise AcceptanceFailure(
@@ -379,12 +445,13 @@ class BrowserPathClient:
         if response.status_code != 202:
             raise AcceptanceFailure(
                 "Job creation returned "
-                f"HTTP {response.status_code}: "
-                f"{response.text[:400]}"
+                f"HTTP {response.status_code}."
             )
 
-        return _job_payload(
-            response.json()
+        return self.contracts.validate(
+            self.contracts.create,
+            _job_payload(response.json()),
+            "job creation",
         )
 
     def get_job(
@@ -392,11 +459,11 @@ class BrowserPathClient:
         job_id: str,
     ) -> dict[str, Any]:
         response = self.client.get(
-            f"/api/v1/jobs/{job_id}"
+            f"/api/v{self.job_api_version}/jobs/{job_id}"
         )
         response.raise_for_status()
-        return _job_payload(
-            response.json()
+        return self.contracts.validate_job(
+            response.json(), expected_id=job_id,
         )
 
     def approve_job(
@@ -404,14 +471,48 @@ class BrowserPathClient:
         job_id: str,
     ) -> dict[str, Any]:
         response = self.client.post(
-            f"/api/v1/jobs/{job_id}/approve",
+            f"/api/v{self.job_api_version}/jobs/{job_id}/approve",
             headers=self._mutation_headers(),
             json={},
         )
         response.raise_for_status()
-        return _job_payload(
-            response.json()
+        return self.contracts.validate_job(
+            response.json(), expected_id=job_id,
         )
+
+    def assert_approval_replay_rejected(self, job_id: str, *, status: str) -> None:
+        response = self.client.post(
+            f"/api/v{self.job_api_version}/jobs/{job_id}/approve",
+            headers=self._mutation_headers(),
+            json={},
+        )
+        if response.status_code != 409:
+            raise AcceptanceFailure("Terminal approval replay was not rejected with HTTP 409.")
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise AcceptanceFailure("Approval replay returned a non-object rejection.") from exc
+        if not isinstance(payload, dict) or payload.get("error") != "job_not_waiting_approval":
+            raise AcceptanceFailure("Approval replay lacked a terminal-state rejection.")
+        # Legacy job GET projects this storage state, while conflict responses
+        # continue to expose the underlying terminal status.
+        matching_statuses = {status}
+        if self.job_api_version == 1 and status == "reconciliation_required":
+            matching_statuses.add("outcome_unknown")
+        if payload.get("status") not in matching_statuses:
+            raise AcceptanceFailure("Approval replay reported a different terminal state.")
+
+    def get_history(self, chat_id: str) -> dict[str, Any]:
+        response = self.client.get(
+            f"/api/v{self.job_api_version}/chats/{chat_id}/history",
+            params={"limit": 200},
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if (not isinstance(payload, dict) or payload.get("chat_id") != chat_id
+                or not isinstance(payload.get("messages"), list)):
+            raise AcceptanceFailure("Chat history did not preserve the canonical chat identifier.")
+        return payload
 
     def delete_chat(
         self,
@@ -437,6 +538,8 @@ class BrowserPathClient:
         *,
         poll_seconds: float,
     ) -> dict[str, Any]:
+        if poll_seconds <= 0:
+            raise ValueError("Poll interval must be positive.")
         deadline = (
             time.monotonic()
             + self.timeout_seconds
@@ -465,7 +568,7 @@ class BrowserPathClient:
                 )
                 last_status = status
 
-            if status in TERMINAL:
+            if status in self.contracts.terminal_statuses:
                 return job
 
             time.sleep(
@@ -488,7 +591,7 @@ def _skip_reason(
         "requires_env",
         [],
     ):
-        if not os.getenv(name):
+        if not _acceptance_env(name):
             return (
                 f"missing environment value {name}"
             )
@@ -519,6 +622,8 @@ def _skip_reason(
 def _assert_case(
     case: dict[str, Any],
     job: dict[str, Any],
+    *,
+    job_api_version: int = DEFAULT_JOB_API_VERSION,
 ) -> None:
     status = job.get(
         "status"
@@ -528,7 +633,8 @@ def _assert_case(
     )
 
     expected_statuses = case.get(
-        "expected_terminal_status"
+        f"expected_terminal_status_v{job_api_version}",
+        case.get("expected_terminal_status"),
     )
     if (
         isinstance(expected_statuses, list)
@@ -537,6 +643,37 @@ def _assert_case(
         raise AcceptanceFailure(
             f"Expected terminal status {expected_statuses}, got {status!r}."
         )
+
+    result = job.get("result")
+    workers = result.get("results", []) if isinstance(result, dict) else []
+    if not isinstance(workers, list) or any(not isinstance(worker, dict) for worker in workers):
+        raise AcceptanceFailure("Job contains invalid worker evidence.")
+
+    if case.get("require_tool_result") is True:
+        expected = case.get("expected_tool")
+        evidence = [worker for worker in workers
+                    if worker.get("proposed_tool") == expected
+                    and worker.get("status") == "success"
+                    and isinstance(worker.get("tool_result"), dict)]
+        if not evidence:
+            raise AcceptanceFailure("Completed read lacks successful structured tool evidence.")
+        answer = result.get("answer")
+        if not isinstance(answer, str) or not answer.strip():
+            raise AcceptanceFailure("Completed read lacks an application answer.")
+
+    if case.get("forbid_tool_execution") is True:
+        if any(worker.get("tool_result") is not None for worker in workers):
+            raise AcceptanceFailure("Fail-closed case contains executed tool evidence.")
+        if not isinstance(result, dict) or not isinstance(result.get("results"), list):
+            raise AcceptanceFailure("Fail-closed case lacks structured resolution evidence.")
+        answer = result.get("answer")
+        if not isinstance(answer, str) or not answer.strip():
+            raise AcceptanceFailure("Fail-closed case lacks an application answer.")
+        safe_workers = all(worker.get("status") in {"clarification_required", "denied"}
+                           for worker in workers)
+        no_route = not workers and result.get("routes") == []
+        if not ((workers and safe_workers) or no_route):
+            raise AcceptanceFailure("Fail-closed case lacks a clarification, denial, or empty plan.")
 
     expected_tool = case.get(
         "expected_tool"
@@ -612,27 +749,173 @@ def _assert_case(
                 )
 
 
+def _select_cases(config: Any, selected: set[str]) -> list[dict[str, Any]]:
+    cases = config.get("cases") if isinstance(config, dict) else None
+    if not isinstance(cases, list):
+        raise AcceptanceFailure("Case manifest does not contain cases.")
+    known: dict[str, dict[str, Any]] = {}
+    for case in cases:
+        if not isinstance(case, dict) or not isinstance(case.get("id"), str) or not case["id"]:
+            raise AcceptanceFailure("Case without a valid identifier.")
+        identity = case["id"]
+        if identity in known:
+            raise AcceptanceFailure(f"Duplicate acceptance case identifier: {identity}.")
+        if not isinstance(case.get("prompt"), str) or not case["prompt"].strip():
+            raise AcceptanceFailure(f"{identity}: missing prompt.")
+        expected = case.get("expected_terminal_status")
+        if not isinstance(expected, list) or not expected or not all(
+            isinstance(value, str) for value in expected
+        ):
+            raise AcceptanceFailure(f"{identity}: explicit expected terminal states are required.")
+        known[identity] = case
+    unknown = selected - known.keys()
+    if unknown:
+        raise AcceptanceFailure("Unknown acceptance case identifiers: " + ", ".join(sorted(unknown)))
+    chosen = [case for identity, case in known.items()
+              if (not selected or identity in selected) and case.get("enabled", True) is True]
+    if not chosen:
+        raise AcceptanceFailure("No enabled acceptance cases were selected.")
+    return chosen
+
+
+def _assert_job_context(job: dict[str, Any], *, chat_id: str, message: str) -> None:
+    if job.get("chat_id") != chat_id or job.get("conversation_id") != chat_id:
+        raise AcceptanceFailure("Durable job is not bound to the canonical acceptance chat.")
+    if job.get("message") != message:
+        raise AcceptanceFailure("Durable job did not preserve the submitted request.")
+
+
+def _assert_history_roundtrip(
+    history: dict[str, Any], job: dict[str, Any], *, chat_id: str,
+) -> None:
+    _assert_job_context(job, chat_id=chat_id, message=job["message"])
+    if history.get("chat_id") != chat_id or not isinstance(history.get("messages"), list):
+        raise AcceptanceFailure("Chat history did not preserve the canonical chat identifier.")
+    turns = [turn for turn in history["messages"]
+             if isinstance(turn, dict) and turn.get("job_id") == job["job_id"]]
+    users = [turn for turn in turns if turn.get("role") == "user"]
+    assistants = [turn for turn in turns if turn.get("role") == "assistant"]
+    if len(users) != 1 or users[0].get("content") != job["message"]:
+        raise AcceptanceFailure("Canonical chat history lacks the exact submitted job turn.")
+    result = job.get("result")
+    answer = result.get("answer") if isinstance(result, dict) else None
+    if job["status"] in {"failed", "denied", "outcome_unknown", "reconciliation_required"}:
+        answer = job.get("error") or answer
+    if (not isinstance(answer, str) or not answer.strip() or len(assistants) != 1
+            or assistants[0].get("content") != answer):
+        raise AcceptanceFailure("Canonical chat history lacks the visible durable job answer.")
+    if any(turn.get("status") != job["status"] for turn in turns):
+        raise AcceptanceFailure("Canonical chat history projects a different job state.")
+    if assistants[0].get("proposed_tool") != job.get("proposed_tool"):
+        raise AcceptanceFailure("Canonical chat history changed the persisted tool proposal.")
+
+
+def _assert_proposal_binding(original: dict[str, Any], resolved: dict[str, Any]) -> None:
+    for key in ("job_id", "user_id", "chat_id", "conversation_id", "message", "attempts",
+                "selected_agent", "proposed_tool"):
+        if resolved.get(key) != original.get(key):
+            raise AcceptanceFailure("Approved job changed its persisted request or proposal binding.")
+
+
+def _assert_approval_execution(
+    original: dict[str, Any], resolved: dict[str, Any], case: dict[str, Any],
+) -> None:
+    _assert_proposal_binding(original, resolved)
+    expected = case.get("expected_post_approval_status", ["completed"])
+    if (not isinstance(expected, list) or not expected or resolved.get("status") not in expected
+            or resolved.get("status") == "waiting_approval"):
+        raise AcceptanceFailure("Approved job did not reach its explicit terminal outcome.")
+    proposal = original.get("proposed_tool")
+    approval_id = proposal.get("approval_id") if isinstance(proposal, dict) else None
+    result = resolved.get("result")
+    outcome = result.get("approval_execution") if isinstance(result, dict) else None
+    if not isinstance(approval_id, str) or not approval_id or not isinstance(outcome, dict):
+        raise AcceptanceFailure("Approved job lacks persisted approval execution evidence.")
+    if outcome.get("approval_id") != approval_id:
+        raise AcceptanceFailure("Approval execution identifies a different persisted proposal.")
+    states = {"succeeded": ("approved", "completed"), "failed": ("failed", "failed"),
+              "unresolved": ("executing", "outcome_unknown")}
+    pair = states.get(outcome.get("execution_status"))
+    status = resolved.get("status")
+    if status == "reconciliation_required":
+        status = "outcome_unknown"
+    if (outcome.get("protocol_status") != "processed" or pair is None
+            or pair != (outcome.get("approval_status"), status)
+            or not isinstance(outcome.get("replayed"), bool)):
+        raise AcceptanceFailure("Approval execution has an inconsistent authority outcome.")
+    evidence = outcome.get("result")
+    error = outcome.get("error")
+    if ((evidence is not None and not isinstance(evidence, dict))
+            or (error is not None and not isinstance(error, str))):
+        raise AcceptanceFailure("Approval execution has malformed structured evidence.")
+    if status == "completed":
+        if (not isinstance(evidence, dict) or evidence.get("ok") is not True
+                or evidence.get("status") not in {"success", "executed"} or error):
+            raise AcceptanceFailure("Completed approval lacks a successful structured tool result.")
+        if not isinstance(result.get("answer"), str) or not result["answer"].strip():
+            raise AcceptanceFailure("Completed approval lacks a visible durable answer.")
+
+
+def _execute_approval_case(
+    client: BrowserPathClient, case: dict[str, Any], original: dict[str, Any], *, poll_seconds: float,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    if case.get("allow_execute") is not True:
+        raise AcceptanceFailure("Approval execution requires an explicit allow_execute=true case.")
+    original = deepcopy(original)
+    job_id = original["job_id"]
+    response = client.approve_job(job_id)
+    _assert_proposal_binding(original, response)
+    resolved = client.wait_for_terminal(job_id, poll_seconds=poll_seconds)
+    _assert_approval_execution(original, resolved, case)
+    reopened = client.get_job(job_id)
+    _assert_approval_execution(original, reopened, case)
+    if reopened != resolved:
+        raise AcceptanceFailure("Approved terminal job changed when reopened.")
+    client.assert_approval_replay_rejected(job_id, status=reopened["status"])
+    after_replay = client.get_job(job_id)
+    if after_replay != reopened:
+        raise AcceptanceFailure("Rejected approval replay changed the durable terminal job.")
+    proposal = original["proposed_tool"]
+    return after_replay, {
+        "original_job_id": job_id,
+        "approval_id": proposal["approval_id"],
+        "proposal_sha256": hashlib.sha256(json.dumps(
+            proposal, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")).hexdigest(),
+        "execution_status": reopened["result"]["approval_execution"]["execution_status"],
+        "structured_tool_success_verified": reopened["status"] == "completed",
+        "proposal_binding_preserved": True,
+        "terminal_reopen_unchanged": True,
+        "replay_http_status": 409,
+        "terminal_after_replay_unchanged": True,
+        "external_execution_count_verified": False,
+        "model_not_rerun_verified": False,
+    }
+
+
 def run_live(
     args: argparse.Namespace,
 ) -> None:
     email = (
         args.email
-        or os.getenv(
-            "V18_03_EMAIL"
+        or _acceptance_env(
+            "ACCEPTANCE_EMAIL"
         )
     )
 
     if not email:
         raise AcceptanceFailure(
-            "Set V18_03_EMAIL or pass --email."
+            "Set ACCEPTANCE_EMAIL or pass --email."
         )
 
-    password = os.getenv(
-        "V18_03_PASSWORD"
+    password = _acceptance_env(
+        "ACCEPTANCE_PASSWORD"
     )
     if password is None:
+        if args.non_interactive:
+            raise AcceptanceFailure("Set ACCEPTANCE_PASSWORD for a non-interactive live run.")
         password = getpass.getpass(
-            "V18-03 login password: "
+            "Acceptance login password: "
         )
 
     case_file = Path(
@@ -644,28 +927,18 @@ def run_live(
         )
     )
 
-    cases = config.get(
-        "cases"
-    )
-    if not isinstance(
-        cases,
-        list,
-    ):
-        raise AcceptanceFailure(
-            "Case manifest does not contain cases."
-        )
-
     selected = set(
         args.case
         or []
     )
+    cases = _select_cases(config, selected)
 
     run_token = _now_token()
     report_dir = (
         AI_REPO
         / ".runtime"
         / "acceptance"
-        / "v18-03"
+        / "cross-repo"
     )
     report_dir.mkdir(
         parents=True,
@@ -684,12 +957,14 @@ def run_live(
     client = BrowserPathClient(
         args.backend_url,
         timeout_seconds=args.timeout,
+        job_api_version=args.job_api_version,
+        contracts_dir=Path(args.contracts_dir),
     )
 
     chat_id: str | None = None
 
     try:
-        print("V18-03 live acceptance")
+        print("Cross-repository live acceptance")
         print("======================")
         client.preflight()
         print("backend_health: reachable")
@@ -702,7 +977,7 @@ def run_live(
         integrations = client.integrations()
 
         chat_id = client.create_chat(
-            f"V18-03 acceptance {run_token}"
+            f"ITSM acceptance {run_token}"
         )
         print(
             "acceptance_chat:",
@@ -808,11 +1083,15 @@ def run_live(
                 )
             )
 
+            _assert_job_context(terminal, chat_id=chat_id, message=prompt)
+
             _assert_case(
                 case,
                 terminal,
+                job_api_version=args.job_api_version,
             )
 
+            execution_checks = None
             if (
                 terminal.get(
                     "status"
@@ -831,50 +1110,12 @@ def run_live(
                         "but this case is not explicitly allow_execute=true."
                     )
 
-                print(
-                    "  approving explicitly allowed case"
-                )
-                client.approve_job(
-                    job_id
-                )
-                terminal = (
-                    client.wait_for_terminal(
-                        job_id,
-                        poll_seconds=args.poll_interval,
-                    )
+                print("  approving explicitly allowed case")
+                terminal, execution_checks = _execute_approval_case(
+                    client, case, terminal, poll_seconds=args.poll_interval,
                 )
 
-                post_approval_status = terminal.get(
-                    "status"
-                )
-
-                expected_post_approval = case.get(
-                    "expected_post_approval_status"
-                )
-
-                if isinstance(
-                    expected_post_approval,
-                    list,
-                ):
-                    if (
-                        post_approval_status
-                        not in expected_post_approval
-                    ):
-                        raise AcceptanceFailure(
-                            f"{case_id}: expected post-approval "
-                            f"status {expected_post_approval}, "
-                            f"got {post_approval_status!r}."
-                        )
-                elif post_approval_status not in {
-                    "completed",
-                    "failed",
-                    "reconciliation_required",
-                }:
-                    raise AcceptanceFailure(
-                        f"{case_id}: approved job reached "
-                        f"unexpected state "
-                        f"{post_approval_status!r}."
-                    )
+            _assert_history_roundtrip(client.get_history(chat_id), terminal, chat_id=chat_id)
 
             print(
                 "  tool:",
@@ -900,6 +1141,8 @@ def run_live(
                     "tool": _tool_name(
                         terminal
                     ),
+                    "canonical_history_roundtrip": True,
+                    "approval_execution_checks": execution_checks,
                 }
             )
 
@@ -916,9 +1159,17 @@ def run_live(
 
     finally:
         report = {
-            "version": "V18-03",
+            "suite": "cross-repository-acceptance",
+            "schema": "durable-acceptance.v2",
+            "scope": "Authenticated Phoenix HTTP API; excludes browser rendering and exhaustive tool coverage",
+            "job_api_version": args.job_api_version,
             "run_token": run_token,
             "backend_url": args.backend_url,
+            "selected_case_count": len(cases),
+            "complete": len(results) == len(cases) and all(
+                item.get("outcome") == "passed" for item in results
+            ),
+            "coverage_limits": config.get("coverage_limits", []),
             "results": results,
         }
 
@@ -973,15 +1224,18 @@ def run_live(
             "One or more acceptance cases failed."
         )
 
+    if any(item.get("outcome") == "skipped" for item in results):
+        raise AcceptanceFailure("Live acceptance is incomplete: selected cases were skipped; see the report.")
+
     print()
-    print("PASS: V18-03 live acceptance")
+    print("PASS: cross-repository live acceptance")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "SRS 1.8 V18-03 cross-repository and live "
-            "browser-path acceptance harness."
+            "Cross-repository and live "
+            "authenticated durable HTTP acceptance harness."
         )
     )
 
@@ -997,6 +1251,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--backend-url",
         default=DEFAULT_BACKEND_URL,
+    )
+    parser.add_argument(
+        "--job-api-version", type=int, choices=(1, 2), default=DEFAULT_JOB_API_VERSION,
+        help="Job reads/approval contract version (default: 2). Creation remains POST /api/v1/jobs.",
+    )
+    parser.add_argument(
+        "--contracts-dir", type=Path, default=BACKEND_REPO / "contracts",
+        help="Canonical contracts directory from the current backend checkout.",
+    )
+    parser.add_argument(
+        "--non-interactive", action="store_true",
+        help="Fail if the configured test account password is unavailable; never prompt.",
     )
     parser.add_argument(
         "--email",

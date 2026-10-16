@@ -12,6 +12,9 @@ from __future__ import annotations
 import re
 
 from services.extensions.transport import request_json
+from services.extensions.admission import admit_external_request, record_external_usage
+from services.extensions.budget import estimate_messages_tokens
+from services.extensions.options import reasoning_effort
 
 
 PROBE_CONTRACT = "provider-probe.v1"
@@ -320,6 +323,10 @@ async def remote_probe(
     }
 
     try:
+        effort = reasoning_effort(profile)
+        if effort is not None:
+            body["reasoning_effort"] = effort
+        admission = await admit_external_request(profile, estimate_messages_tokens(body["messages"]) + token_budget)
         data = await request_json(
             url.rstrip(
                 "/"
@@ -331,6 +338,10 @@ async def remote_probe(
                 "",
             ),
         )
+
+        usage = data.get("usage") if isinstance(data, dict) else None
+        if isinstance(usage, dict):
+            record_external_usage(admission, usage.get("total_tokens"))
 
     except ValueError as exc:
         raise _provider_error(

@@ -12,6 +12,8 @@ from services.jira import (
     build_jira_project_read_service,
 )
 
+from subagents.llm.runtime.stages import InferenceStage
+
 from subagents.integration.support import (
     build_hub_integration_context,
 )
@@ -161,7 +163,8 @@ async def main(
             .warm(
                 runtime
                 .settings
-                .hub_model_key
+                .hub_model_key,
+                stage=InferenceStage.CONTROL_ROUTING,
             )
         )
 

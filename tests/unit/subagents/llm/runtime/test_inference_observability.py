@@ -1,5 +1,7 @@
 import asyncio
 
+from subagents.llm.runtime.stages import InferenceStage
+
 from subagents.llm.runtime.base import (
     GenerationOutput,
 )
@@ -128,6 +130,7 @@ def test_generate_emits_observability():
 
         response = (
             await inference.generate(
+                stage=InferenceStage.CONTROL_ROUTING,
                 model_key=(
                     "test-model"
                 ),
@@ -264,7 +267,8 @@ def test_warm_emits_observability():
         )
 
         await inference.warm(
-            "test-model"
+            "test-model",
+            stage=InferenceStage.CONTROL_ROUTING,
         )
 
         assert (

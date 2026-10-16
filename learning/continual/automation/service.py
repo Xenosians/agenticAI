@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from config import Settings
+from subagents.llm.runtime.stages import InferenceStage
 
 from learning.continual.checkpoints import (
     AdapterCheckpointStore,
@@ -679,7 +680,8 @@ class ContinualAutomationService:
             await self.runtime.inference.warm(
                 self.runtime
                 .settings
-                .hub_model_key
+                .hub_model_key,
+                stage=InferenceStage.CONTROL_ROUTING,
             )
 
             self.store.set_json(
@@ -1134,7 +1136,8 @@ class ContinualAutomationService:
         finally:
             try:
                 await self.runtime.inference.warm(
-                    self.runtime.settings.hub_model_key
+                    self.runtime.settings.hub_model_key,
+                    stage=InferenceStage.CONTROL_ROUTING,
                 )
             except Exception as exc:
                 print(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 from typing import (
@@ -19,6 +20,8 @@ from learning.evidence.runtime_decisions import (
     capture_gateway_decision,
     capture_semantic_guard_decision,
 )
+
+from subagents.llm.runtime.stages import InferenceStage
 
 from subagents.core.orchestration.conversation_context import (
     conversation_messages,
@@ -261,6 +264,14 @@ class AgentRuntime:
                 )
             )
 
+        from services.extensions.context import selected_profile
+        inference_stage = (
+            InferenceStage.NETWORKING
+            if agent.name == "networking-specialist"
+            else InferenceStage.SPECIALIST_REASONING
+        )
+        selected_connection = selected_profile(stage=inference_stage)
+
         # ========================================================
         # CAPABILITY CATALOG
         # ========================================================
@@ -422,6 +433,7 @@ class AgentRuntime:
                 }
             )
 
+        current_request_index = len(messages)
         messages.append(
             {
                 "role":
@@ -556,6 +568,7 @@ class AgentRuntime:
         if (
             self.model_profile_resolver
             is not None
+            and selected_connection is None
         ):
 
             try:
@@ -572,7 +585,8 @@ class AgentRuntime:
                 )
 
                 provenance = (
-                    build_specialist_execution_provenance(
+                    await asyncio.to_thread(
+                        build_specialist_execution_provenance,
                         agent=(
                             agent
                         ),
@@ -628,9 +642,14 @@ class AgentRuntime:
         # MODEL GENERATION
         # ========================================================
 
-        from services.extensions.context import selected_profile
-        if selected_profile(agent.model) is not None:
+        if selected_connection is not None:
             task.execution_provenance = None
+            # External history budgeting retains system messages and the final
+            # user message. Keep both the validated target contract and actual
+            # current request mandatory; older conversational context may drop.
+            if task.semantic_intent is not None:
+                messages[-1] = {**messages[-1], "role": "system"}
+            messages.append(messages.pop(current_request_index))
 
         try:
 
@@ -638,6 +657,7 @@ class AgentRuntime:
                 await
                 self.inference
                 .generate(
+                    stage=inference_stage,
                     model_key=(
                         agent.model
                     ),

@@ -8,6 +8,8 @@ from config import (
     get_settings,
 )
 
+from subagents.llm.runtime.stages import InferenceStage
+
 from subagents.core.orchestration.conversation_context import (
     conversation_messages,
 )
@@ -152,6 +154,7 @@ class PrimaryAssistant:
 
         response = (
             await self.inference.generate(
+                stage=InferenceStage.PRIMARY_RESPONSE,
                 model_key=(
                     self.model_key
                 ),
@@ -232,6 +235,7 @@ class PrimaryAssistant:
 
         response = (
             await self.inference.generate(
+                stage=InferenceStage.SYNTHESIS,
                 model_key=(
                     self.model_key
                 ),

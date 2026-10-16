@@ -27,6 +27,8 @@ from learning.training.specialist_sft import (
     load_training_config,
     resolve_worker_prompt_profile,
 )
+from subagents.llm.runtime.stages import InferenceStage
+
 from subagents.core.definitions.loader import load_agent_definition
 from subagents.core.tooling.capabilities import build_agent_capability_catalog
 from subagents.core.tooling.parser import parse_tool_calls
@@ -152,6 +154,12 @@ async def run(args) -> int:
         model=model_key,
     )
 
+    inference_stage = (
+        InferenceStage.NETWORKING
+        if agent.name == "networking-specialist"
+        else InferenceStage.SPECIALIST_REASONING
+    )
+
     capability_catalog = build_agent_capability_catalog(
         agent,
         include_arguments=True,
@@ -185,7 +193,8 @@ async def run(args) -> int:
 
     try:
         await inference.warm(
-            model_key
+            model_key,
+            stage=inference_stage,
         )
 
         for index, case in enumerate(
@@ -223,6 +232,7 @@ async def run(args) -> int:
             started = time.perf_counter()
 
             raw = await inference.generate(
+                stage=inference_stage,
                 model_key=model_key,
                 messages=messages,
                 max_new_tokens=(

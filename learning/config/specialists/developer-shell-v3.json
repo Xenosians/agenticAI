@@ -571,11 +571,7 @@
       "allowed_tools": [
         "workspace_run_tests"
       ],
-      "allowed_arguments": {
-        "relative_path": [
-          "tests/unit/learning"
-        ]
-      },
+      "allowed_arguments": {},
       "expected_tool": "workspace_run_tests",
       "expected_arguments": {
         "relative_path": "tests/unit/learning"

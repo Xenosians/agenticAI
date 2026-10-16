@@ -9,6 +9,7 @@ from .base import (
 from .mock import (
     MockAssetService,
 )
+from .sqlite import SQLiteAssetService
 
 
 def build_asset_service(
@@ -34,6 +35,11 @@ def build_asset_service(
         return (
             MockAssetService()
         )
+
+    if backend == "sqlite":
+        if settings.asset_sqlite_path is None:
+            raise RuntimeError("ASSET_SQLITE_PATH is required for the SQLite asset backend.")
+        return SQLiteAssetService(settings.asset_sqlite_path)
 
     raise RuntimeError(
         "Unsupported asset backend: "

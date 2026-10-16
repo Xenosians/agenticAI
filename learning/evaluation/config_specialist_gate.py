@@ -17,6 +17,8 @@ from learning.training.specialist_sft import (
     SpecialistEvalCase,
     load_training_config,
 )
+from subagents.llm.runtime.stages import InferenceStage
+
 from subagents.core.definitions.loader import load_agent_definition
 from subagents.core.tooling.capabilities import build_agent_capability_catalog
 from subagents.core.tooling.gateway import (
@@ -271,6 +273,12 @@ async def evaluate_specialist_config_gate(
     profile = settings.require_model_profile(model_key)
     agent = load_agent_definition(project_root / agent_definition)
 
+    inference_stage = (
+        InferenceStage.NETWORKING
+        if agent.name == "networking-specialist"
+        else InferenceStage.SPECIALIST_REASONING
+    )
+
     capability_catalog = build_agent_capability_catalog(
         agent,
         include_arguments=True,
@@ -326,7 +334,7 @@ async def evaluate_specialist_config_gate(
     print()
 
     try:
-        await inference.warm(model_key)
+        await inference.warm(model_key, stage=inference_stage)
 
         for source_name, case, budget in selected:
             semantic_context = _semantic_context(case)
@@ -338,6 +346,7 @@ async def evaluate_specialist_config_gate(
 
             started = time.perf_counter()
             raw = await inference.generate(
+                stage=inference_stage,
                 model_key=model_key,
                 messages=messages,
                 max_new_tokens=budget,

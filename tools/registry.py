@@ -245,8 +245,9 @@ TOOLS = {
         "policy_resolver":
             evaluate_process_policy,
 
-        "grounded_arguments":
-            [],
+        "grounded_arguments": [
+            "executable",
+        ],
 
         "parameters": {
             "executable": {
@@ -254,7 +255,8 @@ TOOLS = {
                     "str",
 
                 "description": (
-                    "Approved native executable."
+                    "Exact native executable explicitly named by the user. "
+                    "The application separately validates whether it is approved."
                 ),
             },
 

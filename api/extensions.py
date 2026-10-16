@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from config import get_settings
 from services.extensions.service import command
 from services.extensions.probe import ProviderProbeError
+from services.extensions.diagnostics import HarnessFailure
 
 
 router = APIRouter()
@@ -36,6 +37,24 @@ async def extensions(body: ExtensionCommand, request: Request):
         raise HTTPException(
             422,
             exc.public_detail(),
+        ) from None
+
+    except HarnessFailure as exc:
+        # HarnessFailure contains only server-generated backend/provider
+        # identifiers, a bounded category, and optional exit status.
+        # Never forward raw stderr or provider response bodies.
+        raise HTTPException(
+            422,
+            {
+                "code":
+                    exc.category,
+
+                "message":
+                    (
+                        f"{exc.backend} harness could not "
+                        "complete the selected model request."
+                    ),
+            },
         ) from None
 
     except (ValueError, KeyError, TypeError):

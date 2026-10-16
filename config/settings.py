@@ -10,6 +10,7 @@ from pydantic import (
     BaseModel,
     Field,
     field_validator,
+    model_validator,
 )
 
 from pydantic_settings import (
@@ -398,6 +399,23 @@ class Settings(
         gt=0,
     )
 
+    # Separate, opt-in local SMTP/IMAP lab. The model cannot choose hosts,
+    # container names, commands, ports, or a public mail domain.
+    mailbox_lab_enabled: bool = False
+    mailbox_lab_domain: str = "itsm.test"
+    mailbox_smtp_port: int = Field(default=1587, ge=1024, le=65535)
+    mailbox_imap_port: int = Field(default=1143, ge=1024, le=65535)
+    mailbox_timeout_seconds: float = Field(default=10.0, gt=0, le=30)
+    mailbox_provisioning_lock_path: Path = PROJECT_ROOT / ".runtime/mailbox-provisioning.lock"
+
+    @field_validator("mailbox_lab_domain")
+    @classmethod
+    def validate_mailbox_lab_domain(cls, value: str) -> str:
+        import re
+        if not re.fullmatch(r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+test", value) or len(value) > 253:
+            raise ValueError("MAILBOX_LAB_DOMAIN must be an exact lowercase .test domain.")
+        return value
+
     # ============================================================
     # DURABLE JOB LIVENESS
     # ============================================================
@@ -691,6 +709,7 @@ class Settings(
     asset_backend: str = (
         "mock"
     )
+    asset_sqlite_path: Path | None = None
 
     # ============================================================
     # KNOWLEDGE / RUNBOOK PROVIDER
@@ -956,7 +975,7 @@ class Settings(
 
         supported = {
             "mock",
-            "local",
+            "sqlite",
         }
 
         if normalized not in supported:
@@ -971,6 +990,21 @@ class Settings(
             )
 
         return normalized
+
+    @field_validator("asset_sqlite_path", mode="before")
+    @classmethod
+    def validate_asset_sqlite_path(cls, value):
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        if str(value).strip() == ":memory:":
+            raise ValueError("ASSET_SQLITE_PATH must identify a persistent database file.")
+        return resolve_portable_path(value, base=PROJECT_ROOT)
+
+    @model_validator(mode="after")
+    def validate_asset_storage(self):
+        if self.asset_backend == "sqlite" and self.asset_sqlite_path is None:
+            raise ValueError("ASSET_SQLITE_PATH is required when ASSET_BACKEND=sqlite.")
+        return self
 
     @field_validator(
         "knowledge_backend"

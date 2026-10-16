@@ -1,6 +1,18 @@
 from __future__ import annotations
 
 import json
+import logging
+
+from services.extensions.budget import estimate_messages_tokens
+from services.extensions.context import selected_profile
+from subagents.core.orchestration.candidate_selector import (
+    CandidateSelector,
+    CandidateSet,
+    DeterministicCandidateSelector,
+    build_candidate_agent_specs,
+    validate_candidate_set,
+)
+from subagents.llm.runtime.stages import InferenceStage, resolve_stage_policy
 from subagents.core.orchestration.router_catalog import render_router_catalog
 
 from config import (
@@ -9,7 +21,7 @@ from config import (
 
 from learning.evidence.hub_routing import (
     accept_current_hub_routing_attempt,
-    capture_hub_routing_generation,
+    capture_hub_routing_generation_async,
     reject_current_hub_routing_attempt,
     reset_hub_routing_trace,
     set_current_hub_routing_parsed_output,
@@ -48,6 +60,8 @@ from subagents.prompts.prompt_loader import (
     load_prompt,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class RoutingContractError(
     RuntimeError
@@ -81,6 +95,7 @@ class LLMRouter:
             int | None
         ) = None,
         model_profile_resolver=None,
+        candidate_selector: CandidateSelector | None = None,
     ) -> None:
 
         self.registry = (
@@ -102,6 +117,7 @@ class LLMRouter:
         self.model_profile_resolver = (
             model_profile_resolver
         )
+        self.candidate_selector = candidate_selector or DeterministicCandidateSelector()
 
         self.max_new_tokens = (
             max_new_tokens
@@ -198,6 +214,51 @@ class LLMRouter:
         return (
             system_prompt
         )
+
+    def _routing_input(self, user_request, *, repair_mode, include_workflow_protocol):
+        """Disclose a trusted subset only; broad control routing stays local.
+
+        A candidate miss or oversized packet falls back before any selected
+        adapter is called. Candidate identities never replace the full registry
+        used by semantic validation, approval policy or tool execution.
+        """
+        candidates: CandidateSet | None = None
+        if selected_profile(stage=InferenceStage.SEMANTIC_ROUTING):
+            selection = validate_candidate_set(
+                self.candidate_selector.select(user_request, self.registry), self.registry
+            )
+            fallback = selection.fallback_required or not selection.candidates
+            if not fallback:
+                specialists = build_candidate_agent_specs(selection, self.registry)
+                system = load_prompt("hub_router_compact.txt").replace(
+                    "{{SPECIALISTS_JSON}}", render_router_catalog(specialists)
+                ).replace(
+                    "{{WORKFLOW_PROTOCOL}}",
+                    load_prompt("hub_workflow_compact.txt") if include_workflow_protocol
+                    else "Conditional workflow generation is disabled for this repair.",
+                )
+                policy = resolve_stage_policy(InferenceStage.SEMANTIC_ROUTING)
+                mandatory = estimate_messages_tokens([
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user_request},
+                ])
+                fallback = mandatory + min(self.max_new_tokens, policy.output_token_ceiling) > policy.request_token_ceiling
+                if not fallback:
+                    candidates = selection
+            logger.info(
+                "routing_candidates candidates=%d capabilities=%d confidence=%.4f widening=%d fallback=%s",
+                selection.candidate_count, selection.capability_count, selection.confidence,
+                selection.widening_count, fallback,
+            )
+            if candidates is not None:
+                return specialists, system, InferenceStage.SEMANTIC_ROUTING, candidates
+
+        specialists = [build_router_semantic_agent_spec(agent) for agent in self.registry.list_agents()]
+        system = self._build_system_prompt(
+            repair_mode=repair_mode, include_workflow_protocol=include_workflow_protocol,
+            specialists=specialists,
+        )
+        return specialists, system, InferenceStage.CONTROL_ROUTING, None
 
     def _contract_error(
         self,
@@ -315,30 +376,9 @@ class LLMRouter:
             )
         )
 
-        specialists = [
-            build_router_semantic_agent_spec(
-                agent
-            )
-
-            for agent
-            in (
-                self.registry
-                .list_agents()
-            )
-        ]
-
-        system_content = (
-            self._build_system_prompt(
-                repair_mode=(
-                    repair_mode
-                ),
-                include_workflow_protocol=(
-                    include_workflow_protocol
-                ),
-                specialists=(
-                    specialists
-                ),
-            )
+        specialists, system_content, origin_stage, candidates = self._routing_input(
+            user_request, repair_mode=repair_mode,
+            include_workflow_protocol=include_workflow_protocol,
         )
 
         messages = [
@@ -362,10 +402,13 @@ class LLMRouter:
             and repair_error.strip()
         ):
 
-            messages.append(
+            # Both the feedback and original request remain mandatory under
+            # history trimming. The final user message is always the request.
+            messages.insert(
+                1,
                 {
                     "role":
-                        "user",
+                        "system",
 
                     "content":
                         (
@@ -398,24 +441,22 @@ class LLMRouter:
                     InferencePriority
                     .HUB_ROUTING
                 ),
+                stage=InferenceStage.REPAIR if repair_mode else origin_stage,
+                repair_of=origin_stage if repair_mode else None,
             )
         )
 
-        print(
-            "\n===== HUB ROUTER ====="
-            f"\nMODE: "
-            f"{'repair' if repair_mode else 'normal'}"
-            f"\nUSER: {user_request}"
-            f"\nRAW: {response}"
-            "\n======================"
+        logger.info(
+            "routing_generation stage=%s repair=%s input_estimate=%d response_chars=%d",
+            origin_stage.value, repair_mode, estimate_messages_tokens(messages), len(response),
         )
 
-        capture_hub_routing_generation(
+        await capture_hub_routing_generation_async(
             model_key=(
                 self.model_key
             ),
             model_profile_resolver=(
-                self.model_profile_resolver
+                self.model_profile_resolver if candidates is None else None
             ),
             specialists=(
                 specialists
@@ -506,6 +547,18 @@ class LLMRouter:
             return []
 
         if not delegations:
+
+            if candidates is not None:
+                # A retrieved ITSM task that the selected model cannot route
+                # must not become a successful conversational completion.
+                # The existing caller permits one bounded repair; a repeated
+                # miss remains an explicit failure with no tool execution.
+                message = (
+                    "No supported action was selected from the retrieved capabilities. "
+                    "Clarify the requested operation or target."
+                )
+                reject_current_hub_routing_attempt(message)
+                raise RoutingContractError(message)
 
             accept_current_hub_routing_attempt(
                 validated_delegation_count=0,
@@ -618,6 +671,15 @@ class LLMRouter:
                     agent_name
                 )
             )
+
+            if candidates is not None:
+                disclosed = {item.agent_name: set(item.capability_names) for item in candidates.candidates}
+                raw_intent = delegation.get("intent")
+                allowed = raw_intent.get("allowed_tools") if isinstance(raw_intent, dict) else None
+                if (agent_name not in disclosed or not isinstance(allowed, list)
+                        or any(not isinstance(name, str) or name not in disclosed[agent_name] for name in allowed)):
+                    self._contract_error("Hub router selected an undisclosed candidate capability.")
+                    continue
 
             try:
 

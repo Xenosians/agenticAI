@@ -1,5 +1,9 @@
 import asyncio
 
+import pytest
+
+from subagents.llm.runtime.stages import InferenceStage
+
 from subagents.core.definitions.loader import (
     load_agent_directory,
 )
@@ -44,9 +48,12 @@ class FakeInference:
         messages,
         max_new_tokens,
         priority,
+        stage,
+        repair_of=None,
     ):
         self.calls.append(
             {
+                "stage": stage,
                 "model_key":
                     model_key,
 
@@ -155,6 +162,29 @@ def build_runtime():
     )
 
 
+@pytest.mark.parametrize(
+    ("agent_name", "model_key", "expected_stage"),
+    [
+        ("networking-specialist", "user-uploaded-model", InferenceStage.NETWORKING),
+        ("account-specialist", "networking-looking-model", InferenceStage.SPECIALIST_REASONING),
+    ],
+)
+def test_runtime_stage_uses_trusted_agent_identity(agent_name, model_key, expected_stage):
+    runtime, inference, gateway = build_runtime()
+    runtime.agent_registry.get(agent_name).model = model_key
+    inference.error = RuntimeError("Deliberate generation failure before any execution")
+
+    result = asyncio.run(runtime.run(AgentTask(
+        task_id="stage-identity",
+        agent_name=agent_name,
+        user_request="Inspect the current status.",
+    )))
+
+    assert result.outcome_code == "model_generation_error"
+    assert inference.calls[0]["stage"] is expected_stage
+    assert not gateway.calls
+
+
 def test_runtime_executes_account_specialist():
     (
         runtime,
@@ -234,6 +264,8 @@ def test_runtime_executes_account_specialist():
     inference_call = (
         inference.calls[0]
     )
+
+    assert inference_call["stage"] is InferenceStage.SPECIALIST_REASONING
 
     assert (
         inference_call[

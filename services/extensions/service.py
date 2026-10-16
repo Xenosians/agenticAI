@@ -14,6 +14,7 @@ import threading
 from services.extensions.store import ExtensionStore
 from services.extensions.transport import request_json, validate_url
 from services.extensions.harness import harness_binary, harness_generate
+from services.extensions.options import INFERENCE_OPTION_FIELDS, inference_option_support, validate_inference_options
 
 _upload_lock = threading.Lock()
 
@@ -177,6 +178,7 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
                 "selected": store.selected(owner),
                 "provider_presets": provider_presets(),
                 "connection_presets": connection_presets(),
+                "inference_option_support": inference_option_support(),
                 "local_profiles": [{"id": key, "backend": profile.backend} for key, profile in settings.model_profiles.items() if profile.enabled and not key.startswith("user-upload-")],
                 "capabilities": [{"id": name, "description": tool.get("description", ""),
                                   "effect": tool.get("effect"), "permission": tool.get("permission")}
@@ -253,6 +255,10 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
                 "ready",
         }
 
+        profile.update({key: payload[key] for key in INFERENCE_OPTION_FIELDS
+                        if key in payload and payload[key] is not None
+                        and not (key == "reasoning_effort" and payload[key] == "")})
+
         if backend == "http":
             profile[
                 "url"
@@ -262,6 +268,8 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
                     "",
                 )
             )
+
+        validate_inference_options(profile)
 
         if backend == "local":
             if (
@@ -338,6 +346,12 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
             )
         )
 
+
+    if action == "model_options":
+        if set(payload) - (INFERENCE_OPTION_FIELDS | {"id"}):
+            raise ValueError("Only model inference options can be updated")
+        return public_resource(store.update_model_options(owner, payload["id"],
+            {key: value for key, value in payload.items() if key != "id"}))
 
     if action == "select":
         store.select(owner, payload.get("model_id") or None, payload.get("dataset_id") or None)

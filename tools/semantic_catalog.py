@@ -17,6 +17,8 @@ CAPABILITY_SEMANTICS: dict[str, dict[str, str]] = {
     "network_firewall_config": {"resource_type": "network.firewall", "operation_kind": "read", "effect": "read", "permission": "network.firewall.read"},
     "account_create": {"resource_type": "account", "operation_kind": "create", "effect": "mutation", "permission": "account.create"},
     "account_status": {"resource_type": "account", "operation_kind": "read", "effect": "read", "permission": "account.read"},
+    "mailbox_create": {"resource_type": "mailbox", "operation_kind": "create", "effect": "mutation", "permission": "mailbox.create"},
+    "mailbox_status": {"resource_type": "mailbox", "operation_kind": "read", "effect": "read", "permission": "mailbox.read"},
     "asset_assign": {"resource_type": "asset", "operation_kind": "action", "effect": "mutation", "permission": "asset.assign"},
     "asset_get": {"resource_type": "asset", "operation_kind": "read", "effect": "read", "permission": "asset.read"},
     "asset_search": {"resource_type": "asset", "operation_kind": "search", "effect": "read", "permission": "asset.search"},

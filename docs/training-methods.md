@@ -1,4 +1,4 @@
-# SRS 1.8 training and retrieval
+# Training methods and retrieval
 
 Run commands from the AI repository with the `qwen-infra` Python environment.
 `python scripts/training_methods.py` prints the supported method/role matrix.

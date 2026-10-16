@@ -54,13 +54,13 @@ class InferenceMetric:
 
     priority: int
 
-    loaded_before: bool
+    loaded_before: bool | None
 
-    loaded_after: bool
+    loaded_after: bool | None
 
-    queue_wait_seconds: float
+    queue_wait_seconds: float | None
 
-    execution_seconds: float
+    execution_seconds: float | None
 
     total_seconds: float
 
@@ -77,12 +77,23 @@ class InferenceMetric:
     )
 
     memory_before: (
-        CudaMemorySnapshot
+        CudaMemorySnapshot | None
     )
 
     memory_after: (
-        CudaMemorySnapshot
+        CudaMemorySnapshot | None
     )
+
+    stage: str
+    repair_of: str | None
+    adapter: str
+    outcome: str
+    error_type: str | None
+    input_message_count: int
+    estimated_input_tokens: int | None
+    request_token_budget: int | None
+    output_token_cap: int | None
+    dropped_messages: int
 
 
 MetricSink = Callable[
@@ -275,19 +286,38 @@ def _memory_text(
 def emit_inference_metric(
     metric: InferenceMetric,
 ) -> None:
+    # Labels come from trusted enums/adapter dispatch; prompt, response,
+    # credential, provider URL and exception text never enter this event.
+    print(
+        "[INFERENCE_METRIC] "
+        f"operation={metric.operation} stage={metric.stage} "
+        f"repair_of={metric.repair_of} adapter={metric.adapter} "
+        f"outcome={metric.outcome} error_type={metric.error_type} "
+        f"total_ms={metric.total_seconds * 1000:.2f} "
+        f"messages={metric.input_message_count} "
+        f"estimated_input_tokens={metric.estimated_input_tokens} "
+        f"request_budget={metric.request_token_budget} "
+        f"output_cap={metric.output_token_cap} "
+        f"dropped_messages={metric.dropped_messages}"
+    )
+
+    if metric.memory_before is None or metric.memory_after is None:
+        return
+
     print(
         "[GPU_METRIC] "
         f"operation={metric.operation} "
         f"model={metric.model_key!r} "
+        f"stage={metric.stage} "
         f"priority={metric.priority} "
         f"loaded_before="
         f"{metric.loaded_before} "
         f"loaded_after="
         f"{metric.loaded_after} "
         f"queue_wait_ms="
-        f"{metric.queue_wait_seconds * 1000:.2f} "
+        f"{_number_or_na(metric.queue_wait_seconds * 1000 if metric.queue_wait_seconds is not None else None)} "
         f"execution_ms="
-        f"{metric.execution_seconds * 1000:.2f} "
+        f"{_number_or_na(metric.execution_seconds * 1000 if metric.execution_seconds is not None else None)} "
         f"total_ms="
         f"{metric.total_seconds * 1000:.2f} "
         f"generated_tokens="

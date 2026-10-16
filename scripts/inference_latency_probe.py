@@ -20,6 +20,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from config import Settings
+from subagents.llm.runtime.stages import InferenceStage
+
 from subagents.llm.runtime.inference import InferenceCoordinator
 from subagents.llm.runtime.model_manager import ModelManager
 from subagents.llm.runtime.observability import capture_cuda_memory
@@ -78,6 +80,7 @@ async def probe(args: argparse.Namespace, report: dict) -> None:
             print(f"Load: {entry['load_seconds']:.3f}s", flush=True)
             for index in range(args.runs):
                 await engine.generate(
+                    stage=InferenceStage(args.stage),
                     model_key=key,
                     messages=[{"role": "user", "content": args.prompt}],
                     max_new_tokens=args.max_new_tokens,
@@ -101,6 +104,12 @@ def positive_int(value: str) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-key", action="append", help="Repeat for model-switch measurements")
+    parser.add_argument(
+        "--stage",
+        choices=[stage.value for stage in InferenceStage if stage != InferenceStage.REPAIR],
+        default=InferenceStage.CONTROL_ROUTING.value,
+        help="Trusted inference stage to measure (default: local control routing)",
+    )
     parser.add_argument("--runs", type=positive_int, default=2)
     parser.add_argument("--max-new-tokens", type=positive_int, default=64)
     parser.add_argument("--prompt", default="Explain what a network firewall does in two sentences.")
@@ -112,6 +121,7 @@ def main() -> int:
         "created_at": stamp,
         "scope": "model runtime only; no routing, provider execution, or E2E certification",
         "max_new_tokens": args.max_new_tokens,
+        "stage": args.stage,
         "models": [],
     }
     code = 0

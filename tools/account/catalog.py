@@ -1,6 +1,7 @@
 from tools.account.policy import (
     evaluate_account_create_policy,
 )
+from tools.mailbox.catalog import MAILBOX_TOOLS
 
 from typing import (
     Any,
@@ -186,6 +187,7 @@ def format_account_create_approval(
 
 
 ACCOUNT_TOOLS = {
+    **MAILBOX_TOOLS,
     "account_create": {
         "description": (
             "Create one corporate directory account from explicitly supplied business "

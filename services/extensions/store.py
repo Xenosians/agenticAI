@@ -68,6 +68,26 @@ class ExtensionStore:
             rows = db.execute("SELECT id FROM resource WHERE owner=? ORDER BY rowid", (owner,)).fetchall()
         return [self.get(owner, row["id"]) for row in rows]
 
+    def update_model_options(self, owner: str, identity: str, changes: dict) -> dict:
+        """Patch only inference options without replacing identity or credentials."""
+        from services.extensions.options import INFERENCE_OPTION_FIELDS, validate_inference_options
+        if set(changes) - INFERENCE_OPTION_FIELDS:
+            raise ValueError("Unsupported model inference option")
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT kind, data FROM resource WHERE owner=? AND id=?", (owner, identity)).fetchone()
+            if row is None or row["kind"] != "model":
+                raise ValueError("Model connection not found")
+            data = json.loads(row["data"])
+            for name, value in changes.items():
+                if value is None or (name == "reasoning_effort" and value == ""):
+                    data.pop(name, None)
+                else:
+                    data[name] = value
+            validate_inference_options(data)
+            db.execute("UPDATE resource SET data=? WHERE owner=? AND id=?", (json.dumps(data), owner, identity))
+        return self.get(owner, identity)
+
     def select(self, owner: str, model_id: str | None, dataset_id: str | None):
         for identity, kind in [(model_id, "model"), (dataset_id, "dataset")]:
             if identity:

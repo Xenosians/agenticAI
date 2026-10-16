@@ -11,6 +11,7 @@ from dataclasses import (
 
 from typing import (
     Any,
+    Literal,
 )
 
 import httpx
@@ -60,6 +61,8 @@ from config import (
     Settings,
 )
 
+from subagents.llm.runtime.stages import InferenceStage
+
 from subagents.core.orchestration.conversation_context import (
     normalize_conversation_context,
 )
@@ -93,6 +96,16 @@ from services.openwrt import openwrt_integration_status
 # ============================================================
 # Request models
 # ============================================================
+
+
+class ApprovalProtocolResponse(BaseModel):
+    approval_id: str
+    protocol_status: Literal["processed"]
+    execution_status: Literal["succeeded", "failed", "unresolved", "rejected"]
+    approval_status: Literal["approved", "failed", "executing", "rejected"]
+    replayed: bool
+    result: dict[str, Any] | None
+    error: str | None
 
 
 class AgentRunRequest(
@@ -1376,7 +1389,8 @@ async def lifespan(
         )
 
         await inference.warm(
-            settings.hub_model_key
+            settings.hub_model_key,
+            stage=InferenceStage.CONTROL_ROUTING,
         )
 
         hub = (
@@ -1768,6 +1782,7 @@ def build_approval_protocol_payload(
       succeeded  -> completed
       failed     -> failed
       unresolved -> reconciliation_required
+      rejected   -> denied (human decision; no execution)
     """
 
     approval = approval_result.get("approval")
@@ -1781,6 +1796,7 @@ def build_approval_protocol_payload(
         "approved": "succeeded",
         "failed": "failed",
         "executing": "unresolved",
+        "rejected": "rejected",
     }
     execution_status = status_map.get(approval_status)
     if execution_status is None:
@@ -1803,6 +1819,8 @@ def build_approval_protocol_payload(
             "Approved action outcome is unresolved. Automatic retry is "
             "disabled pending trusted reconciliation."
         )
+    if execution_status == "rejected" and error is None:
+        error = "Action rejected by the user. No tool was executed."
 
     return {
         "approval_id": approval_id,
@@ -1817,12 +1835,15 @@ def build_approval_protocol_payload(
 
 @app.post(
     "/v1/approvals/"
-    "{approval_id}/approve"
+    "{approval_id}/approve",
+    response_model=ApprovalProtocolResponse,
 )
 async def approve(
     approval_id: str,
     request: Request,
 ) -> dict:
+    from api.extensions import require_internal
+    require_internal(request)
     runtime = require_ready_runtime(request)
 
     approval_result = (
@@ -1863,6 +1884,21 @@ async def approve(
             status_code=409,
             detail=str(exc),
         ) from exc
+
+
+@app.post(
+    "/v1/approvals/{approval_id}/reject",
+    response_model=ApprovalProtocolResponse,
+)
+async def reject(approval_id: str, request: Request) -> dict:
+    from api.extensions import require_internal
+    require_internal(request)
+    runtime = require_ready_runtime(request)
+    approval_result = await runtime.approvals.reject_approval(approval_id)
+    try:
+        return build_approval_protocol_payload(approval_id, approval_result)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.get("/v1/integrations")

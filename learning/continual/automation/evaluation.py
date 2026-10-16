@@ -30,6 +30,8 @@ from learning.paths import (
     PROMOTIONS_ROOT,
     REPOSITORY_ROOT,
 )
+from subagents.llm.runtime.stages import InferenceStage
+
 from subagents.hub import (
     build_hub,
 )
@@ -336,7 +338,8 @@ async def evaluate_candidate(
         await candidate_inference.warm(
             runtime
             .settings
-            .hub_model_key
+            .hub_model_key,
+            stage=InferenceStage.CONTROL_ROUTING,
         )
 
         candidate_report = (

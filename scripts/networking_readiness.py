@@ -6,6 +6,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+from subagents.llm.runtime.stages import InferenceStage
+
 from scripts.specialist_model_eval import (
     Settings, ModelManager, GpuScheduler, InferenceCoordinator, InferencePriority,
     load_agent_definition, build_agent_capability_catalog, build_worker_system_prompt,
@@ -33,7 +35,7 @@ async def main():
     results = []
     try:
         for user, tool, arguments in cases:
-            raw = await inference.generate(model_key="networking-func-trained",
+            raw = await inference.generate(stage=InferenceStage.NETWORKING, model_key="networking-func-trained",
                 messages=[{"role": "system", "content": prompt}, {"role": "user", "content": user}],
                 max_new_tokens=96, priority=InferencePriority.SPECIALIST)
             try:

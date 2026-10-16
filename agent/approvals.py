@@ -82,6 +82,30 @@ def execution_unresolved_result(
     }
 
 
+def _durable_decision_result(
+    approval: ApprovalEntry,
+    *,
+    replayed: bool = True,
+) -> dict | None:
+    """Report persisted authority without deciding or executing again."""
+    if approval.status == "executing":
+        return execution_unresolved_result(approval)
+    if approval.status not in {"approved", "failed", "rejected"}:
+        return None
+
+    result = {
+        "ok": approval.status == "approved",
+        "approval": approval_to_dict(approval),
+        "result": approval.result,
+        "replayed": replayed,
+    }
+    if approval.status == "rejected":
+        result["error"] = "Action rejected by the user. No tool was executed."
+    elif approval.status == "failed":
+        result["error"] = f"Approval '{approval.approval_id}' previously failed."
+    return result
+
+
 class ApprovalManager:
     """
     Explicit lifecycle owner for durable approval execution.
@@ -262,6 +286,23 @@ class ApprovalManager:
                 )
             )
 
+    async def reject_approval(self, approval_id: str) -> dict:
+        # The store CAS, rather than this process's lock, arbitrates against
+        # execution in another manager/process. A late rejection observes the
+        # actual durable execution state and never claims it stopped a tool.
+        rejected = self.store.reject_pending(approval_id)
+        approval = self.store.get(approval_id)
+        if approval is None:
+            return {"ok": False, "error": f"Approval '{approval_id}' not found."}
+        result = _durable_decision_result(approval, replayed=not rejected)
+        if result is not None:
+            return result
+        return {
+            "ok": False,
+            "approval": approval_to_dict(approval),
+            "error": f"Approval '{approval_id}' could not be rejected.",
+        }
+
     async def _approve_locked(
         self,
         approval_id: str,
@@ -287,64 +328,9 @@ class ApprovalManager:
         # DURABLE IDEMPOTENT REPLAY
         # ========================================================
 
-        if (
-            approval.status
-            == "approved"
-        ):
-            return {
-                "ok":
-                    True,
-
-                "approval":
-                    approval_to_dict(
-                        approval
-                    ),
-
-                "result":
-                    approval.result,
-
-                "replayed":
-                    True,
-            }
-
-        if (
-            approval.status
-            == "failed"
-        ):
-            return {
-                "ok":
-                    False,
-
-                "approval":
-                    approval_to_dict(
-                        approval
-                    ),
-
-                "result":
-                    approval.result,
-
-                "replayed":
-                    True,
-
-                "error": (
-                    f"Approval '{approval_id}' "
-                    "previously failed."
-                ),
-            }
-
-        # ========================================================
-        # AMBIGUOUS EXECUTION STATE
-        # ========================================================
-
-        if (
-            approval.status
-            == "executing"
-        ):
-            return (
-                execution_unresolved_result(
-                    approval
-                )
-            )
+        existing_result = _durable_decision_result(approval)
+        if existing_result is not None:
+            return existing_result
 
         if (
             approval.status
@@ -702,60 +688,9 @@ class ApprovalManager:
                 ),
             }
 
-        if (
-            approval.status
-            == "approved"
-        ):
-            return {
-                "ok":
-                    True,
-
-                "approval":
-                    approval_to_dict(
-                        approval
-                    ),
-
-                "result":
-                    approval.result,
-
-                "replayed":
-                    True,
-            }
-
-        if (
-            approval.status
-            == "failed"
-        ):
-            return {
-                "ok":
-                    False,
-
-                "approval":
-                    approval_to_dict(
-                        approval
-                    ),
-
-                "result":
-                    approval.result,
-
-                "replayed":
-                    True,
-
-                "error": (
-                    f"Approval '{approval_id}' "
-                    "previously failed."
-                ),
-            }
-
-        if (
-            approval.status
-            == "executing"
-        ):
-            return (
-                execution_unresolved_result(
-                    approval
-                )
-            )
+        existing_result = _durable_decision_result(approval)
+        if existing_result is not None:
+            return existing_result
 
         return {
             "ok":

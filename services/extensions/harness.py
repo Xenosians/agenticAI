@@ -20,8 +20,13 @@ import re
 import signal
 import tempfile
 
+from services.extensions.admission import admit_external_request, record_external_usage
+from services.extensions.options import reasoning_effort
+
 from services.extensions.budget import (
-    DEFAULT_HARNESS_REQUEST_TOKEN_BUDGET,
+    ExternalInferenceBudgetError,
+    default_external_request_budget,
+    log_external_budget_rejection,
     prepare_external_request,
 )
 
@@ -175,6 +180,103 @@ def harness_binary(
     return binary.resolve()
 
 
+def _resolve_node_runtime() -> Path:
+    """Resolve Pi's real Node executable before HOME isolation.
+
+    `node` may itself be an asdf/mise/etc. shim. Such shims can stop working
+    after the harness switches HOME and cwd to an empty temporary directory.
+
+    Ask the currently working host Node process for process.execPath, then use
+    that absolute executable path for the isolated Pi child.
+    """
+
+    configured = os.environ.get(
+        "PI_NODE_BINARY",
+        "",
+    ).strip()
+
+    if configured:
+        candidate = Path(
+            configured
+        ).expanduser()
+
+        if (
+            not candidate.is_absolute()
+            or not candidate.is_file()
+            or not os.access(
+                candidate,
+                os.X_OK,
+            )
+        ):
+            raise ValueError(
+                "PI_NODE_BINARY must point to "
+                "an executable Node binary"
+            )
+
+        return candidate.resolve()
+
+    import subprocess
+
+    try:
+        completed = subprocess.run(
+            [
+                "node",
+                "-p",
+                "process.execPath",
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=10,
+            check=False,
+            env=os.environ.copy(),
+        )
+
+    except (
+        OSError,
+        subprocess.TimeoutExpired,
+    ):
+        raise ValueError(
+            "Pi requires a working Node runtime "
+            "on the AI host"
+        ) from None
+
+    if completed.returncode != 0:
+        raise ValueError(
+            "Pi requires a working Node runtime "
+            "on the AI host"
+        )
+
+    value = (
+        completed.stdout
+        .strip()
+    )
+
+    if not value:
+        raise ValueError(
+            "Unable to resolve Pi Node runtime"
+        )
+
+    candidate = Path(
+        value
+    )
+
+    if (
+        not candidate.is_absolute()
+        or not candidate.is_file()
+        or not os.access(
+            candidate,
+            os.X_OK,
+        )
+    ):
+        raise ValueError(
+            "Resolved Pi Node runtime is invalid"
+        )
+
+    return candidate.resolve()
+
+
 async def _read_bounded(
     stream,
     *,
@@ -209,14 +311,27 @@ async def _read_bounded(
     )
 
 
-def _write_pi_model_override(
+def _write_pi_model_config(
     root: Path,
     *,
     provider: str,
     model_id: str,
     max_output_tokens: int,
+    reasoning: bool = False,
 ) -> None:
-    """Bound Pi's provider-side maximum without persisting credentials."""
+    """Create the minimum isolated Pi model catalog for one request.
+
+    modelOverrides cannot register an unknown model. Pi explicitly ignores
+    override IDs that are not already present in its model registry.
+
+    The Agentic harness uses a fresh PI_CODING_AGENT_DIR for every invocation,
+    so dynamic/cached provider catalogs such as OpenRouter cannot be assumed to
+    exist.
+
+    Register exactly the selected model with `models` instead. Credentials
+    remain exclusively in the subprocess environment and are never persisted
+    in models.json.
+    """
 
     config_dir = (
         root
@@ -228,30 +343,49 @@ def _write_pi_model_override(
         exist_ok=True,
     )
 
-    models = {
+    config = {
+        "$schema":
+            "https://pi.dev/schemas/models.schema.json",
+
         "providers": {
             provider: {
-                "modelOverrides": {
-                    model_id: {
+                "models": [
+                    {
+                        "id":
+                            model_id,
+
                         "maxTokens":
-                            max_output_tokens
+                            max_output_tokens,
                     }
-                }
+                ]
             }
-        }
+        },
     }
+
+    if reasoning:
+        # A models[] entry replaces Pi's registry metadata. Its default for
+        # omitted `reasoning` is false, which would silently ignore --thinking.
+        config["providers"][provider]["models"][0]["reasoning"] = True
 
     (
         config_dir
         / "models.json"
     ).write_text(
         json.dumps(
-            models,
+            config,
             separators=(
                 ",",
                 ":",
             ),
         ),
+        encoding="utf-8",
+    )
+
+    # Admission reserves one provider attempt. Pi enables up to three agent
+    # retries by default; provider SDK retries are a separate setting.
+    (config_dir / "settings.json").write_text(
+        json.dumps({"retry": {"enabled": False, "maxRetries": 0,
+                              "provider": {"maxRetries": 0}}}, separators=(",", ":")),
         encoding="utf-8",
     )
 
@@ -279,6 +413,7 @@ async def harness_generate(
     messages: list[dict],
     max_tokens: int,
 ) -> str:
+    effort = reasoning_effort(profile)
     kind = profile[
         "backend"
     ]
@@ -305,21 +440,30 @@ async def harness_generate(
         kind
     )
 
-    # Harnesses have their own system/context overhead.
-    # Keep a lower default budget than direct HTTP inference.
-    budget = prepare_external_request(
-        profile,
-        messages,
-        max_tokens,
-        default_request_budget=(
-            int(
-                os.environ.get(
-                    "EXTERNAL_HARNESS_REQUEST_TOKEN_BUDGET",
-                    DEFAULT_HARNESS_REQUEST_TOKEN_BUDGET,
+    # Harness/provider envelopes remain conservative and are
+    # resolved before any provider request is attempted.
+    try:
+        budget = prepare_external_request(
+            profile,
+            messages,
+            max_tokens,
+            default_request_budget=(
+                default_external_request_budget(
+                    profile,
+                    backend=kind,
                 )
-            )
-        ),
-    )
+            ),
+        )
+
+    except ExternalInferenceBudgetError as exc:
+        log_external_budget_rejection(
+            exc,
+            backend=kind,
+            provider=provider,
+            model=model,
+        )
+
+        raise
 
     print(
         "[HARNESS] Request budget "
@@ -506,6 +650,13 @@ async def harness_generate(
             ]
 
         else:
+            # Resolve Node before entering the isolated HOME. The host's
+            # `node` command may be an asdf/mise shim that cannot resolve
+            # a version after HOME/cwd are replaced.
+            node_runtime = (
+                _resolve_node_runtime()
+            )
+
             env[
                 "PI_CODING_AGENT_DIR"
             ] = str(
@@ -521,7 +672,7 @@ async def harness_generate(
                 "PI_TELEMETRY"
             ] = "0"
 
-            _write_pi_model_override(
+            _write_pi_model_config(
                 root,
                 provider=provider,
                 model_id=model_id,
@@ -529,9 +680,13 @@ async def harness_generate(
                     budget
                     .max_output_tokens
                 ),
+                reasoning=effort is not None,
             )
 
             args = [
+                str(
+                    node_runtime
+                ),
                 str(
                     binary
                 ),
@@ -546,7 +701,7 @@ async def harness_generate(
                 "--no-context-files",
                 "--no-session",
                 "--thinking",
-                "off",
+                effort or "off",
                 "--provider",
                 provider,
                 "--model",
@@ -561,6 +716,8 @@ async def harness_generate(
                         model
                     )
                 ] = api_key
+
+        admission = await admit_external_request(profile, budget.estimated_request_tokens)
 
         process = await (
             asyncio
@@ -850,6 +1007,9 @@ async def harness_generate(
                     )
                     == "assistant"
                 ):
+                    usage = msg.get("usage")
+                    if isinstance(usage, dict):
+                        record_external_usage(admission, usage.get("totalTokens"))
                     if (
                         msg.get(
                             "stopReason"
@@ -861,9 +1021,38 @@ async def harness_generate(
                             "toolUse",
                         }
                     ):
-                        raise ValueError(
-                            "Harness response "
-                            "did not finish normally"
+                        stop_reason = msg["stopReason"]
+                        # Pi can exit successfully while the provider reports
+                        # an unsuccessful assistant turn. Never accept its
+                        # partial content or expose provider diagnostics to
+                        # the public exception/job result.
+                        error_message = msg.get("errorMessage", "")
+                        diagnostic = sanitize_diagnostic(
+                            f"Pi assistant stop_reason={stop_reason}; "
+                            + (error_message if isinstance(error_message, str) else ""),
+                            secrets=[api_key],
+                        )
+                        category = (
+                            classify_external_failure(diagnostic)
+                            if stop_reason == "error"
+                            else {
+                                "length": "provider_output_truncated",
+                                "aborted": "provider_aborted",
+                                "toolUse": "harness_native_tools_rejected",
+                            }[stop_reason]
+                        )
+                        _log_harness_failure(
+                            kind=kind,
+                            provider=provider,
+                            category=category,
+                            exit_code=process.returncode,
+                            diagnostic=diagnostic,
+                        )
+                        raise HarnessFailure(
+                            kind,
+                            provider,
+                            category,
+                            exit_code=process.returncode,
                         )
 
                     for part in msg.get(

@@ -31,11 +31,63 @@ catalog responses. Pi keyed profiles currently support explicit `openrouter/`,
 prefixes. OpenCode receives the selected provider key through its private process
 environment and provider options. Account credentials from the host are not inherited.
 
+### Which stages use the selected connection
+
+Selecting a connection applies to compact semantic routing, specialist reasoning,
+direct answers and synthesis. A deterministic local search first narrows the
+trusted tool catalog. A weak, ambiguous or oversized candidate packet falls back
+to broad routing on the configured local Hub model. Candidate selection does not
+authorize actions: the full registry, semantic contract and ToolGateway still
+validate the proposal. Keep the local Hub profile configured even when using an API.
+
+External semantic routing has a total request ceiling of 5,000 estimated tokens
+and an output ceiling of 768. External specialist reasoning, direct answers and
+synthesis use ceilings of 6,000 and 1,024 respectively. Lower provider, profile or
+caller limits still apply. These are application-side estimates; provider
+tokenization and CLI overhead may differ. Mandatory instructions and the current
+request are never silently truncated to fit. An oversized mandatory request is
+rejected before dispatch, and routing permits at most one contract repair.
+
+Broad control routing and networking stay local, independent of model names.
+Private reference evidence is available only to specialist reasoning, direct
+answers and synthesis; it is not injected into routing or networking. A repair
+inherits the original stage's connection, retrieval and budget policy.
+
+See [compact routing and verification](compact-routing.md) for the trust
+boundary, live evidence and remaining acceptance work.
+
 The HTTP client permits known provider origins and the local endpoints
 `http://127.0.0.1:11434` and `http://127.0.0.1:1234`. An administrator can add exact
 origins through `EXTENSION_ALLOWED_ORIGINS` (comma separated). Remote URLs require
 HTTPS. Embedded URL credentials, redirects, query strings and fragments are
 rejected. Endpoints use bearer authentication when a key is supplied.
+
+## Provider usage settings
+
+Personal connections expose **Usage settings**. Set the token/request-per-minute
+limits from your provider account and the maximum time a request may wait for
+capacity. Empty limits make no assumption about your account tier. Saved settings
+can be changed without re-entering the API key; the owner, resource ID, encrypted
+credential and selected connection are preserved.
+
+HTTP, Pi and OpenCode connections using the same provider, model and credential
+share a process-local 60-second admission window. Requests wait in FIFO order,
+oversized requests fail before dispatch, and cancellation removes a waiting item.
+Conflicting settings use the lower limit until the bucket expires after inactivity.
+Reservations include failures and never refund estimated tokens. Verified HTTP/Pi
+usage totals can increase reservations. This does not coordinate other processes,
+other applications, or separate keys sharing a provider account. OpenCode accounting
+is estimated per invocation; its internal retries cannot currently be disabled
+through a verified installed-interface setting. Pi's automatic retries are disabled.
+
+The UI offers reasoning controls from server capability metadata. Supported Groq
+GPT-OSS connections via HTTP/Pi can select low, medium or high effort without
+raising output limits. Unsupported combinations are rejected. Provider quotas and
+truncation remain explicit errors; partial output is not an executable proposal.
+
+The owner-scoped `model_options` command accepts `id`,
+`provider_tokens_per_minute`, `provider_requests_per_minute`,
+`admission_max_wait_seconds` and `reasoning_effort`. Null clears an option.
 
 ## Datasets and retrieval
 

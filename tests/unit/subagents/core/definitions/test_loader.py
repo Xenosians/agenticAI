@@ -65,6 +65,8 @@ def test_load_real_account_specialist():
         agent.tools
     ) == {
         "account_create",
+        "mailbox_create",
+        "mailbox_status",
         "account_status",
         "unlock_user",
         "reset_password",

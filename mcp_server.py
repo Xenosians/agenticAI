@@ -63,7 +63,9 @@ from services.palo_alto import (
     build_palo_alto_service,
 )
 from services.openwrt import build_openwrt_service
+from services.mailbox import MaddyMailboxService
 from tools.networking.mcp import register_networking_tools
+from tools.mailbox.mcp import register_mailbox_tools
 
 from services.ticketing import (
     TicketMutationService,
@@ -294,6 +296,8 @@ def create_mcp_server(
         AccountCreationService | None
     ) = None,
 
+    mailbox: MaddyMailboxService | None = None,
+
     access_mutations: (
         AccessMutationService | None
     ) = None,
@@ -450,6 +454,7 @@ def create_mcp_server(
         account_lifecycle_service,
         account_creation_service,
     )
+    register_mailbox_tools(server, mailbox or MaddyMailboxService(runtime_settings))
 
     @server.tool()
     def check_access(

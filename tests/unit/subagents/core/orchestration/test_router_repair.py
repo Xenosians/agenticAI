@@ -2,6 +2,8 @@ import asyncio
 
 import pytest
 
+from subagents.llm.runtime.stages import InferenceStage
+
 from subagents.core.definitions.registry import (
     AgentRegistry,
 )
@@ -41,10 +43,14 @@ class SequencedInference:
         messages,
         max_new_tokens,
         priority,
+        stage,
+        repair_of=None,
     ):
 
         self.calls.append(
             {
+                "stage": stage,
+                "repair_of": repair_of,
                 "model_key":
                     model_key,
 
@@ -337,26 +343,11 @@ def test_router_repairs_invalid_plan_with_fresh_valid_plan():
         in repair_prompt
     )
 
-    assert (
-        inference.calls[
-            0
-        ][
-            "messages"
-        ][
-            1
-        ][
-            "content"
-        ]
-        == inference.calls[
-            1
-        ][
-            "messages"
-        ][
-            1
-        ][
-            "content"
-        ]
-    )
+    assert inference.calls[0]["messages"][-1] == inference.calls[1]["messages"][-1]
+    assert inference.calls[0]["stage"] is InferenceStage.CONTROL_ROUTING
+    assert inference.calls[0]["repair_of"] is None
+    assert inference.calls[1]["stage"] is InferenceStage.REPAIR
+    assert inference.calls[1]["repair_of"] is InferenceStage.CONTROL_ROUTING
 
 
 def test_router_repair_still_fails_closed():
@@ -516,7 +507,7 @@ def test_direct_repair_omits_conditional_protocol_and_gets_validator_feedback():
 
     assert (
         repair_messages[
-            1
+            -1
         ][
             "content"
         ]
@@ -535,11 +526,14 @@ def test_direct_repair_omits_conditional_protocol_and_gets_validator_feedback():
 
     feedback = (
         repair_messages[
-            2
+            1
         ][
             "content"
         ]
     )
+
+    assert repair_messages[1]["role"] == "system"
+    assert repair_messages[-1]["role"] == "user"
 
     assert (
         "TRUSTED VALIDATION FEEDBACK"
