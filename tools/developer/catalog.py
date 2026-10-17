@@ -14,6 +14,10 @@ from tools.developer.runtime_presentation import (
     format_service_logs_result,
     format_service_status_result,
 )
+from tools.workspace.catalog import (
+    WORKSPACE_REPOSITORY_PARAMETER,
+    resolve_workspace_argument_values,
+)
 
 
 DEVELOPER_TOOLS = {
@@ -25,7 +29,8 @@ DEVELOPER_TOOLS = {
         "description": (
             "Detect the supported project type and "
             "available governed developer operations "
-            "at a workspace directory."
+            "inside a configured logical repository. Use repository "
+            "for repository scope and relative_path only for a path inside it."
         ),
 
         "risk":
@@ -34,17 +39,24 @@ DEVELOPER_TOOLS = {
         "requires_approval":
             False,
 
-        "grounded_arguments":
-            [],
+        "grounded_arguments": [
+            "repository",
+        ],
+
+        "argument_values_resolver":
+            resolve_workspace_argument_values,
 
         "parameters": {
+            "repository": WORKSPACE_REPOSITORY_PARAMETER,
+
             "relative_path": {
                 "type":
                     "str",
 
                 "description": (
-                    "Optional workspace-relative project "
-                    "directory. Defaults to the workspace root."
+                    "Optional project directory inside the selected "
+                    "repository. Omit it for the repository root; "
+                    "never send \".\" or a guessed path."
                 ),
             },
         },
@@ -61,7 +73,8 @@ DEVELOPER_TOOLS = {
     "workspace_run_tests": {
         "description": (
             "Run the trusted test command for a detected "
-            "Python, Elixir, or Nim project."
+            "Python, Elixir, or Nim project inside a configured logical "
+            "repository. Use repository for repository scope."
         ),
 
         "risk":
@@ -70,17 +83,24 @@ DEVELOPER_TOOLS = {
         "requires_approval":
             True,
 
-        "grounded_arguments":
-            [],
+        "grounded_arguments": [
+            "repository",
+        ],
+
+        "argument_values_resolver":
+            resolve_workspace_argument_values,
 
         "parameters": {
+            "repository": WORKSPACE_REPOSITORY_PARAMETER,
+
             "relative_path": {
                 "type":
                     "str",
 
                 "description": (
-                    "Optional workspace-relative project "
-                    "directory. Defaults to the workspace root."
+                    "Optional project directory inside the selected "
+                    "repository. Omit it for the repository root; "
+                    "never send \".\" or a guessed path."
                 ),
             },
 
@@ -110,7 +130,8 @@ DEVELOPER_TOOLS = {
     "workspace_run_build": {
         "description": (
             "Run the trusted build/check command for a detected "
-            "Python, Elixir, or Nim project."
+            "Python, Elixir, or Nim project inside a configured logical "
+            "repository. Use repository for repository scope."
         ),
 
         "risk":
@@ -119,17 +140,24 @@ DEVELOPER_TOOLS = {
         "requires_approval":
             True,
 
-        "grounded_arguments":
-            [],
+        "grounded_arguments": [
+            "repository",
+        ],
+
+        "argument_values_resolver":
+            resolve_workspace_argument_values,
 
         "parameters": {
+            "repository": WORKSPACE_REPOSITORY_PARAMETER,
+
             "relative_path": {
                 "type":
                     "str",
 
                 "description": (
-                    "Optional workspace-relative project "
-                    "directory. Defaults to the workspace root."
+                    "Optional project directory inside the selected "
+                    "repository. Omit it for the repository root; "
+                    "never send \".\" or a guessed path."
                 ),
             },
 
@@ -200,17 +228,22 @@ DEVELOPER_TOOLS = {
         "requires_approval":
             False,
 
-        "grounded_arguments":
-            [],
+        "grounded_arguments": [
+            "relative_path",
+        ],
 
         "parameters": {
             "relative_path": {
                 "type":
                     "str",
 
+                "default": ".",
+
                 "description": (
-                    "Optional workspace-relative directory "
-                    "containing the service configuration."
+                    "Workspace-relative directory that contains the "
+                    "Docker Compose file. Copy it exactly when the user "
+                    "names one (for example projectOps/.runtime/mvp-workspace); "
+                    "omit it only when the user names none."
                 ),
             },
         },
@@ -239,6 +272,7 @@ DEVELOPER_TOOLS = {
 
         "grounded_arguments": [
             "service_name",
+            "relative_path",
         ],
 
         "parameters": {
@@ -256,9 +290,13 @@ DEVELOPER_TOOLS = {
                 "type":
                     "str",
 
+                "default": ".",
+
                 "description": (
-                    "Optional workspace-relative directory "
-                    "containing the service configuration."
+                    "Workspace-relative directory that contains the "
+                    "Docker Compose file. Copy it exactly when the user "
+                    "names one (for example projectOps/.runtime/mvp-workspace); "
+                    "omit it only when the user names none."
                 ),
             },
         },

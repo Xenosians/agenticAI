@@ -133,7 +133,7 @@ class InferenceCoordinator:
         self, *, operation, model_key, messages, max_new_tokens, priority, stage, repair_of,
     ):
         from services.extensions.budget import ExternalInferenceBudgetError
-        from services.extensions.context import selected_profile, with_retrieval
+        from services.extensions.context import active_role, selected_profile, with_retrieval
 
         started = time.perf_counter()
         stage_label, repair_label, adapter, outcome = "INVALID", None, "unresolved", "error"
@@ -153,7 +153,9 @@ class InferenceCoordinator:
             from services.job_progress import report_progress
             progress_stage = {
                 "CONTROL_ROUTING": "routing", "SEMANTIC_ROUTING": "routing",
+                "SEMANTIC_ROUTING_BROAD": "routing",
                 "SPECIALIST_REASONING": "planning", "SYNTHESIS": "synthesizing",
+                "NETWORKING": "planning", "NETWORKING_SELECTED": "planning",
             }.get(repair_label or stage_label)
             if operation == "generate" and progress_stage:
                 report_progress(progress_stage)
@@ -245,5 +247,6 @@ class InferenceCoordinator:
                 error_type=error_type, input_message_count=input_message_count,
                 estimated_input_tokens=estimated_input, request_token_budget=request_budget,
                 output_token_cap=output_cap, dropped_messages=dropped_messages,
+                role=active_role.get(),
             )
             _observe("metric_sink", lambda: self.metric_sink(metric))

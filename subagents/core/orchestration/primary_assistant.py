@@ -1,9 +1,5 @@
 import json
 
-from dataclasses import (
-    asdict,
-)
-
 from config import (
     get_settings,
 )
@@ -29,6 +25,31 @@ from subagents.llm.runtime.scheduler import (
 from subagents.prompts.prompt_loader import (
     load_prompt,
 )
+
+
+# Fields a user-facing answer can draw on. Provenance, routing contracts and UI
+# presentation are audit/rendering data that only consume the synthesis budget.
+SYNTHESIS_FIELDS = (
+    "agent_name",
+    "status",
+    "proposed_tool",
+    "proposed_arguments",
+    "tool_result",
+    "outcome_code",
+    "error",
+)
+
+
+def synthesis_evidence(result: AgentResult) -> dict:
+    evidence = {
+        field: getattr(result, field)
+        for field in SYNTHESIS_FIELDS
+        if getattr(result, field) is not None
+    }
+    if result.tool_result is None and result.answer:
+        # Without a structured result the specialist's answer is the evidence.
+        evidence["answer"] = result.answer
+    return evidence
 
 
 class PrimaryAssistant:
@@ -189,12 +210,19 @@ class PrimaryAssistant:
         """
 
         specialist_payload = [
-            asdict(
+            synthesis_evidence(
                 result
             )
 
             for result in results
         ]
+
+        # Formatted answers cost two to three tokens per word, so a quarter of
+        # the output cap in words keeps the answer from being cut off.
+        word_limit = max(
+            40,
+            self.synthesis_max_new_tokens // 4,
+        )
 
         messages = [
             {
@@ -221,14 +249,18 @@ class PrimaryAssistant:
                     "TRUSTED SPECIALIST RESULTS:\n"
                     f"{json.dumps(
                         specialist_payload,
-                        indent=2,
+                        separators=(",", ":"),
                         default=str,
                     )}"
                     "\n\n"
                     "Synthesize the final answer "
                     "for the user using only these "
                     "specialist results for system "
-                    "or external-state claims."
+                    "or external-state claims. "
+                    f"Use at most {word_limit} words "
+                    "and no tables. For long results "
+                    "give counts and at most 10 of "
+                    "the most relevant items."
                 ),
             },
         ]

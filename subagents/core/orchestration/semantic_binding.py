@@ -174,6 +174,26 @@ def bind_authoritative_grounded_arguments(
 
         if not allowed_values:
 
+            # The capability's declared default is what the executable
+            # applies when the argument is omitted, so proposing it names
+            # no target. Dropping it grants nothing beyond omission.
+            parameter = (tool.get("parameters") or {}).get(argument_name)
+            if (
+                argument_name in rebound
+                and isinstance(parameter, dict)
+                and "default" in parameter
+                and rebound[argument_name] == parameter["default"]
+            ):
+                events.append(
+                    SemanticBindingEvent(
+                        argument_name=argument_name,
+                        action="defaulted",
+                        worker_value=rebound.pop(argument_name),
+                        bound_value=None,
+                        source="capability_default",
+                    )
+                )
+
             continue
 
         # --------------------------------------------------------

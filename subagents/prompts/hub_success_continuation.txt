@@ -1,0 +1,20 @@
+MUTATION SUCCESS CONTINUATION
+
+This is different from a read-result predicate (when). Only if the user
+explicitly requests a follow-up operation after a mutation succeeds, AND the
+source capability declares the target in intent_metadata.success_continuations,
+emit the source first and the requested follow-up second. Do not invent a
+preliminary read, result field, identity, or replacement operation.
+
+The follow-up delegation has exactly this nesting:
+{"agent":"<target specialist>","instructions":"<one-line requested task>","after_success_of":"<source specialist>","intent":{"summary":"<requested operation>","effect":"mutation","allowed_tools":["<target capability>"],"forbidden_tools":[],"allowed_arguments":{},"forbidden_arguments":{},"max_tool_calls":1,"clarification_required":false}}
+
+The angle-bracket values are placeholders, never current request values.
+Populate grounded arguments from the current user request under the ordinary
+rules. Never guess an identity that the source has not created yet.
+after_success_of is a sibling of agent, instructions and intent. It is NEVER
+inside intent or either argument map. Do not emit when for mutation success.
+The source has no after_success_of. Omit after_success_of for independent work.
+Trusted application code verifies the result and separately approves each
+mutation. Completion notifications are backend-owned, not another delegation.
+Return complete, concise JSON only, without prose or whitespace-heavy formatting.

@@ -35,6 +35,21 @@ _PROVIDER_PRESETS: tuple[dict[str, object], ...] = (
         "native_tools": "disabled_by_design",
     },
     {
+        "id": "anthropic",
+        "name": "Anthropic",
+        "backend": "http",
+        "url": "https://api.anthropic.com",
+        "api_format": "anthropic",
+        "recommended_model": "claude-sonnet-5-5",
+        "requires_api_key": True,
+        "description": (
+            "Claude through the Anthropic Messages API. "
+            "The API key belongs to this connection only; "
+            "native provider tools are not granted execution authority."
+        ),
+        "native_tools": "disabled_by_design",
+    },
+    {
         "id": "openrouter-free",
         "name": "OpenRouter Free",
         "backend": "http",
@@ -44,7 +59,7 @@ _PROVIDER_PRESETS: tuple[dict[str, object], ...] = (
         "description": (
             "OpenRouter's free-model router. Availability and selected "
             "underlying models may change. Governed application tools remain "
-            "owned by Agentic ITSM."
+            "owned by Janus."
         ),
         "native_tools": "disabled_by_design",
     },
@@ -120,6 +135,40 @@ _CONNECTION_PRESETS: tuple[
 ] = (
     {
         "id":
+            "anthropic-http",
+
+        "name":
+            "Anthropic · Direct",
+
+        "backend":
+            "http",
+
+        "provider":
+            "anthropic",
+
+        "url":
+            "https://api.anthropic.com",
+
+        "api_format":
+            "anthropic",
+
+        "model":
+            "claude-sonnet-5-5",
+
+        "requires_api_key":
+            True,
+
+        "credential_label":
+            "Anthropic API key",
+
+        "description":
+            (
+                "Claude through the Anthropic Messages API. "
+                "Use the model list to pick any model your key can access."
+            ),
+    },
+    {
+        "id":
             "groq-http",
 
         "name":
@@ -182,6 +231,37 @@ _CONNECTION_PRESETS: tuple[
     },
     {
         "id":
+            "pi-anthropic",
+
+        "name":
+            "Pi · Anthropic",
+
+        "backend":
+            "pi",
+
+        "provider":
+            "anthropic",
+
+        "url":
+            "",
+
+        "model":
+            "anthropic/claude-sonnet-5-5",
+
+        "requires_api_key":
+            True,
+
+        "credential_label":
+            "Anthropic API key",
+
+        "description":
+            (
+                "Isolated Pi inference harness "
+                "using Anthropic as its provider."
+            ),
+    },
+    {
+        "id":
             "pi-groq",
 
         "name":
@@ -240,6 +320,37 @@ _CONNECTION_PRESETS: tuple[
             (
                 "Isolated Pi inference harness "
                 "using OpenRouter's free router."
+            ),
+    },
+    {
+        "id":
+            "opencode-anthropic",
+
+        "name":
+            "OpenCode · Anthropic",
+
+        "backend":
+            "opencode",
+
+        "provider":
+            "anthropic",
+
+        "url":
+            "",
+
+        "model":
+            "anthropic/claude-sonnet-5-5",
+
+        "requires_api_key":
+            True,
+
+        "credential_label":
+            "Anthropic API key",
+
+        "description":
+            (
+                "Isolated OpenCode harness "
+                "using Anthropic as its provider."
             ),
     },
     {

@@ -1,8 +1,12 @@
 CONDITIONAL WORKFLOW PROTOCOL
 
-A conditional workflow is valid ONLY when the ORIGINAL USER REQUEST
-explicitly makes one requested operation depend on the trusted result
-of another requested operation.
+This protocol describes read-result predicates expressed with "when".
+It does not describe mutation-success ordering with "after_success_of";
+that uses the separate mutation success continuation protocol. Never replace
+a requested mutation-success sequence with a synthetic read.
+
+A read-result predicate is valid ONLY when the ORIGINAL USER REQUEST
+explicitly makes a mutation depend on a trusted read result.
 
 Do NOT synthesize a read-before-mutation sequence merely to check
 capability execution preconditions.

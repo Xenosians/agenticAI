@@ -14,7 +14,7 @@ import threading
 from services.extensions.store import ExtensionStore
 from services.extensions.transport import request_json, validate_url
 from services.extensions.harness import harness_binary, harness_generate
-from services.extensions.options import INFERENCE_OPTION_FIELDS, inference_option_support, validate_inference_options
+from services.extensions.options import MODEL_OPTION_FIELDS, inference_option_support, networking_inference_options, validate_model_options
 
 _upload_lock = threading.Lock()
 
@@ -24,9 +24,24 @@ def extension_store():
     return ExtensionStore(Path(os.environ.get("EXTENSION_STORAGE_ROOT", Path.home()/".local/share/agentic-extensions")))
 
 
+
+def specialist_roles(settings) -> list[dict]:
+    """Registered specialists a model connection can be assigned to."""
+    from subagents.core.definitions.loader import load_agent_directory
+
+    agents_dir = getattr(settings, "agents_dir", None)
+    if agents_dir is None:
+        return []
+    return [{"id": agent.name, "description": agent.description, "local_model": agent.model}
+            for agent in sorted(load_agent_directory(agents_dir), key=lambda agent: agent.name)]
+
 def public_resource(row):
     # No dataset bodies, credentials or server filesystem paths in list responses.
-    return {key: value for key, value in row.items() if key not in {"api_key", "content", "model_path"}}
+    public = {key: value for key, value in row.items() if key not in {"api_key", "content", "model_path"}}
+    if public.get("kind") == "model" and public.get("backend") == "http":
+        from services.extensions.transport import is_insecure_transport
+        public["insecure_transport"] = is_insecure_transport(public.get("url", ""))
+    return public
 
 
 _HOSTED_HARNESS_PROVIDERS = {
@@ -157,7 +172,7 @@ async def command(owner: str, action: str, payload: dict, settings) -> dict:
 
 
 async def _command(owner: str, action: str, payload: dict, settings) -> dict:
-    for key in ("name", "model", "backend", "url", "api_key", "text", "source", "license", "purpose", "id", "upload_id", "filename", "base64", "query"):
+    for key in ("name", "model", "backend", "url", "api_key", "api_format", "text", "source", "license", "purpose", "id", "upload_id", "filename", "base64", "query"):
         if key in payload and not isinstance(payload[key], str):
             raise ValueError("Expected a text field")
     for key in ("model_id", "dataset_id"):
@@ -176,9 +191,12 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
         )
         return {"schema": "extension-catalog.v1", "resources": [public_resource(r) for r in store.list(owner)],
                 "selected": store.selected(owner),
+                "role_assignments": store.role_assignments(owner),
+                "specialist_roles": specialist_roles(settings),
                 "provider_presets": provider_presets(),
                 "connection_presets": connection_presets(),
                 "inference_option_support": inference_option_support(),
+                "networking_inference_options": networking_inference_options(),
                 "local_profiles": [{"id": key, "backend": profile.backend} for key, profile in settings.model_profiles.items() if profile.enabled and not key.startswith("user-upload-")],
                 "capabilities": [{"id": name, "description": tool.get("description", ""),
                                   "effect": tool.get("effect"), "permission": tool.get("permission")}
@@ -255,8 +273,8 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
                 "ready",
         }
 
-        profile.update({key: payload[key] for key in INFERENCE_OPTION_FIELDS
-                        if key in payload and payload[key] is not None
+        profile.update({key: payload[key] for key in MODEL_OPTION_FIELDS
+                        if key in payload and (payload[key] is not None or key == "networking_inference")
                         and not (key == "reasoning_effort" and payload[key] == "")})
 
         if backend == "http":
@@ -269,7 +287,19 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
                 )
             )
 
-        validate_inference_options(profile)
+            api_format = payload.get("api_format")
+            if api_format is not None:
+                if api_format not in {"anthropic", "openai"}:
+                    raise ValueError("api_format must be anthropic or openai")
+                profile["api_format"] = api_format
+
+            provider_id = str(payload.get("provider_id") or "").strip().lower()
+            if provider_id:
+                if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,39}", provider_id):
+                    raise ValueError("provider_id must be 1-40 letters, digits, '-' or '_'")
+                profile["provider_id"] = provider_id
+
+        validate_model_options(profile)
 
         if backend == "local":
             if (
@@ -348,7 +378,7 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
 
 
     if action == "model_options":
-        if set(payload) - (INFERENCE_OPTION_FIELDS | {"id"}):
+        if set(payload) - (MODEL_OPTION_FIELDS | {"id"}):
             raise ValueError("Only model inference options can be updated")
         return public_resource(store.update_model_options(owner, payload["id"],
             {key: value for key, value in payload.items() if key != "id"}))
@@ -356,6 +386,13 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
     if action == "select":
         store.select(owner, payload.get("model_id") or None, payload.get("dataset_id") or None)
         return store.selected(owner)
+    if action == "assign_role":
+        if set(payload) - {"role", "model_id"}:
+            raise ValueError("Only a role and a model connection can be assigned")
+        role = payload.get("role")
+        if role not in {row["id"] for row in specialist_roles(settings)}:
+            raise ValueError("Unknown specialist role")
+        return {"role_assignments": store.assign_role(owner, role, payload.get("model_id") or None)}
     if action == "delete":
         store.delete(owner, payload["id"])
         return {"deleted": True}
@@ -444,6 +481,27 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
                 ),
         }
 
+    if action == "models":
+        # Lists models the supplied (or saved) credential can use. Credentials
+        # are never echoed; only public identifiers and display names return.
+        from services.extensions import anthropic
+        if payload.get("id"):
+            profile = store.get(owner, payload["id"], secret=True)
+            if profile.get("kind") != "model":
+                raise ValueError("Select a model connection")
+        else:
+            profile = {"backend": "http", "url": validate_url(payload.get("url", "")),
+                       "api_key": payload.get("api_key", "")}
+            if payload.get("api_format") is not None:
+                profile["api_format"] = payload["api_format"]
+        if not anthropic.uses_messages_api(profile):
+            raise ValueError("Model listing is available for Anthropic connections")
+        from services.extensions.diagnostics import ExternalProviderError
+        from services.extensions.probe import _category_error
+        try:
+            return {"models": await anthropic.list_models(profile["url"], profile.get("api_key", ""))}
+        except ExternalProviderError as exc:
+            raise _category_error(exc) from None
     if action == "dataset":
         fields = {key: payload.get(key) for key in ("name", "text", "source", "license", "purpose", "reviewed")}
         if not all(isinstance(fields[k], str) for k in ("name", "text", "source", "license", "purpose")):

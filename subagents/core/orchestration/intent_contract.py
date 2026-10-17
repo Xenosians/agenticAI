@@ -670,6 +670,19 @@ def trusted_bounded_argument_values(
     return bounded
 
 
+def trusted_success_continuations(
+    *, tool_name: str, tool: dict, tool_lookup: ToolLookup = get_tool,
+) -> list[str]:
+    """Read declared successors without inventing a routing or execution plan."""
+    successors = tool.get("success_continuations", [])
+    if (not isinstance(successors, list) or any(
+        not isinstance(name, str) or not name or tool_lookup(name) is None
+        for name in successors
+    )):
+        raise ValueError(f"Capability '{tool_name}' has invalid trusted success_continuations metadata.")
+    return list(dict.fromkeys(successors))
+
+
 def build_router_semantic_agent_spec(
     agent: AgentDefinition,
     *,
@@ -861,14 +874,11 @@ def build_router_semantic_agent_spec(
 
         }
 
-        successors = tool.get("success_continuations", [])
-        if (not isinstance(successors, list) or any(
-            not isinstance(name, str) or not name or tool_lookup(name) is None
-            for name in successors
-        )):
-            raise ValueError("Invalid trusted success_continuations metadata.")
+        successors = trusted_success_continuations(
+            tool_name=tool_name, tool=tool, tool_lookup=tool_lookup,
+        )
         if successors:
-            capability["intent_metadata"]["success_continuations"] = list(dict.fromkeys(successors))
+            capability["intent_metadata"]["success_continuations"] = successors
 
     return spec
 

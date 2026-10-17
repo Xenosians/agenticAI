@@ -14,6 +14,7 @@ class CredentialStatusResult(BaseModel):
     jira_auth_type: str | None = None
     secret_values_exposed: bool = False
     error: str | None = None
+    error_code: str | None = None
 
 
 class OrganizationItem(BaseModel):
@@ -30,6 +31,7 @@ class OrganizationListResult(BaseModel):
     truncated: bool = False
     next_cursor_available: bool = False
     error: str | None = None
+    error_code: str | None = None
 
 
 class OrganizationGetResult(BaseModel):
@@ -37,6 +39,7 @@ class OrganizationGetResult(BaseModel):
     status: str
     organization: OrganizationItem | None = None
     error: str | None = None
+    error_code: str | None = None
 
 
 class WorkspaceItem(BaseModel):
@@ -59,6 +62,7 @@ class WorkspaceListResult(BaseModel):
     truncated: bool = False
     next_cursor_available: bool = False
     error: str | None = None
+    error_code: str | None = None
 
 
 class TokenMetadataItem(BaseModel):
@@ -78,6 +82,7 @@ class TokenMetadataResult(BaseModel):
     truncated: bool = False
     secret_values_exposed: bool = False
     error: str | None = None
+    error_code: str | None = None
 
 
 
@@ -91,6 +96,7 @@ class UserInviteResult(BaseModel):
     resource_ari: str | None = None
     notification_sent_by_provider: bool = False
     error: str | None = None
+    error_code: str | None = None
 
 
 def register_atlassian_tools(server: MCPServer, service: AtlassianAdminService) -> None:

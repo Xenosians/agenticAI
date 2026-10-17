@@ -4,7 +4,7 @@ import json
 from learning.training.specialist_sft import load_training_config
 from subagents.core.definitions.loader import load_agent_definition
 
-CONFIG = Path("learning/config/specialists/developer-shell-v3.json")
+CONFIG = Path("learning/config/specialists/developer-shell.json")
 
 
 def test_shell_v3_continues_from_promoted_developer_profile():

@@ -340,7 +340,11 @@ def test_inference_option_catalog_matches_admitted_profiles_and_is_detached(tmp_
 
     async def run():
         catalog = await service.command("alice", "list", {}, settings)
-        support = catalog["inference_option_support"]
+        rows = catalog["inference_option_support"]
+        endpoint_wide = [row for row in rows if "model" not in row]
+        assert [row["url"] for row in endpoint_wide] == ["https://api.anthropic.com"]
+        assert endpoint_wide[0]["thinking_modes"] == ["adaptive", "disabled"]
+        support = [row for row in rows if "model" in row]
         assert len(support) == 4
         assert {row["backend"] for row in support} == {"http", "pi"}
         for index, row in enumerate(support):

@@ -431,8 +431,10 @@ TICKETING_TOOLS = {
     "ticket_create": {
         "description": (
             "CREATE exactly one new TICKET / ISSUE inside an explicitly "
-            "specified existing project using the exact user-supplied "
-            "summary. If the user says create a Task, Bug, Story, issue, "
+            "specified existing project. Preserve an exact user-supplied "
+            "summary; otherwise compose its derived summary from the "
+            "requested outcome and explicitly supplied verified workflow "
+            "content, if present. If the user says create a Task, Bug, Story, issue, "
             "or ticket in project X, the PRIMARY resource being created "
             "is the ticket/issue and project X is its containing scope. "
             "Do NOT reinterpret this as project creation or project lookup. "
@@ -486,11 +488,12 @@ TICKETING_TOOLS = {
                     "str",
 
                 "description": (
-                    "Concise ticket summary derived only from the "
-                    "user's requested outcome. Rephrasing is allowed, "
-                    "but do not add facts, scope, participants, goals, "
-                    "identifiers, dates, or provider state that the "
-                    "user did not supply."
+                    "Preserve an exact user-supplied summary. Otherwise "
+                    "compose concise content from the requested outcome; "
+                    "exact facts explicitly supplied in runtime VERIFIED "
+                    "WORKFLOW CONTENT may be included as content only. "
+                    "Do not invent facts, scope, participants, goals, "
+                    "identifiers, dates, or provider state."
                 ),
             },
 

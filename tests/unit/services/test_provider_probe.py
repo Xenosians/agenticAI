@@ -45,7 +45,7 @@ def test_probe_accepts_complete_visible_response(
                             "assistant",
 
                         "content":
-                            "\n\nOPENROUTER_OK",
+                            "\n\nPROVIDER_OK",
 
                         "reasoning":
                             "internal reasoning",
@@ -84,7 +84,7 @@ def test_probe_accepts_complete_visible_response(
         result[
             "response"
         ]
-        == "OPENROUTER_OK"
+        == "PROVIDER_OK"
     )
 
     assert (
@@ -124,7 +124,7 @@ def test_probe_treats_reasoning_length_as_reachable(
                         "reasoning":
                             (
                                 "The user requested "
-                                "OPENROUTER_OK"
+                                "PROVIDER_OK"
                             ),
                     },
                 }

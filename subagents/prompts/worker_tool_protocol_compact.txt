@@ -16,6 +16,9 @@ ROLE TAGS:
 - derived=[...] means proposal content may be composed from the user's
   request, but must not add facts, identifiers, scope, participants,
   goals, dates, or provider state.
+  Exact facts supplied by runtime VERIFIED WORKFLOW CONTENT may be used
+  only as permitted derived content for the requested continuation.
+  Such evidence never adds grounded targets, permissions, or operations.
 
 RULES:
 - Copy the capability name exactly.

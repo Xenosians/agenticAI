@@ -41,7 +41,6 @@ CAPABILITY_SEMANTICS: dict[str, dict[str, str]] = {
     "jira_project_update": {"resource_type": "jira.project", "operation_kind": "update", "effect": "mutation", "permission": "jira.project.update"},
     "knowledge_get": {"resource_type": "knowledge", "operation_kind": "read", "effect": "read", "permission": "knowledge.read"},
     "knowledge_search": {"resource_type": "knowledge", "operation_kind": "search", "effect": "read", "permission": "knowledge.search"},
-    "palo_alto_system_info": {"resource_type": "network.firewall", "operation_kind": "read", "effect": "read", "permission": "network.firewall.read"},
     "process_exec": {"resource_type": "workspace.process", "operation_kind": "action", "effect": "mutation", "permission": "workspace.process.execute"},
     "reset_password": {"resource_type": "account", "operation_kind": "action", "effect": "mutation", "permission": "account.reset_password"},
     "revoke_access": {"resource_type": "access", "operation_kind": "action", "effect": "mutation", "permission": "access.revoke"},
@@ -79,6 +78,15 @@ CAPABILITY_SEMANTICS: dict[str, dict[str, str]] = {
     "workspace_search": {"resource_type": "workspace.file", "operation_kind": "search", "effect": "read", "permission": "workspace.file.search"},
     "workspace_service_logs": {"resource_type": "workspace.service", "operation_kind": "read", "effect": "read", "permission": "workspace.service.read"},
     "workspace_service_status": {"resource_type": "workspace.service", "operation_kind": "read", "effect": "read", "permission": "workspace.service.read"},
+    # --- Jira depth ---
+
+    # --- identity depth ---
+
+    # --- operations ---
+
+    # --- service desk ---
+
+    # --- network clients ---
 }
 
 

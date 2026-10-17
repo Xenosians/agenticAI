@@ -38,6 +38,8 @@ from services.extensions.providers import (
     provider_origins,
 )
 
+from services.extensions import anthropic
+
 
 _STATIC_ORIGINS = {
     "https://opencode.ai",
@@ -67,6 +69,57 @@ def _configured_origins() -> set[str]:
         in value.split(",")
         if entry.strip()
     }
+
+
+def insecure_http_origins() -> set[str]:
+    """Exact remote origins an administrator allows over plain HTTP.
+
+    Plain HTTP exposes the credential and every prompt in transit, so this is
+    an explicit, per-origin operator decision (typically a lab gateway with no
+    TLS). Each origin must also be listed in EXTENSION_ALLOWED_ORIGINS.
+    """
+    value = os.environ.get(
+        "EXTENSION_INSECURE_HTTP_ORIGINS",
+        "",
+    )
+
+    origins = set()
+
+    for entry in value.split(","):
+        entry = entry.strip().rstrip("/")
+
+        if not entry:
+            continue
+
+        parts = urlsplit(entry)
+
+        if (
+            parts.scheme != "http"
+            or not parts.hostname
+            or parts.path
+            or parts.query
+            or parts.fragment
+            or parts.username
+            or parts.password
+        ):
+            raise ValueError(
+                "EXTENSION_INSECURE_HTTP_ORIGINS entries "
+                "must be exact http://host[:port] origins"
+            )
+
+        origins.add(entry)
+
+    return origins
+
+
+def is_insecure_transport(url: str) -> bool:
+    """True when a validated endpoint is remote and not protected by TLS."""
+    parts = urlsplit(str(url))
+
+    return (
+        parts.scheme == "http"
+        and parts.hostname != "127.0.0.1"
+    )
 
 
 def validate_url(
@@ -123,6 +176,8 @@ def validate_url(
         != "https"
         and parts.hostname
         != "127.0.0.1"
+        and origin
+        not in insecure_http_origins()
     ):
         raise ValueError(
             "Remote endpoints "
@@ -134,7 +189,7 @@ def validate_url(
     )
 
 
-async def _read_response(
+async def read_bounded(
     response,
     *,
     max_bytes: int,
@@ -210,7 +265,7 @@ async def request_json(
                     != 200
                 ):
                     content = (
-                        await _read_response(
+                        await read_bounded(
                             response,
                             max_bytes=(
                                 MAX_PROVIDER_ERROR_BYTES
@@ -256,7 +311,7 @@ async def request_json(
                     )
 
                 content = (
-                    await _read_response(
+                    await read_bounded(
                         response,
                         max_bytes=(
                             max_bytes
@@ -362,6 +417,9 @@ async def remote_generate(
         f"{budget.dropped_messages}"
     )
 
+    if anthropic.uses_messages_api(profile):
+        return await _messages_generate(profile, budget, effort)
+
     # Intentionally DO NOT add:
     #
     # tools
@@ -458,3 +516,26 @@ async def remote_generate(
         raise ExternalProviderError(
             "provider_malformed_response"
         ) from None
+
+
+async def _messages_generate(profile: dict, budget, effort: str | None) -> str:
+    """Anthropic Messages API inference with the same budget and admission rules."""
+    plan = await anthropic.request_plan(profile, effort)
+    body = anthropic.build_request(
+        profile,
+        budget.messages,
+        budget.max_output_tokens + plan.thinking_allowance,
+        effort=effort,
+        thinking=plan.thinking,
+        max_tokens_limit=plan.max_tokens_limit,
+    )
+    admission = await admit_external_request(
+        profile, budget.estimated_request_tokens + plan.thinking_allowance,
+    )
+    data = await anthropic.post_messages(
+        profile["url"], body, profile.get("api_key", ""),
+    )
+    total = anthropic.total_usage_tokens(data)
+    if total is not None:
+        record_external_usage(admission, total)
+    return anthropic.response_text(data)

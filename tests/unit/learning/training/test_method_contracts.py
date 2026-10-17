@@ -16,7 +16,7 @@ def test_preferences_never_train_without_opt_in():
 
 def test_ppo_training_is_independent_of_fixed_evaluations():
     root = Path(__file__).resolve().parents[4]
-    training = [json.loads(line) for line in (root / "learning/config/ppo-training/router-training-v1.jsonl").read_text().splitlines()]
+    training = [json.loads(line) for line in (root / "learning/config/ppo-training/router-routing.jsonl").read_text().splitlines()]
     heldout = []
     for path in (root / "learning/evaluation/evals").glob("*.jsonl"):
         heldout.extend(json.loads(line) for line in path.read_text().splitlines() if line.strip())

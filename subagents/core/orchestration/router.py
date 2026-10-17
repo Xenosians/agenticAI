@@ -4,8 +4,9 @@ import json
 import logging
 
 from services.extensions.budget import estimate_messages_tokens
-from services.extensions.context import selected_profile
+from services.extensions.context import execution_selection, selected_profile
 from subagents.core.orchestration.candidate_selector import (
+    Candidate,
     CandidateSelector,
     CandidateSet,
     DeterministicCandidateSelector,
@@ -14,6 +15,7 @@ from subagents.core.orchestration.candidate_selector import (
 )
 from subagents.llm.runtime.stages import InferenceStage, resolve_stage_policy
 from subagents.core.orchestration.router_catalog import render_router_catalog
+from subagents.core.orchestration.router_prompt import build_router_system_prompt
 
 from config import (
     get_settings,
@@ -63,12 +65,30 @@ from subagents.prompts.prompt_loader import (
 logger = logging.getLogger(__name__)
 
 
+def selected_request_budget(profile: dict | None) -> int:
+    """Effective request budget of the selected connection (0 when none)."""
+    if not profile:
+        return 0
+    from services.extensions.budget import default_external_request_budget, prepare_external_request
+
+    default = default_external_request_budget(profile, backend=profile["backend"])
+    return prepare_external_request(profile, [], 1, default_request_budget=default).request_token_budget
+
+
 class RoutingContractError(
     RuntimeError
 ):
     """
     Raised when production Hub output cannot be trusted as a valid
     routing / semantic contract.
+    """
+
+
+class CandidateMissError(RoutingContractError):
+    """The selected model found no matching capability in a retrieved subset.
+
+    Retrieval may have omitted the right capability, so the single repair
+    attempt re-routes against the full trusted catalog instead of the subset.
     """
 
 
@@ -101,6 +121,8 @@ class LLMRouter:
         self.registry = (
             registry
         )
+
+        self._broad_specs: dict[bool, tuple[list[dict], str]] = {}
 
         self.inference = (
             inference
@@ -168,61 +190,73 @@ class LLMRouter:
                 )
             ]
 
-        specialists_json = render_router_catalog(specialists)
-
-        base_template = (
-            load_prompt(
-                "hub_router.txt"
-            )
+        return build_router_system_prompt(
+            specialists, repair_mode=repair_mode,
+            include_workflow_protocol=include_workflow_protocol,
         )
 
-        workflow_template = (
-            load_prompt(
-                "hub_conditional_workflow.txt"
-            )
+    def _compact_system(self, specialists: list[dict], include_workflow_protocol: bool) -> str:
+        system = load_prompt("hub_router_compact.txt").replace(
+            "{{SPECIALISTS_JSON}}", render_router_catalog(specialists)
+        ).replace(
+            "{{WORKFLOW_PROTOCOL}}",
+            load_prompt("hub_workflow_compact.txt") if include_workflow_protocol
+            else "Conditional workflow generation is disabled for this repair.",
         )
+        return system + "\n\n" + load_prompt("hub_success_continuation.txt")
 
-        system_prompt = (
-            base_template.replace(
-                "{{SPECIALISTS_JSON}}",
-                specialists_json,
+    def _fits_stage(self, stage: InferenceStage, system: str, user_request: str) -> bool:
+        """True when the mandatory prompt plus output fits the stage and provider budgets."""
+        policy = resolve_stage_policy(stage)
+        limit = policy.request_token_ceiling
+        if stage is InferenceStage.SEMANTIC_ROUTING_BROAD:
+            limit = min(limit, selected_request_budget(selected_profile(stage=stage)))
+        mandatory = estimate_messages_tokens([
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_request},
+        ])
+        return mandatory + min(self.max_new_tokens, policy.output_token_ceiling) <= limit
+
+    def _broad_selected_input(self, user_request, include_workflow_protocol):
+        """Full trusted catalog on the selected connection, when its budget admits it.
+
+        Used when local candidate retrieval cannot narrow a request. The
+        catalog is rebuilt from the registry exactly as for compact routing;
+        semantic validation, approvals and execution are unchanged.
+        """
+        if include_workflow_protocol not in self._broad_specs:
+            everything = CandidateSet(
+                candidates=tuple(
+                    Candidate(agent.name, tuple(agent.tools))
+                    for agent in self.registry.list_agents() if agent.tools
+                ),
+                confidence=1.0,
             )
-        )
-
-        if include_workflow_protocol:
-
-            system_prompt = (
-                system_prompt
-                + "\n\n"
-                + workflow_template
+            specialists = build_candidate_agent_specs(everything, self.registry)
+            self._broad_specs[include_workflow_protocol] = (
+                specialists, self._compact_system(specialists, include_workflow_protocol)
             )
+        specialists, system = self._broad_specs[include_workflow_protocol]
+        if not self._fits_stage(InferenceStage.SEMANTIC_ROUTING_BROAD, system, user_request):
+            return None
+        return specialists, system, InferenceStage.SEMANTIC_ROUTING_BROAD, None
 
-        if repair_mode:
+    def _routing_input(self, user_request, *, repair_mode, include_workflow_protocol, full_catalog=False):
+        """Route on the selected connection; the local Hub is the last resort.
 
-            repair_template = (
-                load_prompt(
-                    "hub_router_repair.txt"
-                )
-            )
-
-            system_prompt = (
-                system_prompt
-                + "\n\n"
-                + repair_template
-            )
-
-        return (
-            system_prompt
-        )
-
-    def _routing_input(self, user_request, *, repair_mode, include_workflow_protocol):
-        """Disclose a trusted subset only; broad control routing stays local.
-
-        A candidate miss or oversized packet falls back before any selected
-        adapter is called. Candidate identities never replace the full registry
-        used by semantic validation, approval policy or tool execution.
+        A narrowed candidate packet is preferred. When retrieval cannot narrow
+        the request, the full trusted catalog goes to the selected connection
+        if its budget admits it; otherwise the local control Hub routes.
+        Candidate identities never replace the full registry used by semantic
+        validation, approval policy or tool execution.
         """
         candidates: CandidateSet | None = None
+        if full_catalog and selected_profile(stage=InferenceStage.SEMANTIC_ROUTING):
+            # A small provider budget cannot take the full catalog; the repair
+            # then keeps the existing candidate path below.
+            broad = self._broad_selected_input(user_request, include_workflow_protocol)
+            if broad is not None:
+                return broad
         if selected_profile(stage=InferenceStage.SEMANTIC_ROUTING):
             selection = validate_candidate_set(
                 self.candidate_selector.select(user_request, self.registry), self.registry
@@ -230,19 +264,8 @@ class LLMRouter:
             fallback = selection.fallback_required or not selection.candidates
             if not fallback:
                 specialists = build_candidate_agent_specs(selection, self.registry)
-                system = load_prompt("hub_router_compact.txt").replace(
-                    "{{SPECIALISTS_JSON}}", render_router_catalog(specialists)
-                ).replace(
-                    "{{WORKFLOW_PROTOCOL}}",
-                    load_prompt("hub_workflow_compact.txt") if include_workflow_protocol
-                    else "Conditional workflow generation is disabled for this repair.",
-                )
-                policy = resolve_stage_policy(InferenceStage.SEMANTIC_ROUTING)
-                mandatory = estimate_messages_tokens([
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user_request},
-                ])
-                fallback = mandatory + min(self.max_new_tokens, policy.output_token_ceiling) > policy.request_token_ceiling
+                system = self._compact_system(specialists, include_workflow_protocol)
+                fallback = not self._fits_stage(InferenceStage.SEMANTIC_ROUTING, system, user_request)
                 if not fallback:
                     candidates = selection
             logger.info(
@@ -252,6 +275,9 @@ class LLMRouter:
             )
             if candidates is not None:
                 return specialists, system, InferenceStage.SEMANTIC_ROUTING, candidates
+            broad = self._broad_selected_input(user_request, include_workflow_protocol)
+            if broad is not None:
+                return broad
 
         specialists = [build_router_semantic_agent_spec(agent) for agent in self.registry.list_agents()]
         system = self._build_system_prompt(
@@ -347,6 +373,11 @@ class LLMRouter:
                             exc
                         )
                     ),
+
+                    full_catalog=isinstance(
+                        exc,
+                        CandidateMissError,
+                    ),
                 )
             )
 
@@ -361,6 +392,7 @@ class LLMRouter:
         repair_error: (
             str | None
         ) = None,
+        full_catalog: bool = False,
     ) -> list[
         SpecialistRequest
     ]:
@@ -379,6 +411,7 @@ class LLMRouter:
         specialists, system_content, origin_stage, candidates = self._routing_input(
             user_request, repair_mode=repair_mode,
             include_workflow_protocol=include_workflow_protocol,
+            full_catalog=full_catalog,
         )
 
         messages = [
@@ -456,7 +489,15 @@ class LLMRouter:
                 self.model_key
             ),
             model_profile_resolver=(
-                self.model_profile_resolver if candidates is None else None
+                # Private model/dataset jobs are already excluded from automatic
+                # training capture. A broad local fallback must not hash shared
+                # multi-GB checkpoints for an ineligible private trajectory.
+                # Inference and its stage/GPU metrics are unaffected.
+                self.model_profile_resolver
+                if (candidates is None
+                    and selected_profile(stage=InferenceStage.SEMANTIC_ROUTING) is None
+                    and not (execution_selection.get() or {}).get("dataset_id"))
+                else None
             ),
             specialists=(
                 specialists
@@ -548,6 +589,10 @@ class LLMRouter:
 
         if not delegations:
 
+            # Broad routing discloses the whole catalog, so an empty plan there
+            # means "no capability needed" (conversation) exactly as with the
+            # local Hub. Only a retrieved candidate packet treats an empty plan
+            # as an unroutable task.
             if candidates is not None:
                 # A retrieved ITSM task that the selected model cannot route
                 # must not become a successful conversational completion.
@@ -558,7 +603,7 @@ class LLMRouter:
                     "Clarify the requested operation or target."
                 )
                 reject_current_hub_routing_attempt(message)
-                raise RoutingContractError(message)
+                raise CandidateMissError(message)
 
             accept_current_hub_routing_attempt(
                 validated_delegation_count=0,

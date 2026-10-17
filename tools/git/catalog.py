@@ -69,7 +69,9 @@ REPOSITORY_PARAMETER = {
     "description": (
         "Configured logical repository identifier. "
         "Use the exact trusted enum value corresponding "
-        "to the repository explicitly requested by the user."
+        "to the repository explicitly requested by the user. "
+        "Omit it when the user names no repository; the "
+        "server's configured default repository then applies."
     ),
 }
 
@@ -541,7 +543,9 @@ GIT_TOOLS[
                 "Configured logical repository identifier. "
                 "Use the exact trusted enum value corresponding "
                 "to the repository explicitly requested by "
-                "the user."
+                "the user. Omit it when the user names no "
+                "repository; the server's configured default "
+                "repository then applies."
             ),
         },
 

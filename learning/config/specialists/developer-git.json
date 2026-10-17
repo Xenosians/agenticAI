@@ -246,7 +246,7 @@
         "process",
         "bounded",
         "exact-command",
-        "git-shell-v2"
+        "git-shell"
       ]
     },
     {
@@ -265,7 +265,7 @@
         "process",
         "bounded",
         "exact-command",
-        "git-shell-v2"
+        "git-shell"
       ]
     },
     {
@@ -280,7 +280,7 @@
         "process",
         "bounded",
         "exact-command",
-        "git-shell-v2"
+        "git-shell"
       ]
     },
     {
@@ -295,7 +295,7 @@
         "process",
         "bounded",
         "exact-command",
-        "git-shell-v2"
+        "git-shell"
       ]
     },
     {
@@ -312,7 +312,7 @@
         "process",
         "bounded",
         "exact-command",
-        "git-shell-v2"
+        "git-shell"
       ]
     },
     {
@@ -329,7 +329,7 @@
         "process",
         "bounded",
         "exact-command",
-        "git-shell-v2"
+        "git-shell"
       ]
     },
     {
@@ -344,7 +344,7 @@
         "process",
         "bounded",
         "exact-command",
-        "git-shell-v2"
+        "git-shell"
       ]
     },
     {
@@ -359,7 +359,7 @@
         "process",
         "bounded",
         "exact-command",
-        "git-shell-v2"
+        "git-shell"
       ]
     }
   ],
@@ -581,7 +581,7 @@
       }
     },
     {
-      "name": "git-shell-v2 process_exec 1",
+      "name": "shell process_exec 1",
       "user": "Execute an approved native process inside the configured workspace. Use these exact values: executable=git; args=[branch, --list, --no-color].",
       "allowed_tools": [
         "process_exec"
@@ -598,7 +598,7 @@
       }
     },
     {
-      "name": "git-shell-v2 process_exec 2",
+      "name": "shell process_exec 2",
       "user": "Execute an approved native process inside the configured workspace. Use these exact values: executable=ls; args=[].",
       "allowed_tools": [
         "process_exec"
@@ -611,7 +611,7 @@
       }
     },
     {
-      "name": "git-shell-v2 process_exec 3",
+      "name": "shell process_exec 3",
       "user": "Execute an approved native process inside the configured workspace. Use these exact values: executable=mkdir; args=[scratch].",
       "allowed_tools": [
         "process_exec"
@@ -626,7 +626,7 @@
       }
     },
     {
-      "name": "git-shell-v2 process_exec 4",
+      "name": "shell process_exec 4",
       "user": "Execute an approved native process inside the configured workspace. Use these exact values: executable=pwd; args=[].",
       "allowed_tools": [
         "process_exec"
@@ -639,7 +639,7 @@
       }
     },
     {
-      "name": "git-shell-v2 workspace_run_tests 5",
+      "name": "shell workspace_run_tests 5",
       "user": "Run the trusted test command for a detected Python, Elixir, or Nim project. Use these exact values: relative_path=README.md; timeout_seconds=10.",
       "allowed_tools": [
         "workspace_run_tests"
@@ -652,7 +652,7 @@
       }
     },
     {
-      "name": "git-shell-v2 workspace_run_build 6",
+      "name": "shell workspace_run_build 6",
       "user": "Run the trusted build/check command for a detected Python, Elixir, or Nim project. Use these exact values: relative_path=README.md; timeout_seconds=10.",
       "allowed_tools": [
         "workspace_run_build"
@@ -665,7 +665,7 @@
       }
     },
     {
-      "name": "git-shell-v2 workspace_process_snapshot 7",
+      "name": "shell workspace_process_snapshot 7",
       "user": "Inspect a bounded host process snapshot containing process identifiers, state, runtime, and executable names without command lines or environment values.",
       "allowed_tools": [
         "workspace_process_snapshot"
@@ -675,24 +675,31 @@
       "expected_arguments": {}
     },
     {
-      "name": "git-shell-v2 workspace_service_status 8",
+      "name": "shell workspace_service_status 8",
       "user": "Inspect declared workspace service status through the configured trusted runtime provider. Use these exact values: relative_path=README.md.",
       "allowed_tools": [
         "workspace_service_status"
       ],
-      "allowed_arguments": {},
+      "allowed_arguments": {
+        "relative_path": [
+          "README.md"
+        ]
+      },
       "expected_tool": "workspace_service_status",
       "expected_arguments": {
         "relative_path": "README.md"
       }
     },
     {
-      "name": "git-shell-v2 workspace_service_logs 9",
+      "name": "shell workspace_service_logs 9",
       "user": "Read a bounded recent log tail for one declared workspace service with common secret patterns redacted. Use these exact values: service_name=example-name; relative_path=README.md.",
       "allowed_tools": [
         "workspace_service_logs"
       ],
       "allowed_arguments": {
+        "relative_path": [
+          "README.md"
+        ],
         "service_name": [
           "example-name"
         ]

@@ -20,13 +20,13 @@ def _json(value) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Build/preflight/train/register Developer Shell/Workspace v3."
+        description="Build/preflight/train/register the developer shell/workspace specialist."
     )
     parser.add_argument("action", choices=("build", "preflight", "train", "register"))
     parser.add_argument(
         "--config",
         type=Path,
-        default=Path("learning/config/specialists/developer-shell-v3.json"),
+        default=Path("learning/config/specialists/developer-shell.json"),
     )
     parser.add_argument(
         "--corpus-dir",

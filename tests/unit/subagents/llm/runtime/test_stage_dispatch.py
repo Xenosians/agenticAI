@@ -104,6 +104,45 @@ def test_model_name_cannot_override_trusted_stage(runtime):
     assert metrics[0].stage == "SEMANTIC_ROUTING"
 
 
+@pytest.mark.parametrize("backend", ["http", "pi", "opencode", "local", "uploaded"])
+@pytest.mark.parametrize("repair", [False, True])
+def test_opted_networking_dispatch_uses_selected_adapter_without_any_dataset(runtime, backend, repair):
+    coordinator, manager, metrics, external = runtime
+    profile = {"backend": backend, "url": "https://api.groq.com/openai/v1",
+               "model": "networking-user-model", "id": "unit-upload",
+               "networking_inference": "selected_model"}
+    execution_profile.set(profile)
+    original = dict(profile)
+    stage = InferenceStage.REPAIR if repair else InferenceStage.NETWORKING_SELECTED
+    origin = InferenceStage.NETWORKING_SELECTED if repair else None
+    result = generate(coordinator, stage, repair_of=origin)
+    if backend in {"http", "pi", "opencode"}:
+        assert result == "remote result" and not manager.calls
+        actual_profile, messages, output_cap = external[0]
+        assert actual_profile["request_token_budget"] <= 6000
+        assert output_cap <= 1024
+    else:
+        assert result == "local result" and not external
+        assert manager.calls[0]["model_key"] == (
+            "uploaded-model" if backend == "uploaded" else "networking-user-model"
+        )
+        messages = manager.calls[0]["messages"]
+    assert messages == [{"role": "user", "content": "Read status"}]
+    assert profile == original
+    assert metrics[0].adapter == backend
+
+
+@pytest.mark.parametrize("backend", ["http", "pi", "opencode", "local", "uploaded"])
+def test_networking_without_opt_in_keeps_dedicated_local_model_for_every_backend(runtime, backend):
+    coordinator, manager, metrics, external = runtime
+    execution_profile.set({"backend": backend, "model": "networking-user-model"})
+    assert generate(coordinator, InferenceStage.NETWORKING) == "local result"
+    assert manager.calls[0]["model_key"] == "renamed-model"
+    assert manager.calls[0]["messages"] == [{"role": "user", "content": "Read status"}]
+    assert not external
+    assert metrics[0].adapter == "local"
+
+
 @pytest.mark.parametrize("stage,repair_of,object_mode", [
     (InferenceStage.SEMANTIC_ROUTING, None, True),
     (InferenceStage.REPAIR, InferenceStage.SEMANTIC_ROUTING, True),
@@ -246,6 +285,18 @@ def test_external_failure_emits_counts_without_prompt_credentials_or_exception_t
     assert "stage=PRIMARY_RESPONSE" in output and "outcome=error" in output
     assert "credential-value" not in output and "private reference" not in output
     assert "GPU_METRIC" not in output
+
+
+def test_metric_names_the_specialist_role_that_ran(runtime, capsys):
+    from services.extensions.context import specialist_role
+
+    coordinator, _, metrics, _ = runtime
+    with specialist_role("jira-specialist"):
+        generate(coordinator, InferenceStage.SPECIALIST_REASONING)
+    generate(coordinator, InferenceStage.SEMANTIC_ROUTING)
+    assert [metric.role for metric in metrics] == ["jira-specialist", None]
+    emit_inference_metric(metrics[0])
+    assert "role=jira-specialist" in capsys.readouterr().out
 
 
 def test_unregistered_control_model_fails_without_remote_fallback(runtime):

@@ -35,6 +35,14 @@ def test_semantic_routing_uses_selected_adapter_with_compact_budget_only():
     assert policy.output_token_ceiling == 768
 
 
+def test_explicit_selected_networking_stage_excludes_retrieval_and_bounds_remote_requests():
+    policy = resolve_stage_policy(InferenceStage.NETWORKING_SELECTED)
+    assert policy.allow_selected is True
+    assert policy.allow_retrieval is False
+    assert policy.request_token_ceiling == 6000
+    assert policy.output_token_ceiling == 1024
+
+
 @pytest.mark.parametrize(
     "stage",
     [

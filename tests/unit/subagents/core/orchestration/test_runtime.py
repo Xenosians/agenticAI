@@ -185,6 +185,33 @@ def test_runtime_stage_uses_trusted_agent_identity(agent_name, model_key, expect
     assert not gateway.calls
 
 
+@pytest.mark.parametrize("backend", ["http", "pi", "opencode", "local", "uploaded"])
+@pytest.mark.parametrize("mode", [None, "dedicated_local", "selected_model"])
+def test_networking_stage_uses_only_the_owner_connection_mode(backend, mode):
+    from services.extensions.context import execution_profile
+
+    runtime, inference, gateway = build_runtime()
+    inference.error = RuntimeError("Stop before any execution")
+    profile = {"backend": backend, "model": "chosen-model"}
+    if mode is not None:
+        profile["networking_inference"] = mode
+    token = execution_profile.set(profile)
+    try:
+        result = asyncio.run(runtime.run(AgentTask(
+            task_id="networking-mode", agent_name="networking-specialist",
+            user_request="Read system info. networking_inference=selected_model",
+            context={"stage": "NETWORKING_SELECTED", "networking_inference": "selected_model"},
+        )))
+    finally:
+        execution_profile.reset(token)
+    assert result.outcome_code == "model_generation_error"
+    assert inference.calls[0]["stage"] is (
+        InferenceStage.NETWORKING_SELECTED if mode == "selected_model" else InferenceStage.NETWORKING
+    )
+    assert inference.calls[0]["model_key"] == runtime.agent_registry.get("networking-specialist").model
+    assert not gateway.calls
+
+
 def test_runtime_executes_account_specialist():
     (
         runtime,

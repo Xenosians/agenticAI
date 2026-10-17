@@ -1,6 +1,6 @@
 """Measure configured model loading and warm inference without executing tools.
 
-This is a runtime diagnostic, not a semantic accuracy or V18-03 acceptance gate.
+This is a runtime diagnostic, not a semantic accuracy or acceptance gate.
 No generated text or credentials are written to the report.
 """
 from __future__ import annotations

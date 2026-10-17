@@ -47,6 +47,10 @@ Preserve concrete repository identities, paths, branch names, service
 names, commit messages, command arguments, and other user-supplied
 authority-bearing values exactly.
 
+When the user does not name a repository, omit the repository argument.
+The server then applies its configured default repository. Never choose a
+repository from the enum on the user's behalf.
+
 Treat related developer operations as semantically distinct.
 
 Examples of distinctions that matter:

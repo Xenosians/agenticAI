@@ -136,8 +136,7 @@ python scripts/cross_repo_acceptance.py \
 ```
 
 For unattended runs, set `ACCEPTANCE_PASSWORD` in private local configuration and
-pass `--non-interactive`. Do not commit credentials. Existing `V18_03_*` variables
-remain supported as fallback aliases; `ACCEPTANCE_*` takes precedence.
+pass `--non-interactive`. Do not commit credentials.
 
 Repository paths can be overridden with `ACCEPTANCE_BACKEND_REPO` and
 `ACCEPTANCE_FRONTEND_REPO`.
@@ -150,8 +149,8 @@ export ACCEPTANCE_TICKET_KEY='...'
 export ACCEPTANCE_JIRA_PROJECT_KEY='...'
 ```
 
-OpenWrt and Palo Alto read cases require their corresponding integration to be
-reported as configured by `/api/v1/integrations`.
+OpenWrt read cases require the OpenWrt integration to be reported as
+configured by `/api/v1/integrations`.
 
 ## One case only
 

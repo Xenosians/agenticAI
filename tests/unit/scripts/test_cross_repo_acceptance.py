@@ -389,23 +389,21 @@ def test_skipped_selected_case_writes_incomplete_report_and_fails(monkeypatch, t
 def test_non_interactive_missing_password_does_not_prompt(monkeypatch):
     monkeypatch.setenv("ACCEPTANCE_EMAIL", "fixture@example.invalid")
     monkeypatch.delenv("ACCEPTANCE_PASSWORD", raising=False)
-    monkeypatch.delenv("V18_03_PASSWORD", raising=False)
     monkeypatch.setattr(acceptance.getpass, "getpass", lambda *args: pytest.fail("Must not prompt"))
     with pytest.raises(acceptance.AcceptanceFailure, match="ACCEPTANCE_PASSWORD"):
         acceptance.run_live(Namespace(email=None, non_interactive=True))
 
 
-def test_descriptive_configuration_overrides_legacy_fixture_aliases(monkeypatch):
-    monkeypatch.setenv("V18_03_EMAIL", "legacy@example.invalid")
+def test_acceptance_settings_come_from_the_environment(monkeypatch):
     monkeypatch.delenv("ACCEPTANCE_EMAIL", raising=False)
-    assert acceptance._acceptance_env("ACCEPTANCE_EMAIL") == "legacy@example.invalid"
+    assert acceptance._acceptance_env("ACCEPTANCE_EMAIL") is None
+    assert acceptance._acceptance_env("ACCEPTANCE_EMAIL", "fallback@example.invalid") == "fallback@example.invalid"
     monkeypatch.setenv("ACCEPTANCE_EMAIL", "current@example.invalid")
     assert acceptance._acceptance_env("ACCEPTANCE_EMAIL") == "current@example.invalid"
 
 
-def test_shipped_case_prerequisites_accept_legacy_environment_aliases(monkeypatch):
-    monkeypatch.setenv("V18_03_ACCOUNT_USER_ID", "fixture-user")
-    monkeypatch.delenv("ACCEPTANCE_ACCOUNT_USER_ID", raising=False)
+def test_case_prerequisites_expand_from_the_environment(monkeypatch):
+    monkeypatch.setenv("ACCEPTANCE_ACCOUNT_USER_ID", "fixture-user")
     case = {"requires_env": ["ACCEPTANCE_ACCOUNT_USER_ID"]}
     assert acceptance._skip_reason(case, {}) is None
     assert acceptance._expand_prompt(

@@ -6,7 +6,7 @@ from functools import wraps
 
 import pytest
 
-from services.job_progress import JobProgress, job_progress, progress_url, report_progress
+from services.job_progress import JobProgress, job_progress, progress_url, renew_lease, report_progress
 
 
 def run_async(function):
@@ -174,3 +174,34 @@ async def test_missing_optional_websocket_dependency_finishes_observer_without_t
     task = asyncio.create_task(publisher.run())
     await task
     assert task.exception() is None
+
+
+@run_async
+async def test_lease_renewal_is_a_request_and_reply_on_the_attempts_joined_socket():
+    from websockets.asyncio.server import serve
+    job_id = "f" * 32
+    lease = {"job_id": job_id, "attempt": 4, "status": "processing", "lease_expires_at": "2026-10-17T12:00:00Z"}
+    events = []
+
+    async def handler(socket):
+        async for raw in socket:
+            frame = json.loads(raw)
+            events.append((frame[3], frame[4]))
+            response = lease if frame[3] == "renew_lease" else {}
+            await socket.send(json.dumps([frame[0], frame[1], frame[2], "phx_reply",
+                                          {"status": "ok", "response": response}]))
+
+    async with serve(handler, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        settings = SimpleNamespace(require_phoenix_base_url=lambda: f"http://127.0.0.1:{port}",
+                                   require_internal_job_token=lambda: "fixture-private")
+        assert await renew_lease(job_id, 4) is None  # no socket for this attempt yet
+        async with job_progress(settings, job_id, 4) as publisher:
+            async with asyncio.timeout(5):
+                while not publisher.joined:
+                    await asyncio.sleep(0.01)
+                assert await renew_lease(job_id, 4) == {"status": "ok", "response": lease}
+            assert await renew_lease(job_id, 5) is None  # another attempt never borrows it
+        assert await renew_lease(job_id, 4) is None  # the scope ended
+    assert ("renew_lease", {}) in events
+    assert all("fixture-private" not in json.dumps(payload) for _, payload in events)

@@ -23,6 +23,10 @@ from tools.assets.catalog import (
     ASSET_TOOLS,
 )
 
+from tools.directory.catalog import (
+    DIRECTORY_TOOLS,
+)
+
 from tools.developer.catalog import (
     DEVELOPER_TOOLS,
 )
@@ -40,16 +44,16 @@ from tools.knowledge.catalog import (
     KNOWLEDGE_TOOLS,
 )
 
-from tools.palo_alto.catalog import (
-    PALO_ALTO_TOOLS,
-)
 from tools.networking.catalog import NETWORKING_TOOLS
+
+from tools.operations.catalog import OPERATIONS_TOOLS
+
+from tools.servicedesk.catalog import SERVICE_DESK_TOOLS
 
 from tools.presentation import (
     format_access_check_result,
     format_account_status_result,
     format_generic_approval,
-    format_password_reset_approval,
     format_process_result,
     format_unlock_approval,
     format_workspace_read_result,
@@ -193,37 +197,6 @@ TOOLS = {
 
         "approval_formatter":
             format_unlock_approval,
-    },
-
-    "reset_password": {
-        "description": (
-            "Reset the password for one explicitly identified "
-            "account."
-        ),
-
-        "risk":
-            "high",
-
-        "requires_approval":
-            True,
-
-        "grounded_arguments": [
-            "user_id",
-        ],
-
-        "parameters": {
-            "user_id": {
-                "type":
-                    "str",
-
-                "description": (
-                    "Exact user identifier."
-                ),
-            },
-        },
-
-        "approval_formatter":
-            format_password_reset_approval,
     },
 
     # ============================================================
@@ -424,9 +397,12 @@ TOOLS = {
                 "type":
                     "str",
 
+                "default": ".",
+
                 "description": (
                     "Optional path inside the selected repository. "
-                    "Defaults to that repository root. Do not put "
+                    "Omit it for the repository root; never send \".\" "
+                    "or a guessed path. Do not put "
                     "the repository identifier in this field."
                 ),
             },
@@ -476,6 +452,8 @@ TOOLS = {
             "relative_path": {
                 "type":
                     "str",
+
+                "default": ".",
 
                 "description": (
                     "Optional path inside the selected repository."
@@ -539,12 +517,13 @@ def merge_capability_catalog(target: dict, catalog: dict):
 
 
 for catalog in (ACCOUNT_TOOLS, ACCESS_TOOLS, ATLASSIAN_TOOLS, ASSET_TOOLS,
-                DEVELOPER_TOOLS, GIT_TOOLS, KNOWLEDGE_TOOLS, PALO_ALTO_TOOLS,
-                JIRA_TOOLS, TICKETING_TOOLS, NETWORKING_TOOLS):
+                DEVELOPER_TOOLS, DIRECTORY_TOOLS, GIT_TOOLS, KNOWLEDGE_TOOLS,
+                JIRA_TOOLS, TICKETING_TOOLS, NETWORKING_TOOLS,
+                OPERATIONS_TOOLS, SERVICE_DESK_TOOLS):
     merge_capability_catalog(TOOLS, catalog)
 
 
-# SRS 1.8: explicit capability semantics; no tool-name inference.
+# Explicit capability semantics; no tool-name inference.
 apply_capability_semantics(
     TOOLS
 )

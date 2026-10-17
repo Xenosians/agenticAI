@@ -13,6 +13,8 @@ from urllib.parse import (
 
 import httpx
 
+from services.jira.authentication import AUTH_EVENT_HOOKS
+
 from .base import (
     TicketService,
 )
@@ -138,6 +140,8 @@ class JiraTicketService(
                 ),
 
                 transport=transport,
+
+                event_hooks=AUTH_EVENT_HOOKS,
             )
         )
 

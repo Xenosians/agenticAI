@@ -1,5 +1,6 @@
 from .phoenix import (
     CredentialPersistenceError,
+    CredentialPersistenceResult,
     PhoenixCredentialStore,
     ProvisionedAccountPersistenceResult,
     build_credential_store,
@@ -7,6 +8,7 @@ from .phoenix import (
 
 __all__ = [
     "CredentialPersistenceError",
+    "CredentialPersistenceResult",
     "PhoenixCredentialStore",
     "ProvisionedAccountPersistenceResult",
     "build_credential_store",

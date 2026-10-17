@@ -12,11 +12,11 @@ python scripts/tool_acceptance_matrix.py --require-full-coverage
 
 The command registers executable signatures without starting MCP transport, validates the trusted capability contracts, loads specialist ownership, and checks authored evaluation targets against the production intent parser and SemanticGuard. It makes no inference or tool execution calls. The JSON report defaults to `.runtime/tool-acceptance-matrix.json`.
 
-The current corpus covers all 65 registered tools. Existing specialist evaluation suites cover 49 tools; 16 additional tools have deliberately authored synthetic cases in `config/tool_acceptance_authored_cases.json`. Those new targets are explicitly **authored and unreviewed**. They are test data, not production routing rules or proof that any adapter works.
+The current corpus covers all 67 registered tools. Existing specialist evaluation suites cover 49 tools; 18 additional tools have explicitly reviewed proposal-level acceptance cases in `config/tool_acceptance_reviewed_cases.json`. Newly authored future cases remain isolated in `config/tool_acceptance_authored_cases.json` until human review. Reviewed proposal cases are not production routing rules and do not prove that any provider or adapter executes successfully.
 
 Prompts also present in version-controlled specialist training examples are excluded from held-out acceptance. This overlap check cannot establish what every underlying model has seen. Negative safety cases remain separate references rather than being mistaken for successful tool proposals.
 
-`--require-full-coverage` fails for missing valid targets, stale targets, or unowned capabilities. Passing that gate proves corpus availability and contract consistency only.
+`--require-full-coverage` fails for missing valid targets, stale targets, or unowned capabilities. `--require-reviewed-coverage` additionally fails when any registered tool lacks reviewed proposal coverage or any authored-unreviewed case remains. Passing either gate proves corpus and contract evidence only; it does not prove provider execution.
 
 ## Bounded worker generation
 
@@ -52,3 +52,9 @@ Every tool has rows for `local`, `http`, `pi`, and `opencode`, with its actual r
 - `passed_authored_unreviewed`: targets passed, with new cases still requiring review.
 
 Approval, tool execution, and durable app flow remain unverified in this runner. Use the real orchestration and cross-repository acceptance tools to check those separately. `all_tools_mvp_verified` remains false because worker proposals alone cannot prove the MVP.
+
+Live account → Jira → mailer acceptance remains incomplete. Check the exact
+saved proposals, verified provider results, final durable job state and mail
+delivery outcome together; WebSocket progress alone proves none of those
+effects. Each inference adapter needs its own execution evidence, and the
+protected networking specialist continues to use its local model.

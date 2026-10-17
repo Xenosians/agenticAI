@@ -36,3 +36,18 @@ def test_rejects_snapshot_change(tmp_path):
     path.write_text("{}")
     with pytest.raises(ValueError, match="hash"):
         LocalKnowledgeService(path, "0" * 64)
+
+
+def test_configured_local_provider_is_reachable_through_production_factory(tmp_path):
+    from config import Settings
+    from services.knowledge.factory import build_knowledge_service
+
+    admitted = build(tmp_path)
+    path = tmp_path / "knowledge.jsonl"
+    settings = Settings(_env_file=None, knowledge_backend="local",
+                        knowledge_snapshot_path=str(path),
+                        knowledge_snapshot_sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+    provider = build_knowledge_service(settings)
+    assert isinstance(provider, LocalKnowledgeService)
+    assert provider.get_knowledge("KB-NET") == admitted.get_knowledge("KB-NET")
+    assert provider.search(KnowledgeSearchQuery(query="firmware")).count == 1

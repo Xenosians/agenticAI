@@ -2,7 +2,8 @@
 
 Local models remain the default. The signed-in account can select another model
 or harness in **Models, harnesses and datasets** (Ctrl/Cmd+,). Changes apply to
-future requests. The networking specialist continues using its existing model.
+future requests. Networking uses its existing dedicated local model by default;
+each connection can explicitly opt in to handling networking requests too.
 The application database is not replaced by user datasets.
 
 ## Model connections
@@ -48,7 +49,13 @@ tokenization and CLI overhead may differ. Mandatory instructions and the current
 request are never silently truncated to fit. An oversized mandatory request is
 rejected before dispatch, and routing permits at most one contract repair.
 
-Broad control routing and networking stay local, independent of model names.
+Broad control routing stays local, independent of model names. Networking stays
+on its dedicated local profile unless the signed-in owner explicitly chooses
+**Use this connection for networking** in that model's settings. This option works
+with HTTP, Pi, OpenCode, installed local profiles, and admitted uploaded models.
+An outbound connection receives the networking request and disclosed capability
+context; private reference datasets remain excluded. Selecting another local
+model does not modify or retrain the dedicated networking model.
 Private reference evidence is available only to specialist reasoning, direct
 answers and synthesis; it is not injected into routing or networking. A repair
 inherits the original stage's connection, retrieval and budget policy.
@@ -87,7 +94,19 @@ truncation remain explicit errors; partial output is not an executable proposal.
 
 The owner-scoped `model_options` command accepts `id`,
 `provider_tokens_per_minute`, `provider_requests_per_minute`,
-`admission_max_wait_seconds` and `reasoning_effort`. Null clears an option.
+`admission_max_wait_seconds`, `reasoning_effort`, and `networking_inference`.
+The last field accepts only `dedicated_local` or `selected_model`; absence defaults
+to `dedicated_local`. Null clears an option, including resetting networking to
+its dedicated default. Networking mode can be changed for local/uploaded
+connections without adding external usage settings or re-entering credentials.
+The catalog publishes detached `networking_inference_options` choices for the UI.
+
+This setting changes inference dispatch only. Strict tool-call parsing,
+capability schemas, SemanticGuard, provider grounding, approvals, and execution
+remain unchanged. A selected model can still fail to produce a valid call; the
+runtime reports that failure and never discards invented arguments to force a
+successful result. No model weights or existing users' preferences are changed
+when deploying this option.
 
 ## Datasets and retrieval
 

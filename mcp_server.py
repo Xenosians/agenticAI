@@ -43,6 +43,7 @@ from services.directory import (
 from services.credentials import (
     build_credential_store,
 )
+from services.directory.password_reset import build_password_reset_service
 
 from services.jira import (
     build_jira_project_mutation_service,
@@ -59,12 +60,12 @@ from services.process_runner import (
     run_process,
 )
 
-from services.palo_alto import (
-    build_palo_alto_service,
-)
 from services.openwrt import build_openwrt_service
 from services.mailbox import MaddyMailboxService
 from tools.networking.mcp import register_networking_tools
+from tools.directory.mcp import register_directory_tools
+from tools.operations.mcp import register_operations_tools
+from tools.servicedesk.mcp import register_service_desk_tools
 from tools.mailbox.mcp import register_mailbox_tools
 
 from services.ticketing import (
@@ -105,10 +106,6 @@ from tools.jira.mcp import (
 
 from tools.knowledge.mcp import (
     register_knowledge_tools,
-)
-
-from tools.palo_alto.mcp import (
-    register_palo_alto_tools,
 )
 
 from tools.ticketing.mcp import (
@@ -453,6 +450,11 @@ def create_mcp_server(
         server,
         account_lifecycle_service,
         account_creation_service,
+        build_password_reset_service(
+            directory_service,
+            credential_store,
+            runtime_settings,
+        ),
     )
     register_mailbox_tools(server, mailbox or MaddyMailboxService(runtime_settings))
 
@@ -486,20 +488,6 @@ def create_mcp_server(
             MutationResult(
                 **directory_service
                 .unlock_user(
-                    user_id
-                )
-            )
-        )
-
-    @server.tool()
-    def reset_password(
-        user_id: str,
-    ) -> MutationResult:
-
-        return (
-            MutationResult(
-                **directory_service
-                .reset_password(
                     user_id
                 )
             )
@@ -724,16 +712,28 @@ def create_mcp_server(
     )
 
     # ============================================================
-    # PALO ALTO NETWORKS PAN-OS — READ ONLY E2E V1
+    # NETWORKING (OpenWrt, read only)
     # ============================================================
 
-    register_palo_alto_tools(
-        server,
-        build_palo_alto_service(
-            runtime_settings
-        ),
-    )
     register_networking_tools(server, build_openwrt_service(runtime_settings))
+
+    # ============================================================
+    # DIRECTORY READS
+    # ============================================================
+
+    register_directory_tools(server, directory_service)
+
+    # ============================================================
+    # OPERATIONS (containers, service health, notifications)
+    # ============================================================
+
+    register_operations_tools(server, runtime_settings)
+
+    # ============================================================
+    # SERVICE DESK (Jira Service Management)
+    # ============================================================
+
+    register_service_desk_tools(server, runtime_settings)
 
     # ============================================================
     # GOVERNED DEVELOPER CAPABILITIES

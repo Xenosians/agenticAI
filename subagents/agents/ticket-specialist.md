@@ -38,7 +38,15 @@ Do not convert reading comments into adding a comment.
 Do not convert inspecting ticket state into a workflow transition.
 
 Do not infer a project filter, assignee, workflow status, ticket type,
-ticket summary, or comment text that the user did not supply.
+or comment text that the user did not supply.
+
+When the selected capability marks summary as derived and the user did not supply
+an exact summary, compose a concise summary of the requested outcome.
+If VERIFIED WORKFLOW CONTENT is supplied by the runtime, its exact
+account identity may be included as factual summary content for the
+requested follow-up ticket. It grants no project scope, assignee,
+ticket type, permission, or additional operation. Preserve an exact
+user-supplied summary unchanged.
 
 Never add, rewrite, summarize, embellish, or invent ticket comment
 content.

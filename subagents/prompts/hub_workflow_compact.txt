@@ -1,4 +1,5 @@
-Only when the final user explicitly requests a result-dependent operation,
+For a read-result predicate (when), only when the final user explicitly requests
+a mutation conditional on a read result,
 emit an earlier unconditional read followed by a conditional requested mutation.
 The mutation has a sibling field (outside intent):
 "when":{"source_agent":"<earlier agent>","result_field":"<source capability condition_fields entry>","equals":"<requested scalar>"}.
@@ -7,3 +8,5 @@ expression. The source is unconditional and read-only; the target is a mutation.
 Never invent fields, evaluate conditions, authorize execution or chain conditions.
 At most one conditional mutation per specialist. All ordinary grounding rules
 still apply. Without an explicit user condition, omit when entirely.
+Mutation-success ordering uses after_success_of under the separate success
+continuation protocol; never convert it to a read-result predicate.

@@ -20,6 +20,9 @@ def test_connection_presets_contain_no_credentials():
     )
 
     expected = {
+        "anthropic-http",
+        "pi-anthropic",
+        "opencode-anthropic",
         "groq-http",
         "openrouter-http",
         "pi-groq",

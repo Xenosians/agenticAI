@@ -38,7 +38,7 @@ def http_response_format_for_stage(
 ) -> HttpResponseFormat | None:
     resolve_stage_policy(stage, repair_of)
     origin = InferenceStage(repair_of) if InferenceStage(stage) is InferenceStage.REPAIR else InferenceStage(stage)
-    if (origin is InferenceStage.SEMANTIC_ROUTING
+    if (origin in {InferenceStage.SEMANTIC_ROUTING, InferenceStage.SEMANTIC_ROUTING_BROAD}
             and HttpResponseFormat.JSON_OBJECT in supported_http_response_formats(profile)):
         # The existing protocol has sparse dynamic argument maps and omitted
         # conditional fields. Groq strict schemas require closed objects and all

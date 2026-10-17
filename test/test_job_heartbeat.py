@@ -7,6 +7,7 @@ from types import (
 from api.app import (
     JobExecuteRequest,
     job_heartbeat_worker,
+    send_job_heartbeat,
 )
 
 
@@ -222,3 +223,34 @@ def test_heartbeat_renews_exact_attempt_and_stops_when_stale():
     asyncio.run(
         scenario()
     )
+
+def test_heartbeat_prefers_the_joined_socket_and_falls_back_to_http(monkeypatch):
+    acknowledged = {
+        "job_id": "job-123",
+        "attempt": 3,
+        "status": "processing",
+        "lease_expires_at": "2026-09-13T22:30:00Z",
+    }
+    socket_replies = [
+        {"status": "ok", "response": acknowledged},
+        None,  # not joined or no reply in time
+        {"status": "error", "response": {"error": "stale_attempt", "current_attempt": 4, "received_attempt": 3}},
+    ]
+
+    async def socket_renewal(job_id, attempt):
+        assert (job_id, attempt) == ("job-123", 3)
+        return socket_replies.pop(0)
+
+    monkeypatch.setattr("services.job_progress.renew_lease", socket_renewal)
+    phoenix_client = FakePhoenixClient()
+    runtime = SimpleNamespace(settings=FakeSettings(), phoenix_client=phoenix_client)
+
+    async def scenario():
+        assert await send_job_heartbeat(runtime, "job-123", 3) is True
+        assert phoenix_client.calls == []
+        assert await send_job_heartbeat(runtime, "job-123", 3) is True
+        assert len(phoenix_client.calls) == 1
+        assert await send_job_heartbeat(runtime, "job-123", 3) is False
+        assert len(phoenix_client.calls) == 1
+
+    asyncio.run(scenario())

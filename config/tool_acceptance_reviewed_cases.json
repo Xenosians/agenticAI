@@ -1,0 +1,292 @@
+{
+  "schema": "tool-proposal-cases.v1",
+  "review_status": "reviewed",
+  "description": "Human-reviewed proposal-level acceptance targets. Review establishes the expected grounded tool proposal only; it does not prove provider execution, approval, durable job flow, or browser behavior.",
+  "cases": [
+    {
+      "id": "mailbox-create-explicit-local-email",
+      "agent": "account-specialist",
+      "user": "Create a local SMTP/IMAP mailbox for itsm.fixture@itsm.test. Generate its password only after approval and keep it encrypted.",
+      "allowed_tools": [
+        "mailbox_create"
+      ],
+      "allowed_arguments": {
+        "email": [
+          "itsm.fixture@itsm.test"
+        ]
+      },
+      "expected_tool": "mailbox_create",
+      "expected_arguments": {
+        "email": "itsm.fixture@itsm.test"
+      }
+    },
+    {
+      "id": "mailbox-status-explicit-local-email",
+      "agent": "account-specialist",
+      "user": "Check whether local mailbox credentials and IMAP storage exist for itsm.fixture@itsm.test. Do not create an account or send email.",
+      "allowed_tools": [
+        "mailbox_status"
+      ],
+      "allowed_arguments": {
+        "email": [
+          "itsm.fixture@itsm.test"
+        ]
+      },
+      "expected_tool": "mailbox_status",
+      "expected_arguments": {
+        "email": "itsm.fixture@itsm.test"
+      }
+    },
+    {
+      "id": "asset-read-exact-id",
+      "agent": "asset-specialist",
+      "user": "Show the managed asset record AST-204. Do not change its assignment.",
+      "allowed_tools": [
+        "asset_get"
+      ],
+      "allowed_arguments": {
+        "asset_id": [
+          "AST-204"
+        ]
+      },
+      "expected_tool": "asset_get",
+      "expected_arguments": {
+        "asset_id": "AST-204"
+      }
+    },
+    {
+      "id": "asset-search-explicit-owner",
+      "agent": "asset-specialist",
+      "user": "Find assets assigned to employee user-482. Keep the inventory unchanged.",
+      "allowed_tools": [
+        "asset_search"
+      ],
+      "allowed_arguments": {
+        "owner_id": [
+          "user-482"
+        ]
+      },
+      "expected_tool": "asset_search",
+      "expected_arguments": {
+        "owner_id": "user-482"
+      }
+    },
+    {
+      "id": "asset-assign-exact-target",
+      "agent": "asset-specialist",
+      "user": "Assign asset AST-204 to employee user-482.",
+      "allowed_tools": [
+        "asset_assign"
+      ],
+      "allowed_arguments": {
+        "asset_id": [
+          "AST-204"
+        ],
+        "user_id": [
+          "user-482"
+        ]
+      },
+      "expected_tool": "asset_assign",
+      "expected_arguments": {
+        "asset_id": "AST-204",
+        "user_id": "user-482"
+      }
+    },
+    {
+      "id": "asset-unassign-exact-target",
+      "agent": "asset-specialist",
+      "user": "Remove the current owner assignment from asset AST-204.",
+      "allowed_tools": [
+        "asset_unassign"
+      ],
+      "allowed_arguments": {
+        "asset_id": [
+          "AST-204"
+        ]
+      },
+      "expected_tool": "asset_unassign",
+      "expected_arguments": {
+        "asset_id": "AST-204"
+      }
+    },
+    {
+      "id": "atlassian-credential-status-without-secret",
+      "agent": "atlassian-specialist",
+      "user": "Check which Atlassian credentials are configured. Return configuration status only, without secret values.",
+      "allowed_tools": [
+        "atlassian_credential_status"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "atlassian_credential_status",
+      "expected_arguments": {}
+    },
+    {
+      "id": "atlassian-org-list",
+      "agent": "atlassian-specialist",
+      "user": "List the Atlassian organizations visible to the configured administrator.",
+      "allowed_tools": [
+        "atlassian_org_list"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "atlassian_org_list",
+      "expected_arguments": {}
+    },
+    {
+      "id": "atlassian-org-get-explicit-id",
+      "agent": "atlassian-specialist",
+      "user": "Read Atlassian organization 1e55f785-9c60-4df3-82ef-93ff24dfd174.",
+      "allowed_tools": [
+        "atlassian_org_get"
+      ],
+      "allowed_arguments": {
+        "org_id": [
+          "1e55f785-9c60-4df3-82ef-93ff24dfd174"
+        ]
+      },
+      "expected_tool": "atlassian_org_get",
+      "expected_arguments": {
+        "org_id": "1e55f785-9c60-4df3-82ef-93ff24dfd174"
+      }
+    },
+    {
+      "id": "atlassian-workspace-list-explicit-org",
+      "agent": "atlassian-specialist",
+      "user": "List existing Atlassian workspaces in organization 1e55f785-9c60-4df3-82ef-93ff24dfd174.",
+      "allowed_tools": [
+        "atlassian_workspace_list"
+      ],
+      "allowed_arguments": {
+        "org_id": [
+          "1e55f785-9c60-4df3-82ef-93ff24dfd174"
+        ]
+      },
+      "expected_tool": "atlassian_workspace_list",
+      "expected_arguments": {
+        "org_id": "1e55f785-9c60-4df3-82ef-93ff24dfd174"
+      }
+    },
+    {
+      "id": "atlassian-api-token-metadata-exact-account",
+      "agent": "atlassian-specialist",
+      "user": "List API token metadata for Atlassian account acct-test-482. Do not return token secret values.",
+      "allowed_tools": [
+        "atlassian_api_token_metadata"
+      ],
+      "allowed_arguments": {
+        "account_id": [
+          "acct-test-482"
+        ]
+      },
+      "expected_tool": "atlassian_api_token_metadata",
+      "expected_arguments": {
+        "account_id": "acct-test-482"
+      }
+    },
+    {
+      "id": "atlassian-product-invite-exact-email",
+      "agent": "atlassian-specialist",
+      "user": "Invite itsm.fixture@example.invalid to the configured Jira cloud product.",
+      "allowed_tools": [
+        "atlassian_user_invite"
+      ],
+      "allowed_arguments": {
+        "email": [
+          "itsm.fixture@example.invalid"
+        ]
+      },
+      "expected_tool": "atlassian_user_invite",
+      "expected_arguments": {
+        "email": "itsm.fixture@example.invalid"
+      }
+    },
+    {
+      "id": "knowledge-document-read-exact-id",
+      "agent": "knowledge-specialist",
+      "user": "Retrieve ITSM knowledge document KB-VPN-204.",
+      "allowed_tools": [
+        "knowledge_get"
+      ],
+      "allowed_arguments": {
+        "document_id": [
+          "KB-VPN-204"
+        ]
+      },
+      "expected_tool": "knowledge_get",
+      "expected_arguments": {
+        "document_id": "KB-VPN-204"
+      }
+    },
+    {
+      "id": "knowledge-search-literal-query",
+      "agent": "knowledge-specialist",
+      "user": "Search ITSM knowledge with the exact query VPN authentication recovery.",
+      "allowed_tools": [
+        "knowledge_search"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "knowledge_search",
+      "expected_arguments": {
+        "query": "VPN authentication recovery"
+      }
+    },
+    {
+      "id": "runbook-read-exact-id",
+      "agent": "knowledge-specialist",
+      "user": "Read runbook RB-VPN-204; do not perform any runbook steps.",
+      "allowed_tools": [
+        "runbook_get"
+      ],
+      "allowed_arguments": {
+        "runbook_id": [
+          "RB-VPN-204"
+        ]
+      },
+      "expected_tool": "runbook_get",
+      "expected_arguments": {
+        "runbook_id": "RB-VPN-204"
+      }
+    },
+    {
+      "id": "git-stage-all-explicit-scope",
+      "agent": "developer-specialist",
+      "user": "Stage all current changes in the backend repository. Do not commit or push.",
+      "allowed_tools": [
+        "workspace_git_stage_all"
+      ],
+      "allowed_arguments": {
+        "repository": [
+          "backend"
+        ]
+      },
+      "expected_tool": "workspace_git_stage_all",
+      "expected_arguments": {
+        "repository": "backend"
+      }
+    },
+    {
+      "id": "git-unstage-explicit-file-set",
+      "agent": "developer-specialist",
+      "user": "Unstage only src/app.nim and README.md in the frontend repository. Preserve the working files.",
+      "allowed_tools": [
+        "workspace_git_unstage_files"
+      ],
+      "allowed_arguments": {
+        "repository": [
+          "frontend"
+        ],
+        "paths": [
+          "src/app.nim",
+          "README.md"
+        ]
+      },
+      "expected_tool": "workspace_git_unstage_files",
+      "expected_arguments": {
+        "repository": "frontend",
+        "paths": [
+          "src/app.nim",
+          "README.md"
+        ]
+      }
+    }
+  ]
+}

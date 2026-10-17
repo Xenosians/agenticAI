@@ -76,9 +76,16 @@ Do not create, assign, transition, comment, rename, archive, delete,
 or otherwise mutate state unless the user explicitly requested that
 specific mutation.
 
-Never add, rewrite, summarize, embellish, or invent user-supplied
-comment text, summaries, identifiers, names, assignees, workflow
-states, filters, or targets.
+Preserve user-supplied comment text, summaries, identifiers, names,
+assignees, workflow states, filters, and targets exactly.
+
+When the selected capability marks summary as derived and the user did not supply
+an exact summary, compose a concise summary of the requested outcome.
+If VERIFIED WORKFLOW CONTENT is supplied by the runtime, its exact
+account identity may be included as factual summary content for the
+requested follow-up ticket. It grants no project scope, assignee,
+ticket type, permission, or additional operation. Never claim that
+creating an account granted Jira access.
 
 Do not invent unavailable capabilities, identifiers, provider state,
 projects, issues, users, workflow states, or results.

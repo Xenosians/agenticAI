@@ -125,21 +125,37 @@ def load_proposal_cases(root: Path = PROJECT_ROOT) -> list[ProposalCase]:
                 allowed_extra_arguments=item.get("allowed_extra_arguments", []),
                 training_overlap=normalized_prompt(item["user"]) in training_prompts,
             ))
-    authored_path = root / "config" / "tool_acceptance_authored_cases.json"
-    if authored_path.exists():
-        authored = json.loads(authored_path.read_text(encoding="utf-8"))
-        if authored.get("schema") != "tool-proposal-cases.v1" or authored.get("review_status") != "authored_unreviewed":
-            raise ValueError("Authored proposal cases require their explicit schema and review status")
-        for item in authored["cases"]:
+    acceptance_sources = (
+        ("tool_acceptance_reviewed_cases.json", "reviewed", "reviewed"),
+        ("tool_acceptance_authored_cases.json", "authored_unreviewed", "authored"),
+    )
+    for filename, review_status, prefix in acceptance_sources:
+        path = root / "config" / filename
+        if not path.exists():
+            continue
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if (
+            payload.get("schema") != "tool-proposal-cases.v1"
+            or payload.get("review_status") != review_status
+        ):
+            raise ValueError(
+                f"{filename} requires schema tool-proposal-cases.v1 "
+                f"and review_status={review_status}"
+            )
+        for item in payload["cases"]:
             cases.append(ProposalCase(
-                case_id=f"authored:{item['id']}", source=authored_path.relative_to(root).as_posix(),
-                source_sha256=hashlib.sha256(authored_path.read_bytes()).hexdigest(),
-                agent_name=item["agent"], user=item["user"],
-                allowed_tools=item["allowed_tools"], allowed_arguments=item.get("allowed_arguments", {}),
-                expected_tool=item["expected_tool"], expected_arguments=item["expected_arguments"],
+                case_id=f"{prefix}:{item['id']}",
+                source=path.relative_to(root).as_posix(),
+                source_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+                agent_name=item["agent"],
+                user=item["user"],
+                allowed_tools=item["allowed_tools"],
+                allowed_arguments=item.get("allowed_arguments", {}),
+                expected_tool=item["expected_tool"],
+                expected_arguments=item["expected_arguments"],
                 allowed_extra_arguments=item.get("allowed_extra_arguments", []),
                 training_overlap=normalized_prompt(item["user"]) in training_prompts,
-                review_status="authored_unreviewed",
+                review_status=review_status,
             ))
     if len({case.case_id for case in cases}) != len(cases):
         raise ValueError("Proposal case IDs must be globally unique")
@@ -261,8 +277,19 @@ def build_report(*, contracts, agents, cases, references, observations=()) -> di
     rows = []
     for name, contract in sorted(contracts.items()):
         tool_cases = [case for case in valid_cases.values() if case.expected_tool == name]
-        held_out = [case for case in tool_cases if not case.training_overlap and case.review_status == "existing_eval"]
-        authored = [case for case in tool_cases if not case.training_overlap and case.review_status == "authored_unreviewed"]
+        existing_eval = [
+            case for case in tool_cases
+            if not case.training_overlap and case.review_status == "existing_eval"
+        ]
+        reviewed_acceptance = [
+            case for case in tool_cases
+            if not case.training_overlap and case.review_status == "reviewed"
+        ]
+        held_out = existing_eval + reviewed_acceptance
+        authored = [
+            case for case in tool_cases
+            if not case.training_overlap and case.review_status == "authored_unreviewed"
+        ]
         case_ids = {case.case_id for case in held_out + authored}
         adapters = {}
         for adapter in ADAPTERS:
@@ -283,20 +310,51 @@ def build_report(*, contracts, agents, cases, references, observations=()) -> di
         owners = sorted(agent.name for agent in agents.values() if name in agent.tools)
         dedicated_networking = owners == ["networking-specialist"]
         for adapter, state in adapters.items():
-            state["effective_adapter"] = "local" if dedicated_networking else adapter
+            checked = [result for result in results if result["adapter"] == adapter
+                       and result["case_id"] in case_ids]
+            observed_stages = sorted({result["stage"] for result in checked if result.get("stage")})
+            state["effective_adapter"] = (
+                adapter if not dedicated_networking or "NETWORKING_SELECTED" in observed_stages else "local"
+            )
+            state["observed_inference_stages"] = observed_stages
+            state["observed_networking_modes"] = sorted({
+                result["networking_inference"] for result in checked if result.get("networking_inference")
+            })
         rows.append({
             **contract.as_dict(), "specialists": owners,
             "argument_schema": get_tool(name).get("parameters", {}),
             "inference_stage": "NETWORKING" if dedicated_networking else "SPECIALIST_REASONING",
             "held_out_proposal_cases": [case.case_id for case in held_out],
+            "existing_eval_proposal_cases": [case.case_id for case in existing_eval],
+            "reviewed_acceptance_proposal_cases": [
+                case.case_id for case in reviewed_acceptance
+            ],
             "authored_unreviewed_proposal_cases": [case.case_id for case in authored],
             "training_overlap_cases": [case.case_id for case in tool_cases if case.training_overlap],
             "available_reference_cases": references.get(name, {}),
             "adapters": adapters,
         })
 
-    missing = [row["name"] for row in rows if not (row["held_out_proposal_cases"] or row["authored_unreviewed_proposal_cases"])]
-    missing_reviewed = [row["name"] for row in rows if not row["held_out_proposal_cases"]]
+    missing = [
+        row["name"]
+        for row in rows
+        if not (
+            row["held_out_proposal_cases"]
+            or row["authored_unreviewed_proposal_cases"]
+        )
+    ]
+    missing_existing = [
+        row["name"] for row in rows
+        if not row["existing_eval_proposal_cases"]
+    ]
+    missing_reviewed = [
+        row["name"] for row in rows
+        if not row["held_out_proposal_cases"]
+    ]
+    authored_unreviewed_count = sum(
+        len(row["authored_unreviewed_proposal_cases"])
+        for row in rows
+    )
     unowned = [row["name"] for row in rows if not row["specialists"]]
     return {
         "schema": SCHEMA,
@@ -315,8 +373,11 @@ def build_report(*, contracts, agents, cases, references, observations=()) -> di
             "registered_tools": len(rows),
             "tools_with_valid_proposal_cases": len(rows) - len(missing),
             "tools_missing_valid_proposal_cases": missing,
-            "tools_with_existing_held_out_proposal_cases": len(rows) - len(missing_reviewed),
-            "tools_missing_existing_held_out_proposal_cases": missing_reviewed,
+            "tools_with_existing_held_out_proposal_cases": len(rows) - len(missing_existing),
+            "tools_missing_existing_held_out_proposal_cases": missing_existing,
+            "tools_with_reviewed_proposal_cases": len(rows) - len(missing_reviewed),
+            "tools_missing_reviewed_proposal_cases": missing_reviewed,
+            "authored_unreviewed_cases": authored_unreviewed_count,
             "tools_without_specialist": unowned,
             "invalid_cases": invalid_cases,
             "negative_reference_cases": negative_reference_cases,
@@ -351,6 +412,7 @@ async def generate_observations(*, inference, adapter, model_key, cases, contrac
     from subagents.core.orchestration.intent_contract import parse_semantic_intent
     from subagents.core.orchestration.runtime import AgentRuntime
     from subagents.llm.runtime.stages import InferenceStage
+    from services.extensions.context import selected_profile, specialist_inference_stage
 
     class CapturingInference:
         """Record only the in-memory proposal; never expose provider exceptions."""
@@ -382,8 +444,16 @@ async def generate_observations(*, inference, adapter, model_key, cases, contrac
     observations = []
     for case in cases:
         agent = agents[case.agent_name]
-        effective_adapter = "local" if agent.name == "networking-specialist" else adapter
-        stage = InferenceStage.NETWORKING if agent.name == "networking-specialist" else InferenceStage.SPECIALIST_REASONING
+        stage = specialist_inference_stage(agent.name)
+        profile = selected_profile(stage=stage)
+        networking_mode = None
+        if agent.name == "networking-specialist":
+            from services.extensions.options import networking_inference_mode
+            networking_mode = networking_inference_mode(profile or {})
+        effective_adapter = (
+            "local" if stage == InferenceStage.NETWORKING
+            else profile["backend"] if profile is not None else adapter
+        )
         if adapter == "local" and stage != InferenceStage.NETWORKING:
             agent = replace(agent, model=model_key)
         registry = AgentRegistry()
@@ -420,6 +490,7 @@ async def generate_observations(*, inference, adapter, model_key, cases, contrac
             result = {"passed": False, "decision_code": "inference_error", "error_type": type(exc).__name__}
         duration = time.perf_counter() - started
         observations.append({"adapter": effective_adapter, "requested_adapter": adapter, "stage": stage.value,
+                             "networking_inference": networking_mode,
                              "case_id": case.case_id, "case_sha256": case.digest,
                              "review_status": case.review_status,
                              "model_key": agent.model,
@@ -478,7 +549,16 @@ async def run(args) -> int:
     print(json.dumps({"report": str(args.report), **summary}, indent=2))
     if any(not item["passed"] for item in observations):
         return 1
-    if args.require_full_coverage and (summary["tools_missing_valid_proposal_cases"] or summary["invalid_cases"] or summary["tools_without_specialist"]):
+    if args.require_full_coverage and (
+        summary["tools_missing_valid_proposal_cases"]
+        or summary["invalid_cases"]
+        or summary["tools_without_specialist"]
+    ):
+        return 1
+    if args.require_reviewed_coverage and (
+        summary["tools_missing_reviewed_proposal_cases"]
+        or summary["authored_unreviewed_cases"]
+    ):
         return 1
     return 0
 
@@ -486,7 +566,16 @@ async def run(args) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", type=Path, default=PROJECT_ROOT / ".runtime" / "tool-acceptance-matrix.json")
-    parser.add_argument("--require-full-coverage", action="store_true", help="Fail if any tool lacks valid held-out proposal cases")
+    parser.add_argument(
+        "--require-full-coverage",
+        action="store_true",
+        help="Fail if any tool lacks a valid proposal case",
+    )
+    parser.add_argument(
+        "--require-reviewed-coverage",
+        action="store_true",
+        help="Fail if any tool lacks reviewed proposal coverage or unreviewed authored cases remain",
+    )
     parser.add_argument("--generate", action="store_true", help="Opt in to bounded inference; never executes a tool")
     parser.add_argument("--adapter", choices=ADAPTERS)
     parser.add_argument("--model-key", default="hub-main")

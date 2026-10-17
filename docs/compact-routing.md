@@ -29,8 +29,9 @@ User request
 ```
 
 With no selected connection, the existing local routing prompt remains in use.
-The networking specialist retains its dedicated local model and receives no
-additional private reference dataset context.
+The networking specialist retains its dedicated local model by default. Each
+owner can explicitly opt a connection into networking inference without changing
+the dedicated weights. Both networking modes exclude private reference datasets.
 
 ## Candidate selection is not authority
 
@@ -63,6 +64,7 @@ Trusted callers supply a stage; a model name does not determine policy.
 | `PRIMARY_RESPONSE` | Selected connection, or local default | Yes, if selected | 6,000 / 1,024 |
 | `SYNTHESIS` | Selected connection, or local default | Yes, if selected | 6,000 / 1,024 |
 | `NETWORKING` | Dedicated local profile | No | Not applicable |
+| `NETWORKING_SELECTED` | Selected connection, with explicit owner opt-in | No | 6,000 / 1,024 |
 | `REPAIR` | Inherits the explicitly named original stage | Inherits original stage | Inherits original stage |
 
 Total ceilings include estimated input and reserved output. Lower provider/profile
@@ -71,6 +73,13 @@ history to fit, but preserves mandatory instructions and the current request.
 Mandatory content that cannot fit is rejected before external dispatch. These are
 conservative application estimates, not exact provider token counts or guarantees
 about CLI-added overhead. Repairs cannot recursively repair another repair.
+
+Networking opt-in is the admitted connection setting `networking_inference` set
+to `selected_model`; missing settings keep `dedicated_local`. Task text and model
+names cannot select the optional stage. A second connection-mode check prevents a
+caller supplying that stage alone from disclosing data to an unopted connection.
+The original `NETWORKING` stage always remains local, and repairs of either
+networking stage continue excluding datasets. See [connection settings](user-extensions.md).
 
 Every inference attempt records its stage, adapter, outcome, elapsed time and
 available budget counts, including failures and cancellations. The dispatch event
@@ -151,6 +160,19 @@ loop. Routing evidence is activated in the caller's task so parse/repair traces
 remain intact. Remote-selected routing and specialists do not fingerprint local
 weights. This removes a responsiveness defect; it does not make local inference
 or cold disk reads instantaneous.
+
+Private model or dataset jobs also omit the shared checkpoint fingerprint when
+candidate retrieval falls back to the full local Hub. These jobs were already
+excluded from automatic training capture. The real local inference stage and
+GPU timing remain observable; the routing evidence correctly remains incomplete
+instead of claiming a checkpoint identity that was not measured.
+
+The full and compact catalogs preserve the same validated
+`success_continuations` metadata. Mutation-success ordering (`after_success_of`)
+has a separate protocol from read-result predicates (`when`), available on the
+initial generation and the single bounded repair. Both fields belong outside
+`intent`. A misplaced field is rejected; the runtime never moves model output
+into a valid shape or substitutes a different plan.
 
 The new runner checks real tool use and approval persistence without approving a
 mutation. Use an existing admitted connection and its owning internal account ID:

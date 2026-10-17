@@ -47,6 +47,8 @@ def test_every_runtime_tool_has_a_valid_proposal_fixture(corpus):
     assert report["summary"]["tools_without_specialist"] == []
     assert report["summary"]["invalid_cases"] == []
     assert report["summary"]["tools_missing_existing_held_out_proposal_cases"]
+    assert report["summary"]["tools_missing_reviewed_proposal_cases"] == []
+    assert report["summary"]["authored_unreviewed_cases"] == 0
     assert report["summary"]["all_tools_mvp_verified"] is False
     for row in report["tools"]:
         assert row["requiredness_source"] == "executable_signature"
@@ -92,7 +94,11 @@ def test_collection_grounding_rejects_added_file(corpus):
 
 def test_authored_success_does_not_claim_review_execution_or_app_flow(corpus):
     contracts, agents, _ = corpus
-    case = eligible(corpus, "asset_get")
+    case = replace(
+        eligible(corpus, "asset_get"),
+        case_id="synthetic-authored-unreviewed-case",
+        review_status="authored_unreviewed",
+    )
     report = build_report(contracts=contracts, agents=agents, cases=[case], references={},
                           observations=[observation(case)])
     row = next(row for row in report["tools"] if row["name"] == case.expected_tool)
@@ -154,6 +160,40 @@ def test_networking_generation_records_actual_local_stage_for_external_selection
     assert results[0]["passed"] is True
     assert results[0]["adapter"] == "local"
     assert results[0]["requested_adapter"] == "http"
+
+
+def test_opted_networking_generation_reports_selected_stage_and_never_claims_execution(corpus):
+    from services.extensions.context import execution_profile
+
+    contracts, agents, _ = corpus
+    case = eligible(corpus, "network_system_info")
+
+    class Inference:
+        async def generate(self, **kwargs):
+            assert kwargs["stage"].value == "NETWORKING_SELECTED"
+            return response(case)
+
+    token = execution_profile.set({"backend": "http", "model": "selected-model",
+                                   "networking_inference": "selected_model"})
+    try:
+        results = asyncio.run(generate_observations(
+            inference=Inference(), adapter="http", model_key="networking-default",
+            cases=[case], contracts=contracts, agents=agents, max_tokens=128, timeout=1,
+        ))
+    finally:
+        execution_profile.reset(token)
+    assert results[0]["passed"] is True
+    assert results[0]["adapter"] == "http"
+    assert results[0]["stage"] == "NETWORKING_SELECTED"
+    assert results[0]["networking_inference"] == "selected_model"
+    assert results[0]["tool_executed"] is False
+    report = build_report(contracts=contracts, agents=agents, cases=[case], references={}, observations=results)
+    row = next(row for row in report["tools"] if row["name"] == case.expected_tool)
+    assert row["adapters"]["http"]["effective_adapter"] == "http"
+    assert row["adapters"]["http"]["observed_inference_stages"] == ["NETWORKING_SELECTED"]
+    assert row["adapters"]["http"]["observed_networking_modes"] == ["selected_model"]
+    assert row["adapters"]["http"]["tool_execution"] == "unverified"
+    assert report["summary"]["all_tools_mvp_verified"] is False
 
 
 def test_generation_errors_are_counted_without_leaking_error_content(corpus):

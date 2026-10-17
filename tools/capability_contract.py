@@ -222,6 +222,8 @@ def build_capability_contract(tool_name: str, tool: Mapping[str, Any]) -> Capabi
         value_type = schema.get("type")
         if not isinstance(value_type, str) or not value_type.strip():
             raise ValueError(f"Capability '{tool_name}' parameter '{argument_name}' requires a type.")
+        if "default" in schema and not isinstance(schema["default"], (str, int, float, bool)):
+            raise ValueError(f"Capability '{tool_name}' parameter '{argument_name}' default must be a scalar.")
 
     grounded = _string_list(tool_name, tool, "grounded_arguments")
     derived = _string_list(tool_name, tool, "derived_arguments")
@@ -256,6 +258,14 @@ def build_capability_contract(tool_name: str, tool: Mapping[str, Any]) -> Capabi
             )
 
         execution_parameters = tuple(runtime_schema.parameters)
+
+        executable_defaults = dict(runtime_schema.defaults)
+        for argument_name, schema in parameters.items():
+            if "default" in schema and executable_defaults.get(argument_name) != schema["default"]:
+                raise ValueError(
+                    f"Capability '{tool_name}' parameter '{argument_name}' declares a default "
+                    "that differs from its executable signature."
+                )
 
     required, optional, requiredness_source = _runtime_authoritative_requiredness(
         tool_name,

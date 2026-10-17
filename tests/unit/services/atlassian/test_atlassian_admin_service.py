@@ -301,8 +301,10 @@ def test_api_token_metadata_never_contains_secret_value():
     )
 
     assert (
-        "account_id"
-        not in result
+        result[
+            "account_id"
+        ]
+        is None
     )
 
     assert (
@@ -311,3 +313,47 @@ def test_api_token_metadata_never_contains_secret_value():
             result
         )
     )
+
+
+def test_token_metadata_for_one_account_returns_only_that_owner():
+    def handler(request):
+        return httpx.Response(200, json={"data": [
+            {"id": "token-a", "label": "ci", "user": {"id": "account-a", "email": "a@example.com"}},
+            {"id": "token-b", "label": "laptop", "user": {"id": "account-b", "email": "b@example.com"}},
+            {"id": "token-c", "label": "backup", "user": {"id": "account-a"}},
+        ]})
+
+    result = _service(handler).list_api_token_metadata(account_id="account-a", limit=1)
+    assert result["ok"] is True and result["account_id"] == "account-a"
+    assert [token["id"] for token in result["tokens"]] == ["token-a"]
+    assert result["truncated"] is True
+    assert "a@example.com" not in repr(result)
+
+    empty = _service(handler).list_api_token_metadata(account_id="account-z")
+    assert empty["ok"] is True and empty["count"] == 0
+
+    invalid = _service(handler).list_api_token_metadata(account_id="  ")
+    assert invalid["ok"] is False and invalid["status"] == "denied"
+
+
+def test_invite_on_a_free_plan_is_a_clear_denial_not_an_error():
+    def handler(request):
+        return httpx.Response(402, json={"errors": [{"title": "Payment Required"}]})
+
+    credentials = AtlassianCredentialBroker(
+        admin_api_key="secret-admin-key",
+        default_org_id="org-123",
+        jira_email="user@example.com",
+        jira_api_token="secret-jira-token",
+    )
+    service = AtlassianAdminService(
+        credentials=credentials,
+        client=AtlassianAdminClient(credentials=credentials, transport=httpx.MockTransport(handler)),
+        jira_resource_ari="ari:cloud:jira::site/abc",
+    )
+    result = service.invite_jira_user(email="new.user@example.com")
+    assert result["ok"] is False
+    assert result["status"] == "denied"
+    assert result["error_code"] == "plan_required"
+    assert "paid subscription" in result["error"]
+    assert "secret-admin-key" not in repr(result)

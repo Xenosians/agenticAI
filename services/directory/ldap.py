@@ -840,34 +840,3 @@ class LdapDirectoryService(
         finally:
             if connection is not None:
                 connection.unbind()
-
-    # ============================================================
-    # PASSWORD RESET
-    # ============================================================
-
-    def reset_password(
-        self,
-        user_id: str,
-    ) -> dict:
-        normalized_user = (
-            self._normalize_user_id(
-                user_id
-            )
-        )
-
-        return {
-            "ok":
-                False,
-            "status":
-                "error",
-            "changed":
-                False,
-            "user_id":
-                normalized_user,
-            "message":
-                None,
-            "error": (
-                "Real Active Directory password "
-                "reset is not enabled yet."
-            ),
-        }

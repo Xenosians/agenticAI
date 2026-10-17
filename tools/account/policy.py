@@ -5,6 +5,7 @@ from typing import Any
 from config import Settings
 from services.directory import build_directory_service
 from services.directory.account_creation import prepare_account_create
+from services.directory.password_reset import prepare_password_reset
 
 
 def evaluate_account_create_policy(
@@ -33,4 +34,19 @@ def evaluate_account_create_policy(
             "risk": "high",
             "requires_approval": True,
             "error": "Trusted account-create policy could not prepare the account identity.",
+        }
+
+
+def evaluate_password_reset_policy(user_id: str) -> dict[str, Any]:
+    """Read-only: freeze the exact target account and refuse protected ones."""
+    settings = Settings()
+    try:
+        return prepare_password_reset(build_directory_service(settings), settings, user_id=user_id)
+    except Exception:
+        return {
+            "ok": False,
+            "status": "error",
+            "risk": "high",
+            "requires_approval": True,
+            "error": "Trusted password-reset policy could not resolve the account.",
         }

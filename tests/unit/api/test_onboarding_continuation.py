@@ -82,7 +82,7 @@ class TicketRuntime:
 
 
 @pytest.fixture
-def env(tmp_path, monkeypatch):
+def env(tmp_path, monkeypatch, request):
     approvals = ApprovalStore(tmp_path / "approvals.sqlite3")
     approvals.initialize()
     provider = Provider()
@@ -92,7 +92,8 @@ def env(tmp_path, monkeypatch):
                               hub=SimpleNamespace(runtime=ticket_runtime))
     extensions = ExtensionStore(tmp_path / "extensions")
     connection = extensions.put("owner-1", "model", {"backend": "http", "name": "unit-connection", "state": "ready"}, "private-unit-secret")
-    extensions.select("owner-1", model_id=connection["id"], dataset_id=None)
+    selected_model = None if getattr(request, "param", None) == "local" else connection["id"]
+    extensions.select("owner-1", model_id=selected_model, dataset_id=None)
     monkeypatch.setattr("services.extensions.service.extension_store", lambda: extensions)
 
     @asynccontextmanager
@@ -340,3 +341,72 @@ async def test_deleted_pinned_connection_blocks_instead_of_using_another_model(e
     response = await continue_after_approval(env.runtime, env.source, protocol)
     assert response["continuation"]["status"] == "outcome_unknown"
     assert env.ticket.calls == []
+
+
+@pytest.mark.parametrize("env", ["local", "http"], indirect=True)
+@pytest.mark.parametrize("prompt_profile", ["standard", "compact"])
+@run_async
+async def test_real_worker_uses_rendered_verified_result_to_propose_governed_ticket(env, prompt_profile):
+    """Exercise the actual continuation -> worker prompt -> guard -> gateway path.
+
+    The inference double composes from what the model actually receives. It
+    cannot read the task object or a preselected account identity. No Jira
+    provider mutation is performed: the real gateway persists a new approval.
+    """
+    from services.extensions.budget import prepare_external_request
+    from subagents.core.definitions.loader import load_agent_definition
+    from subagents.core.orchestration.runtime import AgentRuntime
+    from subagents.core.tooling.gateway import ToolGateway
+    from tools.registry import get_tool
+    from tools.ticketing.policy import _provider_neutral_create_policy
+
+    class PromptDrivenInference:
+        calls = 0
+
+        async def generate(self, *, messages, **kwargs):
+            self.calls += 1
+            assert messages[-1] == {"role": "user", "content": env.payload.message}
+            evidence = next(item for item in messages
+                            if item["content"].startswith("VERIFIED WORKFLOW CONTENT:\n"))
+            identity = json.loads(evidence["content"].splitlines()[-1])
+            contract_message = next(item for item in messages
+                                    if item["content"].startswith("Exact semantic target context"))
+            contract = json.loads(contract_message["content"].splitlines()[-1])
+            assert evidence["role"] == "system"
+            if execution_profile.get() is not None:
+                assert contract_message["role"] == "system"
+                budget = prepare_external_request({}, messages, 32, default_request_budget=6000)
+                assert evidence in budget.messages and contract_message in budget.messages
+                assert budget.messages[-1] == messages[-1]
+            assert contract["allowed_tools"] == ["ticket_create"]
+            return json.dumps([{
+                "name": "ticket_create",
+                "arguments": {"project_key": contract["allowed_arguments"]["project_key"][0],
+                              "summary": f"Onboarding record for {identity['email']}"},
+            }])
+
+    registry = AgentRegistry()
+    registry.register(load_agent_definition("subagents/agents/jira-specialist.md"))
+    inference = PromptDrivenInference()
+    metadata = {**get_tool("ticket_create"), "policy_resolver": _provider_neutral_create_policy}
+    gateway = ToolGateway(approval_creator=env.manager.create_approval, mcp=env.provider,
+                          tool_lookup=lambda name: metadata if name == "ticket_create" else get_tool(name))
+    env.runtime.hub.runtime = AgentRuntime(
+        registry, inference, gateway,
+        model_profile_resolver=lambda key: SimpleNamespace(worker_prompt_profile=prompt_profile),
+        max_new_tokens=128,
+    )
+    protocol = await approve_source(env)
+    response = await continue_after_approval(env.runtime, env.source, protocol)
+    continuation = response["continuation"]
+    assert continuation["status"] == "waiting_approval"
+    target = continuation["proposed_tool"]
+    assert target["arguments"] == {
+        "project_key": "KAN", "summary": "Onboarding record for mtest@itsm.test"
+    }
+    assert env.store.get(target["approval_id"]).status == "pending"
+    assert env.store.get(env.source).status == "approved"
+    assert [name for name, _ in env.provider.calls] == ["account_create"]
+    assert inference.calls == 1
+    assert await continue_after_approval(env.runtime, env.source, protocol) == response
+    assert inference.calls == 1

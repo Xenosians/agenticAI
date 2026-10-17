@@ -93,11 +93,46 @@ def test_default_local_prompt_and_stage_are_unchanged(registry):
 
 
 @pytest.mark.parametrize("selection", [CandidateSet(fallback_required=True), CandidateSet()])
-def test_candidate_miss_uses_full_local_control_never_external_catalog(registry, selected, selection):
+def test_candidate_miss_uses_full_local_control_when_selected_budget_is_small(registry, selected, selection):
     router, inference = router_for(registry, selection=selection)
     asyncio.run(router.route("Unfamiliar request"))
     assert inference.calls[0]["stage"] == InferenceStage.CONTROL_ROUTING
     assert inference.calls[0]["messages"][0]["content"] == router._build_system_prompt()
+
+
+@pytest.fixture
+def large_budget_selected():
+    token = execution_profile.set({"backend": "http", "model": "claude-test", "url": "https://api.anthropic.com",
+                                   "api_format": "anthropic"})
+    try:
+        yield
+    finally:
+        execution_profile.reset(token)
+
+
+@pytest.mark.parametrize("selection", [CandidateSet(fallback_required=True), CandidateSet()])
+def test_candidate_miss_routes_full_catalog_on_selected_connection_when_budget_admits(
+        registry, large_budget_selected, selection):
+    router, inference = router_for(registry, selection=selection)
+    asyncio.run(router.route("Unfamiliar request"))
+    call = inference.calls[0]
+    assert call["stage"] == InferenceStage.SEMANTIC_ROUTING_BROAD
+    system = call["messages"][0]["content"]
+    for agent in registry.list_agents():
+        for tool in agent.tools:
+            assert f'"{tool}"' in system
+    assert estimate_messages_tokens(call["messages"]) + 512 <= 24000
+
+
+def test_broad_route_conversation_is_not_a_routing_failure(registry, large_budget_selected):
+    router, inference = router_for(registry, selection=CandidateSet(fallback_required=True))
+    assert asyncio.run(router.route("hello there")) == []
+
+
+def test_broad_route_still_validates_with_full_registry(registry, large_budget_selected):
+    router, inference = router_for(registry, account_plan(), selection=CandidateSet(fallback_required=True))
+    routes = asyncio.run(router.route("Check account status for alice"))
+    assert [route.agent_name for route in routes] == ["account-specialist"]
 
 
 def test_oversized_mandatory_packet_falls_back_without_truncating_user(registry, selected):
@@ -166,3 +201,22 @@ def test_empty_compact_plan_cannot_become_a_successful_conversational_job(regist
     with pytest.raises(RoutingContractError, match="No supported action"):
         asyncio.run(router.route_with_repair("Check account status for alice"))
     assert len(inference.calls) == 2
+
+
+def test_candidate_miss_repair_reroutes_against_the_full_catalog(registry, large_budget_selected):
+    narrow = CandidateSet((Candidate("account-specialist", ("account_status",)),), confidence=1)
+    router, inference = router_for(registry, '{"delegations":[]}', account_plan(), selection=narrow)
+    routes = asyncio.run(router.route_with_repair("Check account status for alice"))
+    assert [call["stage"] for call in inference.calls] == [InferenceStage.SEMANTIC_ROUTING, InferenceStage.REPAIR]
+    assert inference.calls[1]["repair_of"] == InferenceStage.SEMANTIC_ROUTING_BROAD
+    repaired_catalog = inference.calls[1]["messages"][0]["content"]
+    assert '"process_exec"' in repaired_catalog and '"ticket_create"' in repaired_catalog
+    assert [route.agent_name for route in routes] == ["account-specialist"]
+
+
+def test_candidate_miss_without_large_budget_keeps_existing_repair(registry, selected):
+    narrow = CandidateSet((Candidate("account-specialist", ("account_status",)),), confidence=1)
+    router, inference = router_for(registry, '{"delegations":[]}', '{"delegations":[]}', selection=narrow)
+    with pytest.raises(RoutingContractError):
+        asyncio.run(router.route_with_repair("Check account status for alice"))
+    assert inference.calls[1]["repair_of"] == InferenceStage.SEMANTIC_ROUTING

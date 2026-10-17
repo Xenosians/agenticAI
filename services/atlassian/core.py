@@ -100,6 +100,14 @@ def error_from_status(
     elif status_code == 401:
         code = "authentication_failed"
         message = "Atlassian authentication failed."
+    elif status_code == 402:
+        # Some admin APIs (for example user invitations) are available only to
+        # organizations with at least one paid subscription.
+        code = "plan_required"
+        message = (
+            f"Atlassian requires a paid subscription in this organization for the {operation}. "
+            "The free plan does not include this admin API."
+        )
     elif status_code == 403:
         code = "authorization_failed"
         message = "Atlassian authorization denied this operation."
@@ -311,6 +319,11 @@ class AtlassianAdminClient:
         )
 
 
+def _error_code(exc: Exception) -> str:
+    """Stable machine-readable failure code for tool results (for example plan_required)."""
+    return exc.code if isinstance(exc, AtlassianProviderError) else "invalid_request"
+
+
 def _provider_status(exc: AtlassianProviderError) -> str:
     if exc.code == "not_found":
         return "not_found"
@@ -320,6 +333,7 @@ def _provider_status(exc: AtlassianProviderError) -> str:
         "resource_not_configured",
         "authorization_failed",
         "bad_request",
+        "plan_required",
     }:
         return "denied"
     if exc.code == "rate_limited":
@@ -391,6 +405,7 @@ class AtlassianAdminService:
             return {
                 "ok": False,
                 "status": status,
+                "error_code": _error_code(exc),
                 "organizations": [],
                 "count": 0,
                 "truncated": False,
@@ -434,6 +449,7 @@ class AtlassianAdminService:
             return {
                 "ok": False,
                 "status": _provider_status(exc),
+                "error_code": _error_code(exc),
                 "organization": None,
                 "error": str(exc),
             }
@@ -518,6 +534,7 @@ class AtlassianAdminService:
             return {
                 "ok": False,
                 "status": status,
+                "error_code": _error_code(exc),
                 "organization_id": None,
                 "workspaces": [],
                 "count": 0,
@@ -576,6 +593,7 @@ class AtlassianAdminService:
             return {
                 "ok": False,
                 "status": status,
+                "error_code": _error_code(exc),
                 "email": email if isinstance(email, str) else None,
                 "invitation_id": None,
                 "organization_id": None,
@@ -588,26 +606,32 @@ class AtlassianAdminService:
     def list_api_token_metadata(
         self,
         *,
+        account_id: str | None = None,
         limit: int = DEFAULT_PAGE_LIMIT,
     ) -> dict[str, Any]:
         """
-        List organization-wide user API-token metadata.
+        List user API-token metadata in the trusted organization.
 
         Organization scope comes only from trusted
-        ATLASSIAN_ORG_ID configuration.
+        ATLASSIAN_ORG_ID configuration. With account_id, only
+        tokens owned by exactly that account are returned.
 
-        The caller cannot select an organization, account,
-        URL, host, or raw provider path.
+        The caller cannot select an organization, URL, host,
+        or raw provider path.
 
         Token secret values are never returned.
         """
 
         resolved_org: str | None = None
+        owner = _optional_string(account_id)
 
         try:
             limit = bounded_limit(
                 limit
             )
+
+            if account_id is not None and owner is None:
+                raise ValueError("account_id must be one exact Atlassian account ID.")
 
             resolved_org = (
                 self.credentials
@@ -663,9 +687,10 @@ class AtlassianAdminService:
                 ]
             ] = []
 
-            for item in raw_items[
-                :limit
-            ]:
+            for item in raw_items:
+
+                if len(tokens) >= limit:
+                    break
 
                 if not isinstance(
                     item,
@@ -695,6 +720,9 @@ class AtlassianAdminService:
                     dict,
                 ):
                     user = {}
+
+                if owner is not None and _optional_string(user.get("id")) != owner:
+                    continue
 
                 raw_scopes = (
                     item.get(
@@ -796,6 +824,9 @@ class AtlassianAdminService:
                 "organization_id":
                     resolved_org,
 
+                "account_id":
+                    owner,
+
                 "tokens":
                     tokens,
 
@@ -806,13 +837,10 @@ class AtlassianAdminService:
 
                 "truncated":
                     (
-                        len(
-                            raw_items
-                        )
-                        > limit
-                        or next_cursor
-                        is not None
-                    ),
+                        len(tokens) >= limit
+                        and len(raw_items) > len(tokens)
+                    )
+                    or next_cursor is not None,
 
                 "next_cursor_available":
                     next_cursor
@@ -850,8 +878,14 @@ class AtlassianAdminService:
                 "status":
                     status,
 
+                "error_code":
+                    _error_code(exc),
+
                 "organization_id":
                     resolved_org,
+
+                "account_id":
+                    owner,
 
                 "tokens":
                     [],

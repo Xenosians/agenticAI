@@ -1,6 +1,8 @@
 from tools.account.policy import (
     evaluate_account_create_policy,
+    evaluate_password_reset_policy,
 )
+from tools.presentation import format_password_reset_approval
 from tools.mailbox.catalog import MAILBOX_TOOLS
 
 from typing import (
@@ -186,8 +188,52 @@ def format_account_create_approval(
 
 
 
+def format_password_reset_result(
+    result: dict[str, Any],
+) -> str:
+    user_id = result.get("user_id")
+    if result.get("ok") is True and isinstance(user_id, str):
+        return (
+            f"The password for {user_id} was reset. A temporary credential is encrypted "
+            "in SurrealDB and must be changed at the next sign-in."
+        )
+    error = result.get("error")
+    if isinstance(error, str) and error.strip():
+        return error.strip()
+    return "The password reset did not complete successfully."
+
+
 ACCOUNT_TOOLS = {
     **MAILBOX_TOOLS,
+    "reset_password": {
+        "description": (
+            "Reset the password of one explicitly identified existing account. "
+            "Trusted policy freezes the exact account before approval and refuses "
+            "protected administrative and service accounts. After approval, trusted "
+            "code generates the temporary password, requires a change at next sign-in, "
+            "verifies the change, and Phoenix encrypts the credential. The password is "
+            "never returned to the model."
+        ),
+        "risk": "high",
+        "requires_approval": True,
+        "policy_owns_preconditions": True,
+        "policy_resolver": evaluate_password_reset_policy,
+        "trusted_policy_arguments": [
+            "expected_object_guid",
+            "expected_dn",
+        ],
+        "grounded_arguments": [
+            "user_id",
+        ],
+        "parameters": {
+            "user_id": {
+                "type": "str",
+                "description": "Exact user identifier supplied by the user.",
+            },
+        },
+        "approval_formatter": format_password_reset_approval,
+        "result_formatter": format_password_reset_result,
+    },
     "account_create": {
         "success_continuations": ["ticket_create"],
         "description": (

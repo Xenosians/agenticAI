@@ -157,7 +157,7 @@ Directory result verification
 
 The language model must not be able to bypass this process by changing its output format or wording.
 
-`reset_password` should remain disabled for real LDAP execution until password policy, credential handling, delegated permissions, and post-change verification are implemented and tested.
+`reset_password` runs against real LDAP only through its trusted policy. Before approval it freezes the exact account (objectGUID and DN) and refuses protected administrative accounts (`adminCount=1` or critical system objects) and the application's own bind accounts. After approval, trusted code re-checks the frozen identity, generates the temporary password, sets it with change-at-next-sign-in (`pwdLastSet=0`), verifies the change by read-back, and hands the credential to Phoenix (`/api/internal/v1/directory-credentials`), which stores it encrypted. The password never appears in model input, approvals, tool results, or logs, and no route returns it.
 
 ## MCP Boundary
 

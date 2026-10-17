@@ -277,3 +277,25 @@ def test_explicitly_forbidden_worker_value_is_not_rebound():
         result.events
         == ()
     )
+
+
+def test_unbound_value_equal_to_declared_default_is_dropped():
+    intent = _intent(tool_name="workspace_list", argument_name="repository", values=["mvp"])
+    result = bind_authoritative_grounded_arguments(
+        intent=intent, tool_name="workspace_list",
+        arguments={"repository": "mvp", "relative_path": "."},
+    )
+    assert result.arguments == {"repository": "mvp"}
+    assert [(e.argument_name, e.action, e.source) for e in result.events] == [
+        ("relative_path", "defaulted", "capability_default")
+    ]
+
+
+def test_unbound_value_other_than_default_is_left_for_the_guard():
+    intent = _intent(tool_name="workspace_list", argument_name="repository", values=["mvp"])
+    result = bind_authoritative_grounded_arguments(
+        intent=intent, tool_name="workspace_list",
+        arguments={"repository": "mvp", "relative_path": "src"},
+    )
+    assert result.arguments == {"repository": "mvp", "relative_path": "src"}
+    assert result.events == ()

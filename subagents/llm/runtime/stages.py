@@ -10,11 +10,13 @@ class InferenceStage(StrEnum):
     CONTROL_ROUTING = "CONTROL_ROUTING"
     CANDIDATE_NARROWING = "CANDIDATE_NARROWING"
     SEMANTIC_ROUTING = "SEMANTIC_ROUTING"
+    SEMANTIC_ROUTING_BROAD = "SEMANTIC_ROUTING_BROAD"
     SPECIALIST_REASONING = "SPECIALIST_REASONING"
     PRIMARY_RESPONSE = "PRIMARY_RESPONSE"
     SYNTHESIS = "SYNTHESIS"
     REPAIR = "REPAIR"
     NETWORKING = "NETWORKING"
+    NETWORKING_SELECTED = "NETWORKING_SELECTED"
 
 
 @dataclass(frozen=True)
@@ -46,10 +48,26 @@ _STAGE_POLICIES = {
         request_token_ceiling=5000,
         output_token_ceiling=768,
     ),
+    # The full trusted catalog on the selected connection, used when local
+    # candidate retrieval cannot narrow a request. Only connections whose
+    # provider budget admits it reach this stage (see router); the ceiling
+    # never raises a provider or profile budget.
+    InferenceStage.SEMANTIC_ROUTING_BROAD: StagePolicy(
+        allow_selected=True,
+        allow_retrieval=False,
+        request_token_ceiling=24000,
+        output_token_ceiling=768,
+    ),
     InferenceStage.SPECIALIST_REASONING: _SELECTED_REASONING_POLICY,
     InferenceStage.PRIMARY_RESPONSE: _SELECTED_REASONING_POLICY,
     InferenceStage.SYNTHESIS: _SELECTED_REASONING_POLICY,
     InferenceStage.NETWORKING: _LOCAL_POLICY,
+    InferenceStage.NETWORKING_SELECTED: StagePolicy(
+        allow_selected=True,
+        allow_retrieval=False,
+        request_token_ceiling=6000,
+        output_token_ceiling=1024,
+    ),
 }
 
 

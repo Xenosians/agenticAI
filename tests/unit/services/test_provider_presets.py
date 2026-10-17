@@ -63,6 +63,11 @@ def test_provider_origins_match_public_presets():
                 "https://openrouter.ai"
             )
 
+        elif url == "https://api.anthropic.com":
+            expected.add(
+                "https://api.anthropic.com"
+            )
+
         elif url.startswith(
             "http://127.0.0.1:11434/"
         ):

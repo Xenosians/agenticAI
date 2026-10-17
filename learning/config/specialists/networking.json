@@ -12,7 +12,7 @@
       "user_request": "What firmware does the OpenWrt router run?",
       "arguments": {},
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -20,7 +20,7 @@
       "user_request": "Read the router hostname and release.",
       "arguments": {},
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -28,7 +28,7 @@
       "user_request": "Identify the configured network appliance.",
       "arguments": {},
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -36,7 +36,7 @@
       "user_request": "Show OpenWrt hardware and software identity.",
       "arguments": {},
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -44,7 +44,7 @@
       "user_request": "Which OpenWrt version is installed?",
       "arguments": {},
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -52,7 +52,7 @@
       "user_request": "Tell me the router operating system version.",
       "arguments": {},
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -60,7 +60,7 @@
       "user_request": "Inspect the network device board information.",
       "arguments": {},
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -68,7 +68,7 @@
       "user_request": "Report the firewall hostname without changing it.",
       "arguments": {},
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -76,7 +76,7 @@
       "user_request": "Check the router model and build.",
       "arguments": {},
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -84,7 +84,7 @@
       "user_request": "Fetch the OpenWrt device identity.",
       "arguments": {},
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -92,7 +92,7 @@
       "user_request": "I need an inventory entry for the configured router.",
       "arguments": {},
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -100,7 +100,7 @@
       "user_request": "Read the appliance firmware release.",
       "arguments": {},
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -108,7 +108,7 @@
       "user_request": "Read the configured firewall rules.",
       "arguments": {},
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -116,7 +116,7 @@
       "user_request": "Show the OpenWrt firewall zones.",
       "arguments": {},
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -124,7 +124,7 @@
       "user_request": "Inspect firewall policy without making changes.",
       "arguments": {},
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -132,7 +132,7 @@
       "user_request": "List the firewall configuration.",
       "arguments": {},
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -140,7 +140,7 @@
       "user_request": "What forwarding rules are configured?",
       "arguments": {},
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -148,7 +148,7 @@
       "user_request": "Review the configured traffic filtering policy.",
       "arguments": {},
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -156,7 +156,7 @@
       "user_request": "Retrieve the firewall zones and redirects.",
       "arguments": {},
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -164,7 +164,7 @@
       "user_request": "Show policy configuration, do not apply it.",
       "arguments": {},
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -172,7 +172,7 @@
       "user_request": "Audit the configured OpenWrt firewall settings.",
       "arguments": {},
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -180,7 +180,7 @@
       "user_request": "Read current UCI firewall configuration.",
       "arguments": {},
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -188,7 +188,7 @@
       "user_request": "Display configured rules without a commit.",
       "arguments": {},
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -196,7 +196,7 @@
       "user_request": "Which zones exist in the firewall configuration?",
       "arguments": {},
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -206,7 +206,7 @@
         "interface": "lan"
       },
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -216,7 +216,7 @@
         "interface": "lan"
       },
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -226,7 +226,7 @@
         "interface": "lan"
       },
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -236,7 +236,7 @@
         "interface": "lan"
       },
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -246,7 +246,7 @@
         "interface": "wan"
       },
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -256,7 +256,7 @@
         "interface": "wan"
       },
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -266,7 +266,7 @@
         "interface": "wan"
       },
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -276,7 +276,7 @@
         "interface": "wan"
       },
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -286,7 +286,7 @@
         "interface": "guest"
       },
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -296,7 +296,7 @@
         "interface": "guest"
       },
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -306,7 +306,7 @@
         "interface": "guest"
       },
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -316,7 +316,7 @@
         "interface": "guest"
       },
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -326,7 +326,7 @@
         "interface": "vpn"
       },
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -336,7 +336,7 @@
         "interface": "vpn"
       },
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -346,7 +346,7 @@
         "interface": "vpn"
       },
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -356,7 +356,7 @@
         "interface": "vpn"
       },
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -366,7 +366,7 @@
         "interface": "management"
       },
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -376,7 +376,7 @@
         "interface": "management"
       },
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -386,7 +386,7 @@
         "interface": "management"
       },
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -396,7 +396,7 @@
         "interface": "management"
       },
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -406,7 +406,7 @@
         "interface": "dmz"
       },
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -416,7 +416,7 @@
         "interface": "dmz"
       },
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -426,7 +426,7 @@
         "interface": "dmz"
       },
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     },
     {
@@ -436,7 +436,7 @@
         "interface": "dmz"
       },
       "tags": [
-        "authored-networking-v1"
+        "authored-networking"
       ]
     }
   ],

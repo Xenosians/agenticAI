@@ -5,6 +5,7 @@ from services.directory import (
     AccountCreationService,
     AccountLifecycleService,
 )
+from services.directory.password_reset import PasswordResetService
 
 
 class AccountLifecycleMCPResult(BaseModel):
@@ -35,10 +36,26 @@ class AccountCreateMCPResult(BaseModel):
     error: str | None = None
 
 
+class PasswordResetMCPResult(BaseModel):
+    ok: bool
+    status: str
+    changed: bool = False
+    operation: str = "reset_password"
+    user_id: str | None = None
+    must_change_at_next_logon: bool | None = None
+    credential_persisted: bool = False
+    credential_id: str | None = None
+    credential_expires_at: str | None = None
+    retry_safe: bool = True
+    message: str | None = None
+    error: str | None = None
+
+
 def register_account_lifecycle_tools(
     server: MCPServer,
     lifecycle: AccountLifecycleService,
     creation: AccountCreationService | None = None,
+    password_reset: PasswordResetService | None = None,
 ) -> None:
     @server.tool()
     def enable_user(user_id: str) -> AccountLifecycleMCPResult:
@@ -49,6 +66,20 @@ def register_account_lifecycle_tools(
     def disable_user(user_id: str) -> AccountLifecycleMCPResult:
         result = lifecycle.disable_user(user_id)
         return AccountLifecycleMCPResult(**result.model_dump())
+
+    if password_reset is not None:
+        @server.tool()
+        def reset_password(
+            user_id: str,
+            expected_object_guid: str = "",
+            expected_dn: str = "",
+        ) -> PasswordResetMCPResult:
+            result = password_reset.reset_password(
+                user_id,
+                expected_object_guid=expected_object_guid,
+                expected_dn=expected_dn,
+            )
+            return PasswordResetMCPResult(**result.model_dump())
 
     if creation is not None:
         @server.tool()

@@ -11,7 +11,7 @@ on this laptop or that all SRS acceptance criteria are complete.
 | Self-supervised causal adaptation | Same recipe CLI, objective `causal_adaptation` | Reviewed licensed text; next-token loss | Implemented; optimizer run not performed |
 | Full parameter tuning | Same recipe CLI, tuning `full` | Same objective-specific evidence | Implemented; conservatively requires at least 16 GiB free VRAM |
 | DPO | `scripts/train_preferences.py --settings settings.json --train TRAIN --validation VALIDATION --allow-training` | Existing verified preference partitions with matching base/tokenizer provenance | Real train/evaluate/save path; not run on this laptop |
-| PPO | `scripts/train_ppo.py --checkpoint-id ID --cycle-id ID --training-suite router-training-v1 --settings settings.json --allow-training` | Verified Hub adapter and separate training episodes | Existing bounded sequence PPO, deterministic routing reward and value head; no live tool execution |
+| PPO | `scripts/train_ppo.py --checkpoint-id ID --cycle-id ID --training-suite router-routing --settings settings.json --allow-training` | Verified Hub adapter and separate training episodes | Existing bounded sequence PPO, deterministic routing reward and value head; no live tool execution |
 | RAG | `KNOWLEDGE_BACKEND=local` | Reviewed public JSONL snapshot and SHA256 | Actual lexical FTS5 retrieval; not weight training |
 | Continual learning | `python -m learning.cli.run_continual_cycle --help` and existing automation service | Reviewed evidence, replay, checkpoint and promotion contracts | Governed orchestration; no automatic production promotion added |
 

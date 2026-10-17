@@ -26,6 +26,8 @@ def format_project_info_result(
             ".",
         )
     )
+    repository = result.get("repository")
+    scope = f" in repository '{repository}'" if isinstance(repository, str) else ""
 
     markers = (
         result.get(
@@ -61,7 +63,7 @@ def format_project_info_result(
 
     return (
         f"Detected {project_type} project "
-        f"at {path}.\n"
+        f"at {path}{scope}.\n"
         "Project markers:\n"
         f"{marker_lines}\n"
         "Supported governed operations:\n"
@@ -164,6 +166,8 @@ def build_project_info_card(
             ),
 
             fields=[
+                result_field("Repository", result.get("repository")),
+
                 result_field(
                     "Project type",
                     project_type,
@@ -224,6 +228,8 @@ def format_developer_execution_result(
             ".",
         )
     )
+    repository = result.get("repository")
+    scope = f" in repository '{repository}'" if isinstance(repository, str) else ""
 
     exit_code = (
         result.get(
@@ -253,7 +259,7 @@ def format_developer_execution_result(
         (
             f"Developer {operation} completed "
             f"for the {project_type} project "
-            f"at {project_path}."
+            f"at {project_path}{scope}."
         ),
         f"- Exit code: {exit_code}",
         f"- Duration: {duration_ms} ms",
@@ -352,6 +358,8 @@ def build_developer_execution_card(
             ),
 
             fields=[
+                result_field("Repository", result.get("repository")),
+
                 result_field(
                     "Project",
                     result.get(
@@ -438,9 +446,11 @@ def format_developer_execution_approval(
             ".",
         )
     )
+    repository = arguments.get("repository")
+    scope = f" in repository '{repository}'" if isinstance(repository, str) else ""
 
     return (
         "Executing repository test/build code "
-        f"for workspace project '{relative_path}' "
+        f"for workspace project '{relative_path}'{scope} "
         "requires approval."
     )

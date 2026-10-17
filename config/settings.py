@@ -541,18 +541,8 @@ class Settings(
     )
 
     # ============================================================
-    # PALO ALTO NETWORKS PAN-OS (read-only E2E v1)
+    # NETWORKING (OpenWrt, read only)
     # ============================================================
-
-    palo_alto_base_url: str | None = None
-    palo_alto_api_key: str | None = None
-    palo_alto_verify_tls: bool = True
-    palo_alto_timeout_seconds: float = Field(
-        default=10.0,
-        gt=0.0,
-        le=60.0,
-    )
-    palo_alto_allow_insecure_http: bool = False
 
     openwrt_base_url: str | None = None
     openwrt_username: str | None = None
@@ -665,8 +655,10 @@ class Settings(
         ge=1,
     )
 
+    # Within the SYNTHESIS stage ceiling (1024); the prompt asks for a quarter
+    # of this in words so formatted answers finish instead of being cut off.
     primary_synthesis_max_new_tokens: int = Field(
-        default=512,
+        default=768,
         ge=1,
     )
 
@@ -1025,6 +1017,7 @@ class Settings(
 
         supported = {
             "mock",
+            "local",
         }
 
         if normalized not in supported:
@@ -1628,6 +1621,43 @@ class Settings(
             )
 
         return path
+
+
+# Provider-endpoint policy is read from os.environ by the extension transport
+# (it is re-read per request so an operator change applies without a code
+# path through Settings). Export these from .env at startup so a value in
+# .env behaves the same as one set in the service environment.
+PROCESS_ENV_FROM_DOTENV = (
+    "EXTENSION_ALLOWED_ORIGINS",
+    "EXTENSION_INSECURE_HTTP_ORIGINS",
+)
+
+
+def export_process_env_from_dotenv(
+    path: Path = PROJECT_ROOT / ".env",
+) -> list[str]:
+    """Copy the provider-endpoint policy from .env into os.environ.
+
+    A value already present in the process environment wins. Returns the
+    names that were exported (never their values).
+    """
+    import os
+
+    from dotenv import dotenv_values
+
+    if not path.is_file():
+        return []
+    values = dotenv_values(path)
+    exported = []
+    for name in PROCESS_ENV_FROM_DOTENV:
+        value = values.get(name)
+        if value and name not in os.environ:
+            os.environ[name] = value
+            exported.append(name)
+    return exported
+
+
+export_process_env_from_dotenv()
 
 
 @lru_cache

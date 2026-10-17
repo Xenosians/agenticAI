@@ -298,6 +298,11 @@ async def remote_probe(
         ),
     )
 
+    from services.extensions import anthropic
+
+    if anthropic.uses_messages_api(profile):
+        return await _messages_probe(profile, token_budget)
+
     body = {
         "model":
             model.strip(),
@@ -310,7 +315,7 @@ async def remote_probe(
                 "content":
                     (
                         "Reply with exactly: "
-                        "OPENROUTER_OK"
+                        "PROVIDER_OK"
                     ),
             }
         ],
@@ -534,3 +539,79 @@ async def remote_probe(
         )
 
     return result
+
+
+async def _messages_probe(profile: dict, token_budget: int) -> dict:
+    """Probe an Anthropic connection: model visibility, then one short reply."""
+    from services.extensions import anthropic
+    from services.extensions.diagnostics import ExternalProviderError
+
+    model = profile["model"].strip()
+    api_key = profile.get("api_key", "")
+    messages = [{"role": "user", "content": "Reply with exactly: PROVIDER_OK"}]
+    try:
+        record = await anthropic.get_model(profile["url"], model, api_key)
+        anthropic.remember_capabilities(profile, record)
+        plan = await anthropic.request_plan(profile, None)
+        body = anthropic.build_request(
+            profile, messages, token_budget + plan.thinking_allowance,
+            thinking=plan.thinking, max_tokens_limit=plan.max_tokens_limit,
+        )
+        admission = await admit_external_request(
+            profile, estimate_messages_tokens(messages) + body["max_tokens"],
+        )
+        data = await anthropic.post_messages(profile["url"], body, api_key)
+        total = anthropic.total_usage_tokens(data)
+        if total is not None:
+            record_external_usage(admission, total)
+    except ExternalProviderError as exc:
+        raise _category_error(exc) from None
+    except ValueError as exc:
+        raise _provider_error(exc) from None
+
+    result = {
+        "schema": PROBE_CONTRACT,
+        "state": "reachable",
+        "provider": "anthropic",
+        "requested_model": _bounded_text(model, _MAX_MODEL_NAME),
+        "model": _bounded_text(data.get("model"), _MAX_MODEL_NAME) or _bounded_text(model, _MAX_MODEL_NAME),
+        "display_name": _bounded_text(record.get("display_name"), _MAX_MODEL_NAME),
+        "finish_reason": _bounded_text(data.get("stop_reason"), 80) or "unknown",
+    }
+    try:
+        text = anthropic.response_text(data)
+    except ExternalProviderError as exc:
+        result["probe_complete"] = False
+        result["message"] = (
+            "Provider authenticated and processed the probe, but returned "
+            f"no complete visible answer ({exc.category}). Runtime inference "
+            "remains strict and rejects incomplete output."
+        )
+        return result
+    result["response"] = _bounded_text(text, 2_000)
+    result["probe_complete"] = True
+    result["message"] = "Provider connection is reachable and returned visible completion text."
+    return result
+
+
+_CATEGORY_MESSAGES = {
+    "provider_authentication_failed": "The provider rejected the configured credential.",
+    "provider_permission_denied": "The credential cannot use this model or endpoint.",
+    "provider_billing_required": "The provider account needs billing or credit before it can serve requests.",
+    "provider_rate_limited": "The provider rejected the probe because of rate or spend limits.",
+    "provider_model_unavailable": "The selected model was not found for this credential.",
+    "provider_overloaded": "The provider is temporarily overloaded. Try again shortly.",
+    "provider_timeout": "The provider did not respond before the timeout.",
+    "provider_unavailable": "The provider returned a server error while processing the probe.",
+    "provider_connection_failed": "The external provider could not be reached from the AI service.",
+    "provider_request_too_large": "The provider rejected the request size.",
+    "provider_malformed_response": "The provider was reached but returned an invalid response.",
+}
+
+
+def _category_error(exc) -> ProviderProbeError:
+    message = _CATEGORY_MESSAGES.get(
+        exc.category,
+        "The provider probe failed before a valid completion response was received.",
+    )
+    return ProviderProbeError(exc.category, message, provider_status=exc.status_code)

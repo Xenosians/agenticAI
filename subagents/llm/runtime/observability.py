@@ -94,6 +94,8 @@ class InferenceMetric:
     request_token_budget: int | None
     output_token_cap: int | None
     dropped_messages: int
+    # Registered specialist name whose task ran, or None for hub stages.
+    role: str | None = None
 
 
 MetricSink = Callable[
@@ -298,7 +300,8 @@ def emit_inference_metric(
         f"estimated_input_tokens={metric.estimated_input_tokens} "
         f"request_budget={metric.request_token_budget} "
         f"output_cap={metric.output_token_cap} "
-        f"dropped_messages={metric.dropped_messages}"
+        f"dropped_messages={metric.dropped_messages} "
+        f"role={metric.role}"
     )
 
     if metric.memory_before is None or metric.memory_after is None:

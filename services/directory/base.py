@@ -24,10 +24,3 @@ class DirectoryService(ABC):
         user_id: str,
     ) -> dict:
         pass
-
-    @abstractmethod
-    def reset_password(
-        self,
-        user_id: str,
-    ) -> dict:
-        pass

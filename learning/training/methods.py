@@ -1,4 +1,4 @@
-"""SRS 1.8 method/role compatibility, distinct from available hardware or data."""
+"""Training method/role compatibility, distinct from available hardware or data."""
 METHODS = {
     "causal_adaptation": {"roles": ["hub", "specialist"], "tuning": ["full", "lora", "qlora"], "entrypoint": "scripts/train_recipe.py", "requires": "reviewed licensed text with independent validation"},
     "sft": {"roles": ["hub", "specialist"], "tuning": ["full", "lora", "qlora"], "entrypoint": "scripts/train_recipe.py", "requires": "reviewed messages with assistant targets and independent validation"},

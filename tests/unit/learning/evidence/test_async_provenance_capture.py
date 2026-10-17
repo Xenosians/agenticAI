@@ -6,7 +6,7 @@ import pytest
 
 import learning.evidence.hub_routing as hub_evidence
 import subagents.core.orchestration.runtime as runtime_module
-from services.extensions.context import execution_profile
+from services.extensions.context import execution_profile, execution_selection
 from subagents.core.definitions.types import AgentDefinition, AgentTask
 from subagents.core.orchestration.candidate_selector import Candidate, CandidateSet
 from subagents.core.orchestration.router import LLMRouter, RoutingContractError
@@ -165,6 +165,62 @@ def test_compact_remote_routing_does_not_resolve_or_fingerprint_local_model(monk
         assert trace[0].model_identity.incomplete_reason == "model-profile-resolver-unavailable"
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("profile, selection", [
+    ({"backend": "http", "model": "remote-model"}, None),
+    ({"backend": "local", "model": "private-checkpoint"}, None),
+    (None, {"model_id": None, "dataset_id": "private-dataset"}),
+])
+def test_private_extension_full_local_fallback_omits_checkpoint_fingerprint(
+    monkeypatch, profile, selection,
+):
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Private jobs excluded from training must not hash shared checkpoints")
+
+    inference = _Inference('{"delegations":[]}')
+    router = LLMRouter(
+        registry=SimpleNamespace(), inference=inference, model_key="hub-main",
+        model_profile_resolver=forbidden,
+    )
+    monkeypatch.setattr(router, "_routing_input", lambda *args, **kwargs: (
+        [], "Full local fallback contract", InferenceStage.CONTROL_ROUTING, None,
+    ))
+    monkeypatch.setattr(hub_evidence, "fingerprint_runtime_model_artifact", forbidden)
+    profile_token = execution_profile.set(profile)
+    selection_token = execution_selection.set(selection)
+    try:
+        async def scenario():
+            assert await router.route("Uncovered request") == []
+            trace = hub_evidence.consume_hub_routing_trace()
+            assert len(trace) == 1
+            assert trace[0].model_identity.model_weights_sha256 is None
+            assert not trace[0].model_identity.complete
+
+        asyncio.run(scenario())
+    finally:
+        execution_selection.reset(selection_token)
+        execution_profile.reset(profile_token)
+    # This privacy optimization cannot change which adapter is actually called.
+    assert inference.calls[0]["stage"] is InferenceStage.CONTROL_ROUTING
+
+
+def test_default_local_router_still_resolves_checkpoint_provenance(monkeypatch):
+    captured = []
+
+    def capture_identity(**kwargs):
+        captured.append(kwargs)
+        return hub_evidence.HubModelIdentity(model_key=kwargs["model_key"])
+
+    monkeypatch.setattr(hub_evidence, "build_hub_model_identity", capture_identity)
+    resolver = lambda _: None
+    router = LLMRouter(SimpleNamespace(), _Inference('{"delegations":[]}'), "hub-main",
+                       model_profile_resolver=resolver)
+    monkeypatch.setattr(router, "_routing_input", lambda *args, **kwargs: (
+        [], "Full local contract", InferenceStage.CONTROL_ROUTING, None,
+    ))
+    asyncio.run(router.route("Uncovered request"))
+    assert captured[0]["model_profile_resolver"] is resolver
 
 
 def _specialist_runtime(monkeypatch, agent_name="account-specialist"):

@@ -24,6 +24,7 @@ from subagents.core.orchestration.intent_contract import (
     trusted_policy_owns_preconditions,
     trusted_required_arguments,
     trusted_requires_approval,
+    trusted_success_continuations,
     trusted_tool_effect,
 )
 from tools.registry import get_tool
@@ -123,6 +124,9 @@ def _capability_descriptor(name: str) -> dict:
         "requires_approval": trusted_requires_approval(**args),
         "policy_owns_preconditions": trusted_policy_owns_preconditions(**args),
     }
+    successors = trusted_success_continuations(**args, tool_lookup=get_tool)
+    if successors:
+        metadata["success_continuations"] = successors
     # Parameter descriptions preserve binding meaning, without argument values,
     # examples, full schemas, runtime resolvers or implementation callables.
     descriptions = trusted_grounded_argument_descriptions(**args)

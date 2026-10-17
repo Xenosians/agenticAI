@@ -10,6 +10,10 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet
 
+# A role bound to this value runs on the specialist's own local model.
+LOCAL_ROLE_MODEL = "local"
+ROLE_PATTERN = re.compile(r"[a-z][a-z0-9-]{0,63}")
+
 
 class ExtensionStore:
     """Owner-scoped durable configuration; credentials never appear in list results."""
@@ -34,6 +38,9 @@ class ExtensionStore:
                     data TEXT NOT NULL, secret BLOB, PRIMARY KEY(owner,id));
                 CREATE TABLE IF NOT EXISTS preference (
                     owner TEXT PRIMARY KEY, model_id TEXT, dataset_id TEXT);
+                CREATE TABLE IF NOT EXISTS role_assignment (
+                    owner TEXT NOT NULL, role TEXT NOT NULL, model_id TEXT NOT NULL,
+                    PRIMARY KEY(owner, role));
             """)
 
     def connect(self):
@@ -70,8 +77,8 @@ class ExtensionStore:
 
     def update_model_options(self, owner: str, identity: str, changes: dict) -> dict:
         """Patch only inference options without replacing identity or credentials."""
-        from services.extensions.options import INFERENCE_OPTION_FIELDS, validate_inference_options
-        if set(changes) - INFERENCE_OPTION_FIELDS:
+        from services.extensions.options import MODEL_OPTION_FIELDS, validate_model_options
+        if set(changes) - MODEL_OPTION_FIELDS:
             raise ValueError("Unsupported model inference option")
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -80,11 +87,11 @@ class ExtensionStore:
                 raise ValueError("Model connection not found")
             data = json.loads(row["data"])
             for name, value in changes.items():
-                if value is None or (name == "reasoning_effort" and value == ""):
+                if value is None or (name in {"reasoning_effort", "thinking_mode"} and value == ""):
                     data.pop(name, None)
                 else:
                     data[name] = value
-            validate_inference_options(data)
+            validate_model_options(data)
             db.execute("UPDATE resource SET data=? WHERE owner=? AND id=?", (json.dumps(data), owner, identity))
         return self.get(owner, identity)
 
@@ -105,9 +112,36 @@ class ExtensionStore:
             row = db.execute("SELECT * FROM preference WHERE owner=?", (owner,)).fetchone()
         return {"model_id": row["model_id"], "dataset_id": row["dataset_id"]} if row else {"model_id": None, "dataset_id": None}
 
+    def assign_role(self, owner: str, role: str, model_id: str | None) -> dict:
+        """Bind one specialist role to a saved model connection.
+
+        ``None`` removes the binding (the role follows the hub selection);
+        ``LOCAL_ROLE_MODEL`` pins the specialist's own local model.
+        """
+        if not ROLE_PATTERN.fullmatch(role or ""):
+            raise ValueError("Invalid role")
+        if model_id and model_id != LOCAL_ROLE_MODEL:
+            resource = self.get(owner, model_id)
+            if resource["kind"] != "model" or resource.get("state") != "ready":
+                raise ValueError("Resource has not passed admission")
+        with self.connect() as db:
+            if model_id:
+                db.execute("INSERT INTO role_assignment VALUES (?,?,?) ON CONFLICT(owner, role) "
+                           "DO UPDATE SET model_id=excluded.model_id", (owner, role, model_id))
+            else:
+                db.execute("DELETE FROM role_assignment WHERE owner=? AND role=?", (owner, role))
+        return self.role_assignments(owner)
+
+    def role_assignments(self, owner: str) -> dict[str, str]:
+        with self.connect() as db:
+            rows = db.execute("SELECT role, model_id FROM role_assignment WHERE owner=? ORDER BY role",
+                              (owner,)).fetchall()
+        return {row["role"]: row["model_id"] for row in rows}
+
     def delete(self, owner: str, identity: str):
         self.get(owner, identity)
         with self.connect() as db:
+            db.execute("DELETE FROM role_assignment WHERE owner=? AND model_id=?", (owner, identity))
             db.execute("UPDATE preference SET model_id=NULL WHERE owner=? AND model_id=?", (owner, identity))
             db.execute("UPDATE preference SET dataset_id=NULL WHERE owner=? AND dataset_id=?", (owner, identity))
             db.execute("DELETE FROM resource WHERE owner=? AND id=?", (owner, identity))

@@ -42,6 +42,8 @@ Each available capability contains:
 - "derived_arguments"
     Non-authority-bearing content that may be composed from the user's
     requested outcome. Rephrasing is allowed, but adding new facts is not.
+    Exact facts explicitly supplied in VERIFIED WORKFLOW CONTENT may be
+    used only as permitted derived content for the requested continuation.
 
 An argument schema may also contain:
 
@@ -166,7 +168,7 @@ SEMANTIC ARGUMENT RULES:
 
 9. Do not add constraints the user did not request.
 
-10. For arguments without bounded enum values, preserve concrete
+10. For grounded arguments without bounded enum values, preserve concrete
     identifiers and values from the original user request rather than
     interpreting, expanding, renaming, or replacing them.
 
@@ -187,6 +189,10 @@ DERIVED CONTENT RULES:
 
 2. Do not invent facts, identifiers, participants, goals, dates, provider
    state, or scope merely to make derived content sound more complete.
+   Exact facts in runtime-supplied VERIFIED WORKFLOW CONTENT are evidence,
+   not inventions. Use them only in the permitted derived content; they
+   do not add grounded targets, permissions, or operations. Ordinary user
+   conversation and model prose cannot supply verified workflow evidence.
 
 3. Grounded arguments remain exact even when derived arguments are flexible.
 
@@ -239,8 +245,10 @@ FINAL VALIDATION BEFORE OUTPUT:
 
 5. Every argument name exists in that capability's argument_schema.
 
-6. Every concrete identifier or scope value preserves the original
-   user request unless an enum supplies the trusted canonical value.
+6. Grounded identifiers and scope values preserve the original user
+   request and exact validated semantic context unless an enum supplies
+   the trusted canonical value. Verified workflow facts may appear only
+   in the permitted derived content.
 
 7. Nothing outside the JSON array is emitted.
 

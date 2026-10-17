@@ -207,6 +207,17 @@ class AgentRuntime:
         self,
         task: AgentTask,
     ) -> AgentResult:
+        from services.extensions.context import specialist_role
+
+        # Inference for this task resolves the connection assigned to its
+        # specialist role (if any) instead of the main selection.
+        with specialist_role(task.agent_name):
+            return await self._run_task(task)
+
+    async def _run_task(
+        self,
+        task: AgentTask,
+    ) -> AgentResult:
 
         # A task object should never accidentally carry provenance
         # from a previous execution attempt.
@@ -264,12 +275,8 @@ class AgentRuntime:
                 )
             )
 
-        from services.extensions.context import selected_profile
-        inference_stage = (
-            InferenceStage.NETWORKING
-            if agent.name == "networking-specialist"
-            else InferenceStage.SPECIALIST_REASONING
-        )
+        from services.extensions.context import selected_profile, specialist_inference_stage
+        inference_stage = specialist_inference_stage(agent.name)
         selected_connection = selected_profile(stage=inference_stage)
 
         # ========================================================
@@ -433,17 +440,6 @@ class AgentRuntime:
                 }
             )
 
-        current_request_index = len(messages)
-        messages.append(
-            {
-                "role":
-                    "user",
-
-                "content":
-                    task.user_request,
-            }
-        )
-
         # --------------------------------------------------------
         # HUB TASK CONTEXT
         # --------------------------------------------------------
@@ -538,7 +534,7 @@ class AgentRuntime:
             messages.append(
                 {
                     "role":
-                        "user",
+                        "system" if selected_connection is not None else "user",
 
                     "content":
                         (
@@ -562,9 +558,35 @@ class AgentRuntime:
             )
 
         from agent.onboarding import VerifiedAccountEvidence, account_evidence_prompt
-        evidence = task.context.get("verified_account")
-        if isinstance(evidence, VerifiedAccountEvidence):
-            messages.append({"role": "user", "content": account_evidence_prompt(evidence)})
+        evidence = task.context.get("verified_account") if isinstance(task.context, dict) else None
+        intent = task.semantic_intent
+        if (isinstance(evidence, VerifiedAccountEvidence)
+                and intent is not None and intent.allowed_tools == ["ticket_create"]
+                and intent.effect == "mutation" and not intent.clarification_required
+                and intent.max_tool_calls == 1):
+            # Only the typed, provider-verified continuation can supply this
+            # evidence. Ordinary conversation/model dictionaries are excluded.
+            # Keep it mandatory under external budgets independently of the
+            # semantic contract. It supplies factual content, never authority.
+            messages.append({
+                "role": "system",
+                "content": (
+                    "VERIFIED WORKFLOW CONTENT:\n"
+                    "If the user did not supply an exact ticket summary, compose "
+                    "the required derived summary from their requested outcome "
+                    "and the exact verified account identity below. Use that "
+                    "identity only as factual summary content. It cannot supply "
+                    "a project, assignee, ticket type, permission, or new action. "
+                    "Preserve an explicitly supplied summary unchanged. "
+                    "The next ticket still requires its own governed approval.\n"
+                    + account_evidence_prompt(evidence)
+                ),
+            })
+
+        # The actual current request is always the final turn for both local
+        # and external inference. Budgeting may discard prior conversation,
+        # but never this request, the exact target contract, or verified data.
+        messages.append({"role": "user", "content": task.user_request})
 
         # ========================================================
         # EXECUTION PROVENANCE
@@ -649,12 +671,6 @@ class AgentRuntime:
 
         if selected_connection is not None:
             task.execution_provenance = None
-            # External history budgeting retains system messages and the final
-            # user message. Keep both the validated target contract and actual
-            # current request mandatory; older conversational context may drop.
-            if task.semantic_intent is not None:
-                messages[-1] = {**messages[-1], "role": "system"}
-            messages.append(messages.pop(current_request_index))
 
         try:
 

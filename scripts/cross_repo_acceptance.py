@@ -25,10 +25,8 @@ PROJECT_ROOT = AI_REPO.parents[1]
 
 
 def _acceptance_env(name: str, default: str | None = None) -> str | None:
-    """Prefer descriptive settings while accepting existing local fixtures."""
+    """Read one acceptance setting from the environment."""
     value = os.getenv(name)
-    if value is None and name.startswith("ACCEPTANCE_"):
-        value = os.getenv("V18_03_" + name.removeprefix("ACCEPTANCE_"))
     return default if value is None else value
 
 
@@ -307,10 +305,12 @@ class BrowserPathClient:
             raise ValueError("Timeout must be positive.")
         self.contracts = PublicJobContracts(job_api_version, contracts_dir)
         self.job_api_version = job_api_version
+        # One slow backend read must not end a multi-minute job wait; the
+        # job deadline (timeout_seconds) bounds the overall run instead.
         self.client = httpx.Client(
             base_url=backend_url.rstrip("/"),
             follow_redirects=True,
-            timeout=20.0,
+            timeout=httpx.Timeout(60.0, connect=10.0),
             transport=transport,
         )
         self.timeout_seconds = timeout_seconds

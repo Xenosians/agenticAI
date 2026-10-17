@@ -34,11 +34,15 @@ REPAIR RULES
 6. If the ORIGINAL USER REQUEST explicitly makes one operation depend
    on another result, keep the workflow conditional.
 
-7. For a conditional repair:
+7. For a read-result predicate (when) repair:
    - use an earlier unconditional read
    - use only a result_field exposed through trusted condition_fields
    - never invent a result field
    - keep the mutation conditional
+
+   For a supported mutation-success sequence, preserve after_success_of
+   outside intent using the separate success continuation protocol instead.
+   Never invent a read or convert the requested dependency into independent work.
 
 8. Never repair an invalid conditional workflow by silently converting
    an explicitly conditional user request into an unconditional

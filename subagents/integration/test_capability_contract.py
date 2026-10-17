@@ -1,7 +1,7 @@
 from subagents.core.tooling.capabilities import build_capability_spec
 
 
-def test_capability_contract_v2_exposes_semantics_without_authority():
+def test_capability_contract_exposes_semantics_without_authority():
     def lookup(name):
         assert name == "demo_read"
         return {

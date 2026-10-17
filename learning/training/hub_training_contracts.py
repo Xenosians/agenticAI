@@ -15,8 +15,7 @@ from subagents.core.orchestration.intent_contract import (
     build_router_semantic_agent_spec,
     parse_semantic_intent,
 )
-from subagents.prompts.prompt_loader import load_prompt
-from subagents.core.orchestration.router_catalog import render_router_catalog
+from subagents.core.orchestration.router_prompt import build_router_system_prompt
 
 
 def canonical_json(value: Any) -> str:
@@ -50,16 +49,7 @@ def build_hub_training_environment(*, agent_directory: Path) -> dict[str, Any]:
         for agent in registry.list_agents()
     ]
 
-    specialists_json = render_router_catalog(specialists)
-
-    system_prompt = (
-        load_prompt("hub_router.txt").replace(
-            "{{SPECIALISTS_JSON}}",
-            specialists_json,
-        )
-        + "\n\n"
-        + load_prompt("hub_conditional_workflow.txt")
-    )
+    system_prompt = build_router_system_prompt(specialists)
 
     agent_payload = [
         asdict(

@@ -19,6 +19,12 @@ class ProvisionedAccountPersistenceResult:
     credential_expires_at: str
 
 
+@dataclass(frozen=True)
+class CredentialPersistenceResult:
+    credential_id: str
+    credential_expires_at: str
+
+
 class PhoenixCredentialStore:
     """
     Internal AI -> Phoenix credential handoff.
@@ -48,6 +54,44 @@ class PhoenixCredentialStore:
             "Credential persistence requires HTTPS unless Phoenix is "
             "running on localhost."
         )
+
+    def _post(self, path: str, payload: dict, required: tuple[str, ...]) -> dict[str, str]:
+        base_url = self._settings.require_phoenix_base_url()
+        token = self._settings.require_internal_job_token()
+        self._require_safe_transport(base_url)
+        try:
+            with httpx.Client(timeout=self._settings.phoenix_http_timeout_seconds) as client:
+                response = client.post(f"{base_url}{path}", headers={"x-internal-token": token}, json=payload)
+        except httpx.HTTPError as exc:
+            raise CredentialPersistenceError("Phoenix credential persistence transport failed.") from exc
+        if response.status_code not in range(200, 300):
+            raise CredentialPersistenceError("Phoenix rejected credential persistence.")
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise CredentialPersistenceError("Phoenix returned an invalid credential persistence response.") from exc
+        if not isinstance(body, dict):
+            raise CredentialPersistenceError("Phoenix returned an invalid credential persistence response.")
+        values: dict[str, str] = {}
+        for key in required:
+            value = body.get(key)
+            if not isinstance(value, str) or not value.strip():
+                raise CredentialPersistenceError("Phoenix returned an incomplete credential persistence response.")
+            values[key] = value.strip()
+        return values
+
+    def persist_reset_credential(
+        self,
+        *,
+        directory_user_id: str,
+        temporary_password: str,
+    ) -> CredentialPersistenceResult:
+        values = self._post(
+            "/api/internal/v1/directory-credentials",
+            {"directory_user_id": directory_user_id, "temporary_password": temporary_password},
+            ("credential_id", "credential_expires_at"),
+        )
+        return CredentialPersistenceResult(**values)
 
     def persist_provisioned_account(
         self,

@@ -6,7 +6,7 @@ from dataclasses import (
     dataclass,
 )
 
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import (
     Any,
     Protocol,
@@ -20,6 +20,7 @@ from services.process_runner import (
 from services.workspace_repositories import (
     resolve_workspace_repository,
 )
+from services.git_repositories import GitRepositoryTarget
 
 
 DEFAULT_EXECUTION_TIMEOUT_SECONDS = 60
@@ -226,28 +227,12 @@ PROJECT_STRATEGIES: tuple[
 )
 
 
-def _default_repository_root() -> Path:
-    """
-    Resolve the trusted default logical developer repository.
-
-    Physical filesystem paths remain trusted runtime
-    configuration and are never supplied by the model.
-    """
-
-    target = (
-        resolve_workspace_repository()
-    )
-
-    return (
-        target.path
-        .resolve()
-    )
-
-
 def _resolve_project_directory(
     relative_path: str,
+    repository: str | None = None,
 ) -> tuple[
     Path | None,
+    GitRepositoryTarget | None,
     str | None,
 ]:
     if not isinstance(
@@ -255,6 +240,7 @@ def _resolve_project_directory(
         str,
     ):
         return (
+            None,
             None,
             "relative_path must be a string.",
         )
@@ -266,12 +252,12 @@ def _resolve_project_directory(
     if not relative_path:
         relative_path = "."
 
-    requested = Path(
-        relative_path
-    )
+    requested = Path(relative_path)
+    windows_path = PureWindowsPath(relative_path)
 
-    if requested.is_absolute():
+    if requested.is_absolute() or windows_path.root or windows_path.drive:
         return (
+            None,
             None,
             (
                 "Developer project paths must be "
@@ -279,10 +265,16 @@ def _resolve_project_directory(
             ),
         )
 
-    try:
-        root = (
-            _default_repository_root()
+    if "\x00" in relative_path or ".." in windows_path.parts:
+        return (
+            None,
+            None,
+            "Developer project paths cannot contain traversal or null characters.",
         )
+
+    try:
+        target = resolve_workspace_repository(repository)
+        root = target.path.resolve()
 
         project_dir = (
             root
@@ -295,6 +287,7 @@ def _resolve_project_directory(
     ) as exc:
         return (
             None,
+            None,
             str(exc),
         )
 
@@ -304,6 +297,7 @@ def _resolve_project_directory(
     ):
         return (
             None,
+            target,
             (
                 "Developer project path is outside "
                 "the configured repository."
@@ -313,6 +307,7 @@ def _resolve_project_directory(
     if not project_dir.is_dir():
         return (
             None,
+            target,
             (
                 "Developer project directory "
                 "does not exist."
@@ -321,6 +316,7 @@ def _resolve_project_directory(
 
     return (
         project_dir,
+        target,
         None,
     )
 
@@ -404,6 +400,7 @@ def _detect_project(
 
 def workspace_project_info(
     relative_path: str = ".",
+    repository: str | None = None,
 ) -> dict[str, Any]:
     """
     Detect the supported project/runtime type at one workspace
@@ -412,9 +409,11 @@ def workspace_project_info(
 
     (
         project_dir,
+        target,
         path_error,
     ) = _resolve_project_directory(
-        relative_path
+        relative_path,
+        repository,
     )
 
     if (
@@ -439,13 +438,12 @@ def workspace_project_info(
         return {
             "ok": False,
             "status": "error",
+            "repository": target.name,
             "error":
                 detection_error,
         }
 
-    root = (
-        _default_repository_root()
-    )
+    root = target.path.resolve()
 
     normalized_path = (
         "."
@@ -462,6 +460,7 @@ def workspace_project_info(
     return {
         "ok": True,
         "status": "success",
+        "repository": target.name,
 
         "project_type":
             strategy.name,
@@ -507,6 +506,7 @@ def _run_project_operation(
     operation: str,
     relative_path: str,
     timeout_seconds: int,
+    repository: str | None = None,
 ) -> dict[str, Any]:
     timeout_error = (
         _validate_execution_timeout(
@@ -524,9 +524,11 @@ def _run_project_operation(
 
     (
         project_dir,
+        target,
         path_error,
     ) = _resolve_project_directory(
-        relative_path
+        relative_path,
+        repository,
     )
 
     if project_dir is None:
@@ -549,6 +551,7 @@ def _run_project_operation(
         return {
             "ok": False,
             "status": "error",
+            "repository": target.name,
             "error":
                 detection_error,
         }
@@ -594,9 +597,7 @@ def _run_project_operation(
         )
     )
 
-    root = (
-        _default_repository_root()
-    )
+    root = target.path.resolve()
 
     project_path = (
         "."
@@ -612,6 +613,7 @@ def _run_project_operation(
 
     return {
         **result,
+        "repository": target.name,
 
         "operation":
             operation,
@@ -629,6 +631,7 @@ def workspace_run_tests(
     timeout_seconds: int = (
         DEFAULT_EXECUTION_TIMEOUT_SECONDS
     ),
+    repository: str | None = None,
 ) -> dict[str, Any]:
     """
     Execute the trusted test command for one detected project.
@@ -646,6 +649,7 @@ def workspace_run_tests(
             timeout_seconds=(
                 timeout_seconds
             ),
+            repository=repository,
         )
     )
 
@@ -655,6 +659,7 @@ def workspace_run_build(
     timeout_seconds: int = (
         DEFAULT_EXECUTION_TIMEOUT_SECONDS
     ),
+    repository: str | None = None,
 ) -> dict[str, Any]:
     """
     Execute the trusted build/check command for one detected
@@ -673,5 +678,6 @@ def workspace_run_build(
             timeout_seconds=(
                 timeout_seconds
             ),
+            repository=repository,
         )
     )

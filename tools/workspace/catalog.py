@@ -11,9 +11,10 @@ WORKSPACE_REPOSITORY_PARAMETER = {
 
     "description": (
         "Configured logical repository identifier such as "
-        "ai, backend, or frontend. Use this argument for the "
-        "repository itself. Do NOT place a repository identifier "
-        "inside relative_path."
+        "ai, backend, or frontend. Set it only when the user "
+        "names a repository; omit it otherwise so the server's "
+        "configured default repository applies. Never guess one. "
+        "Do NOT place a repository identifier inside relative_path."
     ),
 }
 

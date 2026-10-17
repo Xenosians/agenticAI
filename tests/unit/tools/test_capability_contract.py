@@ -1,7 +1,18 @@
 import pytest
 
+from tools import runtime_schema
 from tools.capability_contract import build_capability_contract
 from tools.runtime_schema import register_tool_callable
+
+
+@pytest.fixture(autouse=True)
+def isolated_runtime_schemas():
+    """Example tools registered here must not leak into the production registry."""
+    saved = dict(runtime_schema._SCHEMAS)
+    yield
+    with runtime_schema._LOCK:
+        runtime_schema._SCHEMAS.clear()
+        runtime_schema._SCHEMAS.update(saved)
 
 
 def test_requiredness_comes_from_executable_signature():
@@ -220,3 +231,24 @@ def test_trusted_policy_argument_must_exist_in_executable_signature():
                 },
             },
         )
+
+
+def test_declared_default_must_match_the_executable_default():
+    def listing(relative_path: str = "."):
+        return relative_path
+
+    register_tool_callable(listing)
+    tool = {
+        "risk": "read",
+        "requires_approval": False,
+        "operation_kind": "read",
+        "resource_type": "example",
+        "effect": "read",
+        "permission": "example.read",
+        "grounded_arguments": ["relative_path"],
+        "parameters": {"relative_path": {"type": "str", "description": "x", "default": "/"}},
+    }
+    with pytest.raises(ValueError, match="differs from its executable signature"):
+        build_capability_contract("listing", tool)
+    tool["parameters"]["relative_path"]["default"] = "."
+    assert build_capability_contract("listing", tool).optional_arguments == ("relative_path",)

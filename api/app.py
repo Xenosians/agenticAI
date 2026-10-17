@@ -87,9 +87,6 @@ from subagents.llm.runtime.scheduler import (
     GpuScheduler,
 )
 
-from services.palo_alto import (
-    palo_alto_integration_status,
-)
 from services.openwrt import openwrt_integration_status
 
 
@@ -477,6 +474,16 @@ def response_body(
 # ============================================================
 
 
+# Phoenix answers that end this attempt's lease ownership, on either transport.
+TERMINAL_HEARTBEAT_ERRORS = frozenset({
+    "job_not_found",
+    "stale_attempt",
+    "job_not_processing",
+    "lease_expired",
+    "lease_missing",
+})
+
+
 def valid_heartbeat_ack(
     *,
     job_id: str,
@@ -555,6 +562,21 @@ async def send_job_heartbeat(
             f" sequence={sequence}"
         )
 
+    from services.job_progress import renew_lease
+
+    # The attempt's joined progress socket carries the renewal as a two-way
+    # request/reply. No joined socket, no reply, or an answer that is not a
+    # lease decision falls back to the HTTP heartbeat below.
+    reply = await renew_lease(job_id, attempt)
+    if reply is not None:
+        socket_body = reply.get("response")
+        if reply.get("status") == "ok" and valid_heartbeat_ack(job_id=job_id, attempt=attempt, body=socket_body):
+            print("[HEARTBEAT] Lease renewed " f"{context} transport=websocket")
+            return True
+        if isinstance(socket_body, dict) and socket_body.get("error") in TERMINAL_HEARTBEAT_ERRORS:
+            print("[HEARTBEAT] Lease ownership ended " f"{context} transport=websocket response={socket_body}")
+            return False
+
     url = (
         f"{settings.require_phoenix_base_url()}"
         f"/api/internal/v1/jobs/"
@@ -612,7 +634,7 @@ async def send_job_heartbeat(
         ):
             print(
                 "[HEARTBEAT] Lease renewed "
-                f"{context}"
+                f"{context} transport=http"
             )
 
         else:
@@ -623,14 +645,6 @@ async def send_job_heartbeat(
             )
 
         return True
-
-    terminal_heartbeat_errors = {
-        "job_not_found",
-        "stale_attempt",
-        "job_not_processing",
-        "lease_expired",
-        "lease_missing",
-    }
 
     if (
         response.status_code
@@ -645,7 +659,7 @@ async def send_job_heartbeat(
         and body.get(
             "error"
         )
-        in terminal_heartbeat_errors
+        in TERMINAL_HEARTBEAT_ERRORS
     ):
         print(
             "[HEARTBEAT] Lease ownership ended "
@@ -1142,9 +1156,10 @@ async def execute_job(
         # ========================================================
 
         try:
-            if profile is not None or has_dataset:
-                raise ValueError("User extensions are excluded from automatic training capture")
-            trajectory = (
+            # Jobs on the owner's own model connection or dataset are private
+            # and are never captured for training (docs/user-extensions.md).
+            private = profile is not None or has_dataset
+            trajectory = None if private else (
                 runtime
                 .trajectory_recorder
                 .record(
@@ -1925,9 +1940,6 @@ async def integration_status(request: Request):
     runtime = require_ready_runtime(request)
     return {
         "integrations": [
-            palo_alto_integration_status(
-                runtime.settings
-            ),
             openwrt_integration_status(runtime.settings),
         ]
     }

@@ -14,6 +14,8 @@ from urllib.parse import (
 
 import httpx
 
+from services.jira.authentication import AUTH_EVENT_HOOKS
+
 from config import (
     Settings,
 )
@@ -349,6 +351,8 @@ class JiraProjectMutationService:
                 transport=(
                     transport
                 ),
+
+                event_hooks=AUTH_EVENT_HOOKS,
             )
         )
 

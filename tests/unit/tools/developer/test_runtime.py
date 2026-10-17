@@ -521,8 +521,16 @@ def test_service_logs_ground_service_name():
     assert tool[
         "grounded_arguments"
     ] == [
-        "service_name"
+        "service_name",
+        "relative_path",
     ]
+
+
+def test_service_tools_ground_the_named_compose_directory():
+    for tool_name in ("workspace_service_status", "workspace_service_logs"):
+        tool = get_tool(tool_name)
+        assert "relative_path" in tool["grounded_arguments"]
+        assert tool["parameters"]["relative_path"]["default"] == "."
 
 
 class FakeMCPServer:

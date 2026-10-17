@@ -14,6 +14,7 @@ class RuntimeToolSchema:
     parameters: tuple[str, ...]
     required_arguments: tuple[str, ...]
     optional_arguments: tuple[str, ...]
+    defaults: tuple[tuple[str, Any], ...] = ()
 
 
 _LOCK = RLock()
@@ -25,6 +26,7 @@ def _schema_from_callable(fn: Callable[..., Any]) -> RuntimeToolSchema:
     parameters: list[str] = []
     required: list[str] = []
     optional: list[str] = []
+    defaults: list[tuple[str, Any]] = []
 
     for name, parameter in signature.parameters.items():
         if name in {"self", "cls"}:
@@ -36,12 +38,14 @@ def _schema_from_callable(fn: Callable[..., Any]) -> RuntimeToolSchema:
             required.append(name)
         else:
             optional.append(name)
+            defaults.append((name, parameter.default))
 
     return RuntimeToolSchema(
         name=fn.__name__,
         parameters=tuple(parameters),
         required_arguments=tuple(required),
         optional_arguments=tuple(optional),
+        defaults=tuple(defaults),
     )
 
 

@@ -41,6 +41,8 @@ class ProjectInfoResult(
     ok: bool
     status: str
 
+    repository: str | None = None
+
     project_type: (
         str | None
     ) = None
@@ -67,6 +69,8 @@ class DeveloperExecutionResult(
 ):
     ok: bool
     status: str
+
+    repository: str | None = None
 
     operation: (
         str | None
@@ -276,6 +280,7 @@ def register_developer_tools(
         relative_path: (
             str | None
         ) = None,
+        repository: str | None = None,
     ) -> ProjectInfoResult:
         return ProjectInfoResult(
             **run_workspace_project_info(
@@ -283,7 +288,8 @@ def register_developer_tools(
                     _relative_path_or_default(
                         relative_path
                     )
-                )
+                ),
+                repository=repository,
             )
         )
 
@@ -295,6 +301,7 @@ def register_developer_tools(
         timeout_seconds: (
             int | None
         ) = None,
+        repository: str | None = None,
     ) -> DeveloperExecutionResult:
         return DeveloperExecutionResult(
             **run_workspace_run_tests(
@@ -308,6 +315,7 @@ def register_developer_tools(
                         timeout_seconds
                     )
                 ),
+                repository=repository,
             )
         )
 
@@ -319,6 +327,7 @@ def register_developer_tools(
         timeout_seconds: (
             int | None
         ) = None,
+        repository: str | None = None,
     ) -> DeveloperExecutionResult:
         return DeveloperExecutionResult(
             **run_workspace_run_build(
@@ -332,6 +341,7 @@ def register_developer_tools(
                         timeout_seconds
                     )
                 ),
+                repository=repository,
             )
         )
 
@@ -350,7 +360,7 @@ def register_developer_tools(
     def workspace_service_status(
         relative_path: (
             str | None
-        ) = None,
+        ) = DEFAULT_RELATIVE_PATH,
     ) -> ServiceStatusResult:
         return ServiceStatusResult(
             **run_workspace_service_status(
@@ -367,7 +377,7 @@ def register_developer_tools(
         service_name: str,
         relative_path: (
             str | None
-        ) = None,
+        ) = DEFAULT_RELATIVE_PATH,
     ) -> ServiceLogsResult:
         return ServiceLogsResult(
             **run_workspace_service_logs(

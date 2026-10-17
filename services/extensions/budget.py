@@ -105,6 +105,15 @@ _PROVIDER_REQUEST_BUDGETS: dict[
 
     ("harness", "openrouter"):
         8000,
+
+    # Claude models have large context windows and account-tier input
+    # limits well above these envelopes. Stage ceilings still bound every
+    # request; only broad semantic routing uses most of this envelope.
+    ("http", "anthropic"):
+        32000,
+
+    ("harness", "anthropic"):
+        32000,
 }
 
 
@@ -143,6 +152,22 @@ def external_provider(
 
         if hostname == "openrouter.ai":
             return "openrouter"
+
+        if hostname == "api.anthropic.com":
+            return "anthropic"
+
+        label = str(
+            profile.get(
+                "provider_id",
+                "",
+            )
+        ).strip().lower()
+
+        if re.fullmatch(
+            r"[a-z0-9][a-z0-9_-]{0,39}",
+            label,
+        ):
+            return label
 
         return "custom"
 
@@ -269,6 +294,16 @@ def default_external_request_budget(
         if family == "http"
         else DEFAULT_HARNESS_REQUEST_TOKEN_BUDGET
     )
+
+    # A gateway speaking Anthropic's protocol under its own label (for
+    # example "9router") serves Claude models: use the Anthropic envelope
+    # unless that label has a policy of its own.
+    if (
+        (family, provider) not in _PROVIDER_REQUEST_BUDGETS
+        and backend == "http"
+        and profile.get("api_format") == "anthropic"
+    ):
+        provider = "anthropic"
 
     return (
         _PROVIDER_REQUEST_BUDGETS.get(
