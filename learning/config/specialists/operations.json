@@ -1,0 +1,334 @@
+{
+  "schema": "specialist-training-config.v1",
+  "specialist": "operations-specialist",
+  "agent_definition": "subagents/agents/operations-specialist.md",
+  "base_model_key": "hub-main",
+  "candidate_model_key": "operations-func-trained",
+  "worker_prompt_profile": "compact",
+  "max_new_tokens": 128,
+  "examples": [
+    {
+      "tool_name": "container_status",
+      "user_request": "Show the status of all platform containers.",
+      "arguments": {},
+      "tags": [
+        "read",
+        "container"
+      ]
+    },
+    {
+      "tool_name": "container_status",
+      "user_request": "Are the platform runtime containers running?",
+      "arguments": {},
+      "tags": [
+        "read",
+        "container"
+      ]
+    },
+    {
+      "tool_name": "container_status",
+      "user_request": "What state is the itsm-git-lab container in?",
+      "arguments": {
+        "container": "itsm-git-lab"
+      },
+      "tags": [
+        "read",
+        "container"
+      ]
+    },
+    {
+      "tool_name": "container_status",
+      "user_request": "How many times has itsm-mailbox-lab restarted?",
+      "arguments": {
+        "container": "itsm-mailbox-lab"
+      },
+      "tags": [
+        "read",
+        "container"
+      ]
+    },
+    {
+      "tool_name": "container_status",
+      "user_request": "Is the itsm-surrealdb container healthy?",
+      "arguments": {
+        "container": "itsm-surrealdb"
+      },
+      "tags": [
+        "read",
+        "container"
+      ]
+    },
+    {
+      "tool_name": "container_logs",
+      "user_request": "Show the last 30 log lines of itsm-git-lab.",
+      "arguments": {
+        "container": "itsm-git-lab",
+        "lines": 30
+      },
+      "tags": [
+        "read",
+        "logs"
+      ]
+    },
+    {
+      "tool_name": "container_logs",
+      "user_request": "Recent logs of the itsm-mailbox-lab container.",
+      "arguments": {
+        "container": "itsm-mailbox-lab"
+      },
+      "tags": [
+        "read",
+        "logs"
+      ]
+    },
+    {
+      "tool_name": "container_logs",
+      "user_request": "Print 100 lines of agentic-openwrt-lab container logs.",
+      "arguments": {
+        "container": "agentic-openwrt-lab",
+        "lines": 100
+      },
+      "tags": [
+        "read",
+        "logs"
+      ]
+    },
+    {
+      "tool_name": "container_logs",
+      "user_request": "What has itsm-samba-ad written to its log lately?",
+      "arguments": {
+        "container": "itsm-samba-ad"
+      },
+      "tags": [
+        "read",
+        "logs"
+      ]
+    },
+    {
+      "tool_name": "service_health",
+      "user_request": "Is the backend up?",
+      "arguments": {},
+      "tags": [
+        "read",
+        "health"
+      ]
+    },
+    {
+      "tool_name": "service_health",
+      "user_request": "Probe the platform health endpoints.",
+      "arguments": {},
+      "tags": [
+        "read",
+        "health"
+      ]
+    },
+    {
+      "tool_name": "service_health",
+      "user_request": "How fast are the platform services answering their health checks?",
+      "arguments": {},
+      "tags": [
+        "read",
+        "health"
+      ]
+    },
+    {
+      "tool_name": "service_health",
+      "user_request": "Are the backend and AI services healthy?",
+      "arguments": {},
+      "tags": [
+        "read",
+        "health"
+      ]
+    },
+    {
+      "tool_name": "notify_user",
+      "user_request": "Notify alice@itsm.test: the VPN maintenance is complete.",
+      "arguments": {
+        "email": "alice@itsm.test",
+        "message": "the VPN maintenance is complete."
+      },
+      "tags": [
+        "mutation",
+        "notify"
+      ]
+    },
+    {
+      "tool_name": "notify_user",
+      "user_request": "Email bob@itsm.test the message: your laptop is ready for pickup.",
+      "arguments": {
+        "email": "bob@itsm.test",
+        "message": "your laptop is ready for pickup."
+      },
+      "tags": [
+        "mutation",
+        "notify"
+      ]
+    },
+    {
+      "tool_name": "notify_user",
+      "user_request": "Send carol@itsm.test a notification with subject Password policy and message: passwords now expire every 90 days.",
+      "arguments": {
+        "email": "carol@itsm.test",
+        "message": "passwords now expire every 90 days.",
+        "subject": "Password policy"
+      },
+      "tags": [
+        "mutation",
+        "notify"
+      ]
+    },
+    {
+      "tool_name": "notify_user",
+      "user_request": "Let dave@itsm.test know: the printer on floor 2 is fixed.",
+      "arguments": {
+        "email": "dave@itsm.test",
+        "message": "the printer on floor 2 is fixed."
+      },
+      "tags": [
+        "mutation",
+        "notify"
+      ]
+    }
+  ],
+  "eval_cases": [
+    {
+      "name": "container-status-all",
+      "user": "Show the status of the platform containers.",
+      "allowed_tools": [
+        "container_status"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "container_status",
+      "expected_arguments": {}
+    },
+    {
+      "name": "container-status-one",
+      "user": "Is the itsm-surrealdb container running and healthy?",
+      "allowed_tools": [
+        "container_status"
+      ],
+      "allowed_arguments": {
+        "container": [
+          "itsm-surrealdb"
+        ]
+      },
+      "expected_tool": "container_status",
+      "expected_arguments": {
+        "container": "itsm-surrealdb"
+      }
+    },
+    {
+      "name": "container-status-uptime",
+      "user": "How long has itsm-git-lab been up?",
+      "allowed_tools": [
+        "container_status"
+      ],
+      "allowed_arguments": {
+        "container": [
+          "itsm-git-lab"
+        ]
+      },
+      "expected_tool": "container_status",
+      "expected_arguments": {
+        "container": "itsm-git-lab"
+      }
+    },
+    {
+      "name": "container-logs-count",
+      "user": "Show the last 20 log lines of the itsm-surrealdb container.",
+      "allowed_tools": [
+        "container_logs"
+      ],
+      "allowed_arguments": {
+        "container": [
+          "itsm-surrealdb"
+        ]
+      },
+      "expected_tool": "container_logs",
+      "expected_arguments": {
+        "container": "itsm-surrealdb",
+        "lines": 20
+      }
+    },
+    {
+      "name": "container-logs-default",
+      "user": "Show recent log output of the itsm-mailbox-lab container.",
+      "allowed_tools": [
+        "container_logs"
+      ],
+      "allowed_arguments": {
+        "container": [
+          "itsm-mailbox-lab"
+        ]
+      },
+      "expected_tool": "container_logs",
+      "expected_arguments": {
+        "container": "itsm-mailbox-lab"
+      }
+    },
+    {
+      "name": "service-health-platform",
+      "user": "Check the health of the platform services.",
+      "allowed_tools": [
+        "service_health"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "service_health",
+      "expected_arguments": {}
+    },
+    {
+      "name": "service-health-backend",
+      "user": "Is the Phoenix backend answering its health check?",
+      "allowed_tools": [
+        "service_health"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "service_health",
+      "expected_arguments": {}
+    },
+    {
+      "name": "notify-user-message",
+      "user": "Send a notification to jdoe@itsm.test with the message: matrix notification check.",
+      "allowed_tools": [
+        "notify_user"
+      ],
+      "allowed_arguments": {
+        "email": [
+          "jdoe@itsm.test"
+        ],
+        "message": [
+          "matrix notification check."
+        ]
+      },
+      "expected_tool": "notify_user",
+      "expected_arguments": {
+        "email": "jdoe@itsm.test",
+        "message": "matrix notification check."
+      }
+    },
+    {
+      "name": "notify-user-subject",
+      "user": "Notify erin@itsm.test with subject Change window and message: the change window starts at 18:00.",
+      "allowed_tools": [
+        "notify_user"
+      ],
+      "allowed_arguments": {
+        "email": [
+          "erin@itsm.test"
+        ],
+        "message": [
+          "the change window starts at 18:00."
+        ],
+        "subject": [
+          "Change window"
+        ]
+      },
+      "expected_tool": "notify_user",
+      "expected_arguments": {
+        "email": "erin@itsm.test",
+        "message": "the change window starts at 18:00.",
+        "subject": "Change window"
+      }
+    }
+  ]
+}

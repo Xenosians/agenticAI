@@ -92,6 +92,10 @@ CAPABILITY_SEMANTICS: dict[str, dict[str, str]] = {
     "access_explain": {"resource_type": "access", "operation_kind": "read", "effect": "read", "permission": "access.explain"},
 
     # --- operations ---
+    "container_status": {"resource_type": "platform.container", "operation_kind": "read", "effect": "read", "permission": "platform.container.read"},
+    "container_logs": {"resource_type": "platform.container", "operation_kind": "read", "effect": "read", "permission": "platform.container.logs.read"},
+    "service_health": {"resource_type": "platform.service", "operation_kind": "read", "effect": "read", "permission": "platform.service.health.read"},
+    "notify_user": {"resource_type": "user.notification", "operation_kind": "action", "effect": "mutation", "permission": "user.notification.send"},
 
     # --- service desk ---
 

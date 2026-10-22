@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Annotated
 from urllib.parse import urlsplit
 
 from config.path_portability import (
@@ -15,6 +16,7 @@ from pydantic import (
 
 from pydantic_settings import (
     BaseSettings,
+    NoDecode,
     SettingsConfigDict,
 )
 
@@ -550,6 +552,58 @@ class Settings(
     openwrt_verify_tls: bool = True
     openwrt_allow_loopback_http: bool = False
     openwrt_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+
+    # ============================================================
+    # PLATFORM OPERATIONS (runtime containers, service health)
+    # ============================================================
+
+    # Exact container names the operations tools may read; empty disables them.
+    operations_containers: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    operations_docker_socket: Path = Path("/var/run/docker.sock")
+    # name=url pairs. Empty derives the Phoenix and AI health URLs from the
+    # PHOENIX_BASE_URL and AI_HOST/AI_PORT settings.
+    operations_health_urls: Annotated[dict[str, str], NoDecode] = Field(default_factory=dict)
+    operations_timeout_seconds: float = Field(default=3.0, gt=0, le=10)
+
+    @field_validator("operations_containers", mode="before")
+    @classmethod
+    def parse_operations_containers(cls, value) -> list[str]:
+        import re
+        items = value.split(",") if isinstance(value, str) else list(value or [])
+        names: list[str] = []
+        for item in items:
+            name = str(item).strip()
+            if not name:
+                continue
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", name):
+                raise ValueError("OPERATIONS_CONTAINERS must list exact Docker container names separated by commas.")
+            if name not in names:
+                names.append(name)
+        return names
+
+    @field_validator("operations_health_urls", mode="before")
+    @classmethod
+    def parse_operations_health_urls(cls, value) -> dict[str, str]:
+        import re
+        if isinstance(value, str):
+            pairs = [item.split("=", 1) for item in value.split(",") if item.strip()]
+            if any(len(pair) != 2 for pair in pairs):
+                raise ValueError("OPERATIONS_HEALTH_URLS must be name=url pairs separated by commas.")
+            value = {name.strip(): url.strip() for name, url in pairs}
+        urls: dict[str, str] = {}
+        for name, url in dict(value or {}).items():
+            parsed = urlsplit(url)
+            # Health probes never carry credentials, so a URL that embeds any is refused.
+            if (not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,31}", name) or parsed.scheme not in {"http", "https"}
+                    or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment):
+                raise ValueError(
+                    "OPERATIONS_HEALTH_URLS entries need a short lowercase name and an http(s) URL "
+                    "without credentials, query or fragment."
+                )
+            urls[name] = url
+        if len(urls) > 10:
+            raise ValueError("OPERATIONS_HEALTH_URLS accepts at most 10 endpoints.")
+        return urls
 
     model_profiles: dict[
         str,
