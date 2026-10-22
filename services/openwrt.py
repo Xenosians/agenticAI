@@ -11,6 +11,12 @@ from urllib.parse import urlsplit
 import httpx
 
 
+# Bounds for client listings; a router can know about thousands of hosts.
+MAX_DHCP_LEASES = 200
+MAX_WIRELESS_CLIENTS = 200
+WIRELESS_DEVICE_PATTERN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,31}")
+
+
 @dataclass(frozen=True)
 class OpenWrtConfig:
     base_url: str
@@ -62,17 +68,23 @@ class OpenWrtService:
             raise RuntimeError("OpenWrt rejected the read or returned an invalid RPC response.")
         return result[1]
 
-    def _read(self, obj: str, method: str, arguments: dict) -> dict:
-        # All callers below are fixed read capabilities. No generic RPC tool exists.
+    def _login(self) -> str:
         login = self._rpc("0" * 32, "session", "login", {
             "username": self.config.username, "password": self.config.password,
         })
         session = login.get("ubus_rpc_session")
         if not isinstance(session, str) or not re.fullmatch(r"[0-9a-f]{32}", session):
             raise RuntimeError("OpenWrt login returned no valid session.")
-        data = self._rpc(session, obj, method, arguments)
+        return session
+
+    @staticmethod
+    def _observed(data: dict) -> dict:
         return {"ok": True, "status": "success", "provider": "openwrt",
                 "observed_at": datetime.now(timezone.utc).isoformat(), "data": data}
+
+    def _read(self, obj: str, method: str, arguments: dict) -> dict:
+        # All callers below are fixed read capabilities. No generic RPC tool exists.
+        return self._observed(self._rpc(self._login(), obj, method, arguments))
 
     def system_info(self) -> dict:
         result = self._read("system", "board", {})
@@ -93,6 +105,66 @@ class OpenWrtService:
         # Configuration is observed configuration, not proof of active packet filtering.
         result["scope"] = "configured_firewall_rules; not dataplane verification"
         return result
+
+    def dhcp_leases(self) -> dict:
+        data = self._read("luci-rpc", "getDHCPLeases", {})
+        raw = data["data"]
+        ipv4, ipv6 = raw.get("dhcp_leases", []), raw.get("dhcp6_leases", [])
+        if not isinstance(ipv4, list) or not isinstance(ipv6, list):
+            raise RuntimeError("OpenWrt lease response has no lease lists.")
+        leases = [_lease(item, "ipv4") for item in ipv4 if isinstance(item, dict)]
+        leases += [_lease(item, "ipv6") for item in ipv6 if isinstance(item, dict)]
+        data["data"] = {"leases": leases[:MAX_DHCP_LEASES], "count": len(leases),
+                        "truncated": len(leases) > MAX_DHCP_LEASES}
+        # Leases come from the router's own DHCP server only; static addresses and
+        # hosts served by another DHCP server are not listed.
+        data["scope"] = "dhcp_server_leases"
+        return data
+
+    def wireless_clients(self) -> dict:
+        session = self._login()
+        devices = self._rpc(session, "iwinfo", "devices", {}).get("devices")
+        if not isinstance(devices, list):
+            raise RuntimeError("OpenWrt wireless device response is invalid.")
+        interfaces = []
+        for device in devices:
+            if not isinstance(device, str) or not WIRELESS_DEVICE_PATTERN.fullmatch(device):
+                continue
+            stations = self._rpc(session, "iwinfo", "assoclist", {"device": device}).get("results", [])
+            clients = [_station(item) for item in stations if isinstance(item, dict)] if isinstance(stations, list) else []
+            interfaces.append({"device": device, "clients": clients[:MAX_WIRELESS_CLIENTS],
+                               "count": len(clients), "truncated": len(clients) > MAX_WIRELESS_CLIENTS})
+        result = self._observed({"interfaces": interfaces,
+                                 "count": sum(item["count"] for item in interfaces)})
+        if not interfaces:
+            result["note"] = "The router reports no wireless interfaces."
+        return result
+
+
+def _lease(item: dict, family: str) -> dict:
+    return {
+        "family": family,
+        "hostname": item.get("hostname") or None,
+        "address": item.get("ipaddr") or item.get("ip6addr") or (item.get("ip6addrs") or [None])[0],
+        "mac": item.get("macaddr") or None,
+        "duid": item.get("duid") or None,
+        "expires_in_seconds": item.get("expires") if isinstance(item.get("expires"), int) else None,
+    }
+
+
+def _station(item: dict) -> dict:
+    def rate(direction: str) -> int | None:
+        value = item.get(direction)
+        return value.get("rate") if isinstance(value, dict) and isinstance(value.get("rate"), int) else None
+
+    return {
+        "mac": item.get("mac"),
+        "signal_dbm": item.get("signal") if isinstance(item.get("signal"), int) else None,
+        "noise_dbm": item.get("noise") if isinstance(item.get("noise"), int) else None,
+        "inactive_ms": item.get("inactive") if isinstance(item.get("inactive"), int) else None,
+        "rx_rate_kbps": rate("rx"),
+        "tx_rate_kbps": rate("tx"),
+    }
 
 
 def openwrt_integration_status(settings) -> dict:

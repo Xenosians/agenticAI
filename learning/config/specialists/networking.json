@@ -438,6 +438,78 @@
       "tags": [
         "authored-networking"
       ]
+    },
+    {
+      "tool_name": "network_dhcp_leases",
+      "user_request": "Show the DHCP leases on the OpenWrt router.",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "clients"
+      ]
+    },
+    {
+      "tool_name": "network_dhcp_leases",
+      "user_request": "Which devices currently have a DHCP lease from the router?",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "clients"
+      ]
+    },
+    {
+      "tool_name": "network_dhcp_leases",
+      "user_request": "List the IP addresses the OpenWrt DHCP server has handed out.",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "clients"
+      ]
+    },
+    {
+      "tool_name": "network_dhcp_leases",
+      "user_request": "Who got an address from the router's DHCP?",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "clients"
+      ]
+    },
+    {
+      "tool_name": "network_wireless_clients",
+      "user_request": "Which wireless clients are associated with the OpenWrt router?",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "clients"
+      ]
+    },
+    {
+      "tool_name": "network_wireless_clients",
+      "user_request": "Show the devices connected to the router's Wi-Fi.",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "clients"
+      ]
+    },
+    {
+      "tool_name": "network_wireless_clients",
+      "user_request": "List the Wi-Fi stations and their signal strength.",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "clients"
+      ]
+    },
+    {
+      "tool_name": "network_wireless_clients",
+      "user_request": "How many wireless clients are on the access point right now?",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "clients"
+      ]
     }
   ],
   "eval_cases": [
@@ -544,6 +616,46 @@
       "expected_arguments": {
         "interface": "wan"
       }
+    },
+    {
+      "name": "dhcp-leases-paraphrase",
+      "user": "Give me the current address leases from our OpenWrt box.",
+      "allowed_tools": [
+        "network_dhcp_leases"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "network_dhcp_leases",
+      "expected_arguments": {}
+    },
+    {
+      "name": "dhcp-leases-hosts",
+      "user": "What hostnames have leases on the router right now? Read only.",
+      "allowed_tools": [
+        "network_dhcp_leases"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "network_dhcp_leases",
+      "expected_arguments": {}
+    },
+    {
+      "name": "wireless-clients-paraphrase",
+      "user": "Which stations are associated with the OpenWrt wireless network?",
+      "allowed_tools": [
+        "network_wireless_clients"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "network_wireless_clients",
+      "expected_arguments": {}
+    },
+    {
+      "name": "wireless-clients-signal",
+      "user": "Check the signal of the Wi-Fi devices connected to the router, without changing anything.",
+      "allowed_tools": [
+        "network_wireless_clients"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "network_wireless_clients",
+      "expected_arguments": {}
     }
   ]
 }

@@ -103,6 +103,8 @@ CAPABILITY_SEMANTICS: dict[str, dict[str, str]] = {
     "sla_status": {"resource_type": "service_desk.sla", "operation_kind": "read", "effect": "read", "permission": "service_desk.sla.read"},
 
     # --- network clients ---
+    "network_dhcp_leases": {"resource_type": "network.dhcp_lease", "operation_kind": "read", "effect": "read", "permission": "network.dhcp_lease.read"},
+    "network_wireless_clients": {"resource_type": "network.wireless_client", "operation_kind": "read", "effect": "read", "permission": "network.wireless_client.read"},
 }
 
 

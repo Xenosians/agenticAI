@@ -10,6 +10,7 @@ class NetworkReadResult(BaseModel):
     observed_at: str | None = None
     data: dict[str, Any] | None = None
     scope: str | None = None
+    note: str | None = None
 
 
 def register_networking_tools(server, service: OpenWrtService | None):
@@ -29,3 +30,11 @@ def register_networking_tools(server, service: OpenWrtService | None):
     @server.tool()
     def network_firewall_config() -> NetworkReadResult:
         return NetworkReadResult(**require_service().firewall_config())
+
+    @server.tool()
+    def network_dhcp_leases() -> NetworkReadResult:
+        return NetworkReadResult(**require_service().dhcp_leases())
+
+    @server.tool()
+    def network_wireless_clients() -> NetworkReadResult:
+        return NetworkReadResult(**require_service().wireless_clients())
