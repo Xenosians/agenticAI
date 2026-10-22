@@ -303,6 +303,21 @@ class AgentResult:
         str | None
     ) = None
 
+    # Exact arguments saved with the durable approval: what executes when it
+    # is approved, including trusted policy facts the specialist never
+    # proposed (for example a derived account identity). The job proposal a
+    # reviewer approves shows these.
+    #
+    # proposed_arguments stays the specialist's own validated proposal, so
+    # learning evidence never records trusted policy facts as model output.
+    approval_arguments: (
+        dict[
+            str,
+            Any,
+        ]
+        | None
+    ) = None
+
     # Stable machine-readable runtime outcome.
     #
     # This is intentionally separate from human-readable error

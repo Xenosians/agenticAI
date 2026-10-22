@@ -312,16 +312,32 @@ def proposed_tool(
         if not tool_name:
             continue
 
-        return {
-            "tool":
-                tool_name,
+        # An approval executes exactly its saved arguments, including trusted
+        # policy facts the specialist did not propose. The reviewer approves
+        # this proposal, so it must show that exact action.
+        arguments = (
+            result.get(
+                "approval_arguments"
+            )
+        )
 
-            "arguments": (
+        if not isinstance(
+            arguments,
+            dict,
+        ):
+            arguments = (
                 result.get(
                     "proposed_arguments"
                 )
                 or {}
-            ),
+            )
+
+        return {
+            "tool":
+                tool_name,
+
+            "arguments":
+                arguments,
 
             "approval_id":
                 result.get(

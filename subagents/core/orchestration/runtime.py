@@ -1245,6 +1245,10 @@ class AgentRuntime:
                         approval_id
                     ),
 
+                    approval_arguments=(
+                        approval_arguments
+                    ),
+
                     outcome_code=(
                         decision_code
                         or "approval_required"
