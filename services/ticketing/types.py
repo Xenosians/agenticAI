@@ -282,3 +282,100 @@ class TicketCommentsResult(
     error: (
         str | None
     ) = None
+
+
+class TicketLink(
+    BaseModel
+):
+    """
+    One issue link seen from the requested ticket.
+
+    ``relationship`` reads as a sentence:
+    ``<ticket> <relationship> <other_key>``.
+    """
+
+    id: (
+        str | None
+    ) = None
+
+    link_type: str
+
+    direction: str
+
+    relationship: str
+
+    other_key: str
+
+    other_summary: (
+        str | None
+    ) = None
+
+    other_status: (
+        str | None
+    ) = None
+
+
+class TicketLinksResult(
+    BaseModel
+):
+    ok: bool
+    status: str
+
+    provider: (
+        str | None
+    ) = None
+
+    ticket_key: (
+        str | None
+    ) = None
+
+    links: list[
+        TicketLink
+    ] = Field(
+        default_factory=list
+    )
+
+    count: int = Field(
+        default=0,
+        ge=0,
+    )
+
+    error: (
+        str | None
+    ) = None
+
+
+class TicketAssignedResult(
+    BaseModel
+):
+    ok: bool
+    status: str
+
+    provider: (
+        str | None
+    ) = None
+
+    assignee_account_id: (
+        str | None
+    ) = None
+
+    assignee_display_name: (
+        str | None
+    ) = None
+
+    tickets: list[
+        TicketRecord
+    ] = Field(
+        default_factory=list
+    )
+
+    count: int = Field(
+        default=0,
+        ge=0,
+    )
+
+    truncated: bool = False
+
+    error: (
+        str | None
+    ) = None

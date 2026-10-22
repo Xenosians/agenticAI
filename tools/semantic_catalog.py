@@ -79,6 +79,11 @@ CAPABILITY_SEMANTICS: dict[str, dict[str, str]] = {
     "workspace_service_logs": {"resource_type": "workspace.service", "operation_kind": "read", "effect": "read", "permission": "workspace.service.read"},
     "workspace_service_status": {"resource_type": "workspace.service", "operation_kind": "read", "effect": "read", "permission": "workspace.service.read"},
     # --- Jira depth ---
+    "ticket_assigned": {"resource_type": "ticket", "operation_kind": "search", "effect": "read", "permission": "ticket.assigned.read"},
+    "ticket_link": {"resource_type": "ticket.link", "operation_kind": "create", "effect": "mutation", "permission": "ticket.link.create"},
+    "ticket_links": {"resource_type": "ticket.link", "operation_kind": "read", "effect": "read", "permission": "ticket.link.read"},
+    "ticket_update": {"resource_type": "ticket", "operation_kind": "update", "effect": "mutation", "permission": "ticket.update"},
+    "ticket_worklog_add": {"resource_type": "ticket.worklog", "operation_kind": "create", "effect": "mutation", "permission": "ticket.worklog.create"},
 
     # --- identity depth ---
     "account_search": {"resource_type": "account", "operation_kind": "search", "effect": "read", "permission": "account.search"},

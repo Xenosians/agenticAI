@@ -6,6 +6,7 @@ from urllib.parse import quote
 import httpx
 
 from .jira import JiraTicketService, JIRA_TICKET_KEY_PATTERN
+from .validation import DUE_DATE_PATTERN
 
 
 MAX_TICKET_KEY_LENGTH = 100
@@ -140,6 +141,7 @@ def read_jira_issue_snapshot(
     *,
     include_assignee: bool = False,
     include_status: bool = False,
+    include_editable: bool = False,
     operation: str,
 ) -> dict[str, Any]:
     fields = [
@@ -152,6 +154,9 @@ def read_jira_issue_snapshot(
 
     if include_status:
         fields.append("status")
+
+    if include_editable:
+        fields.extend(["priority", "labels", "duedate"])
 
     payload = trusted_get_json(
         service,
@@ -269,8 +274,246 @@ def read_jira_issue_snapshot(
             }
         )
 
+    if include_editable:
+        snapshot.update(editable_field_snapshot(raw_fields))
+
     return snapshot
 
+
+def editable_field_snapshot(raw_fields: dict[str, Any]) -> dict[str, Any]:
+    """Current priority, labels and due date; ``None`` means unset."""
+
+    priority = raw_fields.get("priority")
+    if priority is None:
+        priority_id = None
+        priority_name = None
+    elif isinstance(priority, dict):
+        priority_id = provider_string(
+            priority.get("id"),
+            field_name="priority ID",
+            max_length=MAX_PROVIDER_ID_LENGTH,
+        )
+        priority_name = optional_provider_string(
+            priority.get("name"),
+            field_name="priority name",
+            max_length=MAX_PROVIDER_NAME_LENGTH,
+        )
+    else:
+        raise RuntimeError("Jira returned invalid priority metadata.")
+
+    labels = raw_fields.get("labels")
+    if labels is None:
+        labels = []
+    if not isinstance(labels, list) or not all(
+        isinstance(label, str) and label for label in labels
+    ):
+        raise RuntimeError("Jira returned invalid label metadata.")
+
+    due_date = raw_fields.get("duedate")
+    if due_date is not None and (
+        not isinstance(due_date, str)
+        or DUE_DATE_PATTERN.fullmatch(due_date) is None
+    ):
+        raise RuntimeError("Jira returned an invalid due date.")
+
+    return {
+        "priority_id": priority_id,
+        "priority_name": priority_name,
+        "labels": sorted(labels),
+        "due_date": due_date,
+    }
+
+
+def require_issue_permission(
+    service: JiraTicketService,
+    issue_key: str,
+    permission: str,
+    *,
+    operation: str,
+) -> None:
+    """Refuse before approval when the configured account lacks a permission."""
+
+    payload = trusted_get_json(
+        service,
+        "/rest/api/3/mypermissions",
+        operation=operation,
+        params={
+            "issueKey": issue_key,
+            "permissions": permission,
+        },
+    )
+
+    permissions = (
+        payload.get("permissions")
+        if isinstance(payload, dict)
+        else None
+    )
+    entry = (
+        permissions.get(permission)
+        if isinstance(permissions, dict)
+        else None
+    )
+
+    if not isinstance(entry, dict) or not isinstance(entry.get("havePermission"), bool):
+        raise RuntimeError("Jira returned invalid permission metadata.")
+
+    if entry["havePermission"] is not True:
+        raise PermissionError(
+            f"The configured Jira account lacks the {permission} permission "
+            f"on {issue_key}."
+        )
+
+
+def provider_error_detail(response: httpx.Response) -> str:
+    """Jira's own validation messages, bounded, for a clear refusal."""
+
+    try:
+        payload = response.json()
+    except ValueError:
+        return ""
+
+    if not isinstance(payload, dict):
+        return ""
+
+    messages = [
+        item
+        for item in payload.get("errorMessages") or []
+        if isinstance(item, str) and item.strip()
+    ]
+    errors = payload.get("errors")
+    if isinstance(errors, dict):
+        messages.extend(
+            f"{name}: {value}"
+            for name, value in errors.items()
+            if isinstance(name, str) and isinstance(value, str)
+        )
+
+    return " ".join(messages)[:300]
+
+
+def jira_mutation_result(
+    *,
+    operation: str,
+    ticket_key: object,
+    status: str,
+    ok: bool = False,
+    changed: bool = False,
+    mutation_performed: bool | None = False,
+    verification_ok: bool = False,
+    **fields: Any,
+) -> dict[str, Any]:
+    """Fields of one ``TicketMutationResult`` for a Jira mutation outcome."""
+
+    return {
+        "ok": ok,
+        "status": status,
+        "provider": "jira",
+        "ticket_key": ticket_key if isinstance(ticket_key, str) else None,
+        "operation": operation,
+        "changed": changed,
+        "mutation_performed": mutation_performed,
+        "verification_ok": verification_ok,
+        "reconciled": False,
+        **fields,
+    }
+
+
+def jira_rejection_result(
+    response: httpx.Response,
+    *,
+    operation: str,
+    ticket_key: str,
+    action: str,
+    **fields: Any,
+) -> dict[str, Any] | None:
+    """
+    Map a non-success mutation response; ``None`` means it was not a refusal.
+
+    Refusals (4xx) prove nothing changed. Server errors and unexpected codes
+    after the request was sent leave the outcome unknown; retry is disabled.
+    """
+
+    status_code = response.status_code
+
+    if status_code == 402:
+        return jira_mutation_result(
+            operation=operation,
+            ticket_key=ticket_key,
+            status="denied",
+            error_code="plan_required",
+            error=f"The Jira plan does not allow this {action} request.",
+            **fields,
+        )
+
+    if status_code in {400, 401, 403, 404, 409, 422}:
+        detail = provider_error_detail(response)
+        return jira_mutation_result(
+            operation=operation,
+            ticket_key=ticket_key,
+            status="denied",
+            error=(
+                f"Jira rejected the approved {action} request "
+                f"(HTTP {status_code})."
+                + (f" {detail}" if detail else "")
+            ),
+            **fields,
+        )
+
+    if status_code == 429:
+        return jira_mutation_result(
+            operation=operation,
+            ticket_key=ticket_key,
+            status="rate_limited",
+            error=f"Jira rate limited the approved {action} request.",
+            **fields,
+        )
+
+    if not 200 <= status_code < 300:
+        return jira_mutation_result(
+            operation=operation,
+            ticket_key=ticket_key,
+            status="outcome_unknown",
+            mutation_performed=None,
+            error=(
+                f"Jira returned HTTP {status_code} after the {action} request "
+                "was sent. The outcome is not trusted and automatic retry is "
+                "disabled."
+            ),
+            **fields,
+        )
+
+    return None
+
+
+def revalidate_base_snapshot(
+    service: JiraTicketService,
+    *,
+    operation: str,
+    include_editable: bool = False,
+    expected_extra: dict[str, Any] | None = None,
+    **expected_base: Any,
+) -> dict[str, Any]:
+    """Re-read the issue and refuse if anything frozen before approval changed."""
+
+    expected = {
+        **expected_base_snapshot(**expected_base),
+        **(expected_extra or {}),
+    }
+
+    current = read_jira_issue_snapshot(
+        service,
+        expected["issue_key"],
+        include_editable=include_editable,
+        operation=operation,
+    )
+
+    if current != expected:
+        raise PermissionError(
+            "The Jira issue changed after approval. The approved mutation "
+            "will not execute against changed provider state."
+        )
+
+    return current
 
 def base_snapshot_arguments(snapshot: dict[str, Any]) -> dict[str, Any]:
     return {

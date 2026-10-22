@@ -4,8 +4,10 @@ from abc import (
 )
 
 from .types import (
+    TicketAssignedResult,
     TicketCommentsResult,
     TicketHistoryResult,
+    TicketLinksResult,
     TicketLookupResult,
     TicketSearchQuery,
     TicketSearchResult,
@@ -46,4 +48,21 @@ class TicketService(
         *,
         limit: int = 20,
     ) -> TicketCommentsResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_ticket_links(
+        self,
+        ticket_key: str,
+    ) -> TicketLinksResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_assigned_tickets(
+        self,
+        assignee: str,
+        *,
+        status: str | None = None,
+        limit: int = 10,
+    ) -> TicketAssignedResult:
         raise NotImplementedError

@@ -23,6 +23,11 @@ REQUIRED_TOOLS = {
     "ticket_create",
     "ticket_assign",
     "ticket_transition",
+    "ticket_update",
+    "ticket_link",
+    "ticket_links",
+    "ticket_assigned",
+    "ticket_worklog_add",
 }
 
 
@@ -73,9 +78,11 @@ def test_jira_sft_targets_are_exact_single_tool_calls():
             key,
             value,
         ) in calls[0]["arguments"].items():
-            assert allowed[key] == [
+            assert allowed[key] == (
                 value
-            ]
+                if isinstance(value, list)
+                else [value]
+            )
 
 
 def test_jira_sft_seed_excludes_exact_held_out_eval_requests():

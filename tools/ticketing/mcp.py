@@ -142,9 +142,69 @@ class TicketMutationMCPResult(
     verification_ok: bool = False
     reconciled: bool = False
     comment_id: str | None = None
+    link_id: str | None = None
+    worklog_id: str | None = None
     previous_value: str | None = None
     new_value: str | None = None
+
+    changes: list[
+        TicketFieldChangeResult
+    ] = Field(
+        default_factory=list
+    )
+
     message: str | None = None
+    error: str | None = None
+    error_code: str | None = None
+
+
+class TicketLinkResult(
+    BaseModel
+):
+    id: str | None = None
+    link_type: str
+    direction: str
+    relationship: str
+    other_key: str
+    other_summary: str | None = None
+    other_status: str | None = None
+
+
+class TicketLinksMCPResult(
+    BaseModel
+):
+    ok: bool
+    status: str
+    provider: str | None = None
+    ticket_key: str | None = None
+
+    links: list[
+        TicketLinkResult
+    ] = Field(
+        default_factory=list
+    )
+
+    count: int = 0
+    error: str | None = None
+
+
+class TicketAssignedMCPResult(
+    BaseModel
+):
+    ok: bool
+    status: str
+    provider: str | None = None
+    assignee_account_id: str | None = None
+    assignee_display_name: str | None = None
+
+    tickets: list[
+        TicketRecordResult
+    ] = Field(
+        default_factory=list
+    )
+
+    count: int = 0
+    truncated: bool = False
     error: str | None = None
 
 
@@ -281,6 +341,30 @@ def register_ticketing_tools(
                 **result.model_dump()
             )
         )
+
+    @server.tool()
+    def ticket_links(
+        ticket_key: str,
+    ) -> TicketLinksMCPResult:
+
+        result = ticket_service.get_ticket_links(ticket_key)
+
+        return TicketLinksMCPResult(**result.model_dump())
+
+    @server.tool()
+    def ticket_assigned(
+        assignee: str,
+        status: str | None = None,
+        limit: int | None = None,
+    ) -> TicketAssignedMCPResult:
+
+        result = ticket_service.get_assigned_tickets(
+            assignee,
+            status=status,
+            limit=10 if limit is None else limit,
+        )
+
+        return TicketAssignedMCPResult(**result.model_dump())
 
     if (
         ticket_mutations
@@ -447,6 +531,121 @@ def register_ticketing_tools(
             expected_transition_name=expected_transition_name,
             expected_target_status_id=expected_target_status_id,
             expected_target_status_name=expected_target_status_name,
+        )
+
+        return TicketMutationMCPResult(**result.model_dump())
+
+    @server.tool()
+    def ticket_update(
+        ticket_key: str,
+        priority: str | None = None,
+        add_labels: list[str] | None = None,
+        remove_labels: list[str] | None = None,
+        due_date: str | None = None,
+        expected_issue_id: str | None = None,
+        expected_issue_key: str | None = None,
+        expected_issue_summary: str | None = None,
+        expected_project_id: str | None = None,
+        expected_project_key: str | None = None,
+        expected_project_name: str | None = None,
+        expected_priority_id: str | None = None,
+        expected_priority_name: str | None = None,
+        expected_labels: list[str] | None = None,
+        expected_due_date: str | None = None,
+        expected_target_priority_id: str | None = None,
+        expected_target_priority_name: str | None = None,
+    ) -> TicketMutationMCPResult:
+
+        result = ticket_mutations.update_ticket(
+            ticket_key,
+            priority=priority,
+            add_labels=add_labels,
+            remove_labels=remove_labels,
+            due_date=due_date,
+            expected_issue_id=expected_issue_id,
+            expected_issue_key=expected_issue_key,
+            expected_issue_summary=expected_issue_summary,
+            expected_project_id=expected_project_id,
+            expected_project_key=expected_project_key,
+            expected_project_name=expected_project_name,
+            expected_priority_id=expected_priority_id,
+            expected_priority_name=expected_priority_name,
+            expected_labels=expected_labels,
+            expected_due_date=expected_due_date,
+            expected_target_priority_id=expected_target_priority_id,
+            expected_target_priority_name=expected_target_priority_name,
+        )
+
+        return TicketMutationMCPResult(**result.model_dump())
+
+    @server.tool()
+    def ticket_link(
+        ticket_key: str,
+        other_ticket_key: str,
+        relationship: str,
+        expected_issue_id: str | None = None,
+        expected_issue_key: str | None = None,
+        expected_issue_summary: str | None = None,
+        expected_project_id: str | None = None,
+        expected_project_key: str | None = None,
+        expected_project_name: str | None = None,
+        expected_other_issue_id: str | None = None,
+        expected_other_issue_key: str | None = None,
+        expected_other_issue_summary: str | None = None,
+        expected_link_type_id: str | None = None,
+        expected_link_type_name: str | None = None,
+        expected_link_direction: str | None = None,
+        expected_link_phrase: str | None = None,
+        expected_link_exists: bool | None = None,
+    ) -> TicketMutationMCPResult:
+
+        result = ticket_mutations.link_tickets(
+            ticket_key,
+            other_ticket_key,
+            relationship,
+            expected_issue_id=expected_issue_id,
+            expected_issue_key=expected_issue_key,
+            expected_issue_summary=expected_issue_summary,
+            expected_project_id=expected_project_id,
+            expected_project_key=expected_project_key,
+            expected_project_name=expected_project_name,
+            expected_other_issue_id=expected_other_issue_id,
+            expected_other_issue_key=expected_other_issue_key,
+            expected_other_issue_summary=expected_other_issue_summary,
+            expected_link_type_id=expected_link_type_id,
+            expected_link_type_name=expected_link_type_name,
+            expected_link_direction=expected_link_direction,
+            expected_link_phrase=expected_link_phrase,
+            expected_link_exists=expected_link_exists,
+        )
+
+        return TicketMutationMCPResult(**result.model_dump())
+
+    @server.tool()
+    def ticket_worklog_add(
+        ticket_key: str,
+        time_spent: str,
+        comment: str | None = None,
+        expected_issue_id: str | None = None,
+        expected_issue_key: str | None = None,
+        expected_issue_summary: str | None = None,
+        expected_project_id: str | None = None,
+        expected_project_key: str | None = None,
+        expected_project_name: str | None = None,
+        expected_time_spent_seconds: int | None = None,
+    ) -> TicketMutationMCPResult:
+
+        result = ticket_mutations.add_worklog(
+            ticket_key,
+            time_spent,
+            comment=comment,
+            expected_issue_id=expected_issue_id,
+            expected_issue_key=expected_issue_key,
+            expected_issue_summary=expected_issue_summary,
+            expected_project_id=expected_project_id,
+            expected_project_key=expected_project_key,
+            expected_project_name=expected_project_name,
+            expected_time_spent_seconds=expected_time_spent_seconds,
         )
 
         return TicketMutationMCPResult(**result.model_dump())

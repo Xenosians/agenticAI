@@ -20,6 +20,7 @@ import httpx
 
 from pydantic import (
     BaseModel,
+    Field,
 )
 
 from .base import (
@@ -47,8 +48,20 @@ from .jira_issue_policy import (
     read_jira_issue_snapshot,
 )
 
+from .jira_link_policy import (
+    execute_jira_ticket_link,
+)
+
 from .jira_transition_policy import (
     revalidate_jira_ticket_transition_snapshot,
+)
+
+from .jira_update_policy import (
+    execute_jira_ticket_update,
+)
+
+from .jira_worklog_policy import (
+    execute_jira_worklog_add,
 )
 
 from .mock import (
@@ -59,7 +72,15 @@ from .types import (
     TicketComment,
     TicketFieldChange,
     TicketHistoryEntry,
+    TicketLink,
     TicketRecord,
+)
+
+from .validation import (
+    parse_duration,
+    resolve_link_relationship,
+    updated_labels,
+    validate_update_request,
 )
 
 
@@ -120,6 +141,14 @@ class TicketMutationResult(
         str | None
     ) = None
 
+    link_id: (
+        str | None
+    ) = None
+
+    worklog_id: (
+        str | None
+    ) = None
+
     previous_value: (
         str | None
     ) = None
@@ -128,11 +157,21 @@ class TicketMutationResult(
         str | None
     ) = None
 
+    changes: list[
+        TicketFieldChange
+    ] = Field(
+        default_factory=list
+    )
+
     message: (
         str | None
     ) = None
 
     error: (
+        str | None
+    ) = None
+
+    error_code: (
         str | None
     ) = None
 
@@ -219,6 +258,71 @@ class TicketMutationService(
         expected_transition_name: str | None = None,
         expected_target_status_id: str | None = None,
         expected_target_status_name: str | None = None,
+    ) -> TicketMutationResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    def update_ticket(
+        self,
+        ticket_key: str,
+        *,
+        priority: str | None = None,
+        add_labels: list[str] | None = None,
+        remove_labels: list[str] | None = None,
+        due_date: str | None = None,
+        expected_issue_id: str | None = None,
+        expected_issue_key: str | None = None,
+        expected_issue_summary: str | None = None,
+        expected_project_id: str | None = None,
+        expected_project_key: str | None = None,
+        expected_project_name: str | None = None,
+        expected_priority_id: str | None = None,
+        expected_priority_name: str | None = None,
+        expected_labels: list[str] | None = None,
+        expected_due_date: str | None = None,
+        expected_target_priority_id: str | None = None,
+        expected_target_priority_name: str | None = None,
+    ) -> TicketMutationResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    def link_tickets(
+        self,
+        ticket_key: str,
+        other_ticket_key: str,
+        relationship: str,
+        *,
+        expected_issue_id: str | None = None,
+        expected_issue_key: str | None = None,
+        expected_issue_summary: str | None = None,
+        expected_project_id: str | None = None,
+        expected_project_key: str | None = None,
+        expected_project_name: str | None = None,
+        expected_other_issue_id: str | None = None,
+        expected_other_issue_key: str | None = None,
+        expected_other_issue_summary: str | None = None,
+        expected_link_type_id: str | None = None,
+        expected_link_type_name: str | None = None,
+        expected_link_direction: str | None = None,
+        expected_link_phrase: str | None = None,
+        expected_link_exists: bool | None = None,
+    ) -> TicketMutationResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    def add_worklog(
+        self,
+        ticket_key: str,
+        time_spent: str,
+        *,
+        comment: str | None = None,
+        expected_issue_id: str | None = None,
+        expected_issue_key: str | None = None,
+        expected_issue_summary: str | None = None,
+        expected_project_id: str | None = None,
+        expected_project_key: str | None = None,
+        expected_project_name: str | None = None,
+        expected_time_spent_seconds: int | None = None,
     ) -> TicketMutationResult:
         raise NotImplementedError
 
@@ -1252,6 +1356,326 @@ class MockTicketMutationService(
                     "Ticket status updated."
                 ),
             )
+        )
+
+    def _mock_denied(
+        self,
+        operation: str,
+        error: str,
+        ticket_key: str | None = None,
+    ) -> TicketMutationResult:
+        return TicketMutationResult(
+            ok=False,
+            status="denied",
+            provider="mock",
+            ticket_key=ticket_key,
+            operation=operation,
+            changed=False,
+            mutation_performed=False,
+            error=error,
+        )
+
+    def _mock_ticket(
+        self,
+        ticket_key: str,
+        operation: str,
+    ) -> tuple[
+        TicketRecord | None,
+        TicketMutationResult | None,
+    ]:
+        lookup = self.ticket_service.get_ticket(ticket_key)
+
+        if not lookup.ok or lookup.ticket is None:
+            return None, TicketMutationResult(
+                ok=False,
+                status=lookup.status,
+                provider="mock",
+                operation=operation,
+                error=lookup.error,
+            )
+
+        return lookup.ticket, None
+
+    def update_ticket(
+        self,
+        ticket_key: str,
+        *,
+        priority: str | None = None,
+        add_labels: list[str] | None = None,
+        remove_labels: list[str] | None = None,
+        due_date: str | None = None,
+        **trusted_snapshot: object,
+    ) -> TicketMutationResult:
+
+        if any(value is not None for value in trusted_snapshot.values()):
+            return self._mock_denied(
+                "update_ticket",
+                "Jira provider snapshot arguments cannot be used with the "
+                "mock ticket provider.",
+            )
+
+        try:
+            requested = validate_update_request(
+                priority=priority,
+                add_labels=add_labels,
+                remove_labels=remove_labels,
+                due_date=due_date,
+            )
+        except ValueError as exc:
+            return self._mock_denied("update_ticket", str(exc))
+
+        ticket, failure = self._mock_ticket(ticket_key, "update_ticket")
+        if failure is not None:
+            return failure
+
+        service = self.ticket_service
+        changes: list[TicketFieldChange] = []
+
+        if requested["priority"] is not None:
+            matches = [
+                name
+                for name in service.priorities
+                if name.casefold() == requested["priority"].casefold()
+            ]
+            if not matches:
+                return self._mock_denied(
+                    "update_ticket",
+                    f"Unknown priority '{requested['priority']}'. Valid "
+                    f"priorities: {', '.join(service.priorities)}.",
+                    ticket.key,
+                )
+            if ticket.priority != matches[0]:
+                changes.append(
+                    TicketFieldChange(
+                        field="priority",
+                        from_value=ticket.priority,
+                        to_value=matches[0],
+                    )
+                )
+                ticket.priority = matches[0]
+
+        current_labels = sorted(service.labels.get(ticket.key, []))
+        final_labels = updated_labels(
+            current_labels,
+            add_labels=requested["add_labels"],
+            remove_labels=requested["remove_labels"],
+        )
+        if final_labels != current_labels:
+            changes.append(
+                TicketFieldChange(
+                    field="labels",
+                    from_value=", ".join(current_labels) or None,
+                    to_value=", ".join(final_labels) or None,
+                )
+            )
+            service.labels[ticket.key] = final_labels
+
+        if (
+            requested["due_date"] is not None
+            and service.due_dates.get(ticket.key) != requested["due_date"]
+        ):
+            changes.append(
+                TicketFieldChange(
+                    field="duedate",
+                    from_value=service.due_dates.get(ticket.key),
+                    to_value=requested["due_date"],
+                )
+            )
+            service.due_dates[ticket.key] = requested["due_date"]
+
+        for change in changes:
+            self._append_history(
+                ticket_key=ticket.key,
+                field=change.field,
+                previous_value=change.from_value,
+                new_value=change.to_value,
+            )
+
+        if changes:
+            ticket.updated_at = utc_timestamp()
+
+        return TicketMutationResult(
+            ok=True,
+            status="success",
+            provider="mock",
+            ticket_key=ticket.key,
+            operation="update_ticket",
+            changed=bool(changes),
+            mutation_performed=bool(changes),
+            verification_ok=True,
+            changes=changes,
+            message=(
+                "Ticket updated."
+                if changes
+                else "The ticket already has the requested values; nothing changed."
+            ),
+        )
+
+    def link_tickets(
+        self,
+        ticket_key: str,
+        other_ticket_key: str,
+        relationship: str,
+        **trusted_snapshot: object,
+    ) -> TicketMutationResult:
+
+        if any(value is not None for value in trusted_snapshot.values()):
+            return self._mock_denied(
+                "link_tickets",
+                "Jira provider snapshot arguments cannot be used with the "
+                "mock ticket provider.",
+            )
+
+        ticket, failure = self._mock_ticket(ticket_key, "link_tickets")
+        if failure is not None:
+            return failure
+
+        other, failure = self._mock_ticket(other_ticket_key, "link_tickets")
+        if failure is not None:
+            return failure
+
+        if ticket.key == other.key:
+            return self._mock_denied(
+                "link_tickets",
+                "A ticket cannot be linked to itself.",
+                ticket.key,
+            )
+
+        try:
+            resolved = resolve_link_relationship(
+                relationship,
+                self.ticket_service.link_types,
+            )
+        except ValueError as exc:
+            return self._mock_denied("link_tickets", str(exc), ticket.key)
+
+        sentence = f"{ticket.key} {resolved['phrase']} {other.key}"
+        links = self.ticket_service.links
+        directions = (
+            ("outward", "inward")
+            if resolved["symmetric"]
+            else (resolved["direction"],)
+        )
+
+        for link in links.get(ticket.key, []):
+            if (
+                link.link_type == resolved["link_type_name"]
+                and link.other_key == other.key
+                and link.direction in directions
+            ):
+                return TicketMutationResult(
+                    ok=True,
+                    status="success",
+                    provider="mock",
+                    ticket_key=ticket.key,
+                    operation="link_tickets",
+                    changed=False,
+                    mutation_performed=False,
+                    verification_ok=True,
+                    link_id=link.id,
+                    new_value=sentence,
+                    message=f"The link already exists ({sentence}).",
+                )
+
+        link_id = f"mock-link-{sum(len(items) for items in links.values()) + 1}"
+        reverse = "inward" if resolved["direction"] == "outward" else "outward"
+
+        links.setdefault(ticket.key, []).append(
+            TicketLink(
+                id=link_id,
+                link_type=resolved["link_type_name"],
+                direction=resolved["direction"],
+                relationship=resolved["phrase"],
+                other_key=other.key,
+                other_summary=other.summary,
+                other_status=other.status,
+            )
+        )
+        links.setdefault(other.key, []).append(
+            TicketLink(
+                id=link_id,
+                link_type=resolved["link_type_name"],
+                direction=reverse,
+                relationship=resolved[f"link_type_{reverse}"],
+                other_key=ticket.key,
+                other_summary=ticket.summary,
+                other_status=ticket.status,
+            )
+        )
+
+        return TicketMutationResult(
+            ok=True,
+            status="success",
+            provider="mock",
+            ticket_key=ticket.key,
+            operation="link_tickets",
+            changed=True,
+            mutation_performed=True,
+            verification_ok=True,
+            link_id=link_id,
+            new_value=sentence,
+            message=f"Link created: {sentence}.",
+        )
+
+    def add_worklog(
+        self,
+        ticket_key: str,
+        time_spent: str,
+        *,
+        comment: str | None = None,
+        **trusted_snapshot: object,
+    ) -> TicketMutationResult:
+
+        if any(value is not None for value in trusted_snapshot.values()):
+            return self._mock_denied(
+                "add_worklog",
+                "Jira provider snapshot arguments cannot be used with the "
+                "mock ticket provider.",
+            )
+
+        try:
+            parse_duration(time_spent)
+        except ValueError as exc:
+            return self._mock_denied("add_worklog", str(exc))
+
+        if comment is not None and (
+            not isinstance(comment, str)
+            or not comment.strip()
+            or len(comment) > MAX_TICKET_COMMENT_LENGTH
+        ):
+            return self._mock_denied(
+                "add_worklog",
+                "comment must be non-empty text of at most "
+                f"{MAX_TICKET_COMMENT_LENGTH} characters.",
+            )
+
+        ticket, failure = self._mock_ticket(ticket_key, "add_worklog")
+        if failure is not None:
+            return failure
+
+        worklogs = self.ticket_service.worklogs.setdefault(ticket.key, [])
+        worklog_id = f"mock-worklog-{len(worklogs) + 1}"
+        worklogs.append(
+            {
+                "id": worklog_id,
+                "time_spent": time_spent,
+                "comment": comment,
+                "created_at": utc_timestamp(),
+            }
+        )
+
+        return TicketMutationResult(
+            ok=True,
+            status="success",
+            provider="mock",
+            ticket_key=ticket.key,
+            operation="add_worklog",
+            changed=True,
+            mutation_performed=True,
+            verification_ok=True,
+            worklog_id=worklog_id,
+            new_value=time_spent,
+            message=f"Logged {time_spent} on {ticket.key}.",
         )
 
 
@@ -3388,6 +3812,59 @@ class JiraTicketMutationService(
             previous_value=expected_source_status_name,
             new_value=expected_target_status_name,
             message="Ticket status updated and verified.",
+        )
+
+    def update_ticket(
+        self,
+        ticket_key: str,
+        **arguments: object,
+    ) -> TicketMutationResult:
+        """Execute one exact approved field update; see jira_update_policy."""
+
+        return TicketMutationResult(
+            **execute_jira_ticket_update(
+                self.ticket_service,
+                ticket_key=ticket_key,
+                **arguments,
+            )
+        )
+
+    def link_tickets(
+        self,
+        ticket_key: str,
+        other_ticket_key: str,
+        relationship: str,
+        **arguments: object,
+    ) -> TicketMutationResult:
+        """Execute one exact approved issue link; see jira_link_policy."""
+
+        return TicketMutationResult(
+            **execute_jira_ticket_link(
+                self.ticket_service,
+                ticket_key=ticket_key,
+                other_ticket_key=other_ticket_key,
+                relationship=relationship,
+                **arguments,
+            )
+        )
+
+    def add_worklog(
+        self,
+        ticket_key: str,
+        time_spent: str,
+        **arguments: object,
+    ) -> TicketMutationResult:
+        """Execute one exact approved worklog; see jira_worklog_policy."""
+
+        return TicketMutationResult(
+            **execute_jira_worklog_add(
+                self.ticket_service,
+                ticket_key=ticket_key,
+                time_spent=time_spent,
+                comment_document=self._comment_adf,
+                comment_text=self._comment_adf_exact_text,
+                **arguments,
+            )
         )
 
 

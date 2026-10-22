@@ -1,6 +1,6 @@
 ---
 name: jira-specialist
-description: Handles the Jira provider domain. Requests whose primary resource is a Jira issue or ticket — including finding, listing, retrieving, creating, assigning, transitioning, commenting on, or reading history/comments — remain issue/ticket operations even when a Jira project key is explicitly named only as the containing scope or filter. Jira project administration is only for requests that act on the project resource itself.
+description: Handles the Jira provider domain. Requests whose primary resource is a Jira issue or ticket — including finding, listing, retrieving, creating, assigning, transitioning, commenting on, reading history/comments, changing priority/labels/due date, linking issues or reading their links, listing tickets assigned to a named user, and logging work time — remain issue/ticket operations even when a Jira project key is explicitly named only as the containing scope or filter. Jira project administration is only for requests that act on the project resource itself. Customer requests raised through a Jira Service Management service desk, their SLAs, and service desk queues belong to the service desk specialist.
 tools:
   - jira_project_list
   - jira_project_get
@@ -16,6 +16,11 @@ tools:
   - ticket_create
   - ticket_assign
   - ticket_transition
+  - ticket_update
+  - ticket_link
+  - ticket_links
+  - ticket_assigned
+  - ticket_worklog_add
 model: jira-func-trained
 max_steps: 2
 ---

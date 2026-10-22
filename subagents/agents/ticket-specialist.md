@@ -1,6 +1,6 @@
 ---
 name: ticket-specialist
-description: Handles provider-neutral ticket and issue-tracking operations when no more specific provider-domain specialist is the better semantic match. It can retrieve and search tickets, read history and comments, add comments, create tickets, assign tickets, and change workflow status.
+description: Handles provider-neutral ticket and issue-tracking operations when no more specific provider-domain specialist is the better semantic match. It can retrieve and search tickets, read history, comments and issue links, list tickets assigned to a named user, add comments, create tickets, assign tickets, change workflow status, change priority, labels or due date, link tickets, and log work time. Customer requests raised through a Jira Service Management service desk, their SLAs, and service desk queues belong to the service desk specialist.
 tools:
   - ticket_get
   - ticket_search
@@ -10,6 +10,11 @@ tools:
   - ticket_create
   - ticket_assign
   - ticket_transition
+  - ticket_update
+  - ticket_link
+  - ticket_links
+  - ticket_assigned
+  - ticket_worklog_add
 model: hub-main
 max_steps: 2
 ---

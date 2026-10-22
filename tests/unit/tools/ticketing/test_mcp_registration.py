@@ -85,6 +85,11 @@ def test_all_ticketing_capabilities_are_registered():
         "ticket_create",
         "ticket_assign",
         "ticket_transition",
+        "ticket_update",
+        "ticket_link",
+        "ticket_links",
+        "ticket_assigned",
+        "ticket_worklog_add",
     }
 
 

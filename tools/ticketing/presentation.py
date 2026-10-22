@@ -1006,3 +1006,170 @@ def build_ticket_comments_card(
             ],
         )
     )
+
+
+# ============================================================
+# TICKET LINKS
+# ============================================================
+
+
+def _link_line(
+    ticket_key: Any,
+    link: Any,
+) -> str | None:
+    if not isinstance(link, dict):
+        return None
+
+    relationship = link.get("relationship")
+    other_key = link.get("other_key")
+
+    if not isinstance(relationship, str) or not isinstance(other_key, str):
+        return None
+
+    subject = (
+        ticket_key
+        if isinstance(ticket_key, str) and ticket_key.strip()
+        else "This ticket"
+    )
+
+    line = f"{subject} {relationship} {other_key}"
+
+    details = [
+        value.strip()
+        for value in (link.get("other_summary"), link.get("other_status"))
+        if isinstance(value, str) and value.strip()
+    ]
+
+    if details:
+        line += " — " + " · ".join(details)
+
+    return line
+
+
+def format_ticket_links_result(
+    result: dict[
+        str,
+        Any,
+    ],
+) -> str:
+    ticket_key = result.get("ticket_key")
+    links = result.get("links")
+
+    if not isinstance(links, list):
+        return "Ticket link lookup completed, but no valid links were returned."
+
+    lines = [
+        line
+        for line in (_link_line(ticket_key, link) for link in links)
+        if line is not None
+    ]
+
+    if not lines:
+        return f"No issues are linked to {ticket_key or 'the ticket'}."
+
+    return "Linked issues:\n" + "\n".join(lines)
+
+
+def build_ticket_links_card(
+    result: dict[
+        str,
+        Any,
+    ],
+) -> dict[
+    str,
+    Any,
+]:
+    ticket_key = result.get("ticket_key")
+    links = result.get("links")
+
+    items = [
+        line
+        for line in (
+            _link_line(ticket_key, link)
+            for link in (links if isinstance(links, list) else [])
+        )
+        if line is not None
+    ]
+
+    return build_result_card(
+        kind="ticket-links",
+        title=(
+            f"{ticket_key} links"
+            if isinstance(ticket_key, str) and ticket_key.strip()
+            else "Ticket links"
+        ),
+        status=str(result.get("status", "unknown")),
+        fields=[
+            result_field("Returned", result.get("count")),
+            result_field("Provider", result.get("provider")),
+        ],
+        sections=[
+            list_section(
+                title="Links",
+                items=items,
+            )
+        ],
+    )
+
+
+# ============================================================
+# TICKETS ASSIGNED TO ONE USER
+# ============================================================
+
+
+def format_ticket_assigned_result(
+    result: dict[
+        str,
+        Any,
+    ],
+) -> str:
+    who = (
+        result.get("assignee_display_name")
+        or result.get("assignee_account_id")
+        or "the user"
+    )
+
+    tickets = result.get("tickets")
+
+    if isinstance(tickets, list) and not tickets:
+        return f"No tickets are assigned to {who}."
+
+    listing = format_ticket_search_result(result)
+
+    return listing.replace(
+        "Matching tickets:",
+        f"Tickets assigned to {who}:",
+        1,
+    )
+
+
+def build_ticket_assigned_card(
+    result: dict[
+        str,
+        Any,
+    ],
+) -> dict[
+    str,
+    Any,
+]:
+    card = build_ticket_search_card(result)
+
+    who = (
+        result.get("assignee_display_name")
+        or result.get("assignee_account_id")
+    )
+
+    return build_result_card(
+        kind="ticket-list",
+        title=(
+            f"Tickets assigned to {who}"
+            if isinstance(who, str) and who.strip()
+            else "Assigned tickets"
+        ),
+        status=card["status"],
+        fields=[
+            result_field("Assignee account", result.get("assignee_account_id")),
+            *card["fields"],
+        ],
+        sections=card["sections"],
+    )

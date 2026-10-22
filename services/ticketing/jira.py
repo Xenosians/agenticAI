@@ -20,15 +20,22 @@ from .base import (
 )
 
 from .types import (
+    TicketAssignedResult,
     TicketComment,
     TicketCommentsResult,
     TicketFieldChange,
     TicketHistoryEntry,
     TicketHistoryResult,
+    TicketLink,
+    TicketLinksResult,
     TicketLookupResult,
     TicketRecord,
     TicketSearchQuery,
     TicketSearchResult,
+)
+
+from .validation import (
+    explicit_user_reference,
 )
 
 
@@ -1224,12 +1231,27 @@ class JiraTicketService(
                 )
             )
 
+        return (
+            self._search_jql(
+                jql,
+                limit=query.limit,
+            )
+        )
+
+    def _search_jql(
+        self,
+        jql: str,
+        *,
+        limit: int,
+    ) -> TicketSearchResult:
+        """Run one trusted, bounded JQL search and decode its tickets."""
+
         request_body = {
             "jql":
                 jql,
 
             "maxResults":
-                query.limit,
+                limit,
 
             "fields":
                 list(
@@ -1995,6 +2017,320 @@ class JiraTicketService(
                 truncated=truncated,
                 error=None,
             )
+        )
+
+    @classmethod
+    def _decode_issue_link(
+        cls,
+        payload: Any,
+    ) -> (
+        TicketLink | None
+    ):
+        if not isinstance(
+            payload,
+            dict,
+        ):
+            return None
+
+        link_type = payload.get("type")
+        if not isinstance(link_type, dict):
+            return None
+
+        type_name = cls._string_field(link_type.get("name"))
+
+        # Jira reports each link from the requested issue's side:
+        # ``outwardIssue`` reads "<issue> <type.outward> <other>" and
+        # ``inwardIssue`` reads "<issue> <type.inward> <other>".
+        for direction in ("outward", "inward"):
+            other = payload.get(f"{direction}Issue")
+            if not isinstance(other, dict):
+                continue
+
+            other_key = cls._string_field(other.get("key"))
+            relationship = cls._string_field(link_type.get(direction))
+
+            if (
+                type_name is None
+                or other_key is None
+                or relationship is None
+            ):
+                return None
+
+            other_fields = other.get("fields")
+            if not isinstance(other_fields, dict):
+                other_fields = {}
+
+            return TicketLink(
+                id=cls._string_field(payload.get("id")),
+                link_type=type_name,
+                direction=direction,
+                relationship=relationship,
+                other_key=other_key,
+                other_summary=cls._string_field(other_fields.get("summary")),
+                other_status=cls._nested_name(other_fields.get("status")),
+            )
+
+        return None
+
+    def get_ticket_links(
+        self,
+        ticket_key: str,
+    ) -> TicketLinksResult:
+
+        normalized_key, key_error = self._normalize_ticket_key(ticket_key)
+
+        if normalized_key is None:
+            return TicketLinksResult(
+                ok=False,
+                status="denied",
+                error=key_error,
+            )
+
+        try:
+            response = self.client.get(
+                f"/rest/api/3/issue/{quote(normalized_key, safe='')}",
+                params={"fields": "issuelinks"},
+            )
+        except httpx.HTTPError:
+            return TicketLinksResult(
+                ok=False,
+                status="error",
+                ticket_key=normalized_key,
+                error="Jira issue links request failed.",
+            )
+
+        if response.status_code == 404:
+            return TicketLinksResult(
+                ok=False,
+                status="not_found",
+                ticket_key=normalized_key,
+                error=f"Ticket '{normalized_key}' was not found.",
+            )
+
+        if response.status_code in {401, 403}:
+            return TicketLinksResult(
+                ok=False,
+                status="error",
+                ticket_key=normalized_key,
+                error="Jira authentication or authorization failed.",
+            )
+
+        if not 200 <= response.status_code < 300:
+            return TicketLinksResult(
+                ok=False,
+                status="error",
+                ticket_key=normalized_key,
+                error=(
+                    f"Jira returned HTTP {response.status_code} "
+                    "for ticket links."
+                ),
+            )
+
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+
+        fields = (
+            payload.get("fields")
+            if isinstance(payload, dict)
+            else None
+        )
+        raw_links = (
+            fields.get("issuelinks")
+            if isinstance(fields, dict)
+            else None
+        )
+
+        if not isinstance(raw_links, list):
+            return TicketLinksResult(
+                ok=False,
+                status="error",
+                ticket_key=normalized_key,
+                error="Jira returned an invalid issue links response.",
+            )
+
+        links = []
+        for raw_link in raw_links:
+            link = self._decode_issue_link(raw_link)
+            if link is not None:
+                links.append(link)
+
+        return TicketLinksResult(
+            ok=True,
+            status="success",
+            provider="jira",
+            ticket_key=(
+                self._string_field(payload.get("key"))
+                or normalized_key
+            ),
+            links=links,
+            count=len(links),
+        )
+
+    def _user_identity(
+        self,
+        payload: Any,
+    ) -> dict[str, Any] | None:
+        if not isinstance(payload, dict):
+            return None
+
+        account_id = self._string_field(payload.get("accountId"))
+        if account_id is None:
+            return None
+
+        return {
+            "account_id": account_id,
+            "display_name": self._string_field(payload.get("displayName")),
+            "email_address": self._string_field(payload.get("emailAddress")),
+        }
+
+    def _resolve_user(
+        self,
+        reference: str,
+    ) -> tuple[
+        dict[str, Any] | None,
+        str,
+        str | None,
+    ]:
+        """
+        Resolve one explicit user reference to exactly one Jira account.
+
+        Accepts an account ID, or an exact (case-insensitive) email address
+        or display name. Returns ``(identity, status, error)``.
+        """
+
+        try:
+            if not any(char.isspace() or char == "@" for char in reference):
+                response = self.client.get(
+                    "/rest/api/3/user",
+                    params={"accountId": reference},
+                )
+                if response.status_code == 200:
+                    identity = self._user_identity(response.json())
+                    if identity is not None and identity["account_id"] == reference:
+                        return identity, "success", None
+                elif response.status_code in {401, 403}:
+                    return (
+                        None,
+                        "error",
+                        "Jira authentication or authorization failed.",
+                    )
+
+            response = self.client.get(
+                "/rest/api/3/user/search",
+                params={"query": reference, "maxResults": 50},
+            )
+        except (httpx.HTTPError, ValueError):
+            return None, "error", "Jira user lookup failed."
+
+        if response.status_code in {401, 403}:
+            return None, "error", "Jira authentication or authorization failed."
+
+        if response.status_code != 200:
+            return (
+                None,
+                "error",
+                f"Jira returned HTTP {response.status_code} for user lookup.",
+            )
+
+        try:
+            candidates = response.json()
+        except ValueError:
+            candidates = None
+
+        if not isinstance(candidates, list):
+            return None, "error", "Jira returned an invalid user lookup response."
+
+        folded = reference.casefold()
+        matches: dict[str, dict[str, Any]] = {}
+
+        for candidate in candidates:
+            identity = self._user_identity(candidate)
+            if identity is None:
+                continue
+            if any(
+                isinstance(identity[field], str)
+                and identity[field].casefold() == folded
+                for field in ("email_address", "display_name")
+            ):
+                matches[identity["account_id"]] = identity
+
+        if not matches:
+            return (
+                None,
+                "not_found",
+                (
+                    "No Jira user exactly matches the supplied account ID, "
+                    "email address or display name."
+                ),
+            )
+
+        if len(matches) > 1:
+            return (
+                None,
+                "denied",
+                (
+                    f"The supplied user matches {len(matches)} Jira accounts. "
+                    "Identify the user by account ID or exact email address."
+                ),
+            )
+
+        return next(iter(matches.values())), "success", None
+
+    def get_assigned_tickets(
+        self,
+        assignee: str,
+        *,
+        status: str | None = None,
+        limit: int = 10,
+    ) -> TicketAssignedResult:
+
+        reference, reference_error = explicit_user_reference(assignee)
+        if reference is None:
+            return TicketAssignedResult(
+                ok=False,
+                status="denied",
+                error=reference_error,
+            )
+
+        try:
+            query = TicketSearchQuery(status=status, limit=limit)
+        except ValueError:
+            return TicketAssignedResult(
+                ok=False,
+                status="denied",
+                error=(
+                    "status must be a string of at most 100 characters and "
+                    "limit an integer between 1 and 25."
+                ),
+            )
+
+        identity, lookup_status, lookup_error = self._resolve_user(reference)
+        if identity is None:
+            return TicketAssignedResult(
+                ok=False,
+                status=lookup_status,
+                error=lookup_error,
+            )
+
+        jql = f"assignee = {self._jql_string(identity['account_id'])} "
+        if query.status is not None:
+            jql += f"AND status = {self._jql_string(query.status)} "
+        jql += "ORDER BY updated DESC"
+
+        search = self._search_jql(jql, limit=query.limit)
+
+        return TicketAssignedResult(
+            ok=search.ok,
+            status=search.status,
+            provider="jira",
+            assignee_account_id=identity["account_id"],
+            assignee_display_name=identity["display_name"],
+            tickets=search.tickets,
+            count=search.count,
+            truncated=search.truncated,
+            error=search.error,
         )
 
     def close(

@@ -22,6 +22,11 @@ JIRA_TICKET_TOOLS = {
     "ticket_create",
     "ticket_assign",
     "ticket_transition",
+    "ticket_update",
+    "ticket_link",
+    "ticket_links",
+    "ticket_assigned",
+    "ticket_worklog_add",
 }
 
 

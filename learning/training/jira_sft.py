@@ -95,6 +95,16 @@ JIRA_HELD_OUT_EVAL_REQUESTS = {
     "List Jira projects matching OPS",
     "What discussion is on HELP-204?",
     "Set SEC-12 assignee to bob@example.com",
+    "Set the priority of Jira ticket KAN-3 to High and add the label customer-impact",
+    "On OPS-17 remove the label stale and set the due date to 2026-12-15",
+    "Link Jira ticket SUP-12 to SUP-9: SUP-12 blocks SUP-9",
+    "Record that HELP-204 is duplicated by HELP-210",
+    "Which issues are linked to Jira ticket KAN-3?",
+    "Show what ENG-88 blocks or is blocked by",
+    "Which Jira tickets are assigned to alice@example.com?",
+    "List the In Progress tickets assigned to bob@example.com",
+    "Log 1h 30m of work on Jira ticket KAN-3 with the comment: Investigated VPN logs",
+    "Record 45m spent on SEC-12",
 }
 
 
@@ -210,10 +220,14 @@ def semantic_context_for(
         "allowed_tools": [
             tool_name
         ],
+        # A list argument is an exact collection; the runtime binds its
+        # items directly, not a list of lists.
         "allowed_arguments": {
-            key: [
-                value
-            ]
+            key: (
+                list(value)
+                if isinstance(value, list)
+                else [value]
+            )
             for (
                 key,
                 value,
@@ -811,6 +825,152 @@ def _seed_examples(
                     ],
                 ),
             ]
+        )
+
+    # Field updates use only exact user-supplied values.
+    update_examples = [
+        (
+            "Change the priority of Jira ticket OPS-17 to Highest",
+            {"ticket_key": "OPS-17", "priority": "Highest"},
+        ),
+        (
+            "Add the label vpn to HELP-204",
+            {"ticket_key": "HELP-204", "add_labels": ["vpn"]},
+        ),
+        (
+            "Set the due date of ENG-88 to 2026-11-30",
+            {"ticket_key": "ENG-88", "due_date": "2026-11-30"},
+        ),
+        (
+            "Remove the label triage from SEC-12 and make its priority Low",
+            {"ticket_key": "SEC-12", "priority": "Low", "remove_labels": ["triage"]},
+        ),
+        (
+            "On APP-41 add the labels backend and release-blocker",
+            {"ticket_key": "APP-41", "add_labels": ["backend", "release-blocker"]},
+        ),
+        (
+            "Lower KAN-3 to priority Medium",
+            {"ticket_key": "KAN-3", "priority": "Medium"},
+        ),
+    ]
+
+    for user_request, arguments in update_examples:
+        examples.append(
+            (
+                "ticket_update",
+                user_request,
+                arguments,
+                [
+                    "issue",
+                    "update",
+                    "mutation",
+                    "exact-values",
+                ],
+            )
+        )
+
+    # Links keep the user's subject first and the relationship words exact.
+    link_examples = [
+        ("OPS-17", "blocks", "ENG-88", "Mark OPS-17 as blocking ENG-88: OPS-17 blocks ENG-88"),
+        ("HELP-204", "relates to", "KAN-3", "Link HELP-204 to KAN-3: HELP-204 relates to KAN-3"),
+        ("SEC-12", "is blocked by", "APP-41", "Note that SEC-12 is blocked by APP-41"),
+        ("ENG-88", "duplicates", "OPS-17", "ENG-88 duplicates OPS-17, please link them"),
+        ("APP-41", "causes", "HELP-204", "Link APP-41 and HELP-204 so that APP-41 causes HELP-204"),
+        ("KAN-3", "is caused by", "SEC-12", "Record that KAN-3 is caused by SEC-12"),
+    ]
+
+    for ticket, relationship, other, user_request in link_examples:
+        examples.append(
+            (
+                "ticket_link",
+                user_request,
+                {
+                    "ticket_key": ticket,
+                    "other_ticket_key": other,
+                    "relationship": relationship,
+                },
+                [
+                    "issue",
+                    "link",
+                    "mutation",
+                ],
+            )
+        )
+
+    # Reading links is contrasted with creating them.
+    links_templates = [
+        "Which issues are linked to {ticket}?",
+        "Show the issue links of Jira ticket {ticket}",
+        "What is {ticket} linked to?",
+    ]
+
+    for ticket in ticket_keys[:4]:
+        for template in links_templates:
+            examples.append(
+                (
+                    "ticket_links",
+                    template.format(
+                        ticket=ticket
+                    ),
+                    {
+                        "ticket_key": ticket,
+                    },
+                    [
+                        "issue",
+                        "links",
+                        "read",
+                    ],
+                )
+            )
+
+    # Assigned-ticket reads name the user explicitly.
+    assigned_examples = [
+        ("Which Jira tickets are assigned to charlie@example.com?", {"assignee": "charlie@example.com"}),
+        ("Show tickets assigned to dina@example.com", {"assignee": "dina@example.com"}),
+        ("List the Done tickets assigned to eric@example.com", {"assignee": "eric@example.com", "status": "Done"}),
+        ("What is farah@example.com working on in Jira?", {"assignee": "farah@example.com"}),
+        ("Show open tickets assigned to alice@example.com with status Open", {"assignee": "alice@example.com", "status": "Open"}),
+        ("Which issues does Jira user 5b10ac8d82e05b22cc7d4ef5 have assigned?", {"assignee": "5b10ac8d82e05b22cc7d4ef5"}),
+    ]
+
+    for user_request, arguments in assigned_examples:
+        examples.append(
+            (
+                "ticket_assigned",
+                user_request,
+                arguments,
+                [
+                    "issue",
+                    "assigned",
+                    "read",
+                ],
+            )
+        )
+
+    # Worklogs keep the exact duration and comment.
+    worklog_examples = [
+        ("Log 2h of work on OPS-17", {"ticket_key": "OPS-17", "time_spent": "2h"}),
+        ("Log 30m on HELP-204 with the comment: Called the requester", {"ticket_key": "HELP-204", "time_spent": "30m", "comment": "Called the requester"}),
+        ("Add a worklog of 1d 2h to ENG-88", {"ticket_key": "ENG-88", "time_spent": "1d 2h"}),
+        ("Record 15m spent on APP-41 with the comment: Restarted the service", {"ticket_key": "APP-41", "time_spent": "15m", "comment": "Restarted the service"}),
+        ("Track 3h 15m of work on KAN-3", {"ticket_key": "KAN-3", "time_spent": "3h 15m"}),
+        ("I spent 45m on SEC-12, log it with the comment: Reviewed firewall rules", {"ticket_key": "SEC-12", "time_spent": "45m", "comment": "Reviewed firewall rules"}),
+    ]
+
+    for user_request, arguments in worklog_examples:
+        examples.append(
+            (
+                "ticket_worklog_add",
+                user_request,
+                arguments,
+                [
+                    "issue",
+                    "worklog",
+                    "mutation",
+                    "exact-text",
+                ],
+            )
         )
 
     # Project reads are intentionally contrasted with ticket searches.

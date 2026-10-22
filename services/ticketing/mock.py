@@ -3,15 +3,22 @@ from .base import (
 )
 
 from .types import (
+    TicketAssignedResult,
     TicketComment,
     TicketCommentsResult,
     TicketFieldChange,
     TicketHistoryEntry,
     TicketHistoryResult,
+    TicketLink,
+    TicketLinksResult,
     TicketLookupResult,
     TicketRecord,
     TicketSearchQuery,
     TicketSearchResult,
+)
+
+from .validation import (
+    explicit_user_reference,
 )
 
 
@@ -151,6 +158,40 @@ class MockTicketService(
                 )
             ],
 
+            "OPS-42": [],
+        }
+
+        self.priorities = [
+            "Highest",
+            "High",
+            "Medium",
+            "Low",
+            "Lowest",
+        ]
+
+        self.link_types = [
+            {"id": "1", "name": "Blocks", "inward": "is blocked by", "outward": "blocks"},
+            {"id": "2", "name": "Duplicate", "inward": "is duplicated by", "outward": "duplicates"},
+            {"id": "3", "name": "Relates", "inward": "relates to", "outward": "relates to"},
+        ]
+
+        self.labels: dict[str, list[str]] = {
+            "ITSM-101": ["vpn"],
+            "OPS-42": [],
+        }
+
+        self.due_dates: dict[str, str | None] = {
+            "ITSM-101": None,
+            "OPS-42": None,
+        }
+
+        self.links: dict[str, list[TicketLink]] = {
+            "ITSM-101": [],
+            "OPS-42": [],
+        }
+
+        self.worklogs: dict[str, list[dict]] = {
+            "ITSM-101": [],
             "OPS-42": [],
         }
 
@@ -595,4 +636,94 @@ class MockTicketService(
                 truncated=truncated,
                 error=None,
             )
+        )
+
+    def get_ticket_links(
+        self,
+        ticket_key: str,
+    ) -> TicketLinksResult:
+
+        normalized_key, key_error = self._normalize_key(ticket_key)
+
+        if normalized_key is None:
+            return TicketLinksResult(
+                ok=False,
+                status="denied",
+                error=key_error,
+            )
+
+        if normalized_key not in self.tickets:
+            return TicketLinksResult(
+                ok=False,
+                status="not_found",
+                ticket_key=normalized_key,
+                error=f"Ticket '{normalized_key}' was not found.",
+            )
+
+        links = list(self.links.get(normalized_key, []))
+
+        return TicketLinksResult(
+            ok=True,
+            status="success",
+            provider="mock",
+            ticket_key=normalized_key,
+            links=links,
+            count=len(links),
+        )
+
+    def get_assigned_tickets(
+        self,
+        assignee: str,
+        *,
+        status: str | None = None,
+        limit: int = 10,
+    ) -> TicketAssignedResult:
+
+        reference, reference_error = explicit_user_reference(assignee)
+        if reference is None:
+            return TicketAssignedResult(
+                ok=False,
+                status="denied",
+                error=reference_error,
+            )
+
+        try:
+            query = TicketSearchQuery(status=status, limit=limit)
+        except ValueError:
+            return TicketAssignedResult(
+                ok=False,
+                status="denied",
+                error=(
+                    "status must be a string of at most 100 characters and "
+                    "limit an integer between 1 and 25."
+                ),
+            )
+
+        folded = reference.casefold()
+        tickets = [
+            ticket
+            for ticket in self.tickets.values()
+            if ticket.assignee is not None
+            and ticket.assignee.casefold() == folded
+            and (
+                query.status is None
+                or ticket.status.casefold() == query.status.casefold()
+            )
+        ]
+
+        tickets.sort(
+            key=lambda ticket: ticket.updated_at or "",
+            reverse=True,
+        )
+
+        selected = tickets[:query.limit]
+
+        return TicketAssignedResult(
+            ok=True,
+            status="success",
+            provider="mock",
+            assignee_display_name=reference,
+            tickets=selected,
+            count=len(selected),
+            truncated=len(tickets) > query.limit,
         )

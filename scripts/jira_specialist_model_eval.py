@@ -315,6 +315,138 @@ CASES = [
             "assignee": "bob@example.com",
         },
     },
+    {
+        "name": "issue priority and label update",
+        "user": "Set the priority of Jira ticket KAN-3 to High and add the label customer-impact",
+        "allowed_tools": ["ticket_update"],
+        "allowed_arguments": {
+            "ticket_key": ["KAN-3"],
+            "priority": ["High"],
+            "add_labels": ["customer-impact"],
+        },
+        "expected_tool": "ticket_update",
+        "expected_arguments": {
+            "ticket_key": "KAN-3",
+            "priority": "High",
+            "add_labels": ["customer-impact"],
+        },
+    },
+    {
+        "name": "issue due date and label removal",
+        "user": "On OPS-17 remove the label stale and set the due date to 2026-12-15",
+        "allowed_tools": ["ticket_update"],
+        "allowed_arguments": {
+            "ticket_key": ["OPS-17"],
+            "remove_labels": ["stale"],
+            "due_date": ["2026-12-15"],
+        },
+        "expected_tool": "ticket_update",
+        "expected_arguments": {
+            "ticket_key": "OPS-17",
+            "remove_labels": ["stale"],
+            "due_date": "2026-12-15",
+        },
+    },
+    {
+        "name": "issue link blocks",
+        "user": "Link Jira ticket SUP-12 to SUP-9: SUP-12 blocks SUP-9",
+        "allowed_tools": ["ticket_link"],
+        "allowed_arguments": {
+            "ticket_key": ["SUP-12"],
+            "other_ticket_key": ["SUP-9"],
+            "relationship": ["blocks"],
+        },
+        "expected_tool": "ticket_link",
+        "expected_arguments": {
+            "ticket_key": "SUP-12",
+            "other_ticket_key": "SUP-9",
+            "relationship": "blocks",
+        },
+    },
+    {
+        "name": "issue link inward phrase",
+        "user": "Record that HELP-204 is duplicated by HELP-210",
+        "allowed_tools": ["ticket_link"],
+        "allowed_arguments": {
+            "ticket_key": ["HELP-204"],
+            "other_ticket_key": ["HELP-210"],
+            "relationship": ["is duplicated by"],
+        },
+        "expected_tool": "ticket_link",
+        "expected_arguments": {
+            "ticket_key": "HELP-204",
+            "other_ticket_key": "HELP-210",
+            "relationship": "is duplicated by",
+        },
+    },
+    {
+        "name": "issue links read",
+        "user": "Which issues are linked to Jira ticket KAN-3?",
+        "allowed_tools": ["ticket_links"],
+        "allowed_arguments": {"ticket_key": ["KAN-3"]},
+        "expected_tool": "ticket_links",
+        "expected_arguments": {"ticket_key": "KAN-3"},
+    },
+    {
+        "name": "issue links paraphrase",
+        "user": "Show what ENG-88 blocks or is blocked by",
+        "allowed_tools": ["ticket_links"],
+        "allowed_arguments": {"ticket_key": ["ENG-88"]},
+        "expected_tool": "ticket_links",
+        "expected_arguments": {"ticket_key": "ENG-88"},
+    },
+    {
+        "name": "assigned tickets by email",
+        "user": "Which Jira tickets are assigned to alice@example.com?",
+        "allowed_tools": ["ticket_assigned"],
+        "allowed_arguments": {"assignee": ["alice@example.com"]},
+        "expected_tool": "ticket_assigned",
+        "expected_arguments": {"assignee": "alice@example.com"},
+    },
+    {
+        "name": "assigned tickets with status",
+        "user": "List the In Progress tickets assigned to bob@example.com",
+        "allowed_tools": ["ticket_assigned"],
+        "allowed_arguments": {
+            "assignee": ["bob@example.com"],
+            "status": ["In Progress"],
+        },
+        "expected_tool": "ticket_assigned",
+        "expected_arguments": {
+            "assignee": "bob@example.com",
+            "status": "In Progress",
+        },
+    },
+    {
+        "name": "worklog with comment",
+        "user": "Log 1h 30m of work on Jira ticket KAN-3 with the comment: Investigated VPN logs",
+        "allowed_tools": ["ticket_worklog_add"],
+        "allowed_arguments": {
+            "ticket_key": ["KAN-3"],
+            "time_spent": ["1h 30m"],
+            "comment": ["Investigated VPN logs"],
+        },
+        "expected_tool": "ticket_worklog_add",
+        "expected_arguments": {
+            "ticket_key": "KAN-3",
+            "time_spent": "1h 30m",
+            "comment": "Investigated VPN logs",
+        },
+    },
+    {
+        "name": "worklog without comment",
+        "user": "Record 45m spent on SEC-12",
+        "allowed_tools": ["ticket_worklog_add"],
+        "allowed_arguments": {
+            "ticket_key": ["SEC-12"],
+            "time_spent": ["45m"],
+        },
+        "expected_tool": "ticket_worklog_add",
+        "expected_arguments": {
+            "ticket_key": "SEC-12",
+            "time_spent": "45m",
+        },
+    },
 ]
 
 
@@ -338,6 +470,13 @@ BENIGN_OPTIONAL_ARGUMENTS = {
             isinstance(value, int)
             and not isinstance(value, bool)
             and 1 <= value <= 50
+        ),
+    },
+    "ticket_assigned": {
+        "limit": lambda value: (
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and 1 <= value <= 25
         ),
     },
     "jira_project_list": {
