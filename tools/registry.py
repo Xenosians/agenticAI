@@ -86,7 +86,9 @@ TOOLS = {
 
     "account_status": {
         "description": (
-            "Check whether an account is enabled or locked."
+            "Read only, changes nothing: check whether one exact directory account "
+            "is enabled or disabled and locked or unlocked. Report observed "
+            "account status without changing the account."
         ),
 
         "risk":

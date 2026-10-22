@@ -65,6 +65,38 @@ def test_shared_capabilities_keep_all_owners(production_registry):
     assert actual == expected
 
 
+@pytest.mark.parametrize("user_request", [
+    "Is alice disabled?",
+    "Is bob unlocked?",
+    "Is charlie enabled?",
+    "Is dana locked?",
+    "Is employee47 locked or disabled?",
+    "Check whether blair is disabled",
+])
+def test_account_security_state_language_discloses_the_read_capability(
+        production_registry, user_request):
+    selection = DeterministicCandidateSelector().select(user_request, production_registry)
+    disclosed = {name for candidate in selection.candidates for name in candidate.capability_names}
+    # These are retrieval hints, not a plan: ambiguity may still require broad
+    # routing. A mutation whose description mentions a disabled/locked account
+    # must not crowd the actual status read out of the candidate packet.
+    assert "account_status" in disclosed
+    tool = get_tool("account_status")
+    assert tool["effect"] == "read"
+    assert tool["requires_approval"] is False
+    assert tool["grounded_arguments"] == ["user_id"]
+
+
+def test_account_state_alternatives_keep_unresolved_clause_fallback(production_registry):
+    selection = DeterministicCandidateSelector().select(
+        "Is employee47 locked or disabled?", production_registry,
+    )
+    # Disclosure of the right tool does not erase the selector's unresolved
+    # clause evidence or turn the candidate into an executable route.
+    assert selection.fallback_required
+    assert selection.reason == "uncovered_request"
+
+
 def test_registry_order_does_not_change_ranking(production_registry):
     reverse_registry = AgentRegistry()
     reverse_registry.register_many(list(reversed(production_registry.list_agents())))
