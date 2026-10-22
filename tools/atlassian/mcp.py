@@ -91,10 +91,22 @@ class UserInviteResult(BaseModel):
     ok: bool
     status: str
     email: str | None = None
+    account_id: str | None = None
+    # Retained as an empty compatibility field; provider id identifies account.
     invitation_id: str | None = None
     organization_id: str | None = None
     resource_ari: str | None = None
-    notification_sent_by_provider: bool = False
+    provider_role: str | None = None
+    role_assignment_status: str | None = None
+    verification_ok: bool = False
+    verification_scope: str | None = None
+    notification_requested: bool | None = False
+    request_dispatched: bool | None = False
+    notification_sent_by_provider: bool | None = None
+    notification_delivery_verified: bool = False
+    changed: bool | None = False
+    mutation_performed: bool | None = False
+    retry_safe: bool = True
     error: str | None = None
     error_code: str | None = None
 

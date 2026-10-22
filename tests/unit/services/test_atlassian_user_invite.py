@@ -23,9 +23,12 @@ def test_jira_user_invite_uses_trusted_org_and_resource() -> None:
             json={
                 "data": [
                     {
-                        "id": "invite-1",
+                        "id": "account-1",
                         "email": "maya@example.com",
-                        "results": [],
+                        "results": [{"roleAssignmentResult": [{
+                            "resource": "ari:cloud:jira::site/70ef3a32-d0da-4e09-b35e-0109f91969c3",
+                            "role": "atlassian/user", "status": "INVITED",
+                        }], "groupAssignmentResult": []}],
                     }
                 ]
             },
@@ -52,7 +55,11 @@ def test_jira_user_invite_uses_trusted_org_and_resource() -> None:
     assert result["ok"] is True
     assert result["status"] == "success"
     assert result["email"] == "maya@example.com"
-    assert result["invitation_id"] == "invite-1"
+    assert result["account_id"] == "account-1"
+    assert result["invitation_id"] is None
+    assert result["notification_requested"] is True
+    assert result["notification_sent_by_provider"] is None
+    assert result["verification_ok"] is True
     assert seen["method"] == "POST"
     assert seen["path"] == "/admin/v2/orgs/org-123/users/invite"
     assert seen["authorization"] == "Bearer secret-admin-key"

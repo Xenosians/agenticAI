@@ -70,9 +70,14 @@ def _token_metadata(
 
 def _user_invite(result: dict[str, Any]) -> str:
     if not result.get("ok"):
+        if result.get("status") == "outcome_unknown":
+            return "Jira product-access invitation outcome is uncertain. Reconcile the account and product access before retrying."
         return ("Jira product-access invitation did not complete. " + str(result.get("error") or "")).strip()
     email = result.get("email") or "the requested account"
-    return f"Jira product access invitation was created for {email}. Atlassian will send the provider invitation email."
+    return (
+        f"Atlassian confirmed the Jira product-role invitation for {email}. "
+        "An invitation email was requested; its sending and delivery are not confirmed."
+    )
 
 ATLASSIAN_TOOLS = {
     "atlassian_credential_status": {

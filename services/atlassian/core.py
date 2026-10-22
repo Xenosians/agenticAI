@@ -23,6 +23,8 @@ class AtlassianProviderError(Exception):
     message: str
     status_code: int | None = None
     retry_after_seconds: int | None = None
+    mutation_may_have_occurred: bool = False
+    request_dispatched: bool | None = False
 
     def __str__(self) -> str:
         return self.message
@@ -253,6 +255,8 @@ class AtlassianAdminClient:
         operation: str,
         params: dict[str, Any] | None = None,
         json_body: Any = None,
+        include_status: bool = False,
+        mutation: bool = False,
     ) -> Any:
         trusted_path = self._trusted_path(path)
         headers = self.credentials.admin_headers()
@@ -269,25 +273,46 @@ class AtlassianAdminClient:
             raise AtlassianProviderError(
                 code="transport_error",
                 message=f"Atlassian transport failed during {operation}.",
+                mutation_may_have_occurred=(
+                    mutation and not isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout))
+                ),
+                request_dispatched=(
+                    False if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)) else None
+                ),
             ) from exc
 
         if not 200 <= response.status_code < 300:
-            raise error_from_status(
+            failure = error_from_status(
                 operation=operation,
                 status_code=response.status_code,
                 retry_after=response.headers.get("Retry-After"),
             )
+            if mutation:
+                raise AtlassianProviderError(
+                    code=failure.code,
+                    message=failure.message,
+                    status_code=failure.status_code,
+                    retry_after_seconds=failure.retry_after_seconds,
+                    mutation_may_have_occurred=(
+                        response.status_code not in {400, 401, 402, 403, 404, 405, 409, 413, 414, 415, 422, 429, 431}
+                    ),
+                    request_dispatched=True,
+                )
+            raise failure
 
         if response.status_code == 204:
-            return None
+            return (204, None) if include_status else None
 
         try:
-            return response.json()
+            payload = response.json()
+            return (response.status_code, payload) if include_status else payload
         except ValueError as exc:
             raise AtlassianProviderError(
                 code="invalid_response",
                 message=f"Atlassian returned invalid JSON during {operation}.",
                 status_code=response.status_code,
+                mutation_may_have_occurred=mutation,
+                request_dispatched=True,
             ) from exc
 
     def get_json(
@@ -318,6 +343,19 @@ class AtlassianAdminClient:
             json_body=json_body,
         )
 
+    def post_json_with_status(
+        self,
+        path: str,
+        *,
+        operation: str,
+        json_body: Any,
+    ) -> tuple[int, Any]:
+        """One mutation request; preserve partial responses and uncertain dispatch."""
+        return self.request_json(
+            "POST", path, operation=operation, json_body=json_body,
+            include_status=True, mutation=True,
+        )
+
 
 def _error_code(exc: Exception) -> str:
     """Stable machine-readable failure code for tool results (for example plan_required)."""
@@ -325,6 +363,8 @@ def _error_code(exc: Exception) -> str:
 
 
 def _provider_status(exc: AtlassianProviderError) -> str:
+    if exc.mutation_may_have_occurred:
+        return "outcome_unknown"
     if exc.code == "not_found":
         return "not_found"
     if exc.code in {
@@ -341,8 +381,79 @@ def _provider_status(exc: AtlassianProviderError) -> str:
     return "error"
 
 
+def _verified_invitation_receipt(
+    http_status: int,
+    payload: Any,
+    *,
+    expected_email: str,
+    expected_resource: str,
+) -> tuple[str, str]:
+    """Validate the documented AdminInviteResponse, not a fabricated invite ID.
+
+    Source: Organizations REST API OpenAPI, AdminInviteResponse,
+    SingleAdminInviteResult and RoleAssignmentResult. The documented response
+    role example uses a product-member ARI. Accept that response identifier or
+    the documented request role; no administrator or other role is substituted.
+    Neither response contains a notification delivery acknowledgement.
+    https://developer.atlassian.com/cloud/admin/organization/rest/api-group-users/
+    """
+    def reject() -> None:
+        raise AtlassianProviderError(
+            code="invitation_unverified",
+            message=(
+                "Atlassian did not confirm exactly the requested recipient and Jira "
+                "product-role invitation. Its outcome is uncertain; reconcile the "
+                "account and product access before any retry."
+            ),
+            status_code=http_status,
+            mutation_may_have_occurred=True,
+            request_dispatched=True,
+        )
+
+    def text(value: Any) -> str:
+        if (not isinstance(value, str) or not value or len(value) > 512
+                or value != value.strip() or any(ord(char) < 32 or ord(char) == 127 for char in value)):
+            reject()
+        return value
+
+    if http_status != 200 or not isinstance(payload, dict):
+        reject()
+    recipients = payload.get("data")
+    if not isinstance(recipients, list) or len(recipients) != 1 or not isinstance(recipients[0], dict):
+        reject()
+    recipient = recipients[0]
+    account_id = text(recipient.get("id"))
+    if text(recipient.get("email")).casefold() != expected_email.casefold():
+        reject()
+    results = recipient.get("results")
+    if not isinstance(results, list) or not 1 <= len(results) <= 25:
+        reject()
+    roles = []
+    for result in results:
+        if not isinstance(result, dict) or not set(result) <= {"roleAssignmentResult", "groupAssignmentResult"}:
+            reject()
+        assignments = result.get("roleAssignmentResult")
+        groups = result.get("groupAssignmentResult", [])
+        if not isinstance(assignments, list) or not 1 <= len(assignments) <= 50 or not isinstance(groups, list) or len(groups) > 100:
+            reject()
+        for group in groups:
+            if not isinstance(group, dict) or group.get("status") != "INVITED":
+                reject()
+            text(group.get("group"))
+        for assignment in assignments:
+            if not isinstance(assignment, dict) or assignment.get("status") != "INVITED":
+                reject()
+            resource, role = text(assignment.get("resource")), text(assignment.get("role"))
+            if resource != expected_resource or role not in {"atlassian/user", "ari:cloud:jira::role/product/member"}:
+                reject()
+            roles.append(role)
+    if len(roles) != 1:
+        reject()
+    return account_id, roles[0]
+
+
 class AtlassianAdminService:
-    """J1 read-only organization/workspace/token-metadata provider."""
+    """Organization reads and governed, single-request product invitations."""
 
     def __init__(
         self,
@@ -548,13 +659,17 @@ class AtlassianAdminService:
         *,
         email: str,
     ) -> dict[str, Any]:
+        notification_requested = False
+        normalized_email = None
+        resolved_org = None
+        resource_ari = self.jira_resource_ari
         try:
             normalized_email = _optional_string(email)
-            if normalized_email is None or "@" not in normalized_email or any(c.isspace() for c in normalized_email):
+            if (normalized_email is None or len(normalized_email) > 320
+                    or normalized_email.count("@") != 1 or any(c.isspace() for c in normalized_email)):
                 raise ValueError("email must be one explicit email address.")
             normalized_email = normalized_email.lower()
             resolved_org = self.credentials.resolve_org_id(None)
-            resource_ari = self.jira_resource_ari
             if resource_ari is None:
                 raise AtlassianProviderError(
                     code="resource_not_configured",
@@ -565,7 +680,10 @@ class AtlassianAdminService:
                     code="resource_not_configured",
                     message="ATLASSIAN_JIRA_RESOURCE_ARI must identify a Jira cloud site.",
                 )
-            payload = self.client.post_json(
+            # Validate credentials before marking the notification as requested.
+            self.credentials.admin_headers()
+            notification_requested = True
+            http_status, payload = self.client.post_json_with_status(
                 f"/admin/v2/orgs/{quote(resolved_org, safe='')}/users/invite",
                 operation="Jira user invitation",
                 json_body={
@@ -575,30 +693,52 @@ class AtlassianAdminService:
                     "notificationText": "Your Jira access was provisioned through the governed ITSM onboarding workflow.",
                 },
             )
-            if not isinstance(payload, dict) or not isinstance(payload.get("data"), list) or not payload["data"] or not isinstance(payload["data"][0], dict):
-                raise AtlassianProviderError(code="invalid_response", message="Atlassian returned an invalid user invitation response.")
-            item = payload["data"][0]
+            account_id, role = _verified_invitation_receipt(
+                http_status, payload, expected_email=normalized_email, expected_resource=resource_ari,
+            )
             return {
                 "ok": True,
                 "status": "success",
-                "email": _optional_string(item.get("email")) or normalized_email,
-                "invitation_id": _optional_string(item.get("id")),
+                "email": normalized_email,
+                "account_id": account_id,
+                # The documented id is an account ID, never an invitation ID.
+                "invitation_id": None,
                 "organization_id": resolved_org,
                 "resource_ari": resource_ari,
-                "notification_sent_by_provider": True,
+                "provider_role": role,
+                "role_assignment_status": "INVITED",
+                "verification_ok": True,
+                "verification_scope": "provider_invitation_receipt",
+                "notification_requested": True,
+                "request_dispatched": True,
+                "notification_sent_by_provider": None,
+                "notification_delivery_verified": False,
+                "changed": None,
+                "mutation_performed": True,
+                "retry_safe": False,
                 "error": None,
             }
         except (AtlassianProviderError, ValueError) as exc:
             status = _provider_status(exc) if isinstance(exc, AtlassianProviderError) else "denied"
+            uncertain = status == "outcome_unknown"
+            dispatched = exc.request_dispatched if isinstance(exc, AtlassianProviderError) else False
             return {
                 "ok": False,
                 "status": status,
                 "error_code": _error_code(exc),
                 "email": email if isinstance(email, str) else None,
+                "account_id": None,
                 "invitation_id": None,
-                "organization_id": None,
-                "resource_ari": None,
-                "notification_sent_by_provider": False,
+                "organization_id": resolved_org,
+                "resource_ari": resource_ari,
+                "verification_ok": False,
+                "notification_requested": notification_requested if dispatched is True else dispatched,
+                "request_dispatched": dispatched,
+                "notification_sent_by_provider": None,
+                "notification_delivery_verified": False,
+                "changed": None if uncertain else False,
+                "mutation_performed": None if uncertain else False,
+                "retry_safe": not uncertain,
                 "error": str(exc),
             }
 
