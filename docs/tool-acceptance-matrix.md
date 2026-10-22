@@ -2,6 +2,14 @@
 
 The MVP requires correct tool use and the complete application flow across local models, API connections, and harnesses. This matrix records what has actually been checked. A fixture, a model proposal, an approval, a tool result, and a durable job are different evidence.
 
+## Live execution checker
+
+`scripts/tool_matrix.py` uses actual configured providers and can execute reviewed mutations against its disposable lab fixtures. It is separate from the proposal-only runner below. Do not run it against production as a shortcut to a green result.
+
+Its v2 reports use exit 0 only when every selected case passed. Exit 1 means a failed case; exit 2 means incomplete coverage, blocked/skipped/plan-limited cases, or source changes during execution. Unknown case IDs and empty selections are errors. Without `--only`, every registered tool must be covered; a passing subset is labeled selected scope. `all_registered_tools_passed` describes that run, not release acceptance across every model/harness or mailbox inbox delivery.
+
+An existing report needs explicit `--resume`, matching source content/project and the original saved fixture identity. Resume continues unattempted cases; it never automatically repeats a recorded failure or uncertain operation. Reconcile those operations before planning another run. Legacy reports or reports from changed code cannot be reused as current passing evidence. New runs use new report paths.
+
 ## Inventory without inference
 
 Run from the AI repository using the project's Python environment:

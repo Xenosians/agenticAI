@@ -18,16 +18,24 @@ every case.
 
 Usage (AI repository root, AI service Python):
   python scripts/tool_browser_e2e.py [--only case-id ...] [--resume] [--headed]
+
+Exit status (same rules as scripts/tool_matrix.py):
+  0  every selected case passed, and a full run covered every registered tool
+  1  at least one case failed
+  2  incomplete: a case was blocked, skipped or plan-limited, or a tool is uncovered
+An unknown or empty --only selection is rejected before the browser starts.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -36,28 +44,83 @@ from dotenv import dotenv_values  # noqa: E402
 from playwright.sync_api import sync_playwright  # noqa: E402
 
 from scripts.cross_repo_acceptance import _assert_history_roundtrip, _tool_name  # noqa: E402
+from scripts import tool_matrix as matrix  # noqa: E402
 from scripts.tool_matrix import (  # noqa: E402
     ATLASSIAN_ADMIN_TOOLS,
-    CASES,
-    FINAL_VERDICTS,
     GIT_MUTATION_CASES,
     RUN,
     TERMINAL_OK,
     VERDICTS,
+    acceptance_summary,
     atlassian_admin_configured,
+    build_cases,
     discover_fixtures,
+    load_matrix_report,
     plan_limited,
     prepare_git_fixture,
     provider_ok,
     record_created,
-    remove_jira_fixture,
+    select_matrix_cases,
+    source_identity,
     worker_evidence,
 )
+from tools.registry import TOOLS  # noqa: E402
 
 BACKEND_REPO = Path(os.getenv("ACCEPTANCE_BACKEND_REPO", str(PROJECT_ROOT.parents[1] / "agenticBackend" / "itsm_backend")))
 REPORT = PROJECT_ROOT / ".runtime" / "acceptance" / "tool-browser-e2e.json"
-SHOTS = PROJECT_ROOT / ".runtime" / "acceptance" / "tool-browser-e2e"
 TERMINAL = {"completed", "failed", "denied", "outcome_unknown", "reconciliation_required"}
+BROWSER_REPORT_SCHEMA = "tool-browser-e2e.v2"
+
+
+def execution_context(args) -> dict:
+    """Bind evidence to its app origins/configuration without storing credentials."""
+    origins = {}
+    for name in ("frontend_url", "backend_url"):
+        value = getattr(args, name).rstrip("/")
+        parsed = urlsplit(value)
+        if (parsed.scheme not in {"http", "https"} or not parsed.hostname
+                or parsed.username is not None or parsed.password is not None
+                or parsed.query or parsed.fragment):
+            raise ValueError(f"{name} must be an HTTP(S) base URL without credentials, query or fragment")
+        origins[name] = value
+    return {**origins, "login_configuration": str(args.login_env.resolve()),
+            "git_fixture": str(matrix.GIT_FIXTURE.resolve())}
+
+
+def bind_principal(report: dict, email: str) -> None:
+    """Changing the acceptance account requires a new report, not merged evidence."""
+    principal = hashlib.sha256(email.strip().casefold().encode()).hexdigest()
+    prior = report.get("principal_sha256")
+    if prior is not None and prior != principal:
+        raise ValueError("Acceptance account changed; use a new report")
+    report["principal_sha256"] = principal
+
+
+def unattempted_cases(report: dict, selected: list) -> list:
+    # Even failed/interrupted rows may have performed a side effect. A resume
+    # continues untouched cases; it never creates an independent replacement job.
+    return [case for case in selected if case[0] not in report["results"]]
+
+
+def save_browser_report(report: dict, path: Path, selected: list, *, full_scope: bool,
+                        source_unchanged: bool = False) -> None:
+    rows = report["results"].values()
+    report["summary"] = {verdict: sum(row.get("verdict") == verdict for row in rows) for verdict in VERDICTS}
+    report["registered_tools"] = len(TOOLS)
+    report["selection"] = {"scope": "full" if full_scope else "selected", "cases": [case[0] for case in selected]}
+    report["acceptance"] = acceptance_summary(report["results"], selected, registered_tools=TOOLS,
+                                               full_scope=full_scope, source_unchanged=source_unchanged)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
+def socket_evidence(traffic, before: list[int]) -> dict:
+    """Count only frames received during this case, including persistent sockets."""
+    incoming = sum(max(0, entry["frames_in"] - (before[index] if index < len(before) else 0))
+                   for index, entry in enumerate(traffic.sockets))
+    return {"opened": len(traffic.sockets) - len(before), "frames_in": incoming}
 
 
 class BrowserTraffic:
@@ -152,7 +215,7 @@ def new_chat(page, timeout_ms: int) -> None:
     page.wait_for_timeout(300)
 
 
-def send(page, prompt: str, timeout_ms: int) -> tuple[str, str]:
+def send(page, prompt: str, timeout_ms: int, *, on_submission) -> tuple[str, str]:
     page.locator("#messageInput").fill(prompt)
     button = page.get_by_role("button", name="Send message")
     deadline = time.monotonic() + timeout_ms / 1000
@@ -160,10 +223,24 @@ def send(page, prompt: str, timeout_ms: int) -> tuple[str, str]:
         if time.monotonic() > deadline:
             raise TimeoutError("Send button never became enabled")
         page.wait_for_timeout(100)
-    with page.expect_response(lambda r: r.url.rstrip("/").endswith("/api/v1/jobs") and r.request.method == "POST",
-                              timeout=timeout_ms) as info:
-        button.click()
-    response = info.value
+    def observed(request):
+        if request.url.rstrip("/").endswith("/api/v1/jobs") and request.method == "POST":
+            try:
+                payload = json.loads(request.post_data or "{}")
+            except (TypeError, ValueError):
+                payload = {}
+            # Retain only reconciliation identities, never request headers/login data.
+            on_submission({key: payload[key] for key in ("chat_id", "submission_id")
+                           if isinstance(payload, dict) and isinstance(payload.get(key), str)})
+
+    page.on("request", observed)
+    try:
+        with page.expect_response(lambda r: r.url.rstrip("/").endswith("/api/v1/jobs") and r.request.method == "POST",
+                                  timeout=timeout_ms) as info:
+            button.click()
+        response = info.value
+    finally:
+        page.remove_listener("request", observed)
     if response.status >= 400:
         raise RuntimeError(f"job submission returned HTTP {response.status}")
     # The browser names the chat in its request; the response carries the job.
@@ -184,17 +261,26 @@ def approve(page, timeout_ms: int) -> None:
     button.click()
 
 
-def run_case(page, traffic: BrowserTraffic, args, case: tuple, context: dict) -> dict:
+def run_case(page, traffic: BrowserTraffic, args, case: tuple, context: dict, *, row: dict, checkpoint) -> dict:
     identity, tool, prompt, approve_mode = case
     message = prompt.format(**context)
-    row: dict = {"tool": tool, "prompt": message}
+    row.update(tool=tool, prompt=message, stage="preparing_browser")
     started = time.monotonic()
     timeout_ms = int(args.timeout * 1000)
 
     new_chat(page, timeout_ms)
-    sockets_before = len(traffic.sockets)
-    job_id, chat_id = send(page, message, timeout_ms)
-    row["job_id"] = job_id
+    sockets_before = [entry["frames_in"] for entry in traffic.sockets]
+
+    def observed(identities):
+        row.update(identities)
+        row["submission_outcome"] = "outcome_unknown"
+        checkpoint()
+
+    row.update(stage="submitting", submission_outcome="outcome_unknown", reconciliation_required=True)
+    checkpoint()  # Durable before a click can create work, even if no response arrives.
+    job_id, chat_id = send(page, message, timeout_ms, on_submission=observed)
+    row.update(job_id=job_id, chat_id=chat_id, submission_outcome="acknowledged", stage="waiting_for_job")
+    checkpoint()
     first = traffic.wait(page, args.backend_url, job_id, {"waiting_approval"} | TERMINAL, args.timeout)
     row["first_status"] = first.get("status")
     row["first_tool"] = _tool_name(first)
@@ -208,11 +294,15 @@ def run_case(page, traffic: BrowserTraffic, args, case: tuple, context: dict) ->
         if _tool_name(first) != tool:
             raise AssertionError(f"approval card proposes {_tool_name(first)} instead of {tool}")
         approval_id = (first.get("proposed_tool") or {}).get("approval_id")
+        row.update(stage="approving", approval_id=approval_id)
+        checkpoint()
         approve(page, timeout_ms)
         # Done when the job is terminal, or waiting on a *different* approval
         # (a follow-up step); the approval just clicked no longer counts.
         final = traffic.wait_after_approval(page, args.backend_url, job_id, approval_id, args.timeout)
     row["status"] = final.get("status")
+    row["stage"] = "verifying"
+    checkpoint()
 
     if chat_id and final.get("chat_id") != chat_id:
         raise AssertionError("durable job is not bound to the chat the browser submitted to")
@@ -231,108 +321,144 @@ def run_case(page, traffic: BrowserTraffic, args, case: tuple, context: dict) ->
     elif final.get("status") not in TERMINAL_OK or not ok:
         raise AssertionError(f"status={final.get('status')} {detail}")
 
-    opened = traffic.sockets[sockets_before:]
-    row["websocket"] = {"opened": len(opened), "frames_in": sum(s["frames_in"] for s in opened)}
+    row["websocket"] = socket_evidence(traffic, sockets_before)
     if not limited:
         record_created(tool, worker["tool_result"], context)
+    if row["websocket"]["frames_in"] < 1:
+        raise AssertionError("No live-update WebSocket frame was observed during this case")
+    if not limited:
+        row["verdict"] = "pass"
+    row.update(stage="verified", reconciliation_required=False)
     row["seconds"] = round(time.monotonic() - started, 1)
     return row
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
-    parser.add_argument("--only", nargs="*", default=[])
+    parser.add_argument("--only", nargs="*", default=None)
     parser.add_argument("--resume", action="store_true",
-                        help="skip cases whose last verdict is final (pass or plan_limited)")
+                        help="continue only unattempted cases; recorded outcomes require reconciliation")
+    parser.add_argument("--report", type=Path, default=REPORT)
     parser.add_argument("--timeout", type=float, default=300)
     parser.add_argument("--frontend-url", default="http://127.0.0.1:8080")
     parser.add_argument("--backend-url", default="http://127.0.0.1:4000")
     parser.add_argument("--login-env", type=Path, default=BACKEND_REPO / ".runtime" / "acceptance" / "login.env")
     parser.add_argument("--headed", action="store_true")
     args = parser.parse_args()
+    try:
+        if args.only == []:
+            raise ValueError("--only needs at least one case identity")
+        # Reject invalid scope before reading credentials, repositories or starting a browser.
+        select_matrix_cases(build_cases(RUN, matrix.PROJECT), args.only or [])
+        identity = source_identity()
+        report = load_matrix_report(args.report, resume=args.resume, identity=identity,
+                                    run=RUN, project=matrix.PROJECT, schema=BROWSER_REPORT_SCHEMA,
+                                    execution_context=execution_context(args))
+        selected = select_matrix_cases(build_cases(report["run"], report["project"]), args.only or [])
+    except ValueError as exc:
+        parser.error(str(exc))
 
-    # Results merge by case id, so a partial run (--only) never discards other cases.
-    report = {"schema": "tool-browser-e2e.v1", "results": {}}
-    if REPORT.exists():
-        report = json.loads(REPORT.read_text(encoding="utf-8"))
-    report["run"] = RUN
-    report["started_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    SHOTS.mkdir(parents=True, exist_ok=True)
+    # Shared fixture helpers resolve their names from the original run, too.
+    matrix.RUN = report["run"]
+    report.setdefault("started_at", datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    report["run_state"] = "in_progress"
+    shots = args.report.with_suffix("")
+    pending = unattempted_cases(report, selected)
 
-    def save() -> None:
-        results = report["results"].values()
-        report["summary"] = {verdict: sum(1 for r in results if r.get("verdict") == verdict)
-                             for verdict in VERDICTS}
-        report["registered_tools"] = len({case[1] for case in CASES})
-        temporary = REPORT.with_suffix(".tmp")
-        temporary.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        temporary.replace(REPORT)
+    def save(*, final=False) -> None:
+        save_browser_report(report, args.report, selected, full_scope=args.only is None,
+                            source_unchanged=final and source_identity() == identity)
 
-    login = dotenv_values(args.login_env)
-    # Only a resumed run reuses fixtures (ticket key, status) from the previous run.
-    context: dict = dict(report.get("context") or {}) if args.resume else {}
-    for key, value in (("org_id", os.environ.get("ATLASSIAN_ORG_ID")),
-                       ("account_id", os.environ.get("ATLASSIAN_ACCOUNT_ID")),
-                       ("assignee", os.environ.get("ACCEPTANCE_JIRA_ASSIGNEE")),
-                       ("status", os.environ.get("ACCEPTANCE_JIRA_STATUS"))):
-        if value and key not in context:
-            context[key] = value
-    # Notifications go to the signed-in lab user, a registered application user.
-    context.setdefault("user_email", login["ACCEPTANCE_EMAIL"])
-    discover_fixtures(context)
-    selected = [case for case in CASES if not args.only or case[0] in args.only]
-    if any(case[0] in GIT_MUTATION_CASES for case in selected):
-        print("git fixture:", prepare_git_fixture(), flush=True)
-    admin_ready = atlassian_admin_configured()
-
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=not args.headed)
-        page = browser.new_context(viewport={"width": 1440, "height": 900}).new_page()
-        traffic = BrowserTraffic(page)
-        try:
-            sign_in(page, args.frontend_url, login["ACCEPTANCE_EMAIL"], login["ACCEPTANCE_PASSWORD"],
-                    int(args.timeout * 1000))
-            for index, case in enumerate(selected, 1):
-                identity, tool = case[0], case[1]
-                prior = report["results"].get(identity)
-                if args.resume and prior and prior.get("verdict") in FINAL_VERDICTS:
-                    continue
-                if tool in ATLASSIAN_ADMIN_TOOLS and not admin_ready:
-                    report["results"][identity] = {"tool": tool, "verdict": "blocked",
-                                                   "reason": "ATLASSIAN_ADMIN_API_KEY is not configured"}
+    save()
+    try:
+        if pending:
+            login = dotenv_values(args.login_env)
+            bind_principal(report, login["ACCEPTANCE_EMAIL"])
+            context = report.setdefault("context", {})
+            for key, value in (("org_id", os.environ.get("ATLASSIAN_ORG_ID")),
+                               ("account_id", os.environ.get("ATLASSIAN_ACCOUNT_ID")),
+                               ("assignee", os.environ.get("ACCEPTANCE_JIRA_ASSIGNEE")),
+                               ("status", os.environ.get("ACCEPTANCE_JIRA_STATUS"))):
+                if value and key not in context:
+                    context[key] = value
+            context.setdefault("user_email", login["ACCEPTANCE_EMAIL"])
+            discover_fixtures(context)
+            if any(case[0] in GIT_MUTATION_CASES for case in pending):
+                # Do not alter a fixture whose earlier mutation may still be in flight.
+                attempted_git = [case for case in build_cases(report["run"], report["project"])
+                                 if case[0] in GIT_MUTATION_CASES and case[0] in report["results"]]
+                preparation = report.get("git_fixture_preparation", {})
+                if not attempted_git and not preparation:
+                    report["git_fixture_preparation"] = {"status": "outcome_unknown"}
+                    save()  # Fixture preparation itself mutates the disposable repository.
+                    preparation = {"status": prepare_git_fixture()}
+                    report["git_fixture_preparation"] = preparation
                     save()
-                    continue
-                try:
-                    case[2].format(**context)
-                except KeyError as missing:
-                    report["results"][identity] = {"tool": tool, "verdict": "skipped", "reason": f"needs {missing}"}
+                if attempted_git or preparation.get("status") != "ready":
+                    for case in pending:
+                        if case[0] in GIT_MUTATION_CASES:
+                            report["results"][case[0]] = {
+                                "tool": case[1], "verdict": "blocked", "reconciliation_required": True,
+                                "reason": "Reconcile the previously attempted Git fixture before new mutations.",
+                            }
+                    pending = unattempted_cases(report, pending)
                     save()
-                    print(f"SKIP {identity:<34} needs {missing}", flush=True)
-                    continue
+            admin_ready = atlassian_admin_configured()
+            shots.mkdir(parents=True, exist_ok=True)
+
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=not args.headed)
                 try:
-                    row = run_case(page, traffic, args, case, context)
-                    row.setdefault("verdict", "pass")
-                except Exception as exc:
-                    row = {"tool": tool, "verdict": "fail", "reason": f"{type(exc).__name__}: {str(exc)[:300]}"}
-                    try:
-                        page.screenshot(path=str(SHOTS / f"{identity}.png"))
-                        row["screenshot"] = str(SHOTS / f"{identity}.png")
-                    except Exception:
-                        pass
-                report["results"][identity] = row
-                report["context"] = context
-                save()
-                print(f"[{index:02d}/{len(selected)}] {row['verdict'].upper():<12} {identity:<34} "
-                      f"{row.get('seconds', '-'):>6}s ws={row.get('websocket', {}).get('opened', '-')} "
-                      f"{row.get('reason', '')[:150]}", flush=True)
-        finally:
-            browser.close()
-            archived = report["results"].get("jira-project-archive", {})
-            if archived.get("verdict") == "pass" and archived.get("prompt", "").endswith(f"MY{RUN[-4:]}."):
-                print("fixture cleanup:", remove_jira_fixture(f"MY{RUN[-4:]}"), flush=True)
-            save()
-    print("summary:", report["summary"], "| registered tools:", report["registered_tools"], "| report:", REPORT)
-    return 0 if report["summary"].get("fail", 0) == 0 else 1
+                    page = browser.new_context(viewport={"width": 1440, "height": 900}).new_page()
+                    traffic = BrowserTraffic(page)
+                    sign_in(page, args.frontend_url, login["ACCEPTANCE_EMAIL"], login["ACCEPTANCE_PASSWORD"],
+                            int(args.timeout * 1000))
+                    for index, case in enumerate(pending, 1):
+                        case_id, tool = case[0], case[1]
+                        if tool in ATLASSIAN_ADMIN_TOOLS and not admin_ready:
+                            report["results"][case_id] = {"tool": tool, "verdict": "blocked",
+                                                         "reason": "ATLASSIAN_ADMIN_API_KEY is not configured"}
+                            save()
+                            continue
+                        try:
+                            case[2].format(**context)
+                        except KeyError as missing:
+                            report["results"][case_id] = {"tool": tool, "verdict": "skipped", "reason": f"needs {missing}"}
+                            save()
+                            print(f"SKIP {case_id:<34} needs {missing}", flush=True)
+                            continue
+                        row = {"tool": tool, "verdict": "blocked", "stage": "prepared",
+                               "reason": "Case may be in progress; reconcile before any replacement request."}
+                        report["results"][case_id] = row
+                        save()  # Persist intent before new_chat/send can create application work.
+                        try:
+                            run_case(page, traffic, args, case, context, row=row, checkpoint=save)
+                            if row.get("verdict") == "pass":
+                                row.pop("reason", None)
+                        except Exception as exc:
+                            row.update(verdict="fail", reason=f"{type(exc).__name__}: {str(exc)[:300]}")
+                            try:
+                                page.screenshot(path=str(shots / f"{case_id}.png"))
+                                row["screenshot"] = str(shots / f"{case_id}.png")
+                            except Exception:
+                                pass
+                        save()
+                        print(f"[{index:02d}/{len(pending)}] {row['verdict'].upper():<12} {case_id:<34} "
+                              f"{row.get('seconds', '-'):>6}s ws={row.get('websocket', {}).get('frames_in', '-')} "
+                              f"{row.get('reason', '')[:150]}", flush=True)
+                finally:
+                    browser.close()
+        report["run_state"] = "finished"
+    finally:
+        if report["results"].get("jira-project-archive", {}).get("verdict") == "pass":
+            report["cleanup_required"] = {"archived_project": f"MY{report['run'][-4:]}",
+                                          "action": "Reconcile and clean up this disposable project explicitly."}
+        save(final=True)
+    acceptance = report["acceptance"]
+    print("summary:", report["summary"], "| registered tools:", report["registered_tools"], "| report:", args.report)
+    print(f"acceptance: {acceptance['overall']} ({acceptance['scope']} scope, "
+          f"{acceptance['pass']}/{acceptance['selected_cases']} selected cases passed)")
+    return acceptance["exit_code"]
 
 
 if __name__ == "__main__":
