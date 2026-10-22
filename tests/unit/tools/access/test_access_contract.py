@@ -57,6 +57,9 @@ def test_access_specialist_exposes_read_and_mutations():
             "check_access",
             "grant_access",
             "revoke_access",
+            "user_groups",
+            "group_members",
+            "access_explain",
         }
     )
 

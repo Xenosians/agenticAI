@@ -135,6 +135,50 @@
         "create",
         "identity"
       ]
+    },
+    {
+      "tool_name": "account_search",
+      "user_request": "Search the directory for accounts matching smith",
+      "arguments": {
+        "query": "smith"
+      },
+      "tags": [
+        "read",
+        "search"
+      ]
+    },
+    {
+      "tool_name": "account_search",
+      "user_request": "Find accounts with maria in the name",
+      "arguments": {
+        "query": "maria"
+      },
+      "tags": [
+        "read",
+        "search"
+      ]
+    },
+    {
+      "tool_name": "account_search",
+      "user_request": "Look up directory users whose email contains finance.example",
+      "arguments": {
+        "query": "finance.example"
+      },
+      "tags": [
+        "read",
+        "search"
+      ]
+    },
+    {
+      "tool_name": "account_search",
+      "user_request": "Which accounts match the text onboard?",
+      "arguments": {
+        "query": "onboard"
+      },
+      "tags": [
+        "read",
+        "search"
+      ]
     }
   ],
   "eval_cases": [
@@ -244,6 +288,54 @@
         "family_name": "Putri",
         "department": "Finance",
         "role": "Analyst"
+      }
+    },
+    {
+      "name": "account search fragment",
+      "user": "Search directory accounts for the text asmith",
+      "allowed_tools": [
+        "account_search"
+      ],
+      "allowed_arguments": {
+        "query": [
+          "asmith"
+        ]
+      },
+      "expected_tool": "account_search",
+      "expected_arguments": {
+        "query": "asmith"
+      }
+    },
+    {
+      "name": "account search no mutation",
+      "user": "Find accounts whose name contains Matrix, don't change anything",
+      "allowed_tools": [
+        "account_search"
+      ],
+      "allowed_arguments": {
+        "query": [
+          "Matrix"
+        ]
+      },
+      "expected_tool": "account_search",
+      "expected_arguments": {
+        "query": "Matrix"
+      }
+    },
+    {
+      "name": "account search email fragment",
+      "user": "Which directory accounts have itsm.local in their email?",
+      "allowed_tools": [
+        "account_search"
+      ],
+      "allowed_arguments": {
+        "query": [
+          "itsm.local"
+        ]
+      },
+      "expected_tool": "account_search",
+      "expected_arguments": {
+        "query": "itsm.local"
       }
     }
   ]

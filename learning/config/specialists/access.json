@@ -78,6 +78,108 @@
         "mutation",
         "revoke"
       ]
+    },
+    {
+      "tool_name": "user_groups",
+      "user_request": "What groups is asmith in?",
+      "arguments": {
+        "user_id": "asmith"
+      },
+      "tags": [
+        "read",
+        "groups"
+      ]
+    },
+    {
+      "tool_name": "user_groups",
+      "user_request": "List the directory groups of alice",
+      "arguments": {
+        "user_id": "alice"
+      },
+      "tags": [
+        "read",
+        "groups"
+      ]
+    },
+    {
+      "tool_name": "user_groups",
+      "user_request": "Show all group memberships for bob, including nested ones",
+      "arguments": {
+        "user_id": "bob"
+      },
+      "tags": [
+        "read",
+        "groups"
+      ]
+    },
+    {
+      "tool_name": "group_members",
+      "user_request": "Who is in the admin group?",
+      "arguments": {
+        "group": "admin"
+      },
+      "tags": [
+        "read",
+        "members"
+      ]
+    },
+    {
+      "tool_name": "group_members",
+      "user_request": "List the members of VPN-Users",
+      "arguments": {
+        "group": "VPN-Users"
+      },
+      "tags": [
+        "read",
+        "members"
+      ]
+    },
+    {
+      "tool_name": "group_members",
+      "user_request": "Show everyone in Domain Admins",
+      "arguments": {
+        "group": "Domain Admins"
+      },
+      "tags": [
+        "read",
+        "members"
+      ]
+    },
+    {
+      "tool_name": "access_explain",
+      "user_request": "Why can't alice use admin?",
+      "arguments": {
+        "user_id": "alice",
+        "resource": "admin"
+      },
+      "tags": [
+        "read",
+        "explain"
+      ]
+    },
+    {
+      "tool_name": "access_explain",
+      "user_request": "bob cannot connect to VPN, explain why",
+      "arguments": {
+        "user_id": "bob",
+        "resource": "VPN"
+      },
+      "tags": [
+        "read",
+        "explain"
+      ]
+    },
+    {
+      "tool_name": "access_explain",
+      "user_request": "Explain why asmith has no access to admin",
+      "arguments": {
+        "user_id": "asmith",
+        "resource": "admin"
+      },
+      "tags": [
+        "read",
+        "explain"
+      ]
     }
   ],
   "eval_cases": [
@@ -198,6 +300,130 @@
       "expected_tool": "revoke_access",
       "expected_arguments": {
         "user_id": "alice",
+        "resource": "admin"
+      }
+    },
+    {
+      "name": "user groups",
+      "user": "Which directory groups does jdoe belong to?",
+      "allowed_tools": [
+        "user_groups"
+      ],
+      "allowed_arguments": {
+        "user_id": [
+          "jdoe"
+        ]
+      },
+      "expected_tool": "user_groups",
+      "expected_arguments": {
+        "user_id": "jdoe"
+      }
+    },
+    {
+      "name": "user groups no mutation",
+      "user": "Show asmith's group memberships without changing them",
+      "allowed_tools": [
+        "user_groups"
+      ],
+      "allowed_arguments": {
+        "user_id": [
+          "asmith"
+        ]
+      },
+      "expected_tool": "user_groups",
+      "expected_arguments": {
+        "user_id": "asmith"
+      }
+    },
+    {
+      "name": "group members by resource",
+      "user": "Who belongs to the vpn group?",
+      "allowed_tools": [
+        "group_members"
+      ],
+      "allowed_arguments": {
+        "group": [
+          "vpn"
+        ]
+      },
+      "expected_tool": "group_members",
+      "expected_arguments": {
+        "group": "vpn"
+      }
+    },
+    {
+      "name": "group members by exact name",
+      "user": "List all members of ITSM-Admins",
+      "allowed_tools": [
+        "group_members"
+      ],
+      "allowed_arguments": {
+        "group": [
+          "ITSM-Admins"
+        ]
+      },
+      "expected_tool": "group_members",
+      "expected_arguments": {
+        "group": "ITSM-Admins"
+      }
+    },
+    {
+      "name": "explain denied access",
+      "user": "jdoe can't use VPN, why?",
+      "allowed_tools": [
+        "access_explain"
+      ],
+      "allowed_arguments": {
+        "user_id": [
+          "jdoe"
+        ],
+        "resource": [
+          "VPN"
+        ]
+      },
+      "expected_tool": "access_explain",
+      "expected_arguments": {
+        "user_id": "jdoe",
+        "resource": "VPN"
+      }
+    },
+    {
+      "name": "explain without changes",
+      "user": "Find out why alice cannot reach admin without changing anything",
+      "allowed_tools": [
+        "access_explain"
+      ],
+      "allowed_arguments": {
+        "user_id": [
+          "alice"
+        ],
+        "resource": [
+          "admin"
+        ]
+      },
+      "expected_tool": "access_explain",
+      "expected_arguments": {
+        "user_id": "alice",
+        "resource": "admin"
+      }
+    },
+    {
+      "name": "explain not grant",
+      "user": "Don't grant anything, just tell me why jdoe lacks admin access",
+      "allowed_tools": [
+        "access_explain"
+      ],
+      "allowed_arguments": {
+        "user_id": [
+          "jdoe"
+        ],
+        "resource": [
+          "admin"
+        ]
+      },
+      "expected_tool": "access_explain",
+      "expected_arguments": {
+        "user_id": "jdoe",
         "resource": "admin"
       }
     }

@@ -38,7 +38,10 @@ class AccountLifecycleResult(
 
     status: str
 
-    changed: bool = False
+    changed: bool | None = False
+    mutation_performed: bool | None = False
+    verification_ok: bool = False
+    retry_safe: bool = True
 
     user_id: (
         str | None
@@ -311,6 +314,7 @@ class LdapAccountLifecycleService(
         mutation_attempted = (
             False
         )
+        mutation_accepted = False
 
         normalized_user = (
             (
@@ -385,7 +389,6 @@ class LdapAccountLifecycleService(
                 ._get_raw_integer_attribute(
                     entry,
                     "userAccountControl",
-                    0,
                 )
             )
 
@@ -414,6 +417,8 @@ class LdapAccountLifecycleService(
                         status="executed",
 
                         changed=False,
+
+                        verification_ok=True,
 
                         user_id=(
                             normalized_user
@@ -491,6 +496,7 @@ class LdapAccountLifecycleService(
                     )
                 )
 
+            mutation_accepted = True
             verified_entry = (
                 self.directory
                 ._find_user(
@@ -505,9 +511,11 @@ class LdapAccountLifecycleService(
                     AccountLifecycleResult(
                         ok=False,
 
-                        status="unknown",
+                        status="outcome_unknown",
 
-                        changed=False,
+                        changed=None,
+                        mutation_performed=True,
+                        retry_safe=False,
 
                         user_id=(
                             normalized_user
@@ -529,7 +537,6 @@ class LdapAccountLifecycleService(
                 ._get_raw_integer_attribute(
                     verified_entry,
                     "userAccountControl",
-                    0,
                 )
             )
 
@@ -549,9 +556,11 @@ class LdapAccountLifecycleService(
                     AccountLifecycleResult(
                         ok=False,
 
-                        status="unknown",
+                        status="outcome_unknown",
 
-                        changed=False,
+                        changed=None,
+                        mutation_performed=True,
+                        retry_safe=False,
 
                         user_id=(
                             normalized_user
@@ -583,6 +592,10 @@ class LdapAccountLifecycleService(
 
                     changed=True,
 
+                    mutation_performed=True,
+                    verification_ok=True,
+                    retry_safe=False,
+
                     user_id=(
                         normalized_user
                     ),
@@ -605,12 +618,14 @@ class LdapAccountLifecycleService(
                     ok=False,
 
                     status=(
-                        "unknown"
+                        "outcome_unknown"
                         if mutation_attempted
                         else "error"
                     ),
 
-                    changed=False,
+                    changed=None if mutation_attempted else False,
+                    mutation_performed=True if mutation_accepted else None if mutation_attempted else False,
+                    retry_safe=not mutation_attempted,
 
                     user_id=(
                         normalized_user

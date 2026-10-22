@@ -11,7 +11,10 @@ from services.directory.password_reset import PasswordResetService
 class AccountLifecycleMCPResult(BaseModel):
     ok: bool
     status: str
-    changed: bool = False
+    changed: bool | None = False
+    mutation_performed: bool | None = False
+    verification_ok: bool = False
+    retry_safe: bool = True
     user_id: str | None = None
     enabled: bool | None = None
     message: str | None = None

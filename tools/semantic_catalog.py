@@ -81,6 +81,10 @@ CAPABILITY_SEMANTICS: dict[str, dict[str, str]] = {
     # --- Jira depth ---
 
     # --- identity depth ---
+    "account_search": {"resource_type": "account", "operation_kind": "search", "effect": "read", "permission": "account.search"},
+    "user_groups": {"resource_type": "group_membership", "operation_kind": "read", "effect": "read", "permission": "group_membership.read"},
+    "group_members": {"resource_type": "group_membership", "operation_kind": "search", "effect": "read", "permission": "group_membership.search"},
+    "access_explain": {"resource_type": "access", "operation_kind": "read", "effect": "read", "permission": "access.explain"},
 
     # --- operations ---
 

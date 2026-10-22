@@ -68,6 +68,7 @@ def test_load_real_account_specialist():
         "mailbox_create",
         "mailbox_status",
         "account_status",
+        "account_search",
         "unlock_user",
         "reset_password",
         "enable_user",
@@ -119,6 +120,9 @@ def test_load_real_access_specialist():
         "check_access",
         "grant_access",
         "revoke_access",
+        "user_groups",
+        "group_members",
+        "access_explain",
     }
 
     assert agent.model == "qwen3-0.6b"
