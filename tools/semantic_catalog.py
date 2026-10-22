@@ -98,6 +98,9 @@ CAPABILITY_SEMANTICS: dict[str, dict[str, str]] = {
     "notify_user": {"resource_type": "user.notification", "operation_kind": "action", "effect": "mutation", "permission": "user.notification.send"},
 
     # --- service desk ---
+    "queue_list": {"resource_type": "service_desk.queue", "operation_kind": "search", "effect": "read", "permission": "service_desk.queue.read"},
+    "service_request_create": {"resource_type": "service_desk.request", "operation_kind": "create", "effect": "mutation", "permission": "service_desk.request.create"},
+    "sla_status": {"resource_type": "service_desk.sla", "operation_kind": "read", "effect": "read", "permission": "service_desk.sla.read"},
 
     # --- network clients ---
 }

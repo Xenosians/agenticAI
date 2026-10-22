@@ -1,0 +1,31 @@
+{
+  "schema": "specialist-training-config.v1",
+  "specialist": "service-desk-specialist",
+  "agent_definition": "subagents/agents/service-desk-specialist.md",
+  "base_model_key": "hub-main",
+  "candidate_model_key": "service-desk-func-trained",
+  "worker_prompt_profile": "compact",
+  "max_new_tokens": 128,
+  "examples": [
+    {"tool_name": "service_request_create", "user_request": "Raise a Get IT help request in the SUP service desk with the summary: Laptop will not start", "arguments": {"service_desk": "SUP", "request_type": "Get IT help", "summary": "Laptop will not start"}, "tags": ["authored-service-desk"]},
+    {"tool_name": "service_request_create", "user_request": "Open a Request admin access request in the ITSM service desk, summary: Admin rights for the build server", "arguments": {"service_desk": "ITSM", "request_type": "Request admin access", "summary": "Admin rights for the build server"}, "tags": ["authored-service-desk"]},
+    {"tool_name": "service_request_create", "user_request": "In the Support service desk, raise an Emailed request with the summary Mailbox full and the description: Inbox shows full usage since Monday", "arguments": {"service_desk": "Support", "request_type": "Emailed request", "summary": "Mailbox full", "description": "Inbox shows full usage since Monday"}, "tags": ["authored-service-desk"]},
+    {"tool_name": "service_request_create", "user_request": "Submit a Get IT help request to service desk ITSM: the printer on floor 2 keeps jamming", "arguments": {"service_desk": "ITSM", "request_type": "Get IT help", "summary": "Printer on floor 2 keeps jamming"}, "tags": ["authored-service-desk", "derived-summary"]},
+    {"tool_name": "sla_status", "user_request": "What is the SLA status of request SUP-12?", "arguments": {"request_key": "SUP-12"}, "tags": ["authored-service-desk"]},
+    {"tool_name": "sla_status", "user_request": "Is ITSM-4 about to breach its SLA?", "arguments": {"request_key": "ITSM-4"}, "tags": ["authored-service-desk"]},
+    {"tool_name": "sla_status", "user_request": "How much time is left on the SLAs for SUP-31?", "arguments": {"request_key": "SUP-31"}, "tags": ["authored-service-desk"]},
+    {"tool_name": "sla_status", "user_request": "Show the time to first response and time to resolution for request ITSM-17", "arguments": {"request_key": "ITSM-17"}, "tags": ["authored-service-desk"]},
+    {"tool_name": "queue_list", "user_request": "List the queues of the SUP service desk", "arguments": {"service_desk": "SUP"}, "tags": ["authored-service-desk"]},
+    {"tool_name": "queue_list", "user_request": "How many items are in each queue of the ITSM service desk?", "arguments": {"service_desk": "ITSM"}, "tags": ["authored-service-desk"]},
+    {"tool_name": "queue_list", "user_request": "Which queues does the Support service desk have?", "arguments": {"service_desk": "Support"}, "tags": ["authored-service-desk"]},
+    {"tool_name": "queue_list", "user_request": "Show queue counts for service desk SUP", "arguments": {"service_desk": "SUP"}, "tags": ["authored-service-desk"]}
+  ],
+  "eval_cases": [
+    {"name": "request-exact-summary", "user": "Raise a Request admin access request in the SUP service desk with the summary: Admin access to the backup console", "allowed_tools": ["service_request_create"], "allowed_arguments": {"service_desk": ["SUP"], "request_type": ["Request admin access"], "summary": ["Admin access to the backup console"]}, "expected_tool": "service_request_create", "expected_arguments": {"service_desk": "SUP", "request_type": "Request admin access", "summary": "Admin access to the backup console"}},
+    {"name": "request-with-description", "user": "File a Get IT help request in the ITSM service desk. Summary: VPN drops every hour. Description: Happens on the office Wi-Fi only", "allowed_tools": ["service_request_create"], "allowed_arguments": {"service_desk": ["ITSM"], "request_type": ["Get IT help"], "summary": ["VPN drops every hour"], "description": ["Happens on the office Wi-Fi only"]}, "expected_tool": "service_request_create", "expected_arguments": {"service_desk": "ITSM", "request_type": "Get IT help", "summary": "VPN drops every hour", "description": "Happens on the office Wi-Fi only"}},
+    {"name": "sla-breach-check", "user": "Has request SUP-44 breached any SLA yet?", "allowed_tools": ["sla_status"], "allowed_arguments": {"request_key": ["SUP-44"]}, "expected_tool": "sla_status", "expected_arguments": {"request_key": "SUP-44"}},
+    {"name": "sla-remaining", "user": "Remaining SLA time for ITSM-9, please.", "allowed_tools": ["sla_status"], "allowed_arguments": {"request_key": ["ITSM-9"]}, "expected_tool": "sla_status", "expected_arguments": {"request_key": "ITSM-9"}},
+    {"name": "queue-counts", "user": "Give me the count per queue for the ITSM service desk.", "allowed_tools": ["queue_list"], "allowed_arguments": {"service_desk": ["ITSM"]}, "expected_tool": "queue_list", "expected_arguments": {"service_desk": "ITSM"}},
+    {"name": "queue-names", "user": "What queues exist in the Support service desk?", "allowed_tools": ["queue_list"], "allowed_arguments": {"service_desk": ["Support"]}, "expected_tool": "queue_list", "expected_arguments": {"service_desk": "Support"}}
+  ]
+}
