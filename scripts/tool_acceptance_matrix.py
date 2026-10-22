@@ -58,14 +58,14 @@ class ProposalCase:
 
 
 def load_inventory(root: Path = PROJECT_ROOT):
-    from mcp_server import create_mcp_server
+    from mcp_server import register_capability_signatures
     from subagents.core.definitions.loader import load_agent_directory
     from tools.capability_contract import validate_capability_registry
     from tools.registry import TOOLS
     from tools.runtime_schema import runtime_registered_tools
 
     # Registration only captures callable signatures; no MCP transport starts.
-    create_mcp_server()
+    register_capability_signatures()
     contracts = {item.name: item for item in validate_capability_registry(TOOLS, require_runtime_schema=True)}
     if set(runtime_registered_tools()) != set(contracts):
         raise ValueError("Production catalog and registered executable tools differ")

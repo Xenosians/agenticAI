@@ -27,6 +27,12 @@ def build_knowledge_service(
         .knowledge_backend
     )
 
+    if backend == "unconfigured":
+        raise RuntimeError(
+            "KNOWLEDGE_BACKEND is not configured. Select local with a reviewed "
+            "snapshot, or explicitly select mock for a simulated demo/test."
+        )
+
     if backend == "mock":
 
         return (

@@ -32,6 +32,12 @@ def build_directory_service(
         .directory_backend
     )
 
+    if backend == "unconfigured":
+        raise RuntimeError(
+            "DIRECTORY_BACKEND is not configured. Select ldap for real directory "
+            "operations, or explicitly select mock for a simulated demo/test."
+        )
+
     if (
         backend
         == "mock"

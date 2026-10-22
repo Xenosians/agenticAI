@@ -17,9 +17,22 @@ from scripts.tool_acceptance_matrix import (
 
 
 @pytest.fixture(scope="module")
-def corpus():
-    contracts, agents = load_inventory()
-    return contracts, agents, load_proposal_cases()
+def corpus(tmp_path_factory):
+    from config import Settings
+    from services import git_repositories
+
+    # These proposal fixtures name three logical repositories. Declare that
+    # test deployment explicitly instead of reading aliases from a user's .env.
+    root = tmp_path_factory.mktemp("proposal-repositories")
+    aliases = {name: root / name for name in ("ai", "backend", "frontend")}
+    for path in aliases.values():
+        path.mkdir()
+    settings = Settings(_env_file=None, git_repositories=aliases, git_default_repository="ai")
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(git_repositories, "get_settings", lambda: settings)
+        patch.setattr(git_repositories, "workspace_root", lambda: root)
+        contracts, agents = load_inventory()
+        yield contracts, agents, load_proposal_cases()
 
 
 def eligible(corpus, tool):

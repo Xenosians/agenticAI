@@ -1,4 +1,4 @@
-from mcp_server import create_mcp_server
+from mcp_server import register_capability_signatures
 from tools.capability_contract import validate_capability_registry
 from tools.registry import TOOLS
 from tools.registry import merge_capability_catalog
@@ -24,7 +24,7 @@ def test_all_registered_capabilities_have_standard_contract(monkeypatch):
 
     # Registration captures executable Python signatures without starting
     # the MCP transport. Requiredness therefore comes from real callables.
-    create_mcp_server()
+    register_capability_signatures()
 
     contracts = validate_capability_registry(
         TOOLS,

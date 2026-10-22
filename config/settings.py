@@ -721,7 +721,7 @@ class Settings(
     # ============================================================
 
     directory_backend: str = (
-        "mock"
+        "unconfigured"
     )
 
     # ============================================================
@@ -747,7 +747,7 @@ class Settings(
     # ============================================================
 
     ticketing_backend: str = (
-        "mock"
+        "unconfigured"
     )
 
     # ============================================================
@@ -755,7 +755,7 @@ class Settings(
     # ============================================================
 
     asset_backend: str = (
-        "mock"
+        "unconfigured"
     )
     asset_sqlite_path: Path | None = None
 
@@ -766,7 +766,7 @@ class Settings(
     knowledge_snapshot_path: str | None = None
     knowledge_snapshot_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     knowledge_backend: str = (
-        "mock"
+        "unconfigured"
     )
 
     # ============================================================
@@ -961,6 +961,7 @@ class Settings(
         supported = {
             "ldap",
             "mock",
+            "unconfigured",
         }
 
         if normalized not in supported:
@@ -992,6 +993,7 @@ class Settings(
         supported = {
             "jira",
             "mock",
+            "unconfigured",
         }
 
         if normalized not in supported:
@@ -1024,6 +1026,7 @@ class Settings(
         supported = {
             "mock",
             "sqlite",
+            "unconfigured",
         }
 
         if normalized not in supported:
@@ -1072,6 +1075,7 @@ class Settings(
         supported = {
             "mock",
             "local",
+            "unconfigured",
         }
 
         if normalized not in supported:
@@ -1711,9 +1715,6 @@ def export_process_env_from_dotenv(
     return exported
 
 
-export_process_env_from_dotenv()
-
-
 @lru_cache
 def get_settings(
 ) -> Settings:
@@ -1721,4 +1722,5 @@ def get_settings(
     Return the process-cached validated Settings instance.
     """
 
+    export_process_env_from_dotenv()
     return Settings()

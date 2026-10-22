@@ -30,6 +30,12 @@ def build_asset_service(
         .asset_backend
     )
 
+    if backend == "unconfigured":
+        raise RuntimeError(
+            "ASSET_BACKEND is not configured. Select sqlite with a persistent "
+            "inventory, or explicitly select mock for a simulated demo/test."
+        )
+
     if backend == "mock":
 
         return (

@@ -755,11 +755,34 @@ def create_mcp_server(
     )
 
 
-mcp = (
-    create_mcp_server()
-)
+class _SignatureSettings(Settings):
+    """Explicit metadata fixtures; ignore deployment/environment providers."""
+
+    @classmethod
+    def settings_customise_sources(cls, settings_cls, init_settings, env_settings,
+                                   dotenv_settings, file_secret_settings):
+        return (init_settings,)
+
+
+def register_capability_signatures() -> None:
+    """Capture actual callable schemas without loading a deployment.
+
+    Explicit in-memory providers supply registration dependencies only. The
+    server is discarded: no transport, tool call, provider result or acceptance
+    evidence is produced. Ordinary MCP startup still requires real configuration
+    or a deliberately selected demo/test backend.
+    """
+    create_mcp_server(settings=_SignatureSettings(
+        _env_file=None, directory_backend="mock", ticketing_backend="mock",
+        asset_backend="mock", knowledge_backend="mock",
+    ))
+
+
+def main() -> None:
+    from config.settings import export_process_env_from_dotenv
+    export_process_env_from_dotenv()
+    create_mcp_server().run()
 
 
 if __name__ == "__main__":
-
-    mcp.run()
+    main()

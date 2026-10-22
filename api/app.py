@@ -1303,6 +1303,10 @@ async def lifespan(
 ):
     app.state.runtime = None
 
+    # Deployment policy loading belongs to startup, not schema/module imports.
+    from config.settings import export_process_env_from_dotenv
+    export_process_env_from_dotenv()
+
     settings = (
         Settings()
     )

@@ -54,7 +54,14 @@ Create a private `.env` in this repository, using [config/settings.py](config/se
 | `ITSM_INTERNAL_JOB_TOKEN` | Same private token as Phoenix |
 | `MODEL_PROFILES` | JSON profiles with actual model paths and runtime settings |
 | `HUB_MODEL_KEY` | Hub profile; default `hub-main` |
-| Provider settings | Enable only the directory, ticketing, knowledge, or network services you intend to use |
+| `DIRECTORY_BACKEND` | Explicitly choose `ldap` for directory operations |
+| `TICKETING_BACKEND` | Explicitly choose `jira` for tickets |
+| `ASSET_BACKEND` | Explicitly choose `sqlite` with a persistent `ASSET_SQLITE_PATH` |
+| `KNOWLEDGE_BACKEND` | Explicitly choose `local` with a reviewed snapshot path and SHA256 |
+
+Provider defaults are `unconfigured`; constructing the MCP tool server fails with a configuration error until these four provider families are explicitly selected. This prevents a missing setting from silently activating seeded demo results. `mock` remains an explicit demo/test choice; it does not verify real ITSM actions. A configured real provider never falls back to a mock on failure.
+
+Module imports and callable-signature registration do not start the MCP server or read the deployment dotenv file. Deployment policy loads explicitly during FastAPI/MCP startup (or a requested cached-settings initialization). Signature registration uses isolated in-memory dependencies and does not execute tools or establish provider readiness. Proposal validation separately uses the deployment's configured logical repository aliases; unit tests declare those aliases explicitly.
 
 Profiles must cover the enabled [agent definitions](subagents/agents). Configure repository/workspace mappings before using developer tools. Remote model selection does not remove the need to configure the local runtime, including the networking model.
 

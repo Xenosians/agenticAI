@@ -34,10 +34,10 @@ class FixedSelector:
 @pytest.fixture
 def registry(monkeypatch):
     # Match production callable registration without depending on test order.
-    from mcp_server import create_mcp_server
+    from mcp_server import register_capability_signatures
     from tools import runtime_schema
     monkeypatch.setattr(runtime_schema, "_SCHEMAS", {})
-    create_mcp_server()
+    register_capability_signatures()
     result = AgentRegistry()
     result.register_many(load_agent_directory(Path(__file__).resolve().parents[5] / "subagents/agents"))
     return result

@@ -18,7 +18,7 @@ if str(REPOSITORY_ROOT) not in sys.path:
     )
 
 
-from mcp_server import create_mcp_server
+from mcp_server import register_capability_signatures
 from tools.capability_contract import (
     normalize_capability_catalog,
     validate_capability_registry,
@@ -37,7 +37,7 @@ def main() -> None:
 
     # Registration captures executable signatures. The returned server
     # does not need to start its transport.
-    create_mcp_server()
+    register_capability_signatures()
 
     contracts = validate_capability_registry(
         TOOLS,

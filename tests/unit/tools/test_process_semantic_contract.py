@@ -13,10 +13,10 @@ from tools.registry import get_tool
 @pytest.fixture
 def developer_agent(monkeypatch):
     # Register real executable signatures, without invoking any tool/provider.
-    from mcp_server import create_mcp_server
+    from mcp_server import register_capability_signatures
 
     monkeypatch.setattr(runtime_schema, "_SCHEMAS", {})
-    create_mcp_server()
+    register_capability_signatures()
     agents_dir = Path(__file__).resolve().parents[3] / "subagents" / "agents"
     return next(
         agent for agent in load_agent_directory(agents_dir)

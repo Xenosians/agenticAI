@@ -33,6 +33,12 @@ def build_ticket_service(
         .ticketing_backend
     )
 
+    if backend == "unconfigured":
+        raise RuntimeError(
+            "TICKETING_BACKEND is not configured. Select jira for real tickets, "
+            "or explicitly select mock for a simulated demo/test."
+        )
+
     if backend == "mock":
         return (
             MockTicketService()
