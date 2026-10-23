@@ -580,10 +580,16 @@ def arguments_semantically_match(
 
 
 
-def semantic_context(case: dict) -> dict:
+def semantic_context(case: dict, capability_catalog: list[dict]) -> dict:
+    # Bind only the grounded targets the router admits for this capability.
+    # Derived proposal content (a ticket summary) is composed by the model in
+    # production; the training corpus drops it from bindings the same way.
+    grounded = {name for item in capability_catalog for name in item["grounded_arguments"]}
     return {
         "allowed_tools": case["allowed_tools"],
-        "allowed_arguments": case["allowed_arguments"],
+        "allowed_arguments": {
+            name: values for name, values in case["allowed_arguments"].items() if name in grounded
+        },
         "forbidden_tools": [],
         "forbidden_arguments": {},
     }
@@ -593,6 +599,7 @@ def build_messages(
     *,
     system_prompt: str,
     case: dict,
+    capability_catalog: list[dict],
 ) -> list[dict[str, str]]:
     return [
         {
@@ -611,7 +618,7 @@ def build_messages(
                 "aliases, configuration names, inferred names, or "
                 "rewritten values.\n\n"
                 + json.dumps(
-                    semantic_context(case),
+                    semantic_context(case, capability_catalog),
                     ensure_ascii=False,
                     sort_keys=True,
                 )
@@ -826,6 +833,7 @@ async def main(argv=None) -> int:
             messages = build_messages(
                 system_prompt=system_prompt,
                 case=case,
+                capability_catalog=capability_catalog,
             )
 
             try:
