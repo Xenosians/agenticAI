@@ -12,6 +12,7 @@ This is an evolving local-first **MVP candidate**. Model output is a proposal, n
 - Durable approvals that retain the exact proposed action, plus a completion outbox for reliable delivery to Phoenix.
 - Authenticated WebSocket progress from the AI runtime to Phoenix, alongside durable job and approval state that can be restored after reconnecting.
 - A bounded account → Jira ticket → completion mail workflow on durable jobs, with verified account data, separate approvals, and saved continuation recovery.
+- Optional user-reviewed workflow contracts check complete operation lists, dependencies and exact target pins before dispatch for both local and outbound reasoning. Normal chat remains available; free-text submissions do not receive this completeness check.
 - Local Transformers models, quantization profiles, LoRA adapters, and serialized GPU scheduling.
 - Per-account model connections: compatible chat-completion APIs, including Groq; installed local profiles; and Pi/OpenCode inference adapters.
 - Shared provider usage queues, editable quota settings, and verified reasoning controls for supported connections.

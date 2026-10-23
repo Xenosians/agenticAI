@@ -92,7 +92,8 @@ def env(tmp_path, monkeypatch, request):
                               hub=SimpleNamespace(runtime=ticket_runtime))
     extensions = ExtensionStore(tmp_path / "extensions")
     connection = extensions.put("owner-1", "model", {"backend": "http", "name": "unit-connection", "state": "ready"}, "private-unit-secret")
-    selected_model = None if getattr(request, "param", None) == "local" else connection["id"]
+    mode = getattr(request, "param", "http")
+    selected_model = None if mode.startswith("local") else connection["id"]
     extensions.select("owner-1", model_id=selected_model, dataset_id=None)
     monkeypatch.setattr("services.extensions.service.extension_store", lambda: extensions)
 
@@ -117,6 +118,21 @@ def env(tmp_path, monkeypatch, request):
     setattr(hub_result, "_pending_onboarding", encode_plan(AccountTicketPlan(ticket)))
     payload = SimpleNamespace(user_id="owner-1", job_id="job-1", attempt=1, context=[],
                               message="Create an account for Mvp Test, then create a Jira ticket in KAN for this account.")
+    if mode.endswith("-contract"):
+        from agent.requested_workflow import RequestedWorkflowContract
+        payload.workflow_contract = RequestedWorkflowContract.model_validate({"version": 1, "steps": [
+            {"id": "account", "capability": "account_create", "grounded_arguments": {
+                "given_name": ["Mvp"], "family_name": ["Test"],
+            }, "after_success_of": None},
+            {"id": "ticket", "capability": "ticket_create", "grounded_arguments": {
+                "project_key": ["KAN"],
+            }, "after_success_of": "account"},
+        ]})
+        payload.workflow_contract_hash = payload.workflow_contract.content_hash()
+        registry = AgentRegistry()
+        for name, tool in (("account-specialist", "account_create"), ("jira-specialist", "ticket_create")):
+            registry.register(AgentDefinition(name=name, description=name, model="isolated", tools=[tool]))
+        ticket_runtime.agent_registry = registry
     with owner_execution("owner-1", payload.message):
         marker = persist_workflow_continuation(runtime, payload, hub_result)
     return SimpleNamespace(runtime=runtime, source=source["id"], store=approvals, manager=manager,
@@ -130,6 +146,39 @@ async def approve_source(env):
     return {"approval_id": env.source, "protocol_status": "processed",
             "execution_status": "succeeded", "approval_status": "approved",
             "replayed": False, "result": outcome["result"], "error": None}
+
+
+@pytest.mark.parametrize("env", ["local-contract", "http-contract"], indirect=True)
+@run_async
+async def test_reviewed_scope_is_pinned_and_rechecked_for_saved_continuation(env):
+    entry = WorkflowStore(env.store.path).get(env.source)
+    assert entry["plan"]["workflow_contract"] == env.payload.workflow_contract.model_dump()
+    assert entry["plan"]["workflow_contract_hash"] == env.payload.workflow_contract_hash
+    protocol = await approve_source(env)
+    response = await continue_after_approval(env.runtime, env.source, protocol)
+    assert response["continuation"]["status"] == "waiting_approval"
+    assert len(env.ticket.calls) == 1
+    assert await continue_after_approval(env.runtime, env.source, protocol) == response
+    assert len(env.ticket.calls) == 1
+
+
+@pytest.mark.parametrize("env", ["local-contract", "http-contract"], indirect=True)
+@run_async
+async def test_corrupt_saved_scope_stops_before_followup_inference(env):
+    store = WorkflowStore(env.store.path)
+    entry = store.get(env.source)
+    plan = entry["plan"]
+    plan["workflow_contract"]["steps"][1]["grounded_arguments"]["project_key"] = ["OTHER"]
+    # Simulate damaged local storage, not an application update path. The
+    # public store already refuses to rebind the saved approval's plan.
+    with store.connect() as connection:
+        connection.execute("UPDATE account_ticket_continuation SET plan=? WHERE source_approval_id=?",
+                           (json.dumps(plan), env.source))
+    protocol = await approve_source(env)
+    response = await continue_after_approval(env.runtime, env.source, protocol)
+    assert response["continuation"]["status"] == "outcome_unknown"
+    assert not env.ticket.calls
+    assert store.get(env.source)["state"] == "blocked"
 
 
 def test_only_exact_validated_two_operation_plan_is_admitted():

@@ -14,6 +14,10 @@ import uuid
 
 from agent.onboarding import WorkflowContinuation, WorkflowProposal, decode_ticket, verified_account
 from agent.workflow_store import WorkflowStore
+from agent.requested_workflow import (
+    RequestedWorkflowContract, verify_workflow_binding,
+    admit_requested_workflow, validate_requested_step,
+)
 from subagents.core.definitions.types import AgentTask, HubResult
 
 
@@ -38,12 +42,18 @@ def persist_workflow_continuation(runtime, payload, hub_result) -> dict[str, Any
         raise ValueError("Onboarding must bind the authenticated execution selection.")
     decode_ticket(plan)
     approval_id = hub_result.results[0].approval_id
+    saved_plan = {"delegation": plan, "user_request": payload.message,
+                  "context": [turn.model_dump() for turn in payload.context],
+                  "selection": dict(selection)}
+    contract = getattr(payload, "workflow_contract", None)
+    contract_hash = getattr(payload, "workflow_contract_hash", None)
+    verify_workflow_binding(contract, contract_hash)
+    if contract is not None:
+        saved_plan.update(workflow_contract=contract.model_dump(), workflow_contract_hash=contract_hash)
     workflow_store(runtime).put(
         source_approval_id=approval_id, owner_id=payload.user_id,
         job_id=payload.job_id, attempt=payload.attempt,
-        plan={"delegation": plan, "user_request": payload.message,
-              "context": [turn.model_dump() for turn in payload.context],
-              "selection": dict(selection)},
+        plan=saved_plan,
     )
     return {
         "kind": "account_ticket", "state": "awaiting_account_approval",
@@ -106,6 +116,12 @@ async def _continue_after_approval_locked(runtime, approval_id: str,
         identity = verified_account(source.result, source.arguments)
         plan = entry["plan"]
         ticket = decode_ticket(plan["delegation"])
+        saved_contract = plan.get("workflow_contract")
+        contract = RequestedWorkflowContract.model_validate(saved_contract) if saved_contract is not None else None
+        verify_workflow_binding(contract, plan.get("workflow_contract_hash"))
+        if contract is not None:
+            owners = admit_requested_workflow(contract, runtime.hub.runtime.agent_registry)
+            validate_requested_step(contract, 1, ticket, owners)
         task = AgentTask(
             task_id=uuid.uuid4().hex, agent_name=ticket.agent_name,
             user_request=plan["user_request"], instructions=ticket.instructions,

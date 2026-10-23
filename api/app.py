@@ -26,6 +26,7 @@ from fastapi import (
 from pydantic import (
     BaseModel,
     Field,
+    model_validator,
 )
 
 from agent.approvals import (
@@ -96,6 +97,7 @@ from services.openwrt import openwrt_integration_status
 
 
 from agent.onboarding import WorkflowContinuation
+from agent.requested_workflow import RequestedWorkflowContract, verify_workflow_binding
 
 
 class ApprovalProtocolResponse(BaseModel):
@@ -156,6 +158,13 @@ class JobExecuteRequest(
         default_factory=list,
         max_length=24,
     )
+    workflow_contract: RequestedWorkflowContract | None = None
+    workflow_contract_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+
+    @model_validator(mode="after")
+    def validate_workflow_binding(self):
+        verify_workflow_binding(self.workflow_contract, self.workflow_contract_hash)
+        return self
 
 
 # ============================================================
@@ -1141,7 +1150,13 @@ async def execute_job(
         from services.job_progress import job_progress
         async with job_progress(runtime.settings, job_id, payload.attempt):
             with owner_execution(payload.user_id, payload.message) as (profile, has_dataset):
-                result = await runtime.hub.run(payload.message, context=conversation_context)
+                workflow_options = (
+                    {"workflow_contract": payload.workflow_contract}
+                    if payload.workflow_contract is not None else {}
+                )
+                result = await runtime.hub.run(
+                    payload.message, context=conversation_context, **workflow_options,
+                )
                 from api.workflows import persist_workflow_continuation
                 workflow = persist_workflow_continuation(runtime, payload, result)
 

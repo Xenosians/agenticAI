@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
+from agent.requested_workflow import (
+    RequestedWorkflowContract, admit_requested_workflow,
+    requested_workflow_prompt, validate_requested_plan,
+)
 
 from services.extensions.budget import (
     ExternalInferenceBudgetError,
@@ -357,6 +361,7 @@ class LLMRouter:
         user_request: str,
         *,
         context: list[dict[str, str]] | None = None,
+        workflow_contract: RequestedWorkflowContract | None = None,
     ) -> list[
         SpecialistRequest
     ]:
@@ -382,18 +387,21 @@ class LLMRouter:
         """
 
         try:
-
-            return (
-                await self.route(
-                    user_request,
-                    context=context,
-                )
-            )
+            options = {"workflow_contract": workflow_contract} if workflow_contract is not None else {}
+            plan = await self.route(user_request, context=context, **options)
+            if workflow_contract is not None:
+                try:
+                    validate_requested_plan(
+                        workflow_contract, plan, admit_requested_workflow(workflow_contract, self.registry),
+                    )
+                except ValueError as exc:
+                    raise RoutingContractError(str(exc)) from exc
+            return plan
 
         except RoutingContractError as exc:
-
+            # A requested-workflow mismatch shares the existing one-repair
+            # budget. It never starts a second format-repair loop.
             if not self.strict_contract:
-
                 raise
 
             print(
@@ -407,8 +415,7 @@ class LLMRouter:
                 "conditional_protocol=False"
             )
 
-            return (
-                await self.route(
+            plan = await self.route(
                     user_request,
 
                     context=context,
@@ -427,8 +434,16 @@ class LLMRouter:
                         exc,
                         CandidateMissError,
                     ),
+                    **options,
                 )
-            )
+            if workflow_contract is not None:
+                try:
+                    validate_requested_plan(
+                        workflow_contract, plan, admit_requested_workflow(workflow_contract, self.registry),
+                    )
+                except ValueError as final_exc:
+                    raise RoutingContractError(str(final_exc)) from final_exc
+            return plan
 
 
     async def route(
@@ -442,6 +457,7 @@ class LLMRouter:
             str | None
         ) = None,
         full_catalog: bool = False,
+        workflow_contract: RequestedWorkflowContract | None = None,
     ) -> list[
         SpecialistRequest
     ]:
@@ -457,11 +473,34 @@ class LLMRouter:
             )
         )
 
-        specialists, system_content, origin_stage, candidates = self._routing_input(
-            user_request, repair_mode=repair_mode,
-            include_workflow_protocol=include_workflow_protocol,
-            full_catalog=full_catalog,
-        )
+        if workflow_contract is not None:
+            owners = admit_requested_workflow(workflow_contract, self.registry)
+            # Explicitly selected operations determine disclosure, not an
+            # executable route. The model must still generate and validate its
+            # complete plan through the same semantic contract and guards.
+            candidates = validate_candidate_set(CandidateSet(
+                tuple(Candidate(agent, (step.capability,))
+                      for step in workflow_contract.steps
+                      for agent in owners[step.capability]), confidence=1.0,
+                reason="user-reviewed workflow disclosure",
+            ), self.registry)
+            specialists = build_candidate_agent_specs(candidates, self.registry)
+            external = selected_profile(stage=InferenceStage.SEMANTIC_ROUTING) is not None
+            origin_stage = InferenceStage.SEMANTIC_ROUTING if external else InferenceStage.CONTROL_ROUTING
+            if external or self.router_prompt_profile == "compact":
+                system_content = self._compact_system(specialists, include_workflow_protocol)
+            else:
+                system_content = self._build_system_prompt(
+                    repair_mode=repair_mode, include_workflow_protocol=include_workflow_protocol,
+                    specialists=specialists,
+                )
+            system_content += requested_workflow_prompt(workflow_contract)
+        else:
+            specialists, system_content, origin_stage, candidates = self._routing_input(
+                user_request, repair_mode=repair_mode,
+                include_workflow_protocol=include_workflow_protocol,
+                full_catalog=full_catalog,
+            )
 
         messages = [
             {
@@ -950,6 +989,13 @@ class LLMRouter:
                 "Hub router produced no executable valid "
                 "delegation from a non-empty routing result."
             )
+
+        if workflow_contract is not None:
+            try:
+                validate_requested_plan(workflow_contract, validated, owners)
+            except ValueError as exc:
+                reject_current_hub_routing_attempt(str(exc))
+                raise RoutingContractError(str(exc)) from exc
 
         accept_current_hub_routing_attempt(
             validated_delegation_count=(

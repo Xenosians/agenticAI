@@ -7,6 +7,9 @@ import uuid
 from dataclasses import (
     replace,
 )
+from agent.requested_workflow import (
+    RequestedWorkflowContract, admit_requested_workflow, validate_requested_plan,
+)
 
 from learning.evidence.runtime_decisions import (
     attach_hub_runtime_decisions,
@@ -67,14 +70,17 @@ async def _call_with_optional_context(
     callback,
     *args,
     context: list[dict[str, str]],
+    workflow_contract: RequestedWorkflowContract | None = None,
 ):
-    if _accepts_context_keyword(callback):
-        return await callback(
-            *args,
-            context=context,
-        )
-
-    return await callback(*args)
+    options = {"context": context} if _accepts_context_keyword(callback) else {}
+    if workflow_contract is not None:
+        signature = inspect.signature(callback)
+        if ("workflow_contract" not in signature.parameters and not any(
+                item.kind is inspect.Parameter.VAR_KEYWORD
+                for item in signature.parameters.values())):
+            raise RoutingContractError("The router cannot preserve the reviewed workflow contract.")
+        options["workflow_contract"] = workflow_contract
+    return await callback(*args, **options)
 
 
 class Orchestrator:
@@ -368,6 +374,7 @@ class Orchestrator:
         user_request: str,
         *,
         context: list[dict[str, str]] | None = None,
+        workflow_contract: RequestedWorkflowContract | None = None,
     ) -> HubResult:
 
         conversation_context = (
@@ -378,6 +385,24 @@ class Orchestrator:
         )
 
         try:
+            owners = None
+            if workflow_contract is not None:
+                try:
+                    # Revalidate a fresh snapshot even if an internal caller
+                    # supplied an existing model with mutable nested lists.
+                    workflow_contract = RequestedWorkflowContract.model_validate(
+                        workflow_contract.model_dump()
+                        if isinstance(workflow_contract, RequestedWorkflowContract)
+                        else workflow_contract
+                    )
+                    registry = getattr(self.runtime, "agent_registry", None)
+                    if registry is None:
+                        registry = getattr(self.router, "registry", None)
+                    if registry is None:
+                        raise ValueError("The current specialist registry is unavailable.")
+                    owners = admit_requested_workflow(workflow_contract, registry)
+                except ValueError as exc:
+                    raise RoutingContractError(str(exc)) from exc
 
             route_with_repair = (
                 getattr(
@@ -396,6 +421,7 @@ class Orchestrator:
                         route_with_repair,
                         user_request,
                         context=conversation_context,
+                        workflow_contract=workflow_contract,
                     )
                 )
 
@@ -406,8 +432,15 @@ class Orchestrator:
                         self.router.route,
                         user_request,
                         context=conversation_context,
+                        workflow_contract=workflow_contract,
                     )
                 )
+
+            if workflow_contract is not None:
+                try:
+                    validate_requested_plan(workflow_contract, delegations, owners)
+                except ValueError as exc:
+                    raise RoutingContractError(str(exc)) from exc
 
         except RoutingContractError as exc:
 
@@ -420,6 +453,12 @@ class Orchestrator:
                 "The request could not be safely interpreted "
                 "into a valid governed execution plan."
             )
+            if workflow_contract is not None:
+                message = (
+                    "No action was executed because the plan could not be confirmed "
+                    "against your reviewed workflow. Please review the selected steps, "
+                    "targets and dependencies and clarify the request."
+                )
 
             return (
                 HubResult(

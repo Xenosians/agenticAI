@@ -35,6 +35,40 @@ def specialist_roles(settings) -> list[dict]:
     return [{"id": agent.name, "description": agent.description, "local_model": agent.model}
             for agent in sorted(load_agent_directory(agents_dir), key=lambda agent: agent.name)]
 
+
+def workflow_capabilities(settings) -> list[dict]:
+    """Public descriptors for explicit workflow review, never provider health."""
+    from subagents.core.definitions.loader import load_agent_directory
+    from tools.capability_contract import build_capability_contract
+    from tools.registry import TOOLS, get_tool
+    from subagents.core.orchestration.intent_contract import trusted_success_continuations
+
+    agents_dir = getattr(settings, "agents_dir", None)
+    agents = load_agent_directory(agents_dir) if agents_dir is not None else []
+    result = []
+    for name, tool in sorted(TOOLS.items()):
+        metadata = build_capability_contract(name, tool)
+        # Every registered owner is disclosed; a capability can belong to a
+        # provider-specific specialist and a provider-neutral fallback.
+        owners = sorted(agent.name for agent in agents if name in agent.tools)
+        result.append({
+            "id": name, "description": tool.get("description", ""),
+            "effect": metadata.effect, "permission": metadata.permission,
+            "agent_names": owners,
+            "grounded_arguments": list(metadata.grounded_arguments),
+            "required_arguments": list(metadata.required_arguments),
+            "parameters": {
+                field: {key: value for key, value in descriptor.items()
+                        if key in {"type", "description", "enum"}}
+                for field, descriptor in tool.get("parameters", {}).items()
+                if field in metadata.grounded_arguments
+            },
+            "success_continuations": trusted_success_continuations(
+                tool_name=name, tool=tool, tool_lookup=get_tool,
+            ),
+        })
+    return result
+
 def public_resource(row):
     # No dataset bodies, credentials or server filesystem paths in list responses.
     public = {key: value for key, value in row.items() if key not in {"api_key", "content", "model_path"}}
@@ -184,7 +218,6 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
         raise ValueError("Invalid upload offset")
     store = extension_store()
     if action == "list":
-        from tools.registry import TOOLS
         from services.extensions.providers import (
             connection_presets,
             provider_presets,
@@ -198,9 +231,7 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
                 "inference_option_support": inference_option_support(),
                 "networking_inference_options": networking_inference_options(),
                 "local_profiles": [{"id": key, "backend": profile.backend} for key, profile in settings.model_profiles.items() if profile.enabled and not key.startswith("user-upload-")],
-                "capabilities": [{"id": name, "description": tool.get("description", ""),
-                                  "effect": tool.get("effect"), "permission": tool.get("permission")}
-                                 for name, tool in sorted(TOOLS.items())],
+                "capabilities": workflow_capabilities(settings),
                 "harnesses": [{"id": kind, "available": _installed(kind)} for kind in ["opencode", "pi"]],
                 "connections": [{"id": "rag", "state": "ready", "contract": "owner-retrieval.v1"},
                                 {"id": "n8n", "state": "prepared", "contract": "governed-workflow.v1"}]}
