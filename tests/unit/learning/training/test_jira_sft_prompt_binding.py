@@ -64,6 +64,7 @@ def _training_fixture(tmp_path, directory, corpus, *, legacy=False):
         values.update(
             worker_prompt_profile=corpus.worker_prompt_profile,
             system_prompt_sha256=corpus.system_prompt_sha256,
+            prompt_layout=corpus.prompt_layout,
         )
     manifest = jira_sft.JiraSftTrainingManifest(**values)
     path = tmp_path / "training-manifest.json"
@@ -131,12 +132,14 @@ def test_registration_inherits_verified_corpus_prompt(configured_profiles, tmp_p
     assert profiles["networking-base"] == {"backend": "hf-causal", "worker_prompt_profile": "compact"}
 
 
-@pytest.mark.parametrize("field", ["corpus_train_sha256", "corpus_validation_sha256", "system_prompt_sha256"])
+@pytest.mark.parametrize("field", [
+    "corpus_train_sha256", "corpus_validation_sha256", "system_prompt_sha256", "prompt_layout",
+])
 def test_registration_rejects_unbound_training_artifacts_without_env_writes(configured_profiles, tmp_path, field):
     directory, corpus = _build_candidate(tmp_path)
     manifest, env = _training_fixture(tmp_path, directory, corpus)
     values = json.loads(manifest.read_text(encoding="utf-8"))
-    values[field] = "b" * 64
+    values[field] = "runtime_task" if field == "prompt_layout" else "b" * 64
     manifest.write_text(json.dumps(values), encoding="utf-8")
     before = env.read_bytes()
     with pytest.raises(ValueError, match="does not match"):

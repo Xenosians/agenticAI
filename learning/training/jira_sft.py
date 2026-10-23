@@ -13,7 +13,7 @@ from datetime import (
 )
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -37,6 +37,7 @@ from learning.training.capability_curriculum import (
 from subagents.core.definitions.loader import (
     load_agent_definition,
 )
+from subagents.core.definitions.types import AgentDefinition
 
 from subagents.core.tooling.capabilities import (
     build_agent_capability_catalog,
@@ -250,13 +251,14 @@ def build_runtime_messages(
         str,
         Any,
     ],
+    current_request_last: bool = False,
 ) -> list[
     dict[
         str,
         str,
     ]
 ]:
-    return [
+    messages = [
         {
             "role": "system",
             "content": system_prompt,
@@ -284,6 +286,9 @@ def build_runtime_messages(
             ),
         },
     ]
+    if current_request_last:
+        return [messages[0], messages[2], messages[1]]
+    return messages
 
 
 # ============================================================
@@ -315,6 +320,9 @@ class JiraSftRecord(
         Any,
     ]
     target_response: str
+    # Present only for an explicitly built runtime-task corpus. Verification
+    # reconstructs these messages from trusted current capabilities.
+    prompt_messages: list[dict[str, str]] | None = None
     tags: list[str] = Field(
         default_factory=list
     )
@@ -352,6 +360,7 @@ class JiraSftCorpusManifest(
     agent_definition_sha256: str
     capability_catalog_sha256: str
     system_prompt_sha256: str
+    prompt_layout: Literal["legacy", "runtime_task"] = "legacy"
 
 
 class JiraSftTrainingManifest(
@@ -382,6 +391,7 @@ class JiraSftTrainingManifest(
     # contract as well as the two supervised split identities.
     worker_prompt_profile: str | None = None
     system_prompt_sha256: str | None = None
+    prompt_layout: Literal["legacy", "runtime_task"] | None = None
     max_steps: int
     learning_rate: float
     max_length: int
@@ -1385,14 +1395,68 @@ def _build_records(
 
     return records
 
+
+def _register_runtime_contract(prompt_layout: str) -> None:
+    if prompt_layout == "runtime_task":
+        # Signature registration is metadata-only: no provider/server starts.
+        from mcp_server import register_capability_signatures
+        register_capability_signatures()
+
+
+def runtime_task_messages(
+    agent: AgentDefinition, record: JiraSftRecord, prompt_profile: str,
+) -> list[dict[str, str]]:
+    """Reproduce one isolated local worker task, without prior conversation."""
+    if record.semantic_context.get("allowed_tools") != [record.tool_name]:
+        raise ValueError("Runtime-task corpus requires exactly its declared capability.")
+    catalog = build_agent_capability_catalog(
+        agent, include_arguments=True, allowed_tools=[record.tool_name],
+    )
+    if len(catalog) != 1 or catalog[0]["name"] != record.tool_name:
+        raise ValueError("Runtime-task capability is not owned by the Jira specialist.")
+    return build_runtime_messages(
+        system_prompt=build_worker_system_prompt(
+            agent, capability_catalog=catalog, prompt_profile=prompt_profile,
+        ),
+        user_request=record.user_request, semantic_context=record.semantic_context,
+        current_request_last=True,
+    )
+
+
+def _runtime_task_record(
+    agent: AgentDefinition, record: JiraSftRecord, prompt_profile: str,
+) -> JiraSftRecord:
+    catalog = build_agent_capability_catalog(
+        agent, include_arguments=True, allowed_tools=[record.tool_name],
+    )
+    if len(catalog) != 1:
+        raise ValueError("Runtime-task capability must have one trusted descriptor.")
+    grounded = set(catalog[0]["grounded_arguments"])
+    context = dict(record.semantic_context)
+    # Derived proposal content is not a Hub-authorized target binding.
+    for field in ("allowed_arguments", "forbidden_arguments"):
+        context[field] = {
+            name: value for name, value in context.get(field, {}).items()
+            if name in grounded
+        }
+    record = record.model_copy(update={"semantic_context": context})
+    return record.model_copy(update={
+        "prompt_messages": runtime_task_messages(agent, record, prompt_profile),
+    })
+
+
 def build_jira_sft_corpus(
     *,
     project_root: Path,
     output_directory: Path,
     base_model_key: str = DEFAULT_BASE_MODEL_KEY,
     worker_prompt_profile: str | None = None,
+    prompt_layout: Literal["legacy", "runtime_task"] = "legacy",
     force: bool = False,
 ) -> JiraSftCorpusManifest:
+    if prompt_layout not in {"legacy", "runtime_task"}:
+        raise ValueError("Unsupported Jira prompt layout.")
+    _register_runtime_contract(prompt_layout)
     project_root = (
         project_root
         .expanduser()
@@ -1459,6 +1523,8 @@ def build_jira_sft_corpus(
             project_root
         )
     )
+    if prompt_layout == "runtime_task":
+        records = [_runtime_task_record(agent, record, prompt_profile) for record in records]
 
     train = [
         record
@@ -1533,6 +1599,7 @@ def build_jira_sft_corpus(
         )
 
     manifest = JiraSftCorpusManifest(
+        prompt_layout=prompt_layout,
         created_at=_utc_now(),
         source=(
             "catalog-derived-jira-capability-language-v2"
@@ -1698,6 +1765,7 @@ def verify_jira_sft_corpus(
             )
         )
     )
+    _register_runtime_contract(manifest.prompt_layout)
 
     if _sha256_file(
         train_path
@@ -1811,6 +1879,13 @@ def verify_jira_sft_corpus(
         *train,
         *validation,
     ]:
+        if manifest.prompt_layout == "runtime_task":
+            expected_record = _runtime_task_record(agent, record, expected_prompt_profile)
+            if (record.semantic_context != expected_record.semantic_context
+                    or record.prompt_messages != expected_record.prompt_messages):
+                raise ValueError("Jira runtime-task messages changed after corpus build.")
+        elif record.prompt_messages is not None:
+            raise ValueError("Legacy Jira corpus cannot override its verified prompt.")
         calls = parse_tool_calls(
             record.target_response
         )
@@ -2028,89 +2103,33 @@ def _tokenize_record(
     str,
     list[int],
 ]:
-    messages = build_runtime_messages(
+    messages = record.prompt_messages or build_runtime_messages(
         system_prompt=system_prompt,
         user_request=record.user_request,
         semantic_context=record.semantic_context,
     )
 
-    prompt = _render_prompt(
-        tokenizer,
-        messages,
+    from learning.training.hub_hybrid_qlora import (
+        _encode_prompt_and_completion,
+        _has_native_chat_template,
     )
-
-    prompt_ids = tokenizer(
-        prompt,
-        add_special_tokens=True,
-    )[
-        "input_ids"
-    ]
-
-    target_text = (
-        record.target_response
-        + (
-            tokenizer.eos_token
-            or ""
+    completion = record.target_response
+    eos = tokenizer.eos_token or ""
+    if not _has_native_chat_template(tokenizer) and eos and not completion.endswith(eos):
+        completion += eos
+    # Reuse the strict native/fallback boundary. Never discard the system
+    # prefix or partial targets to make an oversized example trainable.
+    try:
+        input_ids, attention_mask, labels = _encode_prompt_and_completion(
+            tokenizer=tokenizer, prompt_messages=messages,
+            completion=completion, max_length=max_length,
         )
-    )
-
-    target_ids = tokenizer(
-        target_text,
-        add_special_tokens=False,
-    )[
-        "input_ids"
-    ]
-
-    if not target_ids:
-        raise ValueError(
-            "Jira SFT target tokenized to zero tokens: "
-            f"{record.record_id}"
-        )
-
-    if len(target_ids) >= max_length:
-        raise ValueError(
-            "Jira SFT target exceeds max_length by itself: "
-            f"{record.record_id}"
-        )
-
-    available_prompt = (
-        max_length
-        - len(target_ids)
-    )
-
-    # Preserve the END of the prompt because it contains the exact
-    # semantic target context. Compact prompt mode keeps the complete
-    # capability protocol within practical bounds for BLOOMZ.
-    if len(prompt_ids) > available_prompt:
-        prompt_ids = prompt_ids[
-            -available_prompt:
-        ]
-
-    input_ids = [
-        *prompt_ids,
-        *target_ids,
-    ]
-
-    labels = [
-        *(
-            [-100]
-            * len(
-                prompt_ids
-            )
-        ),
-        *target_ids,
-    ]
-
-    attention_mask = [
-        1
-    ] * len(
-        input_ids
-    )
-
+    except ValueError as exc:
+        raise ValueError(f"Jira SFT record {record.record_id}: {exc}") from exc
     return {
-        "input_ids": input_ids,
-        "attention_mask": attention_mask,
-        "labels": labels,
+        "input_ids": input_ids[0].tolist(),
+        "attention_mask": attention_mask[0].tolist(),
+        "labels": labels[0].tolist(),
     }
 
 
@@ -2685,6 +2704,7 @@ def train_jira_sft(
         ),
         worker_prompt_profile=corpus_manifest.worker_prompt_profile,
         system_prompt_sha256=corpus_manifest.system_prompt_sha256,
+        prompt_layout=corpus_manifest.prompt_layout,
         max_steps=max_steps,
         learning_rate=learning_rate,
         max_length=max_length,
@@ -2821,6 +2841,8 @@ def register_trained_candidate_profile(
         and manifest.system_prompt_sha256 != corpus_manifest.system_prompt_sha256
     ):
         raise ValueError("Jira training prompt hash does not match its verified corpus.")
+    if manifest.prompt_layout is not None and manifest.prompt_layout != corpus_manifest.prompt_layout:
+        raise ValueError("Jira training layout does not match its verified corpus.")
 
     merged_model_directory = Path(
         manifest.merged_model_directory

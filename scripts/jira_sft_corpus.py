@@ -55,6 +55,10 @@ def main() -> int:
             "Omit to bind the configured base model profile."
         ),
     )
+    parser.add_argument(
+        "--prompt-layout", choices=("legacy", "runtime_task"), default="legacy",
+        help="runtime_task pins per-task capability prompts with the original request last.",
+    )
 
     parser.add_argument(
         "--force",
@@ -90,6 +94,7 @@ def main() -> int:
             output_directory=args.output,
             force=args.force,
             worker_prompt_profile=args.worker_prompt_profile,
+            prompt_layout=args.prompt_layout,
         )
 
         (
@@ -126,6 +131,7 @@ def main() -> int:
         "prompt profile:",
         manifest.worker_prompt_profile,
     )
+    print("prompt layout:", manifest.prompt_layout)
     print(
         "train sha256:",
         manifest.train_sha256,

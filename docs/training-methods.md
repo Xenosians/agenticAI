@@ -55,6 +55,49 @@ Other dependency declarations are not a complete reproducible environment lock.
 These compatibility and rejection checks do not establish model quality or mean
 that a new SFT, DPO or PPO job has run.
 
+The Ministral specialist's suffix-only loss sums supervised-token loss and
+normalizes it by the entire gradient-accumulation window's target count. Unequal
+target lengths and a short final window therefore retain the same weighting as
+full causal loss. CPU Trainer/LoRA gradient tests verify this calculation; they
+do not establish GPU performance or distributed training acceptance.
+
+## Jira corpus preparation
+
+`jira_sft_corpus.py` preserves the historical `legacy` layout by default. To
+prepare a separate candidate using the runtime's isolated local task layout:
+
+```sh
+python scripts/jira_sft_corpus.py --output /path/to/new-corpus \
+  --worker-prompt-profile compact_grounded --prompt-layout runtime_task
+python scripts/jira_sft_corpus.py --output /path/to/new-corpus \
+  --worker-prompt-profile compact_grounded --verify-only
+```
+
+This layout narrows each capability catalog to its declared tool, binds only
+grounded argument fields and places the original request last. Verification
+reconstructs each record's messages from current trusted metadata and checks
+split hashes. Training manifests retain the layout; historical artifacts remain
+readable. It covers isolated local tasks, without prior conversation, outbound
+connection role changes or verified account continuation content.
+
+Jira encoding now uses the same strict prompt/completion boundary as Hub
+training. Mandatory instructions and target tokens are never clipped. Native
+templates own their EOS; the fallback adds one terminal EOS. Oversized examples
+identify the record and fail admission. A corpus schema check alone does not
+establish that its sequences fit the chosen training budget.
+
+With the cached Jira tokenizer, the 376-record candidate spans 1,172–1,402
+tokens; 23 exceed the CLI's 1,280-token default. The old full-catalog candidate
+spans 1,773–1,963 tokens, all above that limit. Neither corpus fits the trainer
+function's 1,024-token default. No records were discarded, budget increased or
+optimizer run performed. Sequence-budget and memory review remains necessary.
+
+The existing merged model passed 24/33 isolated protocol cases with its legacy
+prompt and 3/33 with the experimental grounded prompt. Both quality gates
+failed. Preparing a corrected corpus does not activate that prompt, retrain the
+model, prove live Jira execution or complete the MVP. Both existing specialist
+trainers still lack validation-based best-checkpoint selection.
+
 ## Public retrieval snapshot
 
 Set `KNOWLEDGE_SNAPSHOT_PATH` and `KNOWLEDGE_SNAPSHOT_SHA256` alongside the local
