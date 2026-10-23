@@ -363,6 +363,20 @@ class JiraSftCorpusManifest(
     prompt_layout: Literal["legacy", "runtime_task"] = "legacy"
 
 
+class JiraValidationSummary(BaseModel):
+    """Validation record of one Jira SFT run (see ``summarize_validation``)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    optimizer_steps: int
+    max_steps: int
+    early_stopped: bool
+    evaluated_steps: list[int]
+    baseline_eval_loss: float | None
+    best_eval_loss: float
+    best_checkpoint_step: int
+
+
 class JiraSftTrainingManifest(
     BaseModel
 ):
@@ -397,6 +411,8 @@ class JiraSftTrainingManifest(
     max_length: int
     lora_r: int
     lora_alpha: int
+    # Optional only for historical manifests trained without validation.
+    validation: JiraValidationSummary | None = None
     trainable_parameters: int
     total_parameters: int
     trainable_ratio: float
@@ -2270,6 +2286,7 @@ def build_jira_training_arguments(
     gradient_accumulation_steps: int,
     seed: int,
     warmup_ratio: float = 0.03,
+    guard_arguments: dict[str, Any] | None = None,
 ):
     """Build the exact Trainer configuration without loading weights.
 
@@ -2279,7 +2296,10 @@ def build_jira_training_arguments(
     to an explicit
     step count here. Centralizing this construction also lets preflight
     instantiate the real arguments object before any checkpoint is loaded.
+    ``guard_arguments`` (see ``jira_validation_guard_arguments``) adds
+    validation, checkpointing and best-adapter selection.
     """
+    guard_arguments = guard_arguments or {"save_strategy": "no"}
 
     if not isinstance(max_steps, int) or max_steps < 1:
         raise ValueError(
@@ -2324,7 +2344,6 @@ def build_jira_training_arguments(
         warmup_steps=warmup_steps,
         weight_decay=0.0,
         logging_steps=1,
-        save_strategy="no",
         report_to="none",
         bf16=True,
         fp16=False,
@@ -2335,7 +2354,148 @@ def build_jira_training_arguments(
         optim="paged_adamw_8bit",
         seed=seed,
         remove_unused_columns=False,
+        **guard_arguments,
     )
+
+
+# ============================================================
+# VALIDATION GUARD: BEST CHECKPOINT, EARLY STOP, RESUME
+# ============================================================
+
+
+def jira_validation_guard_arguments(
+    checkpoint_interval: int,
+    *,
+    baseline_evaluation: bool = True,
+) -> dict[str, Any]:
+    """TrainingArguments that keep the validation-best adapter.
+
+    Validation loss is measured every ``checkpoint_interval`` optimizer steps
+    and once before training (the baseline). Checkpoints are saved at the same
+    interval, so an interrupted run can resume. Only the newest and the best
+    checkpoints are kept. Training ends on the best adapter.
+    """
+    if not isinstance(checkpoint_interval, int) or checkpoint_interval < 1:
+        raise ValueError("checkpoint_interval must be a positive integer.")
+    return {
+        "eval_strategy": "steps",
+        "eval_steps": checkpoint_interval,
+        "save_strategy": "steps",
+        "save_steps": checkpoint_interval,
+        "save_total_limit": 2,
+        "load_best_model_at_end": True,
+        "metric_for_best_model": "eval_loss",
+        "greater_is_better": False,
+        "eval_on_start": baseline_evaluation,
+        "per_device_eval_batch_size": 1,
+        "prediction_loss_only": True,
+        "restore_callback_states_from_checkpoint": True,
+    }
+
+
+def build_jira_trainer(
+    *,
+    model,
+    training_args,
+    train_items: list[dict[str, list[int]]],
+    validation_items: list[dict[str, list[int]]],
+    pad_token_id: int,
+    early_stopping_patience: int,
+):
+    """Trainer with target-only loss, validation guard and early stopping."""
+    if not train_items:
+        raise ValueError("Jira SFT training split is empty.")
+    if not validation_items:
+        raise ValueError("Jira SFT requires a non-empty validation split.")
+    if not isinstance(early_stopping_patience, int) or early_stopping_patience < 1:
+        raise ValueError("early_stopping_patience must be a positive integer.")
+
+    from transformers import EarlyStoppingCallback, Trainer
+
+    from learning.training.causal_loss import tail_only_trainer_class
+
+    trainer_class = tail_only_trainer_class(Trainer)
+    return trainer_class(
+        model=model,
+        args=training_args,
+        train_dataset=JiraSftTokenDataset(train_items),
+        eval_dataset=JiraSftTokenDataset(validation_items),
+        data_collator=JiraSftCollator(pad_token_id=pad_token_id),
+        callbacks=[EarlyStoppingCallback(early_stopping_patience=early_stopping_patience)],
+    )
+
+
+def summarize_validation(state, *, max_steps: int) -> JiraValidationSummary:
+    """Validation record of a finished Trainer run, from its own state."""
+    evaluations = [entry for entry in state.log_history if "eval_loss" in entry]
+    if not evaluations or state.best_metric is None or state.best_model_checkpoint is None:
+        raise ValueError("Jira SFT run recorded no validation checkpoint.")
+    baseline = next((entry["eval_loss"] for entry in evaluations if entry["step"] == 0), None)
+    best_step = int(Path(state.best_model_checkpoint).name.rsplit("-", 1)[1])
+    return JiraValidationSummary(
+        optimizer_steps=state.global_step,
+        max_steps=max_steps,
+        early_stopped=state.global_step < max_steps,
+        evaluated_steps=[entry["step"] for entry in evaluations],
+        baseline_eval_loss=baseline,
+        best_eval_loss=float(state.best_metric),
+        best_checkpoint_step=best_step,
+    )
+
+
+def resumable_checkpoint(trainer_directory: Path) -> str | None:
+    """The newest saved checkpoint of an interrupted run, if any."""
+    from transformers.trainer_utils import get_last_checkpoint
+
+    directory = Path(trainer_directory)
+    return get_last_checkpoint(str(directory)) if directory.is_dir() else None
+
+
+def jira_run_identity(
+    *,
+    corpus_manifest: JiraSftCorpusManifest,
+    max_steps: int,
+    max_length: int,
+    learning_rate: float = 2e-4,
+    gradient_accumulation_steps: int = 8,
+    lora_r: int = 16,
+    lora_alpha: int = 32,
+    lora_dropout: float = 0.05,
+    seed: int = 42,
+    checkpoint_interval: int,
+    early_stopping_patience: int,
+) -> dict[str, Any]:
+    """Settings a resumed run must share with the run that saved its checkpoints."""
+    return {
+        "schema": "jira-specialist-sft-run.v1",
+        "corpus_train_sha256": corpus_manifest.train_sha256,
+        "corpus_validation_sha256": corpus_manifest.validation_sha256,
+        "system_prompt_sha256": corpus_manifest.system_prompt_sha256,
+        "prompt_layout": corpus_manifest.prompt_layout,
+        "base_model_key": corpus_manifest.base_model_key,
+        "max_steps": max_steps,
+        "max_length": max_length,
+        "learning_rate": learning_rate,
+        "gradient_accumulation_steps": gradient_accumulation_steps,
+        "lora_r": lora_r,
+        "lora_alpha": lora_alpha,
+        "lora_dropout": lora_dropout,
+        "seed": seed,
+        "checkpoint_interval": checkpoint_interval,
+        "early_stopping_patience": early_stopping_patience,
+    }
+
+
+def _resume_run(run_directory: Path, identity: dict[str, Any]) -> Path:
+    run_directory = run_directory.expanduser().resolve()
+    config_path = run_directory / "run-config.json"
+    if not config_path.is_file():
+        raise ValueError(f"Resume run has no run-config.json: {run_directory}")
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    if saved != identity:
+        changed = sorted(key for key in set(saved) | set(identity) if saved.get(key) != identity.get(key))
+        raise ValueError("Resume configuration does not match the interrupted run: " + ", ".join(changed))
+    return run_directory
 
 
 # ============================================================
@@ -2358,6 +2518,9 @@ def train_jira_sft(
     lora_dropout: float = 0.05,
     seed: int = 42,
     worker_prompt_profile: str | None = None,
+    checkpoint_interval: int = 10,
+    early_stopping_patience: int = 3,
+    resume_run_directory: Path | None = None,
 ) -> JiraSftTrainingManifest:
     if not allow_training:
         raise PermissionError(
@@ -2385,12 +2548,26 @@ def train_jira_sft(
     (
         corpus_manifest,
         train_records,
-        _validation_records,
+        validation_records,
         system_prompt,
     ) = verify_jira_sft_corpus(
         project_root=project_root,
         corpus_directory=corpus_directory,
         worker_prompt_profile=worker_prompt_profile,
+    )
+
+    run_identity = jira_run_identity(
+        corpus_manifest=corpus_manifest, max_steps=max_steps, max_length=max_length,
+        learning_rate=learning_rate, gradient_accumulation_steps=gradient_accumulation_steps,
+        lora_r=lora_r, lora_alpha=lora_alpha, lora_dropout=lora_dropout, seed=seed,
+        checkpoint_interval=checkpoint_interval, early_stopping_patience=early_stopping_patience,
+    )
+    resumed_run = (
+        _resume_run(resume_run_directory, run_identity)
+        if resume_run_directory is not None else None
+    )
+    guard_arguments = jira_validation_guard_arguments(
+        checkpoint_interval, baseline_evaluation=resumed_run is None,
     )
 
     versions = assert_training_versions()
@@ -2444,7 +2621,6 @@ def train_jira_sft(
         AutoModelForCausalLM,
         AutoTokenizer,
         BitsAndBytesConfig,
-        Trainer,
     )
 
     tokenizer = AutoTokenizer.from_pretrained(
@@ -2472,6 +2648,14 @@ def train_jira_sft(
             max_length=max_length,
         )
         for record in train_records
+    ]
+
+    tokenized_validation = [
+        _tokenize_record(
+            tokenizer=tokenizer, system_prompt=system_prompt,
+            record=record, max_length=max_length,
+        )
+        for record in validation_records
     ]
 
     if not tokenized_train:
@@ -2530,7 +2714,7 @@ def train_jira_sft(
         for parameter in model.parameters()
     )
 
-    run_directory = (
+    run_directory = resumed_run or (
         output_root
         .expanduser()
         .resolve()
@@ -2553,10 +2737,17 @@ def train_jira_sft(
         / "trainer-work"
     )
 
-    run_directory.mkdir(
-        parents=True,
-        exist_ok=False,
-    )
+    if resumed_run is None:
+        run_directory.mkdir(
+            parents=True,
+            exist_ok=False,
+        )
+        (run_directory / "run-config.json").write_text(
+            json.dumps(run_identity, indent=2, sort_keys=True) + "\n", encoding="utf-8",
+        )
+    resume_checkpoint = resumable_checkpoint(trainer_directory) if resumed_run is not None else None
+    if resumed_run is not None and resume_checkpoint is None:
+        raise ValueError(f"Resume run has no saved checkpoint: {trainer_directory}")
 
     training_args = build_jira_training_arguments(
         output_dir=trainer_directory,
@@ -2566,26 +2757,19 @@ def train_jira_sft(
             gradient_accumulation_steps
         ),
         seed=seed,
+        guard_arguments=guard_arguments,
     )
 
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=(
-            JiraSftTokenDataset(
-                tokenized_train
-            )
-        ),
-        data_collator=(
-            JiraSftCollator(
-                pad_token_id=(
-                    tokenizer.pad_token_id
-                )
-            )
-        ),
+    trainer = build_jira_trainer(
+        model=model, training_args=training_args,
+        train_items=tokenized_train, validation_items=tokenized_validation,
+        pad_token_id=tokenizer.pad_token_id,
+        early_stopping_patience=early_stopping_patience,
     )
 
-    trainer.train()
+    # Ends on the validation-best adapter (load_best_model_at_end).
+    trainer.train(resume_from_checkpoint=resume_checkpoint)
+    validation_summary = summarize_validation(trainer.state, max_steps=max_steps)
 
     model.save_pretrained(
         adapter_directory,
@@ -2710,6 +2894,7 @@ def train_jira_sft(
         max_length=max_length,
         lora_r=lora_r,
         lora_alpha=lora_alpha,
+        validation=validation_summary,
         trainable_parameters=(
             trainable_parameters
         ),

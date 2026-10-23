@@ -111,6 +111,21 @@ def main() -> int:
         default=32,
     )
 
+    parser.add_argument(
+        "--checkpoint-interval", type=int, default=10,
+        help="Optimizer steps between validation checkpoints.",
+    )
+
+    parser.add_argument(
+        "--early-stopping-patience", type=int, default=3,
+        help="Stop after this many checkpoints without a lower validation loss.",
+    )
+
+    parser.add_argument(
+        "--resume-run", type=Path, default=None,
+        help="Continue an interrupted run directory from its newest checkpoint.",
+    )
+
     args = parser.parse_args()
 
     manifest = train_jira_sft(
@@ -127,6 +142,9 @@ def main() -> int:
         lora_r=args.lora_r,
         lora_alpha=args.lora_alpha,
         worker_prompt_profile=args.worker_prompt_profile,
+        checkpoint_interval=args.checkpoint_interval,
+        early_stopping_patience=args.early_stopping_patience,
+        resume_run_directory=args.resume_run,
     )
 
     manifest_path = (
