@@ -94,3 +94,24 @@ def test_jira_sft_seed_excludes_exact_held_out_eval_requests():
     assert requests.isdisjoint(
         JIRA_HELD_OUT_EVAL_REQUESTS
     )
+
+
+def test_unfiltered_project_supervision_covers_both_splits_with_empty_arguments():
+    records = [
+        record for record in _build_records()
+        if record.tool_name == "jira_project_list"
+        and "empty-arguments" in record.tags
+    ]
+
+    assert {record.split for record in records} == {"train", "validation"}
+    for record in records:
+        assert parse_tool_calls(record.target_response)[0]["arguments"] == {}
+        assert record.semantic_context["allowed_arguments"] == {}
+
+
+def test_every_model_gate_case_is_explicitly_held_out_from_both_sft_splits():
+    from scripts.jira_specialist_model_eval import CASES
+
+    gate_requests = {case["user"] for case in CASES}
+    assert gate_requests <= JIRA_HELD_OUT_EVAL_REQUESTS
+    assert gate_requests.isdisjoint({record.user_request for record in _build_records()})

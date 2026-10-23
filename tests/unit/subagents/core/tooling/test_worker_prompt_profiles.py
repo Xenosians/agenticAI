@@ -2,6 +2,10 @@ from dataclasses import (
     replace,
 )
 
+from pathlib import Path
+
+import pytest
+
 from subagents.core.definitions.types import (
     AgentDefinition,
 )
@@ -74,3 +78,46 @@ def test_compact_worker_prompt_has_strict_json_contract():
     assert "ticket_get(ticket_key:str)" in prompt
     assert "RETURN ONLY THE JSON ARRAY" in prompt
     assert "read one ticket" not in prompt
+
+
+@pytest.mark.parametrize("schema", [{}, {"query": {"type": "str"}}])
+def test_compact_grounded_describes_empty_arguments_without_borrowed_targets(schema):
+    prompt = build_worker_system_prompt(
+        _agent(),
+        capability_catalog=[{
+            "name": "catalog_list",
+            "argument_schema": schema,
+            "required_arguments": [],
+        }],
+        prompt_profile="compact_grounded",
+    )
+
+    assert "catalog_list(" in prompt
+    assert 'If a capability has no arguments, emit "arguments":{}' in prompt
+    assert 'all its arguments are optional and none were supplied' in prompt
+    assert "borrow arguments from another capability" in prompt
+    assert "ticket_get" not in prompt
+    assert "KAN-3" not in prompt
+    assert "OUTPUT EXAMPLE" not in prompt
+    assert "RETURN ONLY THE JSON ARRAY" in prompt
+
+
+@pytest.mark.parametrize("profile", ["standard", "compact"])
+def test_legacy_worker_templates_remain_the_exact_rendered_contract(profile):
+    import json
+
+    agent = _agent()
+    capabilities = [{"name": "ticket_get", "argument_schema": {}}]
+    prompt_directory = Path(__file__).resolve().parents[5] / "subagents" / "prompts"
+    filename = (
+        "worker_tool_protocol.txt"
+        if profile == "standard"
+        else "worker_tool_protocol_compact.txt"
+    )
+    template = (prompt_directory / filename).read_text(encoding="utf-8").strip()
+    expected = template.replace("{{AGENT_SYSTEM_PROMPT}}", agent.system_prompt)
+    expected = expected.replace("{{TOOLS_JSON}}", json.dumps(capabilities, indent=2))
+    expected = expected.replace("{{TOOLS_COMPACT}}", build_compact_capability_text(capabilities))
+    assert build_worker_system_prompt(
+        agent, capability_catalog=capabilities, prompt_profile=profile,
+    ) == expected

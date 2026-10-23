@@ -47,6 +47,16 @@ def main() -> int:
     )
 
     parser.add_argument(
+        "--worker-prompt-profile",
+        choices=("standard", "compact", "compact_grounded"),
+        default=None,
+        help=(
+            "Explicit candidate prompt contract; does not change the serving profile. "
+            "Omit to bind the configured base model profile."
+        ),
+    )
+
+    parser.add_argument(
         "--force",
         action="store_true",
         help=(
@@ -71,6 +81,7 @@ def main() -> int:
         ) = verify_jira_sft_corpus(
             project_root=PROJECT_ROOT,
             corpus_directory=args.output,
+            worker_prompt_profile=args.worker_prompt_profile,
         )
 
     else:
@@ -78,6 +89,7 @@ def main() -> int:
             project_root=PROJECT_ROOT,
             output_directory=args.output,
             force=args.force,
+            worker_prompt_profile=args.worker_prompt_profile,
         )
 
         (
@@ -88,6 +100,7 @@ def main() -> int:
         ) = verify_jira_sft_corpus(
             project_root=PROJECT_ROOT,
             corpus_directory=args.output,
+            worker_prompt_profile=args.worker_prompt_profile,
         )
 
     print(

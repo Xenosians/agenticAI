@@ -193,6 +193,10 @@ def build_worker_system_prompt(
     a bounded representation intended for small specialist models.
     Compact mode changes only model-facing prompting; it never changes
     authority, policy, approval, grounding, or execution.
+
+    `compact_grounded` is an explicit candidate profile with no concrete
+    example targets and an explicit empty-argument contract. Existing
+    `compact` prompts and prompt-bound adapters remain unchanged.
     """
 
     capabilities = (
@@ -246,11 +250,13 @@ def build_worker_system_prompt(
 
     if (
         normalized_profile
-        == "compact"
+        in {"compact", "compact_grounded"}
     ):
         template = (
             load_prompt(
-                "worker_tool_protocol_compact.txt"
+                "worker_tool_protocol_compact_grounded.txt"
+                if normalized_profile == "compact_grounded"
+                else "worker_tool_protocol_compact.txt"
             )
         )
 

@@ -10,6 +10,7 @@ from config.path_portability import (
 from pydantic import (
     BaseModel,
     Field,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -103,6 +104,8 @@ class ModelProfileSettings(
     # compact:
     #   Bounded tool-call protocol intended for small specialist
     #   models. Authority and execution semantics remain unchanged.
+    # compact_grounded:
+    #   Opt-in candidate protocol without example target identifiers.
     # ============================================================
 
     worker_prompt_profile: str = (
@@ -170,6 +173,7 @@ class ModelProfileSettings(
     def validate_prompt_profile(
         cls,
         value: str,
+        info: ValidationInfo,
     ) -> str:
         normalized = (
             value
@@ -181,6 +185,9 @@ class ModelProfileSettings(
             "standard",
             "compact",
         }
+
+        if info.field_name == "worker_prompt_profile":
+            supported.add("compact_grounded")
 
         if normalized not in supported:
             raise ValueError(

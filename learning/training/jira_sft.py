@@ -22,6 +22,7 @@ from pydantic import (
 )
 
 from config import (
+    ModelProfileSettings,
     Settings,
 )
 
@@ -75,6 +76,9 @@ DEFAULT_TRAINED_MODEL_KEY = (
 # Seed SFT generation excludes these strings so the protocol gate
 # remains a genuine held-out check rather than training replay.
 JIRA_HELD_OUT_EVAL_REQUESTS = {
+    "List Jira projects without filtering the collection",
+    "Which Jira projects are available?",
+    "Show every Jira project, with no search text",
     "Get Jira ticket KAN-3",
     "Search Jira tickets in project KAN",
     "Find Jira issues in OPS containing database timeout",
@@ -374,6 +378,10 @@ class JiraSftTrainingManifest(
     corpus_directory: str
     corpus_train_sha256: str
     corpus_validation_sha256: str
+    # Optional only for historical manifests. New runs bind the exact prompt
+    # contract as well as the two supervised split identities.
+    worker_prompt_profile: str | None = None
+    system_prompt_sha256: str | None = None
     max_steps: int
     learning_rate: float
     max_length: int
@@ -420,6 +428,27 @@ def _seed_examples(
             list[str],
         ]
     ] = []
+
+    # Explicit unfiltered requests teach omission of optional arguments.
+    # Held-out paraphrases above are excluded from all generated supervision.
+    for request in (
+        "List all Jira projects",
+        "Show the complete Jira project collection",
+        "Fetch Jira projects without a query",
+        "Display the Jira project catalog",
+        "Retrieve the full list of Jira projects",
+        "Give me all projects from Jira",
+        "Enumerate Jira projects with no filter",
+        "Please show all available projects in Jira",
+        "Read the Jira project listing",
+        "Return the unfiltered Jira project collection",
+    ):
+        examples.append((
+            "jira_project_list",
+            request,
+            {},
+            ["project", "read", "unfiltered", "empty-arguments"],
+        ))
 
     ticket_keys = [
         "KAN-3",
@@ -1361,6 +1390,7 @@ def build_jira_sft_corpus(
     project_root: Path,
     output_directory: Path,
     base_model_key: str = DEFAULT_BASE_MODEL_KEY,
+    worker_prompt_profile: str | None = None,
     force: bool = False,
 ) -> JiraSftCorpusManifest:
     project_root = (
@@ -1395,6 +1425,14 @@ def build_jira_sft_corpus(
     profile = settings.require_model_profile(
         base_model_key
     )
+    prompt_profile = ModelProfileSettings(
+        backend=profile.backend,
+        worker_prompt_profile=(
+            profile.worker_prompt_profile
+            if worker_prompt_profile is None
+            else worker_prompt_profile
+        ),
+    ).worker_prompt_profile
 
     agent = load_agent_definition(
         project_root
@@ -1412,7 +1450,7 @@ def build_jira_sft_corpus(
         agent,
         capability_catalog=capabilities,
         prompt_profile=(
-            profile.worker_prompt_profile
+            prompt_profile
         ),
     )
 
@@ -1502,7 +1540,7 @@ def build_jira_sft_corpus(
         agent_name=agent.name,
         base_model_key=base_model_key,
         worker_prompt_profile=(
-            profile.worker_prompt_profile
+            prompt_profile
         ),
         record_count=len(
             records
@@ -1608,6 +1646,7 @@ def verify_jira_sft_corpus(
     *,
     project_root: Path,
     corpus_directory: Path,
+    worker_prompt_profile: str | None = None,
 ) -> tuple[
     JiraSftCorpusManifest,
     list[JiraSftRecord],
@@ -1678,14 +1717,22 @@ def verify_jira_sft_corpus(
     profile = settings.require_model_profile(
         manifest.base_model_key
     )
+    expected_prompt_profile = ModelProfileSettings(
+        backend=profile.backend,
+        worker_prompt_profile=(
+            profile.worker_prompt_profile
+            if worker_prompt_profile is None
+            else worker_prompt_profile
+        ),
+    ).worker_prompt_profile
 
     if (
-        profile.worker_prompt_profile
+        expected_prompt_profile
         != manifest.worker_prompt_profile
     ):
         raise ValueError(
             "Jira SFT corpus prompt profile no longer matches "
-            "the configured base model profile."
+            "the configured base model profile or explicit candidate profile."
         )
 
     agent = load_agent_definition(
@@ -1704,7 +1751,7 @@ def verify_jira_sft_corpus(
         agent,
         capability_catalog=capabilities,
         prompt_profile=(
-            profile.worker_prompt_profile
+            expected_prompt_profile
         ),
     )
 
@@ -2291,6 +2338,7 @@ def train_jira_sft(
     lora_alpha: int = 32,
     lora_dropout: float = 0.05,
     seed: int = 42,
+    worker_prompt_profile: str | None = None,
 ) -> JiraSftTrainingManifest:
     if not allow_training:
         raise PermissionError(
@@ -2315,6 +2363,17 @@ def train_jira_sft(
             "max_length must be at least 256."
         )
 
+    (
+        corpus_manifest,
+        train_records,
+        _validation_records,
+        system_prompt,
+    ) = verify_jira_sft_corpus(
+        project_root=project_root,
+        corpus_directory=corpus_directory,
+        worker_prompt_profile=worker_prompt_profile,
+    )
+
     versions = assert_training_versions()
 
     import torch
@@ -2328,16 +2387,6 @@ def train_jira_sft(
         raise ValueError(
             "The configured Jira training recipe requires BF16 support."
         )
-
-    (
-        corpus_manifest,
-        train_records,
-        _validation_records,
-        system_prompt,
-    ) = verify_jira_sft_corpus(
-        project_root=project_root,
-        corpus_directory=corpus_directory,
-    )
 
     settings = Settings()
     profile = settings.require_model_profile(
@@ -2634,6 +2683,8 @@ def train_jira_sft(
         corpus_validation_sha256=(
             corpus_manifest.validation_sha256
         ),
+        worker_prompt_profile=corpus_manifest.worker_prompt_profile,
+        system_prompt_sha256=corpus_manifest.system_prompt_sha256,
         max_steps=max_steps,
         learning_rate=learning_rate,
         max_length=max_length,
@@ -2752,6 +2803,25 @@ def register_trained_candidate_profile(
         )
     )
 
+    corpus_manifest, _train, _validation, _prompt = verify_jira_sft_corpus(
+        project_root=Path(__file__).resolve().parents[2],
+        corpus_directory=Path(manifest.corpus_directory),
+        worker_prompt_profile=manifest.worker_prompt_profile,
+    )
+
+    if (
+        corpus_manifest.base_model_key != manifest.base_model_key
+        or corpus_manifest.train_sha256 != manifest.corpus_train_sha256
+        or corpus_manifest.validation_sha256 != manifest.corpus_validation_sha256
+    ):
+        raise ValueError("Jira training manifest does not match its verified corpus.")
+
+    if (
+        manifest.system_prompt_sha256 is not None
+        and manifest.system_prompt_sha256 != corpus_manifest.system_prompt_sha256
+    ):
+        raise ValueError("Jira training prompt hash does not match its verified corpus.")
+
     merged_model_directory = Path(
         manifest.merged_model_directory
     ).expanduser().resolve()
@@ -2832,7 +2902,7 @@ def register_trained_candidate_profile(
         "compute_dtype": "bfloat16",
         "model_dtype": "auto",
         "device_map": "auto",
-        "worker_prompt_profile": "compact",
+        "worker_prompt_profile": corpus_manifest.worker_prompt_profile,
         "bnb_4bit_quant_type": "nf4",
         "bnb_4bit_use_double_quant": True,
     }

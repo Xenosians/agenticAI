@@ -58,6 +58,16 @@ def main() -> int:
     )
 
     parser.add_argument(
+        "--worker-prompt-profile",
+        choices=("standard", "compact", "compact_grounded"),
+        default=None,
+        help=(
+            "Bind an explicitly prepared candidate corpus prompt without changing "
+            "serving configuration. Must match the corpus manifest."
+        ),
+    )
+
+    parser.add_argument(
         "--allow-training",
         action="store_true",
         help=(
@@ -116,6 +126,7 @@ def main() -> int:
         ),
         lora_r=args.lora_r,
         lora_alpha=args.lora_alpha,
+        worker_prompt_profile=args.worker_prompt_profile,
     )
 
     manifest_path = (

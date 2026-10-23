@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import argparse
 import json
 import os
 import sys
@@ -98,6 +99,33 @@ REPORT_PATH = Path(
 
 
 CASES = [
+    {
+        "name": "unfiltered project collection",
+        "exact_arguments": True,
+        "user": "List Jira projects without filtering the collection",
+        "allowed_tools": ["jira_project_list"],
+        "allowed_arguments": {},
+        "expected_tool": "jira_project_list",
+        "expected_arguments": {},
+    },
+    {
+        "name": "unfiltered project collection question",
+        "exact_arguments": True,
+        "user": "Which Jira projects are available?",
+        "allowed_tools": ["jira_project_list"],
+        "allowed_arguments": {},
+        "expected_tool": "jira_project_list",
+        "expected_arguments": {},
+    },
+    {
+        "name": "unfiltered project collection explicit omission",
+        "exact_arguments": True,
+        "user": "Show every Jira project, with no search text",
+        "allowed_tools": ["jira_project_list"],
+        "allowed_arguments": {},
+        "expected_tool": "jira_project_list",
+        "expected_arguments": {},
+    },
     {
         "name": "exact issue get",
         "user": "Get Jira ticket KAN-3",
@@ -497,12 +525,16 @@ def arguments_semantically_match(
     tool_name: str,
     expected: dict,
     observed: dict,
+    exact: bool = False,
 ) -> bool:
     if not isinstance(
         observed,
         dict,
     ):
         return False
+
+    if exact:
+        return observed == expected
 
     for (
         argument_name,
@@ -569,10 +601,6 @@ def build_messages(
         },
         {
             "role": "user",
-            "content": case["user"],
-        },
-        {
-            "role": "user",
             "content": (
                 "Exact semantic target context from the validated "
                 "routing stage.\n"
@@ -589,32 +617,86 @@ def build_messages(
                 )
             ),
         },
+        {"role": "user", "content": case["user"]},
     ]
 
 
-async def main() -> int:
-    if not MODEL_KEY:
+def evaluation_options(argv=None):
+    parser = argparse.ArgumentParser(description="Local Jira protocol evaluation; no tool execution or promotion.")
+    parser.add_argument("--model-key", default=MODEL_KEY)
+    parser.add_argument("--prompt-profile", choices=("standard", "compact", "compact_grounded"),
+                        help="Explicit prompt experiment on an in-memory profile; never changes serving settings.")
+    parser.add_argument("--report", type=Path, default=REPORT_PATH,
+                        help="Fresh output path; existing evaluation evidence is never overwritten.")
+    return parser.parse_args(argv)
+
+
+def evaluation_settings(settings, *, model_key, prompt_profile=None):
+    candidate = settings.model_copy(deep=True)
+    profile = candidate.require_model_profile(model_key)
+    if prompt_profile is not None:
+        values = profile.model_dump()
+        values["worker_prompt_profile"] = prompt_profile
+        candidate.model_profiles[model_key] = type(profile).model_validate(values)
+    return candidate
+
+
+def case_prompt(agent, case, prompt_profile):
+    # Match production disclosure: one validated task's allowed capabilities,
+    # not every Jira tool alongside a hidden expected-answer fixture.
+    catalog = build_agent_capability_catalog(
+        agent, include_arguments=True, allowed_tools=case["allowed_tools"],
+    )
+    return catalog, build_worker_system_prompt(
+        agent, capability_catalog=catalog, prompt_profile=prompt_profile,
+    )
+
+
+async def main(argv=None) -> int:
+    args = evaluation_options(argv)
+    model_key = args.model_key.strip()
+    report_path = args.report.expanduser().resolve()
+    if not model_key or MAX_NEW_TOKENS < 1 or not CASES:
         print(
-            "JIRA_EVAL_MODEL_KEY must not be empty."
+            "Evaluation requires a model, positive output budget and nonempty case scope."
         )
         return 2
 
-    settings = Settings()
+    if report_path.exists():
+        print("Evaluation output already exists; use a fresh path to preserve evidence.")
+        return 2
 
     try:
+        settings = evaluation_settings(Settings(), model_key=model_key, prompt_profile=args.prompt_profile)
         profile = (
             settings
             .require_model_profile(
-                MODEL_KEY
+                model_key
             )
         )
 
     except Exception as exc:
         print(
             "Jira candidate model profile is unavailable:",
-            repr(exc),
+            type(exc).__name__,
         )
         return 2
+
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with report_path.open("x", encoding="utf-8") as stream:
+            json.dump({"schema": "jira-evaluation-intent.v1", "state": "incomplete",
+                       "model_key": model_key, "worker_prompt_profile": profile.worker_prompt_profile,
+                       "declared_cases": [case["name"] for case in CASES],
+                       "tools_executed": False, "production_activation": False}, stream, indent=2)
+    except FileExistsError:
+        print("Evaluation output was claimed concurrently; no inference started.")
+        return 2
+
+    # Capture actual executable requiredness/defaults without starting an MCP
+    # server or instantiating a provider. Production registers the same schema.
+    from mcp_server import register_capability_signatures
+    register_capability_signatures()
 
     model_manager = ModelManager(
         settings=settings,
@@ -640,19 +722,8 @@ async def main() -> int:
     agent = (
         replace(
             base_agent,
-            model=MODEL_KEY,
+            model=model_key,
         )
-    )
-
-    capability_catalog = build_agent_capability_catalog(
-        agent,
-        include_arguments=True,
-    )
-
-    system_prompt = build_worker_system_prompt(
-        agent,
-        capability_catalog=capability_catalog,
-        prompt_profile=profile.worker_prompt_profile,
     )
 
     print(
@@ -673,7 +744,7 @@ async def main() -> int:
     )
     print(
         "candidate model key:",
-        MODEL_KEY,
+        model_key,
     )
     print(
         "model path:",
@@ -732,7 +803,7 @@ async def main() -> int:
         # production warm-up and generation. ModelManager applies the
         # same residency policy before constructing the backend.
         await inference.warm(
-            MODEL_KEY,
+            model_key,
             stage=InferenceStage.SPECIALIST_REASONING,
         )
 
@@ -751,6 +822,7 @@ async def main() -> int:
                 case["user"],
             )
 
+            capability_catalog, system_prompt = case_prompt(agent, case, profile.worker_prompt_profile)
             messages = build_messages(
                 system_prompt=system_prompt,
                 case=case,
@@ -784,7 +856,7 @@ async def main() -> int:
 
             raw = await inference.generate(
                 stage=InferenceStage.SPECIALIST_REASONING,
-                model_key=MODEL_KEY,
+                model_key=model_key,
                 messages=messages,
                 max_new_tokens=MAX_NEW_TOKENS,
                 priority=InferencePriority.SPECIALIST,
@@ -838,6 +910,7 @@ async def main() -> int:
                             observed=(
                                 observed_arguments
                             ),
+                            exact=case.get("exact_arguments", False),
                         )
                     )
 
@@ -899,7 +972,7 @@ async def main() -> int:
 
     report = finalize_specialist_model_report(
         agent_name=agent.name,
-        model_key=MODEL_KEY,
+        model_key=model_key,
         backend=profile.backend,
         quantization=profile.quantization,
         compute_dtype=profile.compute_dtype,
@@ -909,7 +982,7 @@ async def main() -> int:
 
     written = write_specialist_model_report(
         report,
-        REPORT_PATH,
+        report_path,
     )
 
     print()

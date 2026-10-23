@@ -62,6 +62,19 @@ def test_router_prompt_profile_defaults_to_standard_independently_of_worker_prof
     assert profile.router_prompt_profile == "standard"
 
 
+def test_grounded_compact_worker_profile_is_an_explicit_normalized_opt_in():
+    profile = ModelProfileSettings(
+        backend="hf-causal", worker_prompt_profile=" COMPACT_GROUNDED ",
+    )
+    assert profile.worker_prompt_profile == "compact_grounded"
+    assert profile.router_prompt_profile == "standard"
+
+
+def test_grounded_compact_worker_contract_is_not_a_router_profile():
+    with pytest.raises(ValidationError):
+        ModelProfileSettings(backend="hf-causal", router_prompt_profile="compact_grounded")
+
+
 @pytest.mark.parametrize("value", ["standard", " compact ", "COMPACT"])
 def test_router_prompt_profile_is_explicit_and_normalized(value):
     assert ModelProfileSettings(backend="hf-causal", router_prompt_profile=value).router_prompt_profile == value.strip().lower()
