@@ -1386,16 +1386,9 @@ def _load_specialist_base_model(
 def _lora_target_modules(
     model_path: Path,
 ):
-    if _checkpoint_model_type(model_path) == "mistral3":
-        # Restrict text-only Developer adaptation to the language model.
-        # Vision tower and multimodal projector stay frozen.
-        return (
-            r"^model\.language_model\..*"
-            r"\.(q_proj|k_proj|v_proj|o_proj|"
-            r"gate_proj|up_proj|down_proj)$"
-        )
+    from learning.training.lora_targets import text_lora_targets
 
-    return "all-linear"
+    return text_lora_targets(_checkpoint_model_type(model_path), "all-linear")
 
 
 def train_specialist_sft(
@@ -1631,6 +1624,10 @@ def train_specialist_sft(
 
         effective_lora_r = lora_r
         effective_lora_alpha = lora_alpha
+
+    from learning.training.lora_targets import validate_text_adapter_scope
+
+    validate_text_adapter_scope(model, _checkpoint_model_type(base_model_path))
 
     trainable_parameters = sum(
         parameter.numel()

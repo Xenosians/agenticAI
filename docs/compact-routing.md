@@ -1,6 +1,6 @@
 # Compact routing and ITSM execution
 
-Implementation status: 2026-10-16.
+Implementation status: 2026-10-23.
 
 The MVP is an agent that can use the supported ITSM tools to complete a user's
 request. Model and harness switching supports that objective. The next acceptance
@@ -28,7 +28,26 @@ User request
   -> result-backed synthesis
 ```
 
-With no selected connection, the existing local routing prompt remains in use.
+With no selected connection, the existing local routing prompt remains the
+default. A local Hub profile can explicitly set `router_prompt_profile` to
+`compact` in `MODEL_PROFILES`. That profile uses the same locally retrieved
+catalog descriptors and compact semantic protocol, while dispatch remains
+`CONTROL_ROUTING`: it cannot select an outbound adapter or disclose a private
+reference dataset. Specialist `worker_prompt_profile` is a separate setting.
+
+Compact local routing reserves input plus output within 5,000 estimated tokens
+for a candidate packet and 24,000 for a broad compact catalog. It drops old
+history when necessary, preserves mandatory instructions and the current
+request, and rejects mandatory input that cannot fit. Weak candidate evidence
+widens the catalog; an empty candidate plan gets at most one fresh broad repair.
+Configured lower output limits remain in force. These are admission envelopes,
+not latency guarantees.
+
+Keep `standard` for adapters bound to the existing Hub training prompt unless
+their prompt contract has been independently re-evaluated. Compact local traces
+retain actual prompt hashes but are ineligible for the standard Hub curriculum;
+this feature does not retrain, promote or modify an adapter.
+
 The networking specialist retains its dedicated local model by default. Each
 owner can explicitly opt a connection into networking inference without changing
 the dedicated weights. Both networking modes exclude private reference datasets.
@@ -88,6 +107,15 @@ memory measurements remain local-only; remote calls report no invented GPU value
 Observation failures do not change inference results or errors.
 
 ## Verification evidence
+
+A bounded local, plan-only check on 2026-10-23 selected `jira_project_list`
+correctly in 14.170 s (2,458 native input tokens, 86 generated tokens). An
+account -> Jira -> notification request took 16.754 s with a broad compact
+catalog (15,088 native input tokens) but omitted the requested Jira delegation.
+That case **failed** despite valid JSON. Neither case executed a tool, and
+compact mode was not activated in deployment. These are individual observations,
+not an end-to-end acceptance result or a benchmark. The retained local evidence
+is `C:/project/tmp/training-continuation-20261023/local-compact-plan.json`.
 
 The following bounded checks ran on 2026-10-14 using the configured Groq model.
 They establish the stated paths only; they are not a latency benchmark or a claim

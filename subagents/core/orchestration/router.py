@@ -3,7 +3,11 @@ from __future__ import annotations
 import json
 import logging
 
-from services.extensions.budget import estimate_messages_tokens
+from services.extensions.budget import (
+    ExternalInferenceBudgetError,
+    estimate_messages_tokens,
+    prepare_external_request,
+)
 from services.extensions.context import execution_selection, selected_profile
 from subagents.core.orchestration.candidate_selector import (
     Candidate,
@@ -14,8 +18,10 @@ from subagents.core.orchestration.candidate_selector import (
     validate_candidate_set,
 )
 from subagents.llm.runtime.stages import InferenceStage, resolve_stage_policy
-from subagents.core.orchestration.router_catalog import render_router_catalog
-from subagents.core.orchestration.router_prompt import build_router_system_prompt
+from subagents.core.orchestration.router_prompt import (
+    build_compact_router_system_prompt,
+    build_router_system_prompt,
+)
 
 from config import (
     get_settings,
@@ -56,10 +62,6 @@ from subagents.llm.runtime.inference import (
 
 from subagents.llm.runtime.scheduler import (
     InferencePriority,
-)
-
-from subagents.prompts.prompt_loader import (
-    load_prompt,
 )
 
 logger = logging.getLogger(__name__)
@@ -116,6 +118,7 @@ class LLMRouter:
         ) = None,
         model_profile_resolver=None,
         candidate_selector: CandidateSelector | None = None,
+        router_prompt_profile: str = "standard",
     ) -> None:
 
         self.registry = (
@@ -140,6 +143,11 @@ class LLMRouter:
             model_profile_resolver
         )
         self.candidate_selector = candidate_selector or DeterministicCandidateSelector()
+        if not isinstance(router_prompt_profile, str) or router_prompt_profile.strip().lower() not in {
+            "standard", "compact",
+        }:
+            raise ValueError("Router prompt profile must be standard or compact.")
+        self.router_prompt_profile = router_prompt_profile.strip().lower()
 
         self.max_new_tokens = (
             max_new_tokens
@@ -196,14 +204,29 @@ class LLMRouter:
         )
 
     def _compact_system(self, specialists: list[dict], include_workflow_protocol: bool) -> str:
-        system = load_prompt("hub_router_compact.txt").replace(
-            "{{SPECIALISTS_JSON}}", render_router_catalog(specialists)
-        ).replace(
-            "{{WORKFLOW_PROTOCOL}}",
-            load_prompt("hub_workflow_compact.txt") if include_workflow_protocol
-            else "Conditional workflow generation is disabled for this repair.",
+        return build_compact_router_system_prompt(
+            specialists, include_workflow_protocol=include_workflow_protocol,
         )
-        return system + "\n\n" + load_prompt("hub_success_continuation.txt")
+
+    @staticmethod
+    def _compact_policy(*, broad: bool):
+        # Share the established disclosure envelopes without changing the local
+        # CONTROL_ROUTING stage's adapter or retrieval restrictions.
+        return resolve_stage_policy(
+            InferenceStage.SEMANTIC_ROUTING_BROAD if broad
+            else InferenceStage.SEMANTIC_ROUTING
+        )
+
+    def _local_compact_request(self, messages: list[dict], *, broad: bool):
+        policy = self._compact_policy(broad=broad)
+        return prepare_external_request(
+            # Explicit limits prevent external-provider environment settings
+            # from changing this local control-stage envelope.
+            {"request_token_budget": policy.request_token_ceiling,
+             "max_output_tokens": policy.output_token_ceiling},
+            messages, self.max_new_tokens,
+            default_request_budget=policy.request_token_ceiling,
+        )
 
     def _fits_stage(self, stage: InferenceStage, system: str, user_request: str) -> bool:
         """True when the mandatory prompt plus output fits the stage and provider budgets."""
@@ -217,13 +240,8 @@ class LLMRouter:
         ])
         return mandatory + min(self.max_new_tokens, policy.output_token_ceiling) <= limit
 
-    def _broad_selected_input(self, user_request, include_workflow_protocol):
-        """Full trusted catalog on the selected connection, when its budget admits it.
-
-        Used when local candidate retrieval cannot narrow a request. The
-        catalog is rebuilt from the registry exactly as for compact routing;
-        semantic validation, approvals and execution are unchanged.
-        """
+    def _broad_compact_catalog(self, include_workflow_protocol):
+        """Rebuild descriptors from the full registry, never selector content."""
         if include_workflow_protocol not in self._broad_specs:
             everything = CandidateSet(
                 candidates=tuple(
@@ -236,10 +254,35 @@ class LLMRouter:
             self._broad_specs[include_workflow_protocol] = (
                 specialists, self._compact_system(specialists, include_workflow_protocol)
             )
-        specialists, system = self._broad_specs[include_workflow_protocol]
+        return self._broad_specs[include_workflow_protocol]
+
+    def _broad_selected_input(self, user_request, include_workflow_protocol):
+        """Full trusted compact catalog on an explicitly selected connection."""
+        specialists, system = self._broad_compact_catalog(include_workflow_protocol)
         if not self._fits_stage(InferenceStage.SEMANTIC_ROUTING_BROAD, system, user_request):
             return None
         return specialists, system, InferenceStage.SEMANTIC_ROUTING_BROAD, None
+
+    def _local_compact_input(self, user_request, *, include_workflow_protocol, full_catalog):
+        """Keep local routing bounded while retaining every trusted guard."""
+        if not full_catalog:
+            selection = validate_candidate_set(
+                self.candidate_selector.select(user_request, self.registry), self.registry,
+            )
+            if selection.candidates and not selection.fallback_required:
+                specialists = build_candidate_agent_specs(selection, self.registry)
+                system = self._compact_system(specialists, include_workflow_protocol)
+                try:
+                    self._local_compact_request([
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user_request},
+                    ], broad=False)
+                except ExternalInferenceBudgetError:
+                    pass  # Widen the disclosure; never truncate mandatory input.
+                else:
+                    return specialists, system, InferenceStage.CONTROL_ROUTING, selection
+        specialists, system = self._broad_compact_catalog(include_workflow_protocol)
+        return specialists, system, InferenceStage.CONTROL_ROUTING, None
 
     def _routing_input(self, user_request, *, repair_mode, include_workflow_protocol, full_catalog=False):
         """Route on the selected connection; the local Hub is the last resort.
@@ -278,6 +321,12 @@ class LLMRouter:
             broad = self._broad_selected_input(user_request, include_workflow_protocol)
             if broad is not None:
                 return broad
+
+        if self.router_prompt_profile == "compact":
+            return self._local_compact_input(
+                user_request, include_workflow_protocol=include_workflow_protocol,
+                full_catalog=full_catalog,
+            )
 
         specialists = [build_router_semantic_agent_spec(agent) for agent in self.registry.list_agents()]
         system = self._build_system_prompt(
@@ -456,6 +505,24 @@ class LLMRouter:
                 }
             )
 
+        local_compact = (
+            self.router_prompt_profile == "compact"
+            and origin_stage is InferenceStage.CONTROL_ROUTING
+        )
+        output_tokens = self.max_new_tokens
+        if local_compact:
+            # Budget rejection is not a RoutingContractError: another model
+            # generation cannot fix oversized mandatory input. Keep its count
+            # metadata, and do not spend the bounded format repair on it.
+            budget = self._local_compact_request(messages, broad=candidates is None)
+            messages = budget.messages
+            output_tokens = budget.max_output_tokens
+            logger.info(
+                "local_compact_routing broad=%s input_estimate=%d request_budget=%d output_cap=%d dropped_messages=%d",
+                candidates is None, budget.estimated_input_tokens, budget.request_token_budget,
+                output_tokens, budget.dropped_messages,
+            )
+
         response = (
             await self.inference.generate(
                 model_key=(
@@ -467,7 +534,7 @@ class LLMRouter:
                 ),
 
                 max_new_tokens=(
-                    self.max_new_tokens
+                    output_tokens
                 ),
 
                 priority=(
@@ -489,12 +556,12 @@ class LLMRouter:
                 self.model_key
             ),
             model_profile_resolver=(
-                # Private model/dataset jobs are already excluded from automatic
-                # training capture. A broad local fallback must not hash shared
-                # multi-GB checkpoints for an ineligible private trajectory.
-                # Inference and its stage/GPU metrics are unaffected.
+                # Compact local prompts have no admitted training materializer;
+                # private model/dataset jobs are excluded too. Do not hash shared
+                # multi-GB checkpoints or claim standard-prompt model lineage
+                # for these ineligible traces. Actual messages are still hashed.
                 self.model_profile_resolver
-                if (candidates is None
+                if (not local_compact and candidates is None
                     and selected_profile(stage=InferenceStage.SEMANTIC_ROUTING) is None
                     and not (execution_selection.get() or {}).get("dataset_id"))
                 else None
@@ -521,7 +588,7 @@ class LLMRouter:
                 repair_error
             ),
             max_new_tokens=(
-                self.max_new_tokens
+                output_tokens
             ),
             response=(
                 response

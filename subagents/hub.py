@@ -213,6 +213,11 @@ def build_hub(
 
     router = (
         LLMRouter(
+            router_prompt_profile=(
+                model_manager.model_profile(settings.hub_model_key)
+                .router_prompt_profile
+            ),
+
             registry=(
                 agent_registry
             ),

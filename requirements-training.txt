@@ -10,4 +10,4 @@ trl
 bitsandbytes
 
 # Dataset integration used by TRL
-datasets
+datasets==5.0.1

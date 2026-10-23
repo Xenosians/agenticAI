@@ -66,9 +66,11 @@ def account_plan(tool="account_status", value="alice", effect="read"):
     }]})
 
 
-def router_for(registry, *responses, selection=None):
+def router_for(registry, *responses, selection=None, prompt_profile="standard", max_new_tokens=512,
+               model_profile_resolver=None):
     inference = RecordingInference(*responses)
-    router = LLMRouter(registry, inference, "hub-main", strict_contract=True, max_new_tokens=512,
+    router = LLMRouter(registry, inference, "hub-main", strict_contract=True, max_new_tokens=max_new_tokens,
+                       router_prompt_profile=prompt_profile, model_profile_resolver=model_profile_resolver,
                        candidate_selector=FixedSelector(selection) if selection is not None else None)
     return router, inference
 
@@ -220,3 +222,144 @@ def test_candidate_miss_without_large_budget_keeps_existing_repair(registry, sel
     with pytest.raises(RoutingContractError):
         asyncio.run(router.route_with_repair("Check account status for alice"))
     assert inference.calls[1]["repair_of"] == InferenceStage.SEMANTIC_ROUTING
+
+
+@pytest.mark.parametrize("user_request", ["Show Jira projects", "Check account status for alice", "Get Jira ticket OPS-12"])
+def test_explicit_local_compact_profile_uses_bounded_local_candidate_packet(registry, user_request):
+    router, inference = router_for(registry, prompt_profile="compact")
+    with pytest.raises(RoutingContractError, match="No supported action"):
+        asyncio.run(router.route(user_request))
+    call = inference.calls[0]
+    assert call["stage"] is InferenceStage.CONTROL_ROUTING
+    assert call["model_key"] == "hub-main"
+    assert estimate_messages_tokens(call["messages"]) + call["max_new_tokens"] <= 5000
+    assert call["messages"][-1] == {"role": "user", "content": user_request}
+    assert len(call["messages"][0]["content"]) < len(router._build_system_prompt()) / 2
+
+
+@pytest.mark.parametrize("selection", [CandidateSet(fallback_required=True), CandidateSet()])
+def test_unresolved_local_compact_request_discloses_full_trusted_catalog(registry, selection):
+    router, inference = router_for(registry, prompt_profile="compact", selection=selection)
+    assert asyncio.run(router.route("hello there")) == []
+    call = inference.calls[0]
+    assert call["stage"] is InferenceStage.CONTROL_ROUTING
+    assert estimate_messages_tokens(call["messages"]) + call["max_new_tokens"] <= 24000
+    system = call["messages"][0]["content"]
+    for agent in registry.list_agents():
+        for tool in agent.tools:
+            assert f'"{tool}"' in system
+
+
+def test_local_candidate_miss_widens_once_and_keeps_feedback_and_adapter(registry):
+    router, inference = router_for(registry, '{"delegations":[]}', account_plan(),
+                                   prompt_profile="compact", selection=account_selection())
+    request = "Check account status for alice"
+    routes = asyncio.run(router.route_with_repair(request))
+    assert [route.agent_name for route in routes] == ["account-specialist"]
+    assert len(inference.calls) == 2
+    first, repair = inference.calls
+    assert first["stage"] is InferenceStage.CONTROL_ROUTING
+    assert repair["stage"] is InferenceStage.REPAIR
+    assert repair["repair_of"] is InferenceStage.CONTROL_ROUTING
+    assert first["model_key"] == repair["model_key"] == "hub-main"
+    assert '"process_exec"' not in first["messages"][0]["content"]
+    assert '"process_exec"' in repair["messages"][0]["content"]
+    assert repair["messages"][-1] == {"role": "user", "content": request}
+    assert any("TRUSTED VALIDATION FEEDBACK" in item["content"] for item in repair["messages"])
+    assert "Conditional workflow generation is disabled" in repair["messages"][0]["content"]
+    assert estimate_messages_tokens(repair["messages"]) + repair["max_new_tokens"] <= 24000
+
+
+def test_local_compact_format_repair_never_adds_a_third_attempt(registry):
+    router, inference = router_for(registry, "invalid JSON", "invalid JSON",
+                                   prompt_profile="compact", selection=account_selection())
+    with pytest.raises(RoutingContractError, match="invalid JSON"):
+        asyncio.run(router.route_with_repair("Check account status for alice"))
+    assert len(inference.calls) == 2
+    assert inference.calls[1]["repair_of"] is InferenceStage.CONTROL_ROUTING
+    assert '"process_exec"' not in inference.calls[1]["messages"][0]["content"]
+
+
+def test_local_compact_candidate_cannot_select_an_undisclosed_registered_tool(registry):
+    router, _ = router_for(registry, account_plan(tool="unlock_user", effect="mutation"),
+                           prompt_profile="compact", selection=account_selection())
+    with pytest.raises(RoutingContractError, match="undisclosed"):
+        asyncio.run(router.route("Check account status for alice"))
+
+
+def test_local_compact_preserves_grounding_rejection(registry):
+    router, _ = router_for(registry, account_plan(value="mallory"),
+                           prompt_profile="compact", selection=account_selection())
+    routes = asyncio.run(router.route("Check account status for alice"))
+    assert routes[0].semantic_intent.clarification_required
+    assert routes[0].semantic_intent.allowed_arguments == {}
+
+
+def test_local_compact_invalid_selector_is_rejected_before_generation(registry):
+    router, inference = router_for(registry, prompt_profile="compact",
+        selection=CandidateSet((Candidate("made-up-specialist", ("account_status",)),)))
+    with pytest.raises(CandidateValidationError):
+        asyncio.run(router.route("Check account status for alice"))
+    assert inference.calls == []
+
+
+def test_local_compact_trims_history_without_changing_mandatory_request(registry):
+    router, inference = router_for(registry, account_plan(), prompt_profile="compact", selection=account_selection())
+    request = "Check account status for alice"
+    context = [{"role": "user", "content": "old " * 9000}]
+    original = list(context)
+    assert asyncio.run(router.route(request, context=context))
+    call = inference.calls[0]
+    assert call["messages"][-1] == {"role": "user", "content": request}
+    assert all("old old" not in item["content"] for item in call["messages"])
+    assert context == original
+    assert estimate_messages_tokens(call["messages"]) + call["max_new_tokens"] <= 5000
+
+
+def test_local_compact_oversized_mandatory_input_fails_before_any_generation(registry):
+    from services.extensions.budget import ExternalInferenceBudgetError
+    router, inference = router_for(registry, prompt_profile="compact", selection=account_selection())
+    with pytest.raises(ExternalInferenceBudgetError) as failure:
+        asyncio.run(router.route_with_repair("Check account status for alice " + "x" * 100000))
+    assert inference.calls == []
+    assert failure.value.request_token_budget == 24000
+    assert failure.value.mandatory_tokens > failure.value.input_budget
+
+
+def test_local_compact_budgets_ignore_external_provider_environment(registry, monkeypatch):
+    monkeypatch.setenv("EXTERNAL_INFERENCE_REQUEST_TOKEN_BUDGET", "512")
+    monkeypatch.setenv("EXTERNAL_INFERENCE_MAX_OUTPUT_TOKENS", "32")
+    router, inference = router_for(registry, account_plan(), prompt_profile="compact", selection=account_selection(),
+                                   max_new_tokens=900)
+    assert asyncio.run(router.route("Check account status for alice"))
+    assert inference.calls[0]["max_new_tokens"] == 768
+    assert estimate_messages_tokens(inference.calls[0]["messages"]) + 768 <= 5000
+
+
+def test_local_compact_capture_has_actual_prompt_without_standard_training_identity(registry):
+    from learning.evidence.hub_routing import consume_hub_routing_trace
+    def forbidden_resolver(_):
+        raise AssertionError("Compact local routing is not admitted to standard Hub training")
+    router, inference = router_for(registry, account_plan(), prompt_profile="compact", selection=account_selection(),
+                                   model_profile_resolver=forbidden_resolver)
+    async def scenario():
+        await router.route("Check account status for alice")
+        return consume_hub_routing_trace()
+    trace = asyncio.run(scenario())
+    assert len(trace) == 1
+    assert trace[0].messages == inference.calls[0]["messages"]
+    assert trace[0].model_identity.complete is False
+    assert trace[0].model_identity.model_weights_sha256 is None
+    assert trace[0].training_eligible is False
+
+
+def test_local_compact_setting_preserves_explicit_remote_adapter_selection(registry, selected):
+    router, inference = router_for(registry, account_plan(), prompt_profile="compact", selection=account_selection())
+    assert asyncio.run(router.route("Check account status for alice"))
+    assert inference.calls[0]["stage"] is InferenceStage.SEMANTIC_ROUTING
+
+
+@pytest.mark.parametrize("value", [None, "", "unknown", 1])
+def test_invalid_local_router_profile_fails_at_construction(registry, value):
+    with pytest.raises(ValueError, match="prompt profile"):
+        router_for(registry, prompt_profile=value)

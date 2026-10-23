@@ -109,6 +109,11 @@ class ModelProfileSettings(
         "standard"
     )
 
+    # Hub routing uses its own prompt contract. Compact routing is an explicit
+    # serving choice; it does not change specialist prompts or train/promote an
+    # adapter, and its evidence is not admitted to the standard Hub curriculum.
+    router_prompt_profile: str = "standard"
+
     # ============================================================
     # FP8 OPTIONS
     # ============================================================
@@ -159,10 +164,10 @@ class ModelProfileSettings(
         return normalized
 
     @field_validator(
-        "worker_prompt_profile"
+        "worker_prompt_profile", "router_prompt_profile"
     )
     @classmethod
-    def validate_worker_prompt_profile(
+    def validate_prompt_profile(
         cls,
         value: str,
     ) -> str:
@@ -179,7 +184,7 @@ class ModelProfileSettings(
 
         if normalized not in supported:
             raise ValueError(
-                "worker_prompt_profile must be one of: "
+                "prompt profile must be one of: "
                 + ", ".join(
                     sorted(
                         supported

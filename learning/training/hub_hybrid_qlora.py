@@ -8,6 +8,7 @@ import re
 import shutil
 import uuid
 
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,7 @@ from learning.training.hub_training_materializer import (
     HubTrainingMaterializationManifest,
     HubSftRecord,
 )
+from learning.training.lora_targets import text_lora_targets, validate_text_adapter_scope
 
 from subagents.core.definitions.loader import (
     load_agent_directory,
@@ -744,7 +746,10 @@ def _load_model(
             lora_dropout=settings.lora_dropout,
             bias="none",
             target_modules=(
-                settings.lora_target_modules
+                text_lora_targets(
+                    "mistral3" if normalized_backend == "ministral" else "",
+                    settings.lora_target_modules,
+                )
             ),
         )
 
@@ -753,6 +758,9 @@ def _load_model(
             lora,
         )
 
+    validate_text_adapter_scope(
+        model, "mistral3" if normalized_backend == "ministral" else "",
+    )
     model.train()
 
     return _Loaded(
@@ -783,34 +791,77 @@ def _input_device(model):
     )
 
 
+def _generation_prompt_kwargs(tokenizer, enabled: bool) -> dict[str, bool]:
+    from inspect import Parameter, signature
+
+    parameters = signature(tokenizer.apply_chat_template).parameters.values()
+    if any(
+        parameter.kind == Parameter.VAR_KEYWORD
+        or (
+            parameter.name == "add_generation_prompt"
+            and parameter.kind != Parameter.POSITIONAL_ONLY
+        )
+        for parameter in parameters
+    ):
+        return {"add_generation_prompt": enabled}
+    return {}
+
+
 def _template_ids(
     tokenizer,
     messages,
     *,
     add_generation_prompt: bool,
 ):
-    try:
+    from transformers import MistralCommonBackend
+
+    completed_common_message = (
+        isinstance(tokenizer, MistralCommonBackend)
+        and not add_generation_prompt
+        and messages
+        and messages[-1]["role"] == "assistant"
+    )
+
+    if completed_common_message:
+        # The Mistral serving API accepts a final assistant only as a
+        # continuation. Add its EOS below for a completed training target.
         value = tokenizer.apply_chat_template(
             messages,
             return_tensors="pt",
             return_dict=True,
-            add_generation_prompt=(
-                add_generation_prompt
-            ),
+            continue_final_message=True,
         )
-    except TypeError:
-        # MistralCommonBackend currently owns the Hub's runtime
-        # template and does not require the HF tokenizer flag.
+    else:
         value = tokenizer.apply_chat_template(
             messages,
             return_tensors="pt",
             return_dict=True,
+            **_generation_prompt_kwargs(tokenizer, add_generation_prompt),
         )
 
-    if isinstance(value, dict):
-        return value["input_ids"][0]
+    if isinstance(value, Mapping):
+        ids = value["input_ids"][0]
+    else:
+        ids = value[0]
 
-    return value[0]
+    if completed_common_message:
+        eos = tokenizer.eos_token_id
+        if not isinstance(eos, int):
+            raise ValueError("Completed native assistant target requires an EOS token.")
+        if ids.numel() == 0 or int(ids[-1]) != eos:
+            import torch
+
+            ids = torch.cat((ids, ids.new_tensor([eos])))
+
+    return ids
+
+
+def _has_native_chat_template(tokenizer) -> bool:
+    from transformers import MistralCommonBackend
+
+    return isinstance(tokenizer, MistralCommonBackend) or bool(
+        getattr(tokenizer, "chat_template", None)
+    )
 
 
 def _fallback_ids(
@@ -875,6 +926,9 @@ def _encode_prompt_and_completion(
         )
 
     except Exception:
+        if _has_native_chat_template(tokenizer):
+            raise
+
         prompt_ids = _fallback_ids(
             tokenizer,
             prompt_messages,
@@ -889,39 +943,34 @@ def _encode_prompt_and_completion(
     prompt_ids = prompt_ids.flatten()
     full_ids = full_ids.flatten()
 
-    common = 0
-    limit = min(
-        int(prompt_ids.numel()),
-        int(full_ids.numel()),
-    )
+    prompt_length = int(prompt_ids.numel())
 
-    while (
-        common < limit
-        and int(prompt_ids[common])
-        == int(full_ids[common])
+    # A partial common prefix does not establish the assistant boundary:
+    # changed prompt tokens would otherwise become supervised targets.
+    if (
+        prompt_length <= 0
+        or int(full_ids.numel()) < prompt_length
+        or not bool(
+            prompt_ids.eq(full_ids[:prompt_length]).all().item()
+        )
     ):
-        common += 1
-
-    if common <= 0:
         raise ValueError(
-            "Prompt/full encodings do not share a stable prefix."
+            "Full encoding does not preserve the complete prompt prefix."
         )
 
     if full_ids.numel() > max_length:
-        if common >= max_length:
-            raise ValueError(
-                "Prompt alone exceeds max_length."
-            )
-
-        full_ids = full_ids[:max_length]
-
-    if full_ids.numel() <= common:
         raise ValueError(
-            "No completion tokens remain after truncation."
+            "Training sequence exceeds max_length; "
+            "do not truncate supervised completion tokens."
+        )
+
+    if full_ids.numel() <= prompt_length:
+        raise ValueError(
+            "No completion tokens follow the complete prompt."
         )
 
     labels = full_ids.clone()
-    labels[:common] = -100
+    labels[:prompt_length] = -100
 
     attention_mask = full_ids.new_ones(
         full_ids.shape
@@ -1169,25 +1218,21 @@ def _generation_inputs(
     prompt_messages,
 ):
     try:
-        try:
-            value = tokenizer.apply_chat_template(
-                prompt_messages,
-                return_tensors="pt",
-                return_dict=True,
-                add_generation_prompt=True,
-            )
-        except TypeError:
-            value = tokenizer.apply_chat_template(
-                prompt_messages,
-                return_tensors="pt",
-                return_dict=True,
-            )
+        value = tokenizer.apply_chat_template(
+            prompt_messages,
+            return_tensors="pt",
+            return_dict=True,
+            **_generation_prompt_kwargs(tokenizer, True),
+        )
 
-        if isinstance(value, dict):
+        if isinstance(value, Mapping) and "input_ids" in value:
             return value
 
+        raise ValueError("Chat template did not return named input_ids.")
+
     except Exception:
-        pass
+        if _has_native_chat_template(tokenizer):
+            raise
 
     from subagents.llm.runtime.hf_prompt import (
         render_hf_causal_fallback_prompt,

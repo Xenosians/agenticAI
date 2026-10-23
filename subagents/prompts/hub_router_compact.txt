@@ -52,3 +52,5 @@ Rules:
 {{WORKFLOW_PROTOCOL}}
 
 Output JSON only. No markdown, explanations, tool execution or extra fields.
+Return the complete object on one physical line, without indentation. Keep
+summaries brief while retaining every requested action and grounded value.

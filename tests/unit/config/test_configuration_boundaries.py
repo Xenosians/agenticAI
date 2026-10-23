@@ -57,6 +57,22 @@ def build_settings(
     )
 
 
+def test_router_prompt_profile_defaults_to_standard_independently_of_worker_profile():
+    profile = ModelProfileSettings(backend="hf-causal", worker_prompt_profile="compact")
+    assert profile.router_prompt_profile == "standard"
+
+
+@pytest.mark.parametrize("value", ["standard", " compact ", "COMPACT"])
+def test_router_prompt_profile_is_explicit_and_normalized(value):
+    assert ModelProfileSettings(backend="hf-causal", router_prompt_profile=value).router_prompt_profile == value.strip().lower()
+
+
+@pytest.mark.parametrize("value", [None, "", "unknown", 1])
+def test_invalid_router_prompt_profile_is_rejected(value):
+    with pytest.raises(ValidationError):
+        ModelProfileSettings(backend="hf-causal", router_prompt_profile=value)
+
+
 def test_asset_and_knowledge_provider_selection_is_configured():
 
     settings = (
@@ -269,9 +285,11 @@ def test_qwen_factory_uses_model_profile_runtime_settings(
     )
 
 
+@pytest.mark.parametrize("router_prompt_profile", ["standard", "compact"])
 def test_build_hub_injects_generation_configuration(
     monkeypatch,
     tmp_path: Path,
+    router_prompt_profile,
 ):
 
     import subagents.hub as hub_module
@@ -299,6 +317,7 @@ def test_build_hub_injects_generation_configuration(
             model_profiles={
                 "hub-main":
                     ModelProfileSettings(
+                        router_prompt_profile=router_prompt_profile,
                         backend=(
                             "ministral"
                         ),
@@ -360,6 +379,7 @@ def test_build_hub_injects_generation_configuration(
         .max_new_tokens
         == 123
     )
+    assert hub.router.router_prompt_profile == router_prompt_profile
 
     assert (
         hub.runtime

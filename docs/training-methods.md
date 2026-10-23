@@ -35,6 +35,26 @@ privacy-scanner findings are rejected. SFT masks the prompt loss; oversized
 examples fail instead of silently losing their assistant target. Outputs include
 metrics and artifact hashes and remain candidates.
 
+## Native templates and adapter scope
+
+The shared Hub SFT/DPO/PPO encoder also rejects oversized examples and requires
+the full serving prompt to remain a prefix of the completed training sequence.
+It masks every prompt token and retains the complete assistant answer and EOS.
+Native template errors fail the run instead of silently changing serialization.
+Transformers mappings and the Mistral native assistant-continuation API are
+supported; a generic text fallback is reserved for tokenizers without a native
+chat template.
+
+Text adaptation of Mistral3 checkpoints targets language projections. The vision
+tower and multimodal projector remain frozen. Fresh and resumed adapters check
+their actual trainable parameter scope before optimization; unsafe existing
+adapters are rejected without rewriting their saved targets or ranks.
+
+Training requirements pin `datasets==5.0.1`, matching the existing DPO API gate.
+Other dependency declarations are not a complete reproducible environment lock.
+These compatibility and rejection checks do not establish model quality or mean
+that a new SFT, DPO or PPO job has run.
+
 ## Public retrieval snapshot
 
 Set `KNOWLEDGE_SNAPSHOT_PATH` and `KNOWLEDGE_SNAPSHOT_SHA256` alongside the local
