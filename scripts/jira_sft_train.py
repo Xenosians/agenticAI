@@ -187,8 +187,8 @@ def main() -> int:
         "The production Jira specialist was NOT modified."
     )
     print(
-        "Register the merged checkpoint as jira-func-trained, then "
-        "run the isolated Jira model gate."
+        "Register the merged checkpoint as the jira-func-candidate profile, then "
+        "run the isolated Jira model gate on the development and held-out case sets."
     )
 
     return 0

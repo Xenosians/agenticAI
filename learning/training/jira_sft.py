@@ -37,6 +37,7 @@ from learning.training.capability_curriculum import (
 
 from subagents.core.definitions.loader import (
     load_agent_definition,
+    load_agent_directory,
 )
 from subagents.core.definitions.types import AgentDefinition
 
@@ -71,6 +72,12 @@ DEFAULT_BASE_MODEL_KEY = (
 
 DEFAULT_TRAINED_MODEL_KEY = (
     "jira-func-trained"
+)
+
+# Registration target for a freshly trained checkpoint. It must differ from every
+# profile an agent definition serves, so evaluation never changes production.
+DEFAULT_CANDIDATE_MODEL_KEY = (
+    "jira-func-candidate"
 )
 
 
@@ -3277,11 +3284,22 @@ def register_trained_candidate_profile(
     *,
     env_path: Path,
     training_manifest_path: Path,
-    model_key: str = DEFAULT_TRAINED_MODEL_KEY,
+    model_key: str = DEFAULT_CANDIDATE_MODEL_KEY,
 ) -> dict[
     str,
     Any,
 ]:
+    serving_agents = sorted(
+        agent.name
+        for agent in load_agent_directory(Settings().agents_dir)
+        if agent.model == model_key
+    )
+    if serving_agents:
+        raise ValueError(
+            f"Model profile '{model_key}' is served by {', '.join(serving_agents)}; "
+            "register the candidate under a separate key and promote it only after evaluation."
+        )
+
     env_path = (
         env_path
         .expanduser()

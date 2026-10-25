@@ -20,7 +20,7 @@ if str(PROJECT_ROOT) not in sys.path:
     )
 
 from learning.training.jira_sft import (  # noqa: E402
-    DEFAULT_TRAINED_MODEL_KEY,
+    DEFAULT_CANDIDATE_MODEL_KEY,
     register_trained_candidate_profile,
 )
 
@@ -52,7 +52,8 @@ def main() -> int:
 
     parser.add_argument(
         "--model-key",
-        default=DEFAULT_TRAINED_MODEL_KEY,
+        default=DEFAULT_CANDIDATE_MODEL_KEY,
+        help="Candidate profile key; a key that an agent definition serves is refused.",
     )
 
     args = parser.parse_args()

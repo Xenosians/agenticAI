@@ -145,6 +145,11 @@ tool evaluation or authorized live acceptance.
 
 ## Jira evaluation case sets
 
+`jira_sft_register_candidate.py` registers a trained checkpoint as the separate
+`jira-func-candidate` profile. It refuses any profile key an agent definition
+serves, such as the specialist's `jira-func-trained`. Changing production is
+then a separate promotion step, taken only after both evaluations.
+
 `jira_specialist_model_eval.py` scores the built-in `development` cases by
 default. They guided corpus changes, so a pass there is development evidence.
 `--cases learning/evaluation/evals/jira-specialist-holdout.json` scores the

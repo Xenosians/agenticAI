@@ -148,6 +148,48 @@ def test_registration_rejects_unbound_training_artifacts_without_env_writes(conf
     assert not (tmp_path / ".env.before-jira-sft-registration").exists()
 
 
+def _profiles(env):
+    return json.loads(env.read_text(encoding="utf-8").split("=", 1)[1].strip().strip("'"))
+
+
+def test_registration_refuses_a_profile_an_agent_serves_without_env_writes(configured_profiles, tmp_path):
+    # jira-specialist.md serves jira-func-trained. Registering a candidate under that
+    # key would replace production at the next restart, before any evaluation.
+    directory, corpus = _build_candidate(tmp_path)
+    manifest, env = _training_fixture(tmp_path, directory, corpus)
+    before = env.read_bytes()
+    with pytest.raises(ValueError, match="jira-specialist"):
+        jira_sft.register_trained_candidate_profile(
+            env_path=env, training_manifest_path=manifest, model_key=jira_sft.DEFAULT_TRAINED_MODEL_KEY,
+        )
+    assert env.read_bytes() == before
+    assert not (tmp_path / ".env.before-jira-sft-registration").exists()
+
+
+def test_default_registration_adds_an_isolated_candidate_profile(configured_profiles, tmp_path):
+    directory, corpus = _build_candidate(tmp_path)
+    manifest, env = _training_fixture(tmp_path, directory, corpus)
+    jira_sft.register_trained_candidate_profile(env_path=env, training_manifest_path=manifest)
+    profiles = _profiles(env)
+    assert jira_sft.DEFAULT_CANDIDATE_MODEL_KEY != jira_sft.DEFAULT_TRAINED_MODEL_KEY
+    assert jira_sft.DEFAULT_CANDIDATE_MODEL_KEY in profiles
+    assert jira_sft.DEFAULT_TRAINED_MODEL_KEY not in profiles
+
+
+def test_registration_cli_defaults_to_the_candidate_profile(monkeypatch, tmp_path):
+    import sys
+    from scripts import jira_sft_register_candidate
+
+    observed = {}
+    monkeypatch.setattr(jira_sft_register_candidate, "register_trained_candidate_profile",
+                        lambda **kwargs: observed.update(kwargs) or {})
+    monkeypatch.setattr(sys, "argv", [
+        "jira_sft_register_candidate.py", "--training-manifest", str(tmp_path / "training-manifest.json"),
+    ])
+    assert jira_sft_register_candidate.main() == 0
+    assert observed["model_key"] == jira_sft.DEFAULT_CANDIDATE_MODEL_KEY
+
+
 def test_training_checks_explicit_candidate_binding_before_hardware_or_optimizer(configured_profiles, tmp_path, monkeypatch):
     directory, _ = _build_candidate(tmp_path)
     base = tmp_path / "base"
