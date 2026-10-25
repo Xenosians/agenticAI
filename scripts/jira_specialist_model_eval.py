@@ -30,6 +30,11 @@ if str(PROJECT_ROOT) not in sys.path:
     )
 
 
+from agent.onboarding import (
+    VerifiedAccountEvidence,
+    ticket_continuation_message,
+)
+
 from config import (
     Settings,
 )
@@ -633,6 +638,10 @@ def build_messages(
                 )
             ),
         },
+        # A ticket continuation gets the same verified-account message the
+        # live worker adds after an approved account creation.
+        *([ticket_continuation_message(VerifiedAccountEvidence(**case["verified_account"]))]
+          if "verified_account" in case else []),
         {"role": "user", "content": case["user"]},
     ]
 
@@ -667,7 +676,41 @@ def _validated_case(case) -> dict:
         raise ValueError(f"Case {case['name']!r} needs allowed_arguments and expected_arguments objects.")
     if "exact_arguments" in case and type(case["exact_arguments"]) is not bool:
         raise ValueError(f"Case {case['name']!r} exact_arguments must be a boolean.")
+    if "verified_account" in case:
+        _validated_continuation(case)
     return case
+
+
+def _validated_continuation(case: dict) -> None:
+    """A continuation case carries the exact account its ticket must name."""
+    account = case["verified_account"]
+    if (not isinstance(account, dict) or set(account) != {"user_id", "email"}
+            or not all(isinstance(value, str) and value and value == value.strip() for value in account.values())):
+        raise ValueError(f"Case {case['name']!r} verified_account needs an exact user_id and email.")
+    if case["expected_tool"] != "ticket_create" or case.get("exact_arguments"):
+        raise ValueError(f"Case {case['name']!r} continues only into ticket_create, scored on its summary.")
+    expected = case["expected_arguments"]
+    summary = expected.get("summary")
+    if (not isinstance(summary, str) or not (account["user_id"] in summary or account["email"] in summary)
+            or [expected.get("project_key")] != case["allowed_arguments"].get("project_key")):
+        raise ValueError(f"Case {case['name']!r} must expect its bound project and a summary naming the account.")
+
+
+def continuation_proposal_passes(case: dict, tool_name: str, arguments: dict) -> bool:
+    """Score a ticket continuation the way the live workflow needs it.
+
+    The bound project must be copied exactly, the summary composed (it is a
+    derived argument) and naming the verified account, and nothing else proposed.
+    """
+    account = case["verified_account"]
+    summary = arguments.get("summary")
+    return (
+        tool_name == case["expected_tool"]
+        and set(arguments) == {"project_key", "summary"}
+        and arguments["project_key"] == case["expected_arguments"]["project_key"]
+        and isinstance(summary, str) and bool(summary.strip())
+        and (account["user_id"] in summary or account["email"] in summary)
+    )
 
 
 def _case_capabilities() -> dict:
@@ -1017,7 +1060,9 @@ async def main(argv=None) -> int:
                     )
 
                     passed = (
-                        observed_tool
+                        continuation_proposal_passes(case, observed_tool, observed_arguments)
+                        if "verified_account" in case
+                        else observed_tool
                         == case["expected_tool"]
                         and arguments_semantically_match(
                             tool_name=(

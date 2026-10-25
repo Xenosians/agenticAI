@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import asdict, replace
 from typing import Any
 import asyncio
+import re
 import uuid
 
 from agent.onboarding import WorkflowContinuation, WorkflowProposal, decode_ticket, verified_account
@@ -59,6 +60,13 @@ def persist_workflow_continuation(runtime, payload, hub_result) -> dict[str, Any
         "kind": "account_ticket", "state": "awaiting_account_approval",
         "current_step": 1, "steps_total": 2, "source_approval_id": approval_id,
     }
+
+
+def _reason_suffix(outcome_code: str | None) -> str:
+    """Name a stopped step's stable runtime outcome code, never its model output."""
+    if isinstance(outcome_code, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", outcome_code):
+        return f" ({outcome_code})"
+    return ""
 
 
 def _response(approval_id: str, *, status: str, error: str,
@@ -139,7 +147,8 @@ async def _continue_after_approval_locked(runtime, approval_id: str,
                 or not result.approval_id or result.approval_id == approval_id):
             response = _response(
                 approval_id, status="failed",
-                error="The account was created, but the requested Jira step did not produce a valid governed approval. No Jira action was executed.",
+                error="The account was created, but the requested Jira step did not produce a valid governed approval"
+                      f"{_reason_suffix(result.outcome_code)}. No Jira action was executed.",
             )
         else:
             target = runtime.approvals.store.get(result.approval_id)

@@ -1,0 +1,79 @@
+{
+  "schema": "jira-evaluation-cases.v1",
+  "case_set": "continuation-holdout",
+  "description": "Held-out ticket continuations after a verified account creation. Each case renders the verified-account message the live worker sends; a proposal passes only with the bound project and a summary naming the verified user_id or email. Names, accounts, projects and request shapes are absent from training (enforced by a unit test).",
+  "cases": [
+    {
+      "name": "continuation live onboarding wording",
+      "user": "Create a corporate account for given name Yusuf, family name Demir, department Procurement and role Buyer. After the account is successfully created, create a Jira ticket in project SUP for that created account, then notify me by email.",
+      "verified_account": {"user_id": "ydemir", "email": "ydemir@example.net"},
+      "allowed_tools": ["ticket_create"],
+      "allowed_arguments": {"project_key": ["SUP"]},
+      "expected_tool": "ticket_create",
+      "expected_arguments": {"project_key": "SUP", "summary": "Onboarding follow-up for ydemir (ydemir@example.net)"}
+    },
+    {
+      "name": "continuation suffixed account",
+      "user": "Create a corporate account for given name Ingrid, family name Larsen, department Logistics and role Coordinator. After the account is successfully created, create a Jira ticket in project SUP for that created account, then notify me by email.",
+      "verified_account": {"user_id": "ilarsen7", "email": "ilarsen7@example.net"},
+      "allowed_tools": ["ticket_create"],
+      "allowed_arguments": {"project_key": ["SUP"]},
+      "expected_tool": "ticket_create",
+      "expected_arguments": {"project_key": "SUP", "summary": "Onboarding follow-up for ilarsen7 (ilarsen7@example.net)"}
+    },
+    {
+      "name": "continuation brief request",
+      "user": "New hire Rafael Costa joins Facilities as a Technician; make his account and then log a Jira ticket in WORK for it.",
+      "verified_account": {"user_id": "rcosta", "email": "rcosta@example.net"},
+      "allowed_tools": ["ticket_create"],
+      "allowed_arguments": {"project_key": ["WORK"]},
+      "expected_tool": "ticket_create",
+      "expected_arguments": {"project_key": "WORK", "summary": "Onboarding follow-up for rcosta (rcosta@example.net)"}
+    },
+    {
+      "name": "continuation with stated purpose",
+      "user": "Add an account for Mei Lin (Research, Scientist). Once it is created, open a Jira issue in RND asking for lab badge access for her.",
+      "verified_account": {"user_id": "mlin", "email": "mlin@example.net"},
+      "allowed_tools": ["ticket_create"],
+      "allowed_arguments": {"project_key": ["RND"]},
+      "expected_tool": "ticket_create",
+      "expected_arguments": {"project_key": "RND", "summary": "Lab badge access for mlin (mlin@example.net)"}
+    },
+    {
+      "name": "continuation lowercase project wording",
+      "user": "I need a directory account for Noah Becker in Treasury (Associate) and afterwards a ticket in the SUP Jira project so the team can track it.",
+      "verified_account": {"user_id": "nbecker", "email": "nbecker@example.net"},
+      "allowed_tools": ["ticket_create"],
+      "allowed_arguments": {"project_key": ["SUP"]},
+      "expected_tool": "ticket_create",
+      "expected_arguments": {"project_key": "SUP", "summary": "Onboarding follow-up for nbecker (nbecker@example.net)"}
+    },
+    {
+      "name": "continuation multi-step with email",
+      "user": "Provision an account for Zara Ahmed, Customer Success, Specialist. When provisioning succeeds, raise a Jira ticket in WORK for the new account and email me the outcome.",
+      "verified_account": {"user_id": "zahmed2", "email": "zahmed2@example.net"},
+      "allowed_tools": ["ticket_create"],
+      "allowed_arguments": {"project_key": ["WORK"]},
+      "expected_tool": "ticket_create",
+      "expected_arguments": {"project_key": "WORK", "summary": "Onboarding follow-up for zahmed2 (zahmed2@example.net)"}
+    },
+    {
+      "name": "continuation equipment purpose",
+      "user": "Please onboard Elias Brandt (Audit, Senior Auditor) with a new account and then create a Jira ticket in RND to ship him a monitor.",
+      "verified_account": {"user_id": "ebrandt", "email": "ebrandt@example.net"},
+      "allowed_tools": ["ticket_create"],
+      "allowed_arguments": {"project_key": ["RND"]},
+      "expected_tool": "ticket_create",
+      "expected_arguments": {"project_key": "RND", "summary": "Ship a monitor to ebrandt (ebrandt@example.net)"}
+    },
+    {
+      "name": "continuation terse imperative",
+      "user": "Account for Olga Ivanova, Compliance, Officer; then Jira ticket in SUP.",
+      "verified_account": {"user_id": "oivanova", "email": "oivanova@example.net"},
+      "allowed_tools": ["ticket_create"],
+      "allowed_arguments": {"project_key": ["SUP"]},
+      "expected_tool": "ticket_create",
+      "expected_arguments": {"project_key": "SUP", "summary": "Onboarding follow-up for oivanova (oivanova@example.net)"}
+    }
+  ]
+}

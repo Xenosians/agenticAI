@@ -163,6 +163,23 @@ type, template, relationship). Every report records `case_set` and
 the corpus on held-out failures: that turns the set into development data, and
 promotion then needs a newly written held-out set.
 
+### Account-to-ticket continuation
+
+After an approved account creation, the Jira specialist receives one extra
+system message: the verified `user_id` and email, with the instruction to
+compose the ticket summary from them. `ticket_continuation_message` in
+`agent/onboarding.py` builds it for the runtime, the corpus and the evaluation,
+so all three render the same prompt. The runtime-task corpus includes
+continuation records (`verified_account` set) whose target summary names that
+account. The legacy layout cannot carry this message and omits them.
+
+`--cases learning/evaluation/evals/jira-continuation-holdout.json` scores this
+step. A proposal passes only with the bound project copied exactly, a
+non-empty summary naming the verified `user_id` or email, and no other
+argument. A unit test rejects any of these cases whose request, account or
+project appears in training. Continuation prompts reach 1,432 tokens, so train
+with `--max-length 1536`; serving does not truncate the prompt.
+
 ## Public retrieval snapshot
 
 Set `KNOWLEDGE_SNAPSHOT_PATH` and `KNOWLEDGE_SNAPSHOT_SHA256` alongside the local

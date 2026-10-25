@@ -260,6 +260,7 @@ def build_runtime_messages(
         Any,
     ],
     current_request_last: bool = False,
+    verified_account: dict[str, str] | None = None,
 ) -> list[
     dict[
         str,
@@ -295,7 +296,16 @@ def build_runtime_messages(
         },
     ]
     if current_request_last:
-        return [messages[0], messages[2], messages[1]]
+        # The live worker order: system prompt, target contract, then (for a
+        # ticket continuation) the verified-account message, request last.
+        ordered = [messages[0], messages[2]]
+        if verified_account is not None:
+            from agent.onboarding import VerifiedAccountEvidence, ticket_continuation_message
+
+            ordered.append(ticket_continuation_message(VerifiedAccountEvidence(**verified_account)))
+        return [*ordered, messages[1]]
+    if verified_account is not None:
+        raise ValueError("A verified-account continuation needs the runtime-task layout.")
     return messages
 
 
@@ -331,6 +341,10 @@ class JiraSftRecord(
     # Present only for an explicitly built runtime-task corpus. Verification
     # reconstructs these messages from trusted current capabilities.
     prompt_messages: list[dict[str, str]] | None = None
+    # The verified account a ticket continuation receives after an approved
+    # account creation. The runtime prompt then carries the same workflow
+    # message production sends; the target names this account in its summary.
+    verified_account: dict[str, str] | None = None
     tags: list[str] = Field(
         default_factory=list
     )
@@ -1577,7 +1591,108 @@ def _build_records(
             )
         )
 
+    for record in _continuation_records():
+        if record.user_request in seen_requests:
+            raise ValueError(f"Duplicate Jira SFT user request: {record.user_request}")
+        seen_requests.add(record.user_request)
+        records.append(record)
+
     return records
+
+
+# Request shapes for the account -> Jira continuation. In production the Jira
+# specialist receives the user's whole original request after the account step
+# succeeds; the held-out continuation cases use none of these shapes.
+CONTINUATION_REQUEST_TEMPLATES = (
+    "Create a corporate account for given name {given}, family name {family}, "
+    "department {department} and role {role}. After the account is successfully "
+    "created, create a Jira ticket in project {project} for that created account, "
+    "then notify me by email.",
+    "Please create an account for {given} {family} ({role}, {department}) and, once "
+    "it exists, open a Jira ticket in {project} for the new account.",
+    "Onboard {given} {family} as {role} in {department}: create their directory "
+    "account first, then raise a Jira issue in {project} about it.",
+    "Set up a new account for {given} {family}, department {department}, role {role}. "
+    "When that succeeds, file a ticket in Jira project {project} to {purpose}.",
+)
+
+# (given, family, department, role, project, verified user_id, verified email,
+#  purpose or None, summary). The verified identity is copied exactly from the
+# provider read-back, including a numeric suffix; the summary always names it.
+_CONTINUATION_EXAMPLES = (
+    ("Maria", "Santos", "Finance", "Analyst", "KAN", "msantos", "msantos@example.com", None,
+     "Onboarding follow-up for msantos (msantos@example.com)"),
+    ("Kenji", "Tanaka", "Engineering", "Developer", "OPS", "ktanaka", "ktanaka@corp.example", None,
+     "Onboarding follow-up for ktanaka (ktanaka@corp.example)"),
+    ("Aisha", "Bello", "HR", "Recruiter", "HELP", "abello2", "abello2@example.org", None,
+     "Onboarding follow-up for abello2 (abello2@example.org)"),
+    ("Lucas", "Moreau", "Sales", "Account Manager", "ENG", "lmoreau", "lmoreau@example.com", None,
+     "Onboarding follow-up for lmoreau (lmoreau@example.com)"),
+    ("Priya", "Nair", "Security", "Engineer", "SEC", "pnair", "pnair@corp.example", None,
+     "Onboarding follow-up for pnair (pnair@corp.example)"),
+    ("Tomas", "Novak", "Operations", "Technician", "APP", "tnovak", "tnovak@example.org", None,
+     "Onboarding follow-up for tnovak (tnovak@example.org)"),
+    ("Grace", "Okafor", "Legal", "Counsel", "INFRA", "gokafor", "gokafor@example.com", None,
+     "Onboarding follow-up for gokafor (gokafor@example.com)"),
+    ("Daniel", "Weber", "IT", "Support Specialist", "QA", "dweber3", "dweber3@corp.example", None,
+     "Onboarding follow-up for dweber3 (dweber3@corp.example)"),
+    ("Sofia", "Rossi", "Marketing", "Designer", "PAY", "srossi", "srossi@example.org", None,
+     "Onboarding follow-up for srossi (srossi@example.org)"),
+    ("Omar", "Haddad", "Finance", "Controller", "DEV", "ohaddad", "ohaddad@example.com", None,
+     "Onboarding follow-up for ohaddad (ohaddad@example.com)"),
+    ("Hana", "Kim", "Engineering", "Tester", "CS", "hkim", "hkim@corp.example",
+     "set up their laptop", "Set up laptop for hkim (hkim@corp.example)"),
+    ("Ivan", "Petrov", "Operations", "Planner", "KAN", "ipetrov", "ipetrov@example.org",
+     "grant VPN access", "Grant VPN access for ipetrov (ipetrov@example.org)"),
+    ("Lena", "Fischer", "Support", "Agent", "OPS", "lfischer", "lfischer@example.com",
+     "order a headset", "Order a headset for lfischer (lfischer@example.com)"),
+    ("Mateo", "Garcia", "Security", "Analyst", "HELP", "mgarcia4", "mgarcia4@corp.example",
+     "enrol them in security training", "Security training enrolment for mgarcia4 (mgarcia4@corp.example)"),
+    ("Chloe", "Martin", "HR", "Coordinator", "ENG", "cmartin", "cmartin@example.org", None,
+     "Onboarding follow-up for cmartin (cmartin@example.org)"),
+)
+
+
+def _continuation_records() -> list[JiraSftRecord]:
+    """Ticket continuations after a verified account, rendered as production sends them."""
+    records = []
+    plain = [template for template in CONTINUATION_REQUEST_TEMPLATES if "{purpose}" not in template]
+    for index, (given, family, department, role, project, user_id, email, purpose, summary) in enumerate(
+        _CONTINUATION_EXAMPLES
+    ):
+        template = CONTINUATION_REQUEST_TEMPLATES[-1] if purpose else plain[index % len(plain)]
+        request = template.format(
+            given=given, family=family, department=department, role=role, project=project, purpose=purpose,
+        )
+        arguments = {"project_key": project, "summary": summary}
+        records.append(JiraSftRecord(
+            record_id=f"jira-sft-continuation-{index:04d}-{_sha256_text(request)[:12]}",
+            split="validation" if index % 5 == 0 else "train",
+            tool_name="ticket_create",
+            user_request=request,
+            semantic_context=semantic_context_for("ticket_create", arguments),
+            target_response=canonical_tool_call("ticket_create", arguments),
+            verified_account={"user_id": user_id, "email": email},
+            tags=["issue", "create", "mutation", "workflow-continuation", "reviewed-seed"],
+        ))
+    for record in records:
+        _check_continuation_record(record)
+    return records
+
+
+def _check_continuation_record(record: JiraSftRecord) -> None:
+    """A continuation teaches only ticket_create, with a summary naming the verified account."""
+    account = record.verified_account
+    if account is None:
+        return
+    if (set(account) != {"user_id", "email"}
+            or not all(isinstance(value, str) and value and value == value.strip() for value in account.values())):
+        raise ValueError(f"Jira continuation {record.record_id} needs an exact user_id and email.")
+    calls = parse_tool_calls(record.target_response)
+    summary = calls[0]["arguments"].get("summary") if len(calls) == 1 else None
+    if (record.tool_name != "ticket_create" or not isinstance(summary, str)
+            or not (account["user_id"] in summary or account["email"] in summary)):
+        raise ValueError(f"Jira continuation {record.record_id} must create a ticket naming its verified account.")
 
 
 def _register_runtime_contract(prompt_layout: str) -> None:
@@ -1603,7 +1718,7 @@ def runtime_task_messages(
             agent, capability_catalog=catalog, prompt_profile=prompt_profile,
         ),
         user_request=record.user_request, semantic_context=record.semantic_context,
-        current_request_last=True,
+        current_request_last=True, verified_account=record.verified_account,
     )
 
 
@@ -1709,6 +1824,10 @@ def build_jira_sft_corpus(
     )
     if prompt_layout == "runtime_task":
         records = [_runtime_task_record(agent, record, prompt_profile) for record in records]
+    else:
+        # The legacy layout predates the live worker message order and cannot
+        # carry a continuation's verified-account message.
+        records = [record for record in records if record.verified_account is None]
 
     train = [
         record
@@ -2070,6 +2189,9 @@ def verify_jira_sft_corpus(
                 raise ValueError("Jira runtime-task messages changed after corpus build.")
         elif record.prompt_messages is not None:
             raise ValueError("Legacy Jira corpus cannot override its verified prompt.")
+        elif record.verified_account is not None:
+            raise ValueError("A verified-account continuation needs the runtime-task layout.")
+        _check_continuation_record(record)
         calls = parse_tool_calls(
             record.target_response
         )
@@ -2291,6 +2413,7 @@ def _tokenize_record(
         system_prompt=system_prompt,
         user_request=record.user_request,
         semantic_context=record.semantic_context,
+        verified_account=record.verified_account,
     )
 
     from learning.training.hub_hybrid_qlora import (

@@ -73,7 +73,10 @@ does not certify whole-plan completeness.
   inference. An inconsistent saved scope stops for reconciliation.
 - Rejection, failed account verification, an identity mismatch, invalid ticket
   scope or an unrelated ticket proposal stops the workflow. A partially created
-  account is reported truthfully; the server does not claim rollback.
+  account is reported truthfully; the server does not claim rollback. When the
+  specialist's proposal is refused before any approval exists (for example
+  `semantic_required_argument_missing` for an omitted summary), the job error
+  names that stable runtime code; model output never reaches the job.
 - This is a durable-job feature. The transitional synchronous AI endpoint does
   not provide workflow persistence. Arbitrary graphs, public mailbox creation,
   Jira product invitations and automatic account cleanup are outside this

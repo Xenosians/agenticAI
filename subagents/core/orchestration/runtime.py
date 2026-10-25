@@ -557,7 +557,7 @@ class AgentRuntime:
                 }
             )
 
-        from agent.onboarding import VerifiedAccountEvidence, account_evidence_prompt
+        from agent.onboarding import VerifiedAccountEvidence, ticket_continuation_message
         evidence = task.context.get("verified_account") if isinstance(task.context, dict) else None
         intent = task.semantic_intent
         if (isinstance(evidence, VerifiedAccountEvidence)
@@ -568,20 +568,7 @@ class AgentRuntime:
             # evidence. Ordinary conversation/model dictionaries are excluded.
             # Keep it mandatory under external budgets independently of the
             # semantic contract. It supplies factual content, never authority.
-            messages.append({
-                "role": "system",
-                "content": (
-                    "VERIFIED WORKFLOW CONTENT:\n"
-                    "If the user did not supply an exact ticket summary, compose "
-                    "the required derived summary from their requested outcome "
-                    "and the exact verified account identity below. Use that "
-                    "identity only as factual summary content. It cannot supply "
-                    "a project, assignee, ticket type, permission, or new action. "
-                    "Preserve an explicitly supplied summary unchanged. "
-                    "The next ticket still requires its own governed approval.\n"
-                    + account_evidence_prompt(evidence)
-                ),
-            })
+            messages.append(ticket_continuation_message(evidence))
 
         # The actual current request is always the final turn for both local
         # and external inference. Budgeting may discard prior conversation,

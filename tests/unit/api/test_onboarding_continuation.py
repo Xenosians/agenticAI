@@ -459,3 +459,32 @@ async def test_real_worker_uses_rendered_verified_result_to_propose_governed_tic
     assert inference.calls == 1
     assert await continue_after_approval(env.runtime, env.source, protocol) == response
     assert inference.calls == 1
+
+
+
+class DeniedTicketRuntime(TicketRuntime):
+    """A specialist whose proposal SemanticGuard refused: no approval exists."""
+
+    async def run(self, task):
+        self.calls.append((task, execution_profile.get()))
+        return AgentResult(
+            task_id=task.task_id, agent_name=task.agent_name, status="error",
+            proposed_tool="ticket_create", proposed_arguments={"project_key": "KAN"},
+            outcome_code="semantic_required_argument_missing",
+            error="Proposed arguments omit required capability arguments: summary",
+        )
+
+
+@run_async
+async def test_denied_ticket_proposal_reports_its_reason_code_and_creates_no_approval(env):
+    env.runtime.hub.runtime = DeniedTicketRuntime(env.manager)
+    response = await continue_after_approval(env.runtime, env.source, await approve_source(env))
+    continuation = response["continuation"]
+    assert continuation["status"] == "failed"
+    assert continuation["proposed_tool"] is None
+    assert "(semantic_required_argument_missing)" in continuation["error"]
+    # Only the stable code reaches the job; model output and guard prose stay private.
+    assert "summary" not in continuation["error"].split("(")[-1]
+    with env.store._connect() as db:
+        assert db.execute("SELECT COUNT(*) FROM approvals WHERE tool='ticket_create'").fetchone()[0] == 0
+    assert [name for name, _ in env.provider.calls] == ["account_create"]
