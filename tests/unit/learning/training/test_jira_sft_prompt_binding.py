@@ -150,6 +150,12 @@ def test_registration_rejects_unbound_training_artifacts_without_env_writes(conf
 
 def test_training_checks_explicit_candidate_binding_before_hardware_or_optimizer(configured_profiles, tmp_path, monkeypatch):
     directory, _ = _build_candidate(tmp_path)
+    base = tmp_path / "base"
+    base.mkdir()
+    (base / "config.json").write_text("{}", encoding="utf-8")
+    (base / "tokenizer.json").write_text("{}", encoding="utf-8")
+    (base / "model.safetensors").write_bytes(b"isolated model identity fixture")
+    configured_profiles.model_profiles["jira-func"].model_path = base
     original_settings = configured_profiles.model_dump(mode="json")
 
     class HardwareGateReached(Exception):

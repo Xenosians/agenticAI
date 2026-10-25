@@ -6,6 +6,7 @@ import json
 import math
 import os
 import shutil
+from numbers import Real
 
 from datetime import (
     datetime,
@@ -395,6 +396,8 @@ class JiraSftTrainingManifest(
     created_at: str
     base_model_key: str
     base_model_path: str
+    # Historical manifests did not bind the base checkpoint/tokenizer bytes.
+    base_model_identity: dict[str, str] | None = None
     output_directory: str
     adapter_directory: str
     merged_model_directory: str
@@ -2375,7 +2378,7 @@ def jira_validation_guard_arguments(
     interval, so an interrupted run can resume. Only the newest and the best
     checkpoints are kept. Training ends on the best adapter.
     """
-    if not isinstance(checkpoint_interval, int) or checkpoint_interval < 1:
+    if type(checkpoint_interval) is not int or checkpoint_interval < 1:
         raise ValueError("checkpoint_interval must be a positive integer.")
     return {
         "eval_strategy": "steps",
@@ -2407,7 +2410,7 @@ def build_jira_trainer(
         raise ValueError("Jira SFT training split is empty.")
     if not validation_items:
         raise ValueError("Jira SFT requires a non-empty validation split.")
-    if not isinstance(early_stopping_patience, int) or early_stopping_patience < 1:
+    if type(early_stopping_patience) is not int or early_stopping_patience < 1:
         raise ValueError("early_stopping_patience must be a positive integer.")
 
     from transformers import EarlyStoppingCallback, Trainer
@@ -2454,6 +2457,7 @@ def resumable_checkpoint(trainer_directory: Path) -> str | None:
 def jira_run_identity(
     *,
     corpus_manifest: JiraSftCorpusManifest,
+    base_model_identity: dict[str, str],
     max_steps: int,
     max_length: int,
     learning_rate: float = 2e-4,
@@ -2467,12 +2471,13 @@ def jira_run_identity(
 ) -> dict[str, Any]:
     """Settings a resumed run must share with the run that saved its checkpoints."""
     return {
-        "schema": "jira-specialist-sft-run.v1",
+        "schema": "jira-specialist-sft-run.v2",
         "corpus_train_sha256": corpus_manifest.train_sha256,
         "corpus_validation_sha256": corpus_manifest.validation_sha256,
         "system_prompt_sha256": corpus_manifest.system_prompt_sha256,
         "prompt_layout": corpus_manifest.prompt_layout,
         "base_model_key": corpus_manifest.base_model_key,
+        "base_model_identity": base_model_identity,
         "max_steps": max_steps,
         "max_length": max_length,
         "learning_rate": learning_rate,
@@ -2492,10 +2497,145 @@ def _resume_run(run_directory: Path, identity: dict[str, Any]) -> Path:
     if not config_path.is_file():
         raise ValueError(f"Resume run has no run-config.json: {run_directory}")
     saved = json.loads(config_path.read_text(encoding="utf-8"))
+    if not isinstance(saved, dict):
+        raise ValueError("Resume run-config.json must contain an object.")
+    if saved.get("schema") != "jira-specialist-sft-run.v2" or not saved.get("base_model_identity"):
+        raise ValueError(
+            "Resume run has no recorded base-model/tokenizer content identity. "
+            "Preserve this legacy run for reconciliation; its original base "
+            "cannot be established from the current model files. Start a new "
+            "run instead of rewriting its run-config.json."
+        )
     if saved != identity:
         changed = sorted(key for key in set(saved) | set(identity) if saved.get(key) != identity.get(key))
         raise ValueError("Resume configuration does not match the interrupted run: " + ", ".join(changed))
+    if (run_directory / "training-manifest.json").exists():
+        raise ValueError("Resume run already has a completed training manifest.")
     return run_directory
+
+
+def jira_base_model_identity(base_model_path: Path) -> dict[str, str]:
+    """Inspect current local model and tokenizer bytes without loading weights.
+
+    Runtime fingerprints are process snapshots by default. Training must bypass
+    that cache so replacing bytes at the same path cannot reuse a saved identity.
+    """
+    from learning.evidence.execution_provenance import fingerprint_runtime_model_artifact
+
+    resolved = base_model_path.expanduser().resolve()
+    fingerprint = fingerprint_runtime_model_artifact(resolved, use_cache=False)
+    return {
+        "resolved_path": str(resolved),
+        "content_sha256": fingerprint.content_sha256,
+        "weights_sha256": fingerprint.weights_sha256,
+        "tokenizer_sha256": fingerprint.tokenizer_sha256,
+        "config_sha256": fingerprint.config_sha256,
+    }
+
+
+def validate_jira_training_options(
+    *, max_steps: int, max_length: int, learning_rate: float,
+    gradient_accumulation_steps: int, lora_r: int, lora_alpha: int,
+    lora_dropout: float, seed: int, checkpoint_interval: int,
+    early_stopping_patience: int,
+) -> None:
+    """Reject invalid recipes before corpus I/O, CUDA checks or model loading."""
+    integers = {
+        "max_steps": max_steps, "max_length": max_length,
+        "gradient_accumulation_steps": gradient_accumulation_steps,
+        "lora_r": lora_r, "lora_alpha": lora_alpha,
+        "checkpoint_interval": checkpoint_interval,
+        "early_stopping_patience": early_stopping_patience,
+    }
+    for name, value in integers.items():
+        if type(value) is not int or value < 1:
+            raise ValueError(f"{name} must be a positive integer.")
+    if max_steps > 2000:
+        raise ValueError("Jira MVP SFT refuses max_steps > 2000.")
+    if max_length < 256:
+        raise ValueError("max_length must be at least 256.")
+    if type(seed) is not int or not 0 <= seed < 2**32:
+        raise ValueError("seed must be an integer in [0, 2**32).")
+    for name, value in (("learning_rate", learning_rate), ("lora_dropout", lora_dropout)):
+        if isinstance(value, bool) or not isinstance(value, Real) or not math.isfinite(value):
+            raise ValueError(f"{name} must be finite.")
+    if learning_rate < 0:
+        raise ValueError("learning_rate must be non-negative.")
+    if not 0 <= lora_dropout < 1:
+        raise ValueError("lora_dropout must be in [0, 1).")
+
+
+def validate_jira_resume_checkpoint(
+    run_directory: Path, *, max_steps: int, base_model_path: Path,
+    early_stopping_patience: int,
+) -> str:
+    """Check required checkpoint files and plain metadata before hardware use.
+
+    Never fall back to an older checkpoint after finding an incomplete newest
+    one. Binary state is loaded later by Trainer; this preflight does not unpickle
+    files or pretend that nonempty files prove their numerical integrity.
+    """
+    trainer_directory = (run_directory / "trainer-work").resolve()
+    checkpoint = resumable_checkpoint(trainer_directory)
+    if checkpoint is None:
+        raise ValueError(f"Resume run has no saved checkpoint: {trainer_directory}")
+    checkpoint_path = Path(checkpoint).resolve()
+    required = (
+        "adapter_config.json", "adapter_model.safetensors", "trainer_state.json",
+        "optimizer.pt", "scheduler.pt", "rng_state.pth", "training_args.bin",
+    )
+    for name in required:
+        path = checkpoint_path / name
+        if not path.is_file() or path.stat().st_size == 0:
+            raise ValueError(f"Resume checkpoint is incomplete: {checkpoint_path.name}/{name}")
+    state = json.loads((checkpoint_path / "trainer_state.json").read_text(encoding="utf-8"))
+    if not isinstance(state, dict):
+        raise ValueError("Resume trainer_state.json must contain an object.")
+    step = state.get("global_step")
+    if type(step) is not int or step < 1 or step > max_steps or checkpoint_path.name != f"checkpoint-{step}":
+        raise ValueError("Resume checkpoint global_step does not match its directory or step budget.")
+    if state.get("max_steps") != max_steps:
+        raise ValueError("Resume checkpoint max_steps does not match its run configuration.")
+    callbacks = state.get("stateful_callbacks")
+    callback = callbacks.get("EarlyStoppingCallback") if isinstance(callbacks, dict) else None
+    callback_args = callback.get("args") if isinstance(callback, dict) else None
+    callback_state = callback.get("attributes") if isinstance(callback, dict) else None
+    counter = callback_state.get("early_stopping_patience_counter") if isinstance(callback_state, dict) else None
+    if (
+        not isinstance(callback_args, dict)
+        or callback_args.get("early_stopping_patience") != early_stopping_patience
+        or callback_args.get("early_stopping_threshold") != 0.0
+        or type(counter) is not int or not 0 <= counter <= early_stopping_patience
+    ):
+        raise ValueError("Resume checkpoint is missing matching early-stopping state.")
+    if step == max_steps or counter == early_stopping_patience:
+        raise ValueError(
+            "Resume checkpoint already finished its optimization budget or early stop. "
+            "Reconcile its unfinished artifact export instead of repeating optimizer steps."
+        )
+    best = state.get("best_model_checkpoint")
+    metric = state.get("best_metric")
+    if not isinstance(best, str) or not best:
+        raise ValueError("Resume checkpoint has no recorded validation-best adapter.")
+    if isinstance(metric, bool) or not isinstance(metric, Real) or not math.isfinite(metric):
+        raise ValueError("Resume checkpoint has no finite validation-best loss.")
+    best_path = Path(best).expanduser().resolve()
+    best_step = state.get("best_global_step")
+    if (
+        best_path.parent != trainer_directory or type(best_step) is not int
+        or not 1 <= best_step <= step or best_path.name != f"checkpoint-{best_step}"
+    ):
+        raise ValueError("Resume validation-best checkpoint does not belong to this run and step range.")
+    for path in {checkpoint_path, best_path}:
+        for name in ("adapter_config.json", "adapter_model.safetensors"):
+            artifact = path / name
+            if not artifact.is_file() or artifact.stat().st_size == 0:
+                raise ValueError(f"Resume checkpoint is incomplete: {path.name}/{name}")
+        adapter_config = json.loads((path / "adapter_config.json").read_text(encoding="utf-8"))
+        base_name = adapter_config.get("base_model_name_or_path") if isinstance(adapter_config, dict) else None
+        if not isinstance(base_name, str) or Path(base_name).expanduser().resolve() != base_model_path:
+            raise ValueError("Resume adapter base model does not match the bound local base model.")
+    return str(checkpoint_path)
 
 
 # ============================================================
@@ -2527,23 +2667,13 @@ def train_jira_sft(
             "Real Jira SFT requires explicit allow_training=True."
         )
 
-    if not isinstance(
-        max_steps,
-        int,
-    ) or max_steps < 1:
-        raise ValueError(
-            "max_steps must be a positive integer."
-        )
-
-    if max_steps > 2000:
-        raise ValueError(
-            "Jira MVP SFT refuses max_steps > 2000."
-        )
-
-    if max_length < 256:
-        raise ValueError(
-            "max_length must be at least 256."
-        )
+    validate_jira_training_options(
+        max_steps=max_steps, max_length=max_length, learning_rate=learning_rate,
+        gradient_accumulation_steps=gradient_accumulation_steps,
+        lora_r=lora_r, lora_alpha=lora_alpha, lora_dropout=lora_dropout,
+        seed=seed, checkpoint_interval=checkpoint_interval,
+        early_stopping_patience=early_stopping_patience,
+    )
 
     (
         corpus_manifest,
@@ -2556,33 +2686,10 @@ def train_jira_sft(
         worker_prompt_profile=worker_prompt_profile,
     )
 
-    run_identity = jira_run_identity(
-        corpus_manifest=corpus_manifest, max_steps=max_steps, max_length=max_length,
-        learning_rate=learning_rate, gradient_accumulation_steps=gradient_accumulation_steps,
-        lora_r=lora_r, lora_alpha=lora_alpha, lora_dropout=lora_dropout, seed=seed,
-        checkpoint_interval=checkpoint_interval, early_stopping_patience=early_stopping_patience,
-    )
-    resumed_run = (
-        _resume_run(resume_run_directory, run_identity)
-        if resume_run_directory is not None else None
-    )
-    guard_arguments = jira_validation_guard_arguments(
-        checkpoint_interval, baseline_evaluation=resumed_run is None,
-    )
-
-    versions = assert_training_versions()
-
-    import torch
-
-    if not torch.cuda.is_available():
-        raise ValueError(
-            "CUDA is required for Jira BLOOMZ QLoRA training."
-        )
-
-    if not torch.cuda.is_bf16_supported():
-        raise ValueError(
-            "The configured Jira training recipe requires BF16 support."
-        )
+    if not train_records:
+        raise ValueError("Jira SFT training split is empty.")
+    if not validation_records:
+        raise ValueError("Jira SFT requires a non-empty validation split.")
 
     settings = Settings()
     profile = settings.require_model_profile(
@@ -2609,6 +2716,43 @@ def train_jira_sft(
         raise ValueError(
             "Jira SFT base model path does not exist: "
             f"{base_model_path}"
+        )
+
+    base_model_identity = jira_base_model_identity(base_model_path)
+    run_identity = jira_run_identity(
+        corpus_manifest=corpus_manifest, base_model_identity=base_model_identity,
+        max_steps=max_steps, max_length=max_length,
+        learning_rate=learning_rate, gradient_accumulation_steps=gradient_accumulation_steps,
+        lora_r=lora_r, lora_alpha=lora_alpha, lora_dropout=lora_dropout, seed=seed,
+        checkpoint_interval=checkpoint_interval, early_stopping_patience=early_stopping_patience,
+    )
+    resumed_run = (
+        _resume_run(resume_run_directory, run_identity)
+        if resume_run_directory is not None else None
+    )
+    resume_checkpoint = (
+        validate_jira_resume_checkpoint(
+            resumed_run, max_steps=max_steps, base_model_path=base_model_path,
+            early_stopping_patience=early_stopping_patience,
+        )
+        if resumed_run is not None else None
+    )
+    guard_arguments = jira_validation_guard_arguments(
+        checkpoint_interval, baseline_evaluation=resumed_run is None,
+    )
+
+    versions = assert_training_versions()
+
+    import torch
+
+    if not torch.cuda.is_available():
+        raise ValueError(
+            "CUDA is required for Jira BLOOMZ QLoRA training."
+        )
+
+    if not torch.cuda.is_bf16_supported():
+        raise ValueError(
+            "The configured Jira training recipe requires BF16 support."
         )
 
     from peft import (
@@ -2745,10 +2889,6 @@ def train_jira_sft(
         (run_directory / "run-config.json").write_text(
             json.dumps(run_identity, indent=2, sort_keys=True) + "\n", encoding="utf-8",
         )
-    resume_checkpoint = resumable_checkpoint(trainer_directory) if resumed_run is not None else None
-    if resumed_run is not None and resume_checkpoint is None:
-        raise ValueError(f"Resume run has no saved checkpoint: {trainer_directory}")
-
     training_args = build_jira_training_arguments(
         output_dir=trainer_directory,
         max_steps=max_steps,
@@ -2866,6 +3006,7 @@ def train_jira_sft(
         base_model_path=str(
             base_model_path
         ),
+        base_model_identity=base_model_identity,
         output_directory=str(
             run_directory
         ),

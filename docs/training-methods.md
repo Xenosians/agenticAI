@@ -89,14 +89,59 @@ establish that its sequences fit the chosen training budget.
 With the cached Jira tokenizer, the 376-record candidate spans 1,172–1,402
 tokens; 23 exceed the CLI's 1,280-token default. The old full-catalog candidate
 spans 1,773–1,963 tokens, all above that limit. Neither corpus fits the trainer
-function's 1,024-token default. No records were discarded, budget increased or
-optimizer run performed. Sequence-budget and memory review remains necessary.
+function's 1,024-token default. That tokenizer-only admission check discarded no
+records and performed no optimization. A training run must declare its sequence
+budget and resource settings separately; this measurement is not permission to
+increase either.
 
 The existing merged model passed 24/33 isolated protocol cases with its legacy
 prompt and 3/33 with the experimental grounded prompt. Both quality gates
 failed. Preparing a corrected corpus does not activate that prompt, retrain the
-model, prove live Jira execution or complete the MVP. Both existing specialist
-trainers still lack validation-based best-checkpoint selection.
+model, prove live Jira execution or complete the MVP.
+
+## Jira training guard
+
+`jira_sft_train.py` measures validation loss before training and every
+`--checkpoint-interval` optimizer steps, saves a checkpoint at the same
+interval and keeps the newest and the best. It stops after
+`--early-stopping-patience` checkpoints without a lower validation loss and
+ends on the best adapter. `--resume-run RUN_DIR` continues an interrupted run
+from its newest checkpoint only when the run's `run-config.json` (corpus
+hashes, prompt layout, step budget, sequence length, LoRA and optimizer
+settings) matches. The training manifest records the validation summary.
+The shared specialist trainer (`specialist_sft.py`) still has no validation
+checkpoint selection.
+
+`jira_sft_preflight.py` accepts the same candidate prompt and numeric recipe
+options as `jira_sft_train.py` (the defaults are unchanged). Pass the same
+`--worker-prompt-profile`, `--max-length`, `--max-steps`, learning rate,
+accumulation, LoRA and checkpoint/patience options to both commands. Preflight
+verifies both corpus splits and uses the trainer's strict encoder, including
+saved `runtime_task` messages, complete targets and template/EOS boundaries.
+An oversized record rejects the check by identity rather than being clipped or
+reported as ready. It also requires CUDA/BF16 and instantiates the actual
+validation/checkpoint `TrainingArguments`; a pass establishes prerequisites,
+not optimizer completion, a quality gate or live tool execution. Tokenizer-only
+sequence admission remains separate from hardware readiness. No preflight
+operation changes the serving prompt or model binding.
+
+New Jira runs also pin the resolved base-model path and fresh content hashes for
+the checkpoint, configuration and tokenizer. Resume checks bypass the runtime's
+fingerprint cache, so replacing bytes at the same path is a mismatch. Older runs
+without that recorded identity cannot establish which original base was used;
+they are preserved for reconciliation and cannot be made resumable by assigning
+today's fingerprint to their old configuration.
+
+Recipe validation and resume-file checks precede CUDA checks and model loading.
+The newest checkpoint must retain its adapter, optimizer, scheduler, RNG and
+Trainer state, plus the validation-best adapter and matching early-stop state.
+An incomplete newest checkpoint is rejected without falling back to an older
+one. These are metadata and nonempty-file checks; Trainer still validates and
+loads the binary states later. Completed optimization or an existing training
+manifest requires artifact reconciliation instead of repeating optimizer steps.
+The initial validation loss is diagnostic: the untrained adapter is not a saved
+best-checkpoint candidate, and a low validation loss does not replace held-out
+tool evaluation or authorized live acceptance.
 
 ## Public retrieval snapshot
 
