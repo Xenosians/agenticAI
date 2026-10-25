@@ -90,6 +90,61 @@ def test_malformed_case_file_stops_before_settings_or_report(tmp_path, monkeypat
     assert not report.exists()
 
 
+def _case_for(tool, **changes):
+    return {**next(case for case in CASES if case["expected_tool"] == tool), **changes}
+
+
+@pytest.mark.parametrize("case", [
+    {key: value for key, value in CASES[0].items() if key != "allowed_arguments"},
+    {**CASES[0], "allowed_tools": ["fixture_unknown_tool"], "expected_tool": "fixture_unknown_tool"},
+    {**CASES[0], "allowed_tools": ["account_status"], "expected_tool": "account_status"},
+    _case_for("ticket_get", expected_arguments={}),
+    _case_for("ticket_get", expected_arguments={"ticket_key": "KAN-3", "fixture_unknown_field": "value"}),
+    _case_for("jira_project_get", expected_arguments={"project_id_or_key": 7}),
+    _case_for("jira_project_list", expected_arguments={"limit": True}),
+    _case_for("ticket_update", expected_arguments={"ticket_key": "KAN-3", "add_labels": [7]}),
+    _case_for("jira_project_create", expected_arguments={
+        "project_key": "KAN", "project_name": "Fixture project", "template": "fixture_unknown_alias",
+    }),
+    _case_for("jira_project_create", allowed_arguments={"template": ["fixture_unknown_alias"]}),
+    _case_for("ticket_get", allowed_arguments={"ticket_key": "KAN-3"}),
+    _case_for("ticket_get", allowed_arguments={"ticket_key": []}),
+    _case_for("ticket_get", allowed_arguments={"ticket_key": [""]}),
+    _case_for("ticket_get", allowed_arguments={"ticket_key": [" KAN-3"]}),
+    _case_for("ticket_get", allowed_arguments={"ticket_key": ["KAN-3", "KAN-3"]}),
+    _case_for("ticket_get", allowed_arguments={"fixture_unknown_field": ["KAN-3"]}),
+    {**CASES[0], "exact_arguments": "true"},
+])
+def test_invalid_case_contract_stops_before_settings_or_report(tmp_path, monkeypatch, case):
+    report = tmp_path / "report.json"
+    settings_calls = []
+
+    def unexpected_settings():
+        settings_calls.append(True)
+        raise AssertionError("Case admission must precede deployment settings or models")
+
+    monkeypatch.setattr("scripts.jira_specialist_model_eval.Settings", unexpected_settings)
+    path = write_case_file(tmp_path, [case])
+    assert asyncio.run(main(["--cases", str(path), "--report", str(report)])) == 2
+    assert settings_calls == []
+    assert not report.exists()
+
+
+@pytest.mark.parametrize("cases", [1, "invalid", {"case": CASES[0]}])
+def test_case_collection_must_be_an_explicit_list(tmp_path, cases):
+    with pytest.raises(ValueError, match="cases"):
+        load_cases(write_case_file(tmp_path, cases))
+
+
+def test_built_in_and_held_out_cases_match_current_executable_capabilities():
+    root = Path(__file__).resolve().parents[3]
+    _, _, built_in = load_cases(None)
+    _, _, held_out = load_cases(root / "learning/evaluation/evals/jira-specialist-holdout.json")
+    assert len(built_in) == 33
+    assert len(held_out) == 40
+    assert {case["expected_tool"] for case in held_out} == {case["expected_tool"] for case in built_in}
+
+
 def test_existing_report_is_preserved_before_settings_or_inference(tmp_path, monkeypatch):
     report = tmp_path / "existing.json"
     report.write_text("historical evidence", encoding="utf-8")

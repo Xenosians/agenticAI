@@ -8,6 +8,8 @@ import os
 import sys
 import time
 
+from pydantic import TypeAdapter, ValidationError
+
 from dataclasses import (
     replace,
 )
@@ -72,6 +74,9 @@ from subagents.llm.runtime.scheduler import (
     GpuScheduler,
     InferencePriority,
 )
+
+from tools.capability_contract import build_capability_contract
+from tools.registry import get_tool
 
 
 MODEL_KEY = os.environ.get(
@@ -651,33 +656,94 @@ def case_set_digest(cases: list[dict]) -> str:
 
 
 def _validated_case(case) -> dict:
-    if not isinstance(case, dict) or not {"name", "user", "allowed_tools", "expected_tool"} <= set(case):
-        raise ValueError("Each case needs name, user, allowed_tools and expected_tool.")
+    required = {"name", "user", "allowed_tools", "allowed_arguments", "expected_tool", "expected_arguments"}
+    if not isinstance(case, dict) or not required <= set(case):
+        raise ValueError("Each case needs name, user, allowed_tools, allowed_arguments, expected_tool and expected_arguments.")
     if not all(isinstance(case[key], str) and case[key].strip() for key in ("name", "user", "expected_tool")):
         raise ValueError(f"Case {case.get('name')!r} has an empty name, request or tool.")
     if case["allowed_tools"] != [case["expected_tool"]]:
         raise ValueError(f"Case {case['name']!r} must allow exactly its expected tool.")
-    if not isinstance(case.get("allowed_arguments", {}), dict) or not isinstance(case.get("expected_arguments"), dict):
+    if not isinstance(case["allowed_arguments"], dict) or not isinstance(case["expected_arguments"], dict):
         raise ValueError(f"Case {case['name']!r} needs allowed_arguments and expected_arguments objects.")
+    if "exact_arguments" in case and type(case["exact_arguments"]) is not bool:
+        raise ValueError(f"Case {case['name']!r} exact_arguments must be a boolean.")
     return case
+
+
+def _case_capabilities() -> dict:
+    """Read the evaluator's trusted Jira boundary and executable requiredness.
+
+    Signature registration uses explicit in-memory metadata fixtures, without
+    deployment Settings, a transport, inference or any tool/provider call.
+    """
+    from mcp_server import register_capability_signatures
+    register_capability_signatures()
+    agent = load_agent_definition(PROJECT_ROOT / "subagents/agents/jira-specialist.md")
+    return {
+        item["name"]: (item, build_capability_contract(item["name"], get_tool(item["name"])))
+        for item in build_agent_capability_catalog(agent, include_arguments=True)
+    }
+
+
+_CATALOG_ARGUMENT_TYPES = {
+    "str": str, "string": str, "int": int, "integer": int,
+    "float": float, "number": float, "bool": bool, "boolean": bool,
+    "list[str]": list[str],
+}
+
+
+def _validate_case_capability(case: dict, capabilities: dict) -> None:
+    name = case["expected_tool"]
+    if name not in capabilities:
+        raise ValueError(f"Case {case['name']!r} selects a capability outside the current Jira specialist.")
+    descriptor, contract = capabilities[name]
+    parameters = descriptor["argument_schema"]
+    expected, allowed = case["expected_arguments"], case["allowed_arguments"]
+    if (set(expected) | set(allowed)) - set(parameters) or set(contract.required_arguments) - set(expected):
+        raise ValueError(f"Case {case['name']!r} arguments do not match the executable capability contract.")
+    for key, value in expected.items():
+        schema = parameters[key]
+        annotation = _CATALOG_ARGUMENT_TYPES.get(schema["type"])
+        if annotation is None:
+            raise ValueError(f"Case {case['name']!r} uses an unsupported catalog argument type.")
+        try:
+            TypeAdapter(annotation).validate_python(value, strict=True)
+        except ValidationError as exc:
+            raise ValueError(f"Case {case['name']!r} has an invalid expected argument type for {key!r}.") from exc
+        if "enum" in schema and value not in schema["enum"]:
+            raise ValueError(f"Case {case['name']!r} has an expected argument outside its trusted enum.")
+    for key, values in allowed.items():
+        if (not isinstance(values, list) or not values
+                or any(not isinstance(value, str) or not value or value != value.strip() for value in values)
+                or len(set(values)) != len(values)):
+            raise ValueError(f"Case {case['name']!r} allowed_arguments must contain canonical nonempty string lists.")
+        if "enum" in parameters[key] and any(value not in parameters[key]["enum"] for value in values):
+            raise ValueError(f"Case {case['name']!r} has an allowed argument outside its trusted enum.")
 
 
 def load_cases(path: Path | None) -> tuple[str, str, list[dict]]:
     """Return (case set, digest, cases): the built-in development cases or one case file."""
     if path is None:
-        return "development", case_set_digest(CASES), CASES
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise ValueError("Case file must be a JSON object.")
-    case_set = payload.get("case_set")
-    if payload.get("schema") != CASE_FILE_SCHEMA or not isinstance(case_set, str) or not case_set.strip():
-        raise ValueError(f"Case file must declare schema {CASE_FILE_SCHEMA} and a case_set name.")
-    cases = [_validated_case(case) for case in payload.get("cases") or []]
+        case_set, raw_cases = "development", CASES
+    else:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("Case file must be a JSON object.")
+        case_set = payload.get("case_set")
+        if payload.get("schema") != CASE_FILE_SCHEMA or not isinstance(case_set, str) or not case_set.strip():
+            raise ValueError(f"Case file must declare schema {CASE_FILE_SCHEMA} and a case_set name.")
+        raw_cases = payload.get("cases")
+    if not isinstance(raw_cases, list):
+        raise ValueError("Case file cases must be an explicit list.")
+    cases = [_validated_case(case) for case in raw_cases]
     if not cases:
         raise ValueError("Case file declares no cases.")
     for field in ("name", "user"):
         if len({case[field] for case in cases}) != len(cases):
             raise ValueError(f"Case file repeats a case {field}.")
+    capabilities = _case_capabilities()
+    for case in cases:
+        _validate_case_capability(case, capabilities)
     return case_set, case_set_digest(cases), cases
 
 
@@ -748,11 +814,6 @@ async def main(argv=None) -> int:
     except FileExistsError:
         print("Evaluation output was claimed concurrently; no inference started.")
         return 2
-
-    # Capture actual executable requiredness/defaults without starting an MCP
-    # server or instantiating a provider. Production registers the same schema.
-    from mcp_server import register_capability_signatures
-    register_capability_signatures()
 
     model_manager = ModelManager(
         settings=settings,
