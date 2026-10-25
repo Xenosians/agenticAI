@@ -1,5 +1,6 @@
 """Driver safeguards use explicit fixtures only; no browser/provider is started."""
 from contextlib import nullcontext
+from copy import deepcopy
 from email.message import EmailMessage
 import json
 from types import SimpleNamespace
@@ -68,6 +69,67 @@ def test_journal_wont_overwrite_an_existing_attempt(tmp_path):
     with pytest.raises(FileExistsError):
         driver.Journal(path, {"job_id": "replacement"})
     assert json.loads(path.read_text())["job_id"] == "original"
+
+
+def reviewed_fixture():
+    return driver.onboarding_contract({
+        "given_name": "Fixture", "family_name": "Person", "department": "IT", "role": "Engineer",
+    }, "LAB")
+
+
+def test_reviewed_workflow_is_explicit_in_attempt_identity_before_effects(tmp_path, monkeypatch):
+    monkeypatch.setattr(driver, "lab_settings", lambda _: SimpleNamespace(mailbox_lab_domain="fixture.test"))
+    monkeypatch.setattr(driver, "source_identity", lambda: {"fixture": "source"})
+
+    def inspect_before_setup(*values):
+        journal = values[-1]
+        assert journal.data["reviewed_workflow"] is True
+        raise ValueError("Stop before fixture effects")
+
+    monkeypatch.setattr(driver, "create_lab_mailbox", inspect_before_setup)
+    assert driver.main([*args(tmp_path), "--reviewed-workflow"]) == 2
+    saved = json.loads((tmp_path / "report.json").read_text())
+    assert saved["reviewed_workflow"] is True
+    assert saved["result"] == "incomplete"
+
+
+@pytest.mark.parametrize("change", ["missing", "scope", "hash", "dependency", "malformed"])
+def test_reviewed_scope_must_match_observed_job_and_ack(change):
+    contract = reviewed_fixture()
+    record = {"workflow_contract": contract.model_dump(), "workflow_contract_hash": contract.content_hash()}
+    driver.assert_reviewed_binding(record, contract)
+    if change == "missing":
+        record.pop("workflow_contract")
+    elif change == "scope":
+        record["workflow_contract"]["steps"][1]["grounded_arguments"]["project_key"] = ["OTHER"]
+    elif change == "hash":
+        record["workflow_contract_hash"] = "f" * 64
+    elif change == "dependency":
+        record["workflow_contract"]["steps"][1]["after_success_of"] = None
+    else:
+        record = []
+    with pytest.raises(ValueError, match="reviewed request"):
+        driver.assert_reviewed_binding(record, contract)
+
+
+@pytest.mark.parametrize("change", ["missing", "duplicate", "changed_request", "changed_ack"])
+def test_reviewed_submission_requires_actual_single_request_and_matching_echo(change):
+    contract = reviewed_fixture()
+    observation = {"submitted": contract.model_dump(), "ack": {
+        "workflow_contract": contract.model_dump(), "workflow_contract_hash": contract.content_hash(),
+    }}
+    driver.assert_reviewed_submission([observation], contract)
+    records = [deepcopy(observation)]
+    if change == "missing":
+        records = []
+    elif change == "duplicate":
+        records.append(deepcopy(observation))
+    elif change == "changed_request":
+        records[0]["submitted"]["steps"].pop()
+    else:
+        records[0]["ack"]["workflow_contract_hash"] = "0" * 64
+    with pytest.raises(ValueError):
+        driver.assert_reviewed_submission(records, contract)
 
 
 @pytest.mark.parametrize("existing", [(True, False), (False, True), (True, True)])

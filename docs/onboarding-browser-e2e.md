@@ -53,9 +53,18 @@ python scripts/onboarding_browser_e2e.py \
 ```
 
 Optional arguments: `--frontend-url`, `--backend-url`, `--lab-env`, `--headed`,
-`--timeout` (default 300 seconds per workflow/mail phase). The timeout is a
+`--reviewed-workflow`, `--timeout` (default 300 seconds per workflow/mail phase). The timeout is a
 stated budget, not a retry-until-green setting. Measure local latency and record
 failure rather than repeatedly increasing it.
+
+Use `--reviewed-workflow` to cover the composer's **Required operations** path.
+The driver selects account creation and ticket creation through visible controls,
+fills the exact fixture targets and chooses the supported success dependency.
+It verifies the actual submitted contract, server acknowledgement/hash, durable
+job after reload, both approvals and the final history binding. A missing or
+changed binding stops before the next approval. Without this flag the original
+free-text path is checked; it does not establish reviewed-plan completeness.
+Neither mode inserts a missing model operation or bypasses any approval.
 
 For outbound scope the private connection file explicitly declares:
 

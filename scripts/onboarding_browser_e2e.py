@@ -31,6 +31,7 @@ from scripts.cross_repo_acceptance import _assert_history_roundtrip
 from scripts.tool_browser_e2e import BrowserTraffic, TERMINAL, approve, chat_history, send, socket_evidence
 from scripts.tool_matrix import source_identity
 from scripts.workflow_acceptance import account_proposal, completed_workflow, confirm_inbox_message, ticket_proposal
+from agent.requested_workflow import RequestedWorkflowContract
 
 
 def digest(value: str) -> str:
@@ -215,6 +216,55 @@ def fill_auth(page, label: str, value: str) -> None:
     field.press("Tab")
 
 
+def onboarding_contract(expected: dict[str, str], project: str) -> RequestedWorkflowContract:
+    """Declare the disposable workflow being tested, never an observed result."""
+    return RequestedWorkflowContract.model_validate({"version": 1, "steps": [
+        {"id": "step_1", "capability": "account_create", "grounded_arguments": {
+            key: [value] for key, value in expected.items()
+        }, "after_success_of": None},
+        {"id": "step_2", "capability": "ticket_create", "grounded_arguments": {
+            "project_key": [project],
+        }, "after_success_of": "step_1"},
+    ]})
+
+
+def select_reviewed_workflow(page, contract: RequestedWorkflowContract, timeout_ms: int) -> None:
+    """Use the visible composer controls; never inject application state."""
+    rows = page.locator(".required-operations-summary .required-operation")
+    if rows.count() != 0:
+        raise ValueError("A previous operation draft exists; do not replace it")
+    toggle = page.get_by_role("button", name="Required operations", exact=True)
+    if toggle.get_attribute("aria-expanded") != "true":
+        toggle.click()
+    for index, step in enumerate(contract.steps):
+        choice = page.get_by_role("combobox", name="Required operation", exact=True)
+        choice.locator(f'option[value="{step.capability}"]').wait_for(state="attached", timeout=timeout_ms)
+        choice.select_option(step.capability)
+        for key, values in step.grounded_arguments.items():
+            field = page.get_by_role("textbox", name="Exact " + key, exact=True)
+            field.fill("\n".join(values))
+            field.press("Tab")
+        if step.after_success_of is not None:
+            page.get_by_role("combobox", name="Success dependency", exact=True).select_option(step.after_success_of)
+        page.get_by_role("button", name="Add required operation", exact=True).click()
+        rows.nth(index).wait_for(state="visible", timeout=timeout_ms)
+    if rows.count() != len(contract.steps):
+        raise ValueError("The composer did not retain the reviewed operations")
+
+
+def assert_reviewed_binding(record: dict, contract: RequestedWorkflowContract) -> None:
+    if (not isinstance(record, dict) or record.get("workflow_contract") != contract.model_dump()
+            or record.get("workflow_contract_hash") != contract.content_hash()):
+        raise ValueError("Observed workflow scope differs from the exact reviewed request")
+
+
+def assert_reviewed_submission(observations: list[dict], contract: RequestedWorkflowContract) -> None:
+    if (len(observations) != 1 or not isinstance(observations[0], dict)
+            or observations[0].get("submitted") != contract.model_dump()):
+        raise ValueError("The browser did not submit exactly one reviewed workflow")
+    assert_reviewed_binding(observations[0].get("ack"), contract)
+
+
 def execute(args, journal, settings, private, connection):
     timeout_ms = int(args.timeout * 1000)
     expected = {"given_name": "Onboard", "family_name": "Run" + journal.data["run"],
@@ -225,6 +275,7 @@ def execute(args, journal, settings, private, connection):
         try:
             page = context.new_page()
             traffic = BrowserTraffic(page)
+            workflow_observations = []
             def observed_response(response):
                 if response.url != args.backend_url + "/api/v1/jobs" or response.request.method != "POST":
                     return
@@ -234,6 +285,15 @@ def execute(args, journal, settings, private, connection):
                     return
                 if isinstance(body, dict) and isinstance(body.get("job_id"), str):
                     journal.save("job_response_observed", job_id=body["job_id"])
+                    if args.reviewed_workflow:
+                        try:
+                            submitted = json.loads(response.request.post_data or "{}")
+                        except (TypeError, ValueError):
+                            submitted = {}
+                        workflow_observations.append({
+                            "submitted": submitted.get("workflow_contract") if isinstance(submitted, dict) else None,
+                            "ack": {key: body.get(key) for key in ("workflow_contract", "workflow_contract_hash")},
+                        })
             page.on("response", observed_response)
             page.goto(args.frontend_url, wait_until="domcontentloaded")
             page.get_by_role("button", name="Create account", exact=True).click()
@@ -281,15 +341,27 @@ def execute(args, journal, settings, private, connection):
                               "for that created account, then notify me by email.")
                     before = [entry["frames_in"] for entry in traffic.sockets]
                     scope.assert_unchanged()
+                    contract = onboarding_contract(expected, args.project) if args.reviewed_workflow else None
+                    if contract is not None:
+                        journal.save("workflow_review_intent", workflow_contract=contract.model_dump(),
+                                     workflow_contract_hash=contract.content_hash())
+                        select_reviewed_workflow(page, contract, timeout_ms)
+                        journal.save("workflow_reviewed")
                     journal.save("submission_intent")
                     job_id, chat_id = send(page, prompt, timeout_ms,
                         on_submission=lambda values: journal.save("submission_observed", **values))
                     journal.save("job_acknowledged", job_id=job_id, chat_id=chat_id)
+                    if contract is not None:
+                        assert_reviewed_submission(workflow_observations, contract)
                     initial = traffic.wait(page, args.backend_url, job_id, {"waiting_approval"} | TERMINAL, args.timeout)
+                    if contract is not None:
+                        assert_reviewed_binding(initial, contract)
                     first = exact_account_proposal(initial, expected)
                     page.reload(wait_until="domcontentloaded")
                     page.get_by_role("button", name="Approve action", exact=True).wait_for(timeout=timeout_ms)
                     traffic.refresh(page, args.backend_url, job_id)
+                    if contract is not None:
+                        assert_reviewed_binding(traffic.jobs[job_id], contract)
                     if exact_account_proposal(traffic.jobs[job_id], expected) != first:
                         raise ValueError("Reload changed the exact account proposal")
                     scope.assert_unchanged()
@@ -298,12 +370,16 @@ def execute(args, journal, settings, private, connection):
                     approve(page, timeout_ms)
                     waiting = traffic.wait(page, args.backend_url, job_id, {"waiting_approval"} | TERMINAL,
                                            args.timeout, approval_other_than=first["approval_id"])
+                    if contract is not None:
+                        assert_reviewed_binding(waiting, contract)
                     second = ticket_proposal(waiting, initial, args.project)
                     scope.assert_unchanged()
                     journal.save("ticket_approval_intent", ticket_approval_id=second["approval_id"],
                                  ticket_arguments_sha256=digest(json.dumps(second["arguments"], sort_keys=True)))
                     approve(page, timeout_ms)
                     final = traffic.wait(page, args.backend_url, job_id, TERMINAL, args.timeout)
+                    if contract is not None:
+                        assert_reviewed_binding(final, contract)
                     completed = completed_workflow(final, initial, waiting, args.project)
                     _assert_history_roundtrip(chat_history(page, args.backend_url, chat_id), final, chat_id=chat_id)
                     journal.save("workflow_verified", account_id=completed.account_id, ticket_key=completed.ticket_key)
@@ -345,6 +421,8 @@ def main(argv=None) -> int:
     parser.add_argument("--backend-url", default="http://127.0.0.1:4000")
     parser.add_argument("--timeout", type=float, default=300, help="Declared budget per workflow/mail phase; no automatic extension")
     parser.add_argument("--headed", action="store_true")
+    parser.add_argument("--reviewed-workflow", action="store_true",
+                        help="Select and verify the exact account/ticket operations through the composer UI")
     args = parser.parse_args(argv)
     try:
         if not math.isfinite(args.timeout) or args.timeout <= 0 or not re.fullmatch(r"[A-Z][A-Z0-9_]*", args.project):
@@ -363,6 +441,7 @@ def main(argv=None) -> int:
     journal = Journal(args.report, {"schema": "onboarding-browser-e2e.v2", "run": run,
         "project": args.project, "adapter": args.adapter, "source": identity,
         "timeout_seconds": args.timeout, "result": "incomplete", "stage": "intent_recorded",
+        "reviewed_workflow": args.reviewed_workflow,
         "recipient_sha256": digest(private["email"]), "reconciliation_required": False})
     try:
         write_exclusive(args.private_env, "\n".join(f"{key}={value}" for key, value in {

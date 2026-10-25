@@ -513,6 +513,33 @@ def test_history_preserves_visible_outcomes_and_proposal(status):
     acceptance._assert_history_roundtrip(history_for(job), job, chat_id="chat-test")
 
 
+@pytest.mark.parametrize("change", [None, "missing_scope", "changed_scope", "changed_hash", "invalid_job_hash"])
+def test_history_preserves_reviewed_workflow_binding(change):
+    from agent.requested_workflow import RequestedWorkflowContract
+    contract = RequestedWorkflowContract.model_validate({"version": 1, "steps": [{
+        "id": "fixture", "capability": "workspace_mkdir", "grounded_arguments": {},
+        "after_success_of": None,
+    }]})
+    job = completed_approval()
+    job.update(workflow_contract=contract.model_dump(), workflow_contract_hash=contract.content_hash())
+    history = history_for(job)
+    history["messages"][0].update(workflow_contract=deepcopy(job["workflow_contract"]),
+                                  workflow_contract_hash=job["workflow_contract_hash"])
+    if change is None:
+        acceptance._assert_history_roundtrip(history, job, chat_id="chat-test")
+        return
+    if change == "missing_scope":
+        history["messages"][0].pop("workflow_contract")
+    elif change == "changed_scope":
+        history["messages"][0]["workflow_contract"]["steps"][0]["capability"] = "workspace_read_text"
+    elif change == "changed_hash":
+        history["messages"][0]["workflow_contract_hash"] = "f" * 64
+    else:
+        job["workflow_contract_hash"] = "0" * 64
+    with pytest.raises(acceptance.AcceptanceFailure, match="workflow binding"):
+        acceptance._assert_history_roundtrip(history, job, chat_id="chat-test")
+
+
 @pytest.mark.parametrize("change", ["approval-id", "proposal", "attempt", "protocol", "authority",
                                     "outcome", "replayed", "missing-result", "failed-tool", "answer"])
 def test_completed_approval_requires_bound_authoritative_successful_execution(change):

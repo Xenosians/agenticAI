@@ -904,6 +904,16 @@ def _assert_history_roundtrip(
         raise AcceptanceFailure("Canonical chat history projects a different job state.")
     if assistants[0].get("proposed_tool") != job.get("proposed_tool"):
         raise AcceptanceFailure("Canonical chat history changed the persisted tool proposal.")
+    if job.get("workflow_contract") is not None or job.get("workflow_contract_hash") is not None:
+        from agent.requested_workflow import RequestedWorkflowContract, verify_workflow_binding
+        try:
+            contract = RequestedWorkflowContract.model_validate(job.get("workflow_contract"))
+            verify_workflow_binding(contract, job.get("workflow_contract_hash"))
+        except ValueError as exc:
+            raise AcceptanceFailure("Durable job has an invalid reviewed workflow binding.") from exc
+        if (users[0].get("workflow_contract") != job["workflow_contract"]
+                or users[0].get("workflow_contract_hash") != job["workflow_contract_hash"]):
+            raise AcceptanceFailure("Canonical chat history changed the reviewed workflow binding.")
 
 
 def _assert_proposal_binding(original: dict[str, Any], resolved: dict[str, Any]) -> None:
