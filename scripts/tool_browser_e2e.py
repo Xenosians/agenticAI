@@ -169,7 +169,10 @@ class BrowserTraffic:
             job = self.jobs.get(job_id) or {}
             proposal = job.get("proposed_tool") if isinstance(job.get("proposed_tool"), dict) else {}
             if job.get("status") in statuses and (
-                    approval_other_than is None or proposal.get("approval_id") != approval_other_than):
+                    job.get("status") in TERMINAL or approval_other_than is None
+                    or proposal.get("approval_id") != approval_other_than):
+                # A terminal outcome belongs to the whole job even when it
+                # retains the previous approval proposal for audit/history.
                 return job
             page.wait_for_timeout(500)
         raise TimeoutError(f"job did not reach {sorted(statuses)}; last={self.jobs.get(job_id, {}).get('status')}")
