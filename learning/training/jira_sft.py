@@ -1618,28 +1618,72 @@ CONTINUATION_REQUEST_TEMPLATES = (
 
 # (given, family, department, role, project, verified user_id, verified email,
 #  purpose or None, summary). The verified identity is copied exactly from the
-# provider read-back, including a numeric suffix; the summary always names it.
+# provider read-back. Ids take every shape account creation produces: derived
+# from the names, with a numeric suffix when the base id is taken, and
+# generated, digit-heavy family names for service and lab accounts. Plain
+# examples rotate over the request templates in order, so each template sees
+# every shape; the summary always names the account.
 _CONTINUATION_EXAMPLES = (
     ("Maria", "Santos", "Finance", "Analyst", "KAN", "msantos", "msantos@example.com", None,
      "Onboarding follow-up for msantos (msantos@example.com)"),
     ("Kenji", "Tanaka", "Engineering", "Developer", "OPS", "ktanaka", "ktanaka@corp.example", None,
      "Onboarding follow-up for ktanaka (ktanaka@corp.example)"),
+    ("Build", "Agent4471", "Platform", "Service Account", "APP", "bagent4471", "bagent4471@example.org", None,
+     "Onboarding follow-up for bagent4471 (bagent4471@example.org)"),
     ("Aisha", "Bello", "HR", "Recruiter", "HELP", "abello2", "abello2@example.org", None,
      "Onboarding follow-up for abello2 (abello2@example.org)"),
     ("Lucas", "Moreau", "Sales", "Account Manager", "ENG", "lmoreau", "lmoreau@example.com", None,
      "Onboarding follow-up for lmoreau (lmoreau@example.com)"),
+    ("Deploy", "Bot7c3e91", "IT", "Automation", "DEV", "dbot7c3e91", "dbot7c3e91@corp.example", None,
+     "Onboarding follow-up for dbot7c3e91 (dbot7c3e91@corp.example)"),
+    ("Scan", "Host0a8812", "Security", "Scanner", "SEC", "shost0a8812", "shost0a8812@example.com", None,
+     "Onboarding follow-up for shost0a8812 (shost0a8812@example.com)"),
+    ("Nina", "Kowalski", "Finance", "Accountant", "PAY", "nkowalski2", "nkowalski2@example.org", None,
+     "Onboarding follow-up for nkowalski2 (nkowalski2@example.org)"),
     ("Priya", "Nair", "Security", "Engineer", "SEC", "pnair", "pnair@corp.example", None,
      "Onboarding follow-up for pnair (pnair@corp.example)"),
     ("Tomas", "Novak", "Operations", "Technician", "APP", "tnovak", "tnovak@example.org", None,
      "Onboarding follow-up for tnovak (tnovak@example.org)"),
-    ("Grace", "Okafor", "Legal", "Counsel", "INFRA", "gokafor", "gokafor@example.com", None,
-     "Onboarding follow-up for gokafor (gokafor@example.com)"),
+    ("Sensor", "Edge9f41b07", "Facilities", "Monitor", "INFRA", "sedge9f41b07", "sedge9f41b07@corp.example",
+     None, "Onboarding follow-up for sedge9f41b07 (sedge9f41b07@corp.example)"),
     ("Daniel", "Weber", "IT", "Support Specialist", "QA", "dweber3", "dweber3@corp.example", None,
      "Onboarding follow-up for dweber3 (dweber3@corp.example)"),
+    ("Mail", "Proc5521", "IT", "Service Account", "OPS", "mproc5521", "mproc5521@example.com", None,
+     "Onboarding follow-up for mproc5521 (mproc5521@example.com)"),
+    ("Grace", "Okafor", "Legal", "Counsel", "INFRA", "gokafor", "gokafor@example.com", None,
+     "Onboarding follow-up for gokafor (gokafor@example.com)"),
+    ("Report", "Cron8e0d4a6", "Analytics", "Scheduler", "KAN", "rcron8e0d4a6", "rcron8e0d4a6@example.org", None,
+     "Onboarding follow-up for rcron8e0d4a6 (rcron8e0d4a6@example.org)"),
+    ("Badge", "Lab2b90c3", "Facilities", "Reader", "CS", "blab2b90c3", "blab2b90c3@example.com", None,
+     "Onboarding follow-up for blab2b90c3 (blab2b90c3@example.com)"),
+    ("Elif", "Sahin", "Marketing", "Writer", "HELP", "esahin3", "esahin3@corp.example", None,
+     "Onboarding follow-up for esahin3 (esahin3@corp.example)"),
     ("Sofia", "Rossi", "Marketing", "Designer", "PAY", "srossi", "srossi@example.org", None,
      "Onboarding follow-up for srossi (srossi@example.org)"),
+    ("Pedro", "Lima", "Sales", "Representative", "ENG", "plima4", "plima4@example.com", None,
+     "Onboarding follow-up for plima4 (plima4@example.com)"),
+    ("Audit", "Daemon4e17f82", "Compliance", "Collector", "QA", "adaemon4e17f82", "adaemon4e17f82@corp.example",
+     None, "Onboarding follow-up for adaemon4e17f82 (adaemon4e17f82@corp.example)"),
     ("Omar", "Haddad", "Finance", "Controller", "DEV", "ohaddad", "ohaddad@example.com", None,
      "Onboarding follow-up for ohaddad (ohaddad@example.com)"),
+    ("Chloe", "Martin", "HR", "Coordinator", "ENG", "cmartin", "cmartin@example.org", None,
+     "Onboarding follow-up for cmartin (cmartin@example.org)"),
+    ("Gateway", "Link90455", "Networking", "Proxy", "INFRA", "glink90455", "glink90455@example.org", None,
+     "Onboarding follow-up for glink90455 (glink90455@example.org)"),
+    ("Archive", "Store77012", "Records", "Service Account", "APP", "astore77012", "astore77012@example.com", None,
+     "Onboarding follow-up for astore77012 (astore77012@example.com)"),
+    ("Ingest", "Pipe3a5b821", "Data", "Loader", "OPS", "ipipe3a5b821", "ipipe3a5b821@corp.example", None,
+     "Onboarding follow-up for ipipe3a5b821 (ipipe3a5b821@corp.example)"),
+    ("Hugo", "Lindqvist", "Support", "Agent", "CS", "hlindqvist", "hlindqvist@example.org", None,
+     "Onboarding follow-up for hlindqvist (hlindqvist@example.org)"),
+    ("Victor", "Dubois", "Legal", "Paralegal", "SEC", "vdubois2", "vdubois2@example.com", None,
+     "Onboarding follow-up for vdubois2 (vdubois2@example.com)"),
+    ("Render", "Farm2048", "Design", "Batch Worker", "DEV", "rfarm2048", "rfarm2048@example.org", None,
+     "Onboarding follow-up for rfarm2048 (rfarm2048@example.org)"),
+    ("Amara", "Eze", "Operations", "Planner", "KAN", "aeze5", "aeze5@corp.example", None,
+     "Onboarding follow-up for aeze5 (aeze5@corp.example)"),
+    ("Ledger", "Queue6d93e20", "Finance", "Integration", "PAY", "lqueue6d93e20", "lqueue6d93e20@example.com", None,
+     "Onboarding follow-up for lqueue6d93e20 (lqueue6d93e20@example.com)"),
     ("Hana", "Kim", "Engineering", "Tester", "CS", "hkim", "hkim@corp.example",
      "set up their laptop", "Set up laptop for hkim (hkim@corp.example)"),
     ("Ivan", "Petrov", "Operations", "Planner", "KAN", "ipetrov", "ipetrov@example.org",
@@ -1648,26 +1692,49 @@ _CONTINUATION_EXAMPLES = (
      "order a headset", "Order a headset for lfischer (lfischer@example.com)"),
     ("Mateo", "Garcia", "Security", "Analyst", "HELP", "mgarcia4", "mgarcia4@corp.example",
      "enrol them in security training", "Security training enrolment for mgarcia4 (mgarcia4@corp.example)"),
-    ("Chloe", "Martin", "HR", "Coordinator", "ENG", "cmartin", "cmartin@example.org", None,
-     "Onboarding follow-up for cmartin (cmartin@example.org)"),
+    ("Kiosk", "Vm61207", "Facilities", "Kiosk", "APP", "kvm61207", "kvm61207@example.com",
+     "register the kiosk device", "Register kiosk device for kvm61207 (kvm61207@example.com)"),
+    ("Backup", "Task20931", "IT", "Service Account", "INFRA", "btask20931", "btask20931@corp.example",
+     "grant backup storage access", "Grant backup storage access for btask20931 (btask20931@corp.example)"),
+    ("Print", "Relay3306", "Facilities", "Service Account", "QA", "prelay3306", "prelay3306@example.org",
+     "connect it to the print server", "Print server connection for prelay3306 (prelay3306@example.org)"),
+    ("Lucia", "Ferrari", "Sales", "Manager", "ENG", "lferrari2", "lferrari2@example.com",
+     "set up their phone", "Set up phone for lferrari2 (lferrari2@example.com)"),
+    ("Metrics", "Pod1c6d39", "Platform", "Exporter", "SEC", "mpod1c6d39", "mpod1c6d39@corp.example",
+     "allow read access to the metrics database",
+     "Metrics database read access for mpod1c6d39 (mpod1c6d39@corp.example)"),
+    ("Rosa", "Medina", "HR", "Advisor", "DEV", "rmedina", "rmedina@example.org",
+     "replace their badge", "Replace badge for rmedina (rmedina@example.org)"),
 )
 
 
 def _continuation_records() -> list[JiraSftRecord]:
-    """Ticket continuations after a verified account, rendered as production sends them."""
+    """Ticket continuations after a verified account, rendered as production sends them.
+
+    Within each request template every fifth record is held for validation, so
+    validation covers every wording and id shape too.
+    """
     records = []
     plain = [template for template in CONTINUATION_REQUEST_TEMPLATES if "{purpose}" not in template]
+    plain_index = 0
+    per_template: dict[str, int] = {}
     for index, (given, family, department, role, project, user_id, email, purpose, summary) in enumerate(
         _CONTINUATION_EXAMPLES
     ):
-        template = CONTINUATION_REQUEST_TEMPLATES[-1] if purpose else plain[index % len(plain)]
+        if purpose:
+            template = CONTINUATION_REQUEST_TEMPLATES[-1]
+        else:
+            template = plain[plain_index % len(plain)]
+            plain_index += 1
+        position = per_template.get(template, 0)
+        per_template[template] = position + 1
         request = template.format(
             given=given, family=family, department=department, role=role, project=project, purpose=purpose,
         )
         arguments = {"project_key": project, "summary": summary}
         records.append(JiraSftRecord(
             record_id=f"jira-sft-continuation-{index:04d}-{_sha256_text(request)[:12]}",
-            split="validation" if index % 5 == 0 else "train",
+            split="validation" if position % 5 == 0 else "train",
             tool_name="ticket_create",
             user_request=request,
             semantic_context=semantic_context_for("ticket_create", arguments),

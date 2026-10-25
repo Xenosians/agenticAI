@@ -177,8 +177,18 @@ account. The legacy layout cannot carry this message and omits them.
 step. A proposal passes only with the bound project copied exactly, a
 non-empty summary naming the verified `user_id` or email, and no other
 argument. A unit test rejects any of these cases whose request, account or
-project appears in training. Continuation prompts reach 1,432 tokens, so train
+project appears in training. Continuation prompts reach 1,445 tokens, so train
 with `--max-length 1536`; serving does not truncate the prompt.
+
+Account ids take three shapes: derived from the names (`fqureshi`), with a
+numeric suffix when that id is taken (`wzhao5`), and generated, digit-heavy
+family names for service and lab accounts (`pkx41d0e7`). A model taught only
+plain names copied the request into the summary for unseen plain names and
+repeated one phrase until its token limit on a generated id, so the corpus
+pairs every request wording with every id shape (40 records; within each
+wording every fifth is held for validation). The separate held-out set
+`jira-continuation-ids-holdout.json` covers each shape with names, ids,
+projects and requests that are absent from training (unit-enforced).
 
 ## Public retrieval snapshot
 

@@ -54,6 +54,8 @@ def workflow_capabilities(settings) -> list[dict]:
         result.append({
             "id": name, "description": tool.get("description", ""),
             "effect": metadata.effect, "permission": metadata.permission,
+            "risk": metadata.risk, "requires_approval": metadata.requires_approval,
+            "resource_type": metadata.resource_type,
             "agent_names": owners,
             "grounded_arguments": list(metadata.grounded_arguments),
             "required_arguments": list(metadata.required_arguments),

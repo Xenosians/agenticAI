@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,8 @@ from subagents.core.tooling.parser import parse_tool_calls
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 CONTINUATION_CASES = PROJECT_ROOT / "learning/evaluation/evals/jira-continuation-holdout.json"
+ACCOUNT_ID_CASES = PROJECT_ROOT / "learning/evaluation/evals/jira-continuation-ids-holdout.json"
+HELD_OUT_CASE_FILES = (CONTINUATION_CASES, ACCOUNT_ID_CASES)
 EVIDENCE_PREFIX = "VERIFIED WORKFLOW CONTENT:\n"
 
 
@@ -71,6 +74,20 @@ def test_corpus_teaches_the_continuation_in_both_splits():
     assert {record.split for record in records} == {"train", "validation"}
     assert sum(record.split == "train" for record in records) >= 8
     assert all(record.tool_name == "ticket_create" for record in records)
+
+
+def test_corpus_teaches_every_account_id_shape_for_every_request_wording():
+    # A model taught on a dozen plain names copied the request into the summary
+    # for other plain names, and looped on a generated, digit-heavy id in a live
+    # run. Account creation derives ids from the names, adds a numeric suffix when
+    # one is taken, and service or lab accounts carry generated family names.
+    train = [record for record in _continuation_records() if record.split == "train"]
+    ids = [record.verified_account["user_id"] for record in train if record.verified_account]
+    assert sum(re.fullmatch(r"[a-z]+[2-9]", user_id) is not None for user_id in ids) >= 6
+    assert sum(sum(char.isdigit() for char in user_id) >= 4 for user_id in ids) >= 12
+    for template in jira_sft.CONTINUATION_REQUEST_TEMPLATES:
+        opening = template.split("{", 1)[0]
+        assert sum(record.user_request.startswith(opening) for record in train) >= 8, opening
 
 
 def test_continuation_targets_carry_the_bound_project_and_name_the_verified_account():
@@ -139,11 +156,11 @@ def test_runtime_corpus_rejects_a_tampered_verified_account(tmp_path, monkeypatc
         )
 
 
-def test_evaluation_renders_the_live_continuation_messages():
+@pytest.mark.parametrize("case_file", HELD_OUT_CASE_FILES, ids=lambda path: path.stem)
+def test_evaluation_renders_the_live_continuation_messages(case_file):
     from scripts.jira_specialist_model_eval import build_messages, case_prompt, load_cases
 
-    case_set, _, cases = load_cases(CONTINUATION_CASES)
-    assert case_set == "continuation-holdout"
+    _, _, cases = load_cases(case_file)
     agent = _jira_agent()
     for case in cases:
         assert case["expected_tool"] == "ticket_create"
@@ -155,10 +172,11 @@ def test_evaluation_renders_the_live_continuation_messages():
         assert messages == live, case["name"]
 
 
-def test_continuation_cases_are_held_out_from_training():
+@pytest.mark.parametrize("case_file", HELD_OUT_CASE_FILES, ids=lambda path: path.stem)
+def test_continuation_cases_are_held_out_from_training(case_file):
     from scripts.jira_specialist_model_eval import load_cases
 
-    _, _, cases = load_cases(CONTINUATION_CASES)
+    _, _, cases = load_cases(case_file)
     training = jira_sft._build_records()
     requests = {record.user_request for record in training}
     accounts = {

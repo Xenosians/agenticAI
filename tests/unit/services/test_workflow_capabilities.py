@@ -25,6 +25,23 @@ def test_catalog_discloses_registered_owners_and_only_grounded_field_descriptors
         assert not {"api_key", "password", "policy_resolver", "function", "credentials"} & set(row)
 
 
+def test_catalog_discloses_each_capability_effect_risk_and_approval_from_its_contract():
+    # The workspace's capability page groups and labels operations from these
+    # fields, so they must come from the trusted contract, never a UI guess.
+    from tools.capability_contract import build_capability_contract
+    from tools.registry import TOOLS
+
+    settings = SimpleNamespace(agents_dir=Path(__file__).resolve().parents[3] / "subagents/agents")
+    rows = {row["id"]: row for row in workflow_capabilities(settings)}
+    assert rows.keys() == TOOLS.keys()
+    for name, row in rows.items():
+        contract = build_capability_contract(name, TOOLS[name])
+        assert (row["effect"], row["risk"], row["requires_approval"], row["resource_type"]) == (
+            contract.effect, contract.risk, contract.requires_approval, contract.resource_type), name
+    assert rows["account_create"]["requires_approval"] is True
+    assert rows["ticket_get"]["requires_approval"] is False
+
+
 def test_capabilities_without_loaded_owners_are_not_workflow_choices():
     rows = workflow_capabilities(SimpleNamespace())
     assert rows

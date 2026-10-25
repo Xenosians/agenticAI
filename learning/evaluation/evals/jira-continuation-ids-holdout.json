@@ -1,0 +1,79 @@
+{
+  "schema": "jira-evaluation-cases.v1",
+  "case_set": "continuation-ids-holdout",
+  "description": "Held-out ticket continuations whose verified account ids take each shape account creation produces: plain name-derived ids, a numeric suffix for a taken id, and generated digit-heavy ids for service or lab accounts. Each case renders the verified-account message the live worker sends; a proposal passes only with the bound project and a summary naming the verified user_id or email. Names, ids, projects and request texts are absent from training (enforced by a unit test).",
+  "cases": [
+    {
+      "name": "ids plain name live wording",
+      "user": "Create a corporate account for given name Farah, family name Qureshi, department Treasury and role Auditor. After the account is successfully created, create a Jira ticket in project HRD for that created account, then notify me by email.",
+      "verified_account": {"user_id": "fqureshi", "email": "fqureshi@example.net"},
+      "allowed_tools": ["ticket_create"],
+      "allowed_arguments": {"project_key": ["HRD"]},
+      "expected_tool": "ticket_create",
+      "expected_arguments": {"project_key": "HRD", "summary": "Onboarding follow-up for fqureshi (fqureshi@example.net)"}
+    },
+    {
+      "name": "ids plain name onboard wording",
+      "user": "Onboard Bruno Alves as Courier in Logistics: create their directory account first, then raise a Jira issue in FAC about it.",
+      "verified_account": {"user_id": "balves", "email": "balves@example.net"},
+      "allowed_tools": ["ticket_create"],
+      "allowed_arguments": {"project_key": ["FAC"]},
+      "expected_tool": "ticket_create",
+      "expected_arguments": {"project_key": "FAC", "summary": "Onboarding follow-up for balves (balves@example.net)"}
+    },
+    {
+      "name": "ids suffix live wording",
+      "user": "Create a corporate account for given name Wen, family name Zhao, department Research and role Chemist. After the account is successfully created, create a Jira ticket in project LABX for that created account, then notify me by email.",
+      "verified_account": {"user_id": "wzhao5", "email": "wzhao5@example.net"},
+      "allowed_tools": ["ticket_create"],
+      "allowed_arguments": {"project_key": ["LABX"]},
+      "expected_tool": "ticket_create",
+      "expected_arguments": {"project_key": "LABX", "summary": "Onboarding follow-up for wzhao5 (wzhao5@example.net)"}
+    },
+    {
+      "name": "ids suffix request wording",
+      "user": "Please create an account for Ingrid Holm (Pilot, Aviation) and, once it exists, open a Jira ticket in FLT for the new account.",
+      "verified_account": {"user_id": "iholm3", "email": "iholm3@example.net"},
+      "allowed_tools": ["ticket_create"],
+      "allowed_arguments": {"project_key": ["FLT"]},
+      "expected_tool": "ticket_create",
+      "expected_arguments": {"project_key": "FLT", "summary": "Onboarding follow-up for iholm3 (iholm3@example.net)"}
+    },
+    {
+      "name": "ids generated live wording",
+      "user": "Create a corporate account for given name Probe, family name Kx41d0e7, department QA and role Tester. After the account is successfully created, create a Jira ticket in project TST for that created account, then notify me by email.",
+      "verified_account": {"user_id": "pkx41d0e7", "email": "pkx41d0e7@example.net"},
+      "allowed_tools": ["ticket_create"],
+      "allowed_arguments": {"project_key": ["TST"]},
+      "expected_tool": "ticket_create",
+      "expected_arguments": {"project_key": "TST", "summary": "Onboarding follow-up for pkx41d0e7 (pkx41d0e7@example.net)"}
+    },
+    {
+      "name": "ids generated onboard wording",
+      "user": "Onboard Batch Unit90311 as Operator in Platform: create their directory account first, then raise a Jira issue in PLT about it.",
+      "verified_account": {"user_id": "bunit90311", "email": "bunit90311@example.net"},
+      "allowed_tools": ["ticket_create"],
+      "allowed_arguments": {"project_key": ["PLT"]},
+      "expected_tool": "ticket_create",
+      "expected_arguments": {"project_key": "PLT", "summary": "Onboarding follow-up for bunit90311 (bunit90311@example.net)"}
+    },
+    {
+      "name": "ids generated with purpose",
+      "user": "Set up a new account for Canary Node5e2a9c, department Monitoring, role Agent. When that succeeds, file a ticket in Jira project MON to register the monitoring host.",
+      "verified_account": {"user_id": "cnode5e2a9c", "email": "cnode5e2a9c@example.net"},
+      "allowed_tools": ["ticket_create"],
+      "allowed_arguments": {"project_key": ["MON"]},
+      "expected_tool": "ticket_create",
+      "expected_arguments": {"project_key": "MON", "summary": "Register the monitoring host for cnode5e2a9c (cnode5e2a9c@example.net)"}
+    },
+    {
+      "name": "ids generated request wording",
+      "user": "Please create an account for Sync Job7b19 (Integrator, Data) and, once it exists, open a Jira ticket in DAT for the new account.",
+      "verified_account": {"user_id": "sjob7b19", "email": "sjob7b19@example.net"},
+      "allowed_tools": ["ticket_create"],
+      "allowed_arguments": {"project_key": ["DAT"]},
+      "expected_tool": "ticket_create",
+      "expected_arguments": {"project_key": "DAT", "summary": "Onboarding follow-up for sjob7b19 (sjob7b19@example.net)"}
+    }
+  ]
+}
