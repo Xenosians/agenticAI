@@ -1,11 +1,13 @@
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
 
 from config import Settings
 from scripts.jira_specialist_model_eval import (
-    CASES, build_messages, case_prompt, evaluation_options, evaluation_settings, main, semantic_context,
+    CASES, build_messages, case_prompt, evaluation_options, evaluation_settings, load_cases, main,
+    semantic_context,
 )
 from subagents.core.definitions.loader import load_agent_definition
 
@@ -31,6 +33,61 @@ def test_cli_accepts_explicit_experiment_and_report_path():
     assert args.model_key == "candidate"
     assert args.prompt_profile == "compact_grounded"
     assert args.report == Path("comparison.json")
+    assert args.cases is None
+    assert evaluation_options(["--cases", "holdout.json"]).cases == Path("holdout.json")
+
+
+def write_case_file(tmp_path, case_list, **fields):
+    path = tmp_path / "cases.json"
+    payload = {"schema": "jira-evaluation-cases.v1", "case_set": "holdout", "cases": case_list}
+    path.write_text(json.dumps({**payload, **fields}), encoding="utf-8")
+    return path
+
+
+def test_built_in_and_file_case_sets_carry_their_identity(tmp_path):
+    built_in, built_in_digest, built_in_cases = load_cases(None)
+    assert (built_in, built_in_cases) == ("development", CASES)
+    case_set, digest, cases = load_cases(write_case_file(tmp_path, CASES[:2]))
+    assert (case_set, cases) == ("holdout", CASES[:2])
+    assert len(digest) == len(built_in_digest) == 64 and digest != built_in_digest
+
+
+def renamed(case, name):
+    return {**case, "name": name}
+
+
+@pytest.mark.parametrize("fields", [
+    {"schema": "evaluation-case.v1"},
+    {"case_set": ""},
+    {"cases": []},
+    {"cases": [CASES[0], CASES[0]]},
+    {"cases": [CASES[0], renamed(CASES[0], "same request")]},
+    {"cases": [{key: value for key, value in CASES[0].items() if key != "expected_tool"}]},
+    {"cases": [{**CASES[0], "allowed_tools": []}]},
+    {"cases": [{**CASES[3], "expected_tool": "ticket_history"}]},
+    {"cases": [{**CASES[3], "expected_arguments": "KAN-3"}]},
+])
+def test_malformed_case_files_are_rejected(tmp_path, fields):
+    with pytest.raises(ValueError):
+        load_cases(write_case_file(tmp_path, CASES[:1], **fields))
+
+
+@pytest.mark.parametrize("payload", ["[]", "\"cases\"", "{not json"])
+def test_case_file_must_be_a_json_object(tmp_path, payload):
+    path = tmp_path / "cases.json"
+    path.write_text(payload, encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_cases(path)
+
+
+def test_malformed_case_file_stops_before_settings_or_report(tmp_path, monkeypatch):
+    report = tmp_path / "report.json"
+    def unexpected_settings():
+        raise AssertionError("No settings/model access for a malformed case file")
+    monkeypatch.setattr("scripts.jira_specialist_model_eval.Settings", unexpected_settings)
+    cases = write_case_file(tmp_path, [])
+    assert asyncio.run(main(["--cases", str(cases), "--report", str(report)])) == 2
+    assert not report.exists()
 
 
 def test_existing_report_is_preserved_before_settings_or_inference(tmp_path, monkeypatch):
@@ -68,7 +125,8 @@ def test_evaluation_binds_only_grounded_targets_like_the_router():
     register_capability_signatures()
     root = Path(__file__).resolve().parents[3]
     agent = load_agent_definition(root / "subagents/agents/jira-specialist.md")
-    for case in CASES:
+    _, _, holdout = load_cases(root / "learning/evaluation/evals/jira-specialist-holdout.json")
+    for case in [*CASES, *holdout]:
         catalog, prompt = case_prompt(agent, case, "compact_grounded")
         context = semantic_context(case, catalog)
         tool = case["allowed_tools"][0]

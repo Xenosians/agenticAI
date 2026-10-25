@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -97,7 +98,10 @@ REPORT_PATH = Path(
     )
 )
 
+CASE_FILE_SCHEMA = "jira-evaluation-cases.v1"
 
+# Built-in development cases: they also select candidates during training work,
+# so a pass here is development evidence. Held-out scoring uses --cases.
 CASES = [
     {
         "name": "unfiltered project collection",
@@ -635,7 +639,46 @@ def evaluation_options(argv=None):
                         help="Explicit prompt experiment on an in-memory profile; never changes serving settings.")
     parser.add_argument("--report", type=Path, default=REPORT_PATH,
                         help="Fresh output path; existing evaluation evidence is never overwritten.")
+    parser.add_argument("--cases", type=Path, default=None,
+                        help=f"{CASE_FILE_SCHEMA} file to score instead of the built-in development cases.")
     return parser.parse_args(argv)
+
+
+def case_set_digest(cases: list[dict]) -> str:
+    return hashlib.sha256(
+        json.dumps(cases, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _validated_case(case) -> dict:
+    if not isinstance(case, dict) or not {"name", "user", "allowed_tools", "expected_tool"} <= set(case):
+        raise ValueError("Each case needs name, user, allowed_tools and expected_tool.")
+    if not all(isinstance(case[key], str) and case[key].strip() for key in ("name", "user", "expected_tool")):
+        raise ValueError(f"Case {case.get('name')!r} has an empty name, request or tool.")
+    if case["allowed_tools"] != [case["expected_tool"]]:
+        raise ValueError(f"Case {case['name']!r} must allow exactly its expected tool.")
+    if not isinstance(case.get("allowed_arguments", {}), dict) or not isinstance(case.get("expected_arguments"), dict):
+        raise ValueError(f"Case {case['name']!r} needs allowed_arguments and expected_arguments objects.")
+    return case
+
+
+def load_cases(path: Path | None) -> tuple[str, str, list[dict]]:
+    """Return (case set, digest, cases): the built-in development cases or one case file."""
+    if path is None:
+        return "development", case_set_digest(CASES), CASES
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Case file must be a JSON object.")
+    case_set = payload.get("case_set")
+    if payload.get("schema") != CASE_FILE_SCHEMA or not isinstance(case_set, str) or not case_set.strip():
+        raise ValueError(f"Case file must declare schema {CASE_FILE_SCHEMA} and a case_set name.")
+    cases = [_validated_case(case) for case in payload.get("cases") or []]
+    if not cases:
+        raise ValueError("Case file declares no cases.")
+    for field in ("name", "user"):
+        if len({case[field] for case in cases}) != len(cases):
+            raise ValueError(f"Case file repeats a case {field}.")
+    return case_set, case_set_digest(cases), cases
 
 
 def evaluation_settings(settings, *, model_key, prompt_profile=None):
@@ -663,9 +706,14 @@ async def main(argv=None) -> int:
     args = evaluation_options(argv)
     model_key = args.model_key.strip()
     report_path = args.report.expanduser().resolve()
-    if not model_key or MAX_NEW_TOKENS < 1 or not CASES:
+    try:
+        case_set, case_set_sha256, cases = load_cases(args.cases)
+    except (OSError, ValueError) as exc:
+        print("Evaluation case file is unusable:", exc)
+        return 2
+    if not model_key or MAX_NEW_TOKENS < 1:
         print(
-            "Evaluation requires a model, positive output budget and nonempty case scope."
+            "Evaluation requires a model and a positive output budget."
         )
         return 2
 
@@ -694,7 +742,8 @@ async def main(argv=None) -> int:
         with report_path.open("x", encoding="utf-8") as stream:
             json.dump({"schema": "jira-evaluation-intent.v1", "state": "incomplete",
                        "model_key": model_key, "worker_prompt_profile": profile.worker_prompt_profile,
-                       "declared_cases": [case["name"] for case in CASES],
+                       "case_set": case_set, "case_set_sha256": case_set_sha256,
+                       "declared_cases": [case["name"] for case in cases],
                        "tools_executed": False, "production_activation": False}, stream, indent=2)
     except FileExistsError:
         print("Evaluation output was claimed concurrently; no inference started.")
@@ -797,7 +846,8 @@ async def main(argv=None) -> int:
     )
     print(
         "cases:",
-        len(CASES),
+        len(cases),
+        f"({case_set}, sha256 {case_set_sha256})",
     )
     print()
 
@@ -815,7 +865,7 @@ async def main(argv=None) -> int:
         )
 
         for index, case in enumerate(
-            CASES,
+            cases,
             start=1,
         ):
             print(
@@ -986,6 +1036,8 @@ async def main(argv=None) -> int:
         compute_dtype=profile.compute_dtype,
         device_map=profile.device_map,
         cases=case_results,
+        case_set=case_set,
+        case_set_sha256=case_set_sha256,
     )
 
     written = write_specialist_model_report(

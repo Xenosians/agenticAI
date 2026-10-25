@@ -1,0 +1,379 @@
+{
+  "schema": "jira-evaluation-cases.v1",
+  "case_set": "holdout",
+  "description": "Jira specialist held-out cases. Request shapes and free-text values are absent from training (enforced by a unit test); the coverage plan was fixed before any candidate was scored on it.",
+  "cases": [
+    {
+      "name": "unfiltered projects question",
+      "exact_arguments": true,
+      "user": "What projects exist in our Jira site?",
+      "allowed_tools": ["jira_project_list"],
+      "allowed_arguments": {},
+      "expected_tool": "jira_project_list",
+      "expected_arguments": {}
+    },
+    {
+      "name": "unfiltered projects polite request",
+      "exact_arguments": true,
+      "user": "Can you list the projects we track in Jira?",
+      "allowed_tools": ["jira_project_list"],
+      "allowed_arguments": {},
+      "expected_tool": "jira_project_list",
+      "expected_arguments": {}
+    },
+    {
+      "name": "project name search",
+      "user": "Look for Jira projects whose name contains Observability",
+      "allowed_tools": ["jira_project_list"],
+      "allowed_arguments": {"query": ["Observability"]},
+      "expected_tool": "jira_project_list",
+      "expected_arguments": {"query": "Observability"}
+    },
+    {
+      "name": "project details",
+      "user": "Pull up the details of the MKT project in Jira",
+      "allowed_tools": ["jira_project_get"],
+      "allowed_arguments": {"project_id_or_key": ["MKT"]},
+      "expected_tool": "jira_project_get",
+      "expected_arguments": {"project_id_or_key": "MKT"}
+    },
+    {
+      "name": "project create from template",
+      "user": "Set up a new Jira project with key OBS called Observability Platform from the software-scrum template",
+      "allowed_tools": ["jira_project_create"],
+      "allowed_arguments": {
+        "project_key": ["OBS"],
+        "project_name": ["Observability Platform"],
+        "template": ["software-scrum"]
+      },
+      "expected_tool": "jira_project_create",
+      "expected_arguments": {
+        "project_key": "OBS",
+        "project_name": "Observability Platform",
+        "template": "software-scrum"
+      }
+    },
+    {
+      "name": "project rename",
+      "user": "Change the name of the HR project to People Operations",
+      "allowed_tools": ["jira_project_update"],
+      "allowed_arguments": {"project_id_or_key": ["HR"], "new_name": ["People Operations"]},
+      "expected_tool": "jira_project_update",
+      "expected_arguments": {"project_id_or_key": "HR", "new_name": "People Operations"}
+    },
+    {
+      "name": "project archive",
+      "user": "We no longer use project LEGAL, so archive it in Jira",
+      "allowed_tools": ["jira_project_archive"],
+      "allowed_arguments": {"project_id_or_key": ["LEGAL"]},
+      "expected_tool": "jira_project_archive",
+      "expected_arguments": {"project_id_or_key": "LEGAL"}
+    },
+    {
+      "name": "project delete permanently",
+      "user": "Permanently remove the Jira project TEMP",
+      "allowed_tools": ["jira_project_delete"],
+      "allowed_arguments": {"project_id_or_key": ["TEMP"]},
+      "expected_tool": "jira_project_delete",
+      "expected_arguments": {"project_id_or_key": "TEMP"}
+    },
+    {
+      "name": "issue current state",
+      "user": "Show me where NET-58 currently stands",
+      "allowed_tools": ["ticket_get"],
+      "allowed_arguments": {"ticket_key": ["NET-58"]},
+      "expected_tool": "ticket_get",
+      "expected_arguments": {"ticket_key": "NET-58"}
+    },
+    {
+      "name": "issue change log",
+      "user": "Who changed what on FIN-27? Show me its change log",
+      "allowed_tools": ["ticket_history"],
+      "allowed_arguments": {"ticket_key": ["FIN-27"]},
+      "expected_tool": "ticket_history",
+      "expected_arguments": {"ticket_key": "FIN-27"}
+    },
+    {
+      "name": "issue comment thread",
+      "user": "Let me read the comment thread on WEB-316",
+      "allowed_tools": ["ticket_comments"],
+      "allowed_arguments": {"ticket_key": ["WEB-316"]},
+      "expected_tool": "ticket_comments",
+      "expected_arguments": {"ticket_key": "WEB-316"}
+    },
+    {
+      "name": "issue note with exact text",
+      "user": "Leave a note on HR-212 saying: Replacement badge was mailed today",
+      "allowed_tools": ["ticket_add_comment"],
+      "allowed_arguments": {"ticket_key": ["HR-212"], "comment": ["Replacement badge was mailed today"]},
+      "expected_tool": "ticket_add_comment",
+      "expected_arguments": {"ticket_key": "HR-212", "comment": "Replacement badge was mailed today"}
+    },
+    {
+      "name": "issue links listing",
+      "user": "List everything DATA-1043 is linked with",
+      "allowed_tools": ["ticket_links"],
+      "allowed_arguments": {"ticket_key": ["DATA-1043"]},
+      "expected_tool": "ticket_links",
+      "expected_arguments": {"ticket_key": "DATA-1043"}
+    },
+    {
+      "name": "issue create with stated type",
+      "user": "I need a new Story in WEB: Dark mode for the settings page",
+      "allowed_tools": ["ticket_create"],
+      "allowed_arguments": {"project_key": ["WEB"], "ticket_type": ["Story"]},
+      "expected_tool": "ticket_create",
+      "expected_arguments": {
+        "project_key": "WEB",
+        "summary": "Dark mode for the settings page",
+        "ticket_type": "Story"
+      }
+    },
+    {
+      "name": "issue create without type",
+      "user": "Add a ticket to the DESK project with the summary Meeting room display is blank",
+      "allowed_tools": ["ticket_create"],
+      "allowed_arguments": {"project_key": ["DESK"]},
+      "expected_tool": "ticket_create",
+      "expected_arguments": {"project_key": "DESK", "summary": "Meeting room display is blank"}
+    },
+    {
+      "name": "issue handover",
+      "user": "Hand MKT-9 over to priya.nair@example.org",
+      "allowed_tools": ["ticket_assign"],
+      "allowed_arguments": {"ticket_key": ["MKT-9"], "assignee": ["priya.nair@example.org"]},
+      "expected_tool": "ticket_assign",
+      "expected_arguments": {"ticket_key": "MKT-9", "assignee": "priya.nair@example.org"}
+    },
+    {
+      "name": "issue transition to review",
+      "user": "IAM-140 is ready, transition it to In Review",
+      "allowed_tools": ["ticket_transition"],
+      "allowed_arguments": {"ticket_key": ["IAM-140"], "status": ["In Review"]},
+      "expected_tool": "ticket_transition",
+      "expected_arguments": {"ticket_key": "IAM-140", "status": "In Review"}
+    },
+    {
+      "name": "issue clone link",
+      "user": "Record a link where CLOUD-61 clones CLOUD-12",
+      "allowed_tools": ["ticket_link"],
+      "allowed_arguments": {
+        "ticket_key": ["CLOUD-61"],
+        "other_ticket_key": ["CLOUD-12"],
+        "relationship": ["clones"]
+      },
+      "expected_tool": "ticket_link",
+      "expected_arguments": {"ticket_key": "CLOUD-61", "other_ticket_key": "CLOUD-12", "relationship": "clones"}
+    },
+    {
+      "name": "issue blocked-by link",
+      "user": "Link them up: NET-58 is blocked by NET-44",
+      "allowed_tools": ["ticket_link"],
+      "allowed_arguments": {
+        "ticket_key": ["NET-58"],
+        "other_ticket_key": ["NET-44"],
+        "relationship": ["is blocked by"]
+      },
+      "expected_tool": "ticket_link",
+      "expected_arguments": {"ticket_key": "NET-58", "other_ticket_key": "NET-44", "relationship": "is blocked by"}
+    },
+    {
+      "name": "assigned tickets in status",
+      "user": "Which tickets assigned to mei.lin@example.com are sitting in To Do?",
+      "allowed_tools": ["ticket_assigned"],
+      "allowed_arguments": {"assignee": ["mei.lin@example.com"], "status": ["To Do"]},
+      "expected_tool": "ticket_assigned",
+      "expected_arguments": {"assignee": "mei.lin@example.com", "status": "To Do"}
+    },
+    {
+      "name": "worklog with comment",
+      "user": "Book 4h 20m against DATA-1043, comment: Rebuilt the nightly ETL job",
+      "allowed_tools": ["ticket_worklog_add"],
+      "allowed_arguments": {
+        "ticket_key": ["DATA-1043"],
+        "time_spent": ["4h 20m"],
+        "comment": ["Rebuilt the nightly ETL job"]
+      },
+      "expected_tool": "ticket_worklog_add",
+      "expected_arguments": {"ticket_key": "DATA-1043", "time_spent": "4h 20m", "comment": "Rebuilt the nightly ETL job"}
+    },
+    {
+      "name": "worklog without comment",
+      "user": "Put 50m of time on WEB-316",
+      "allowed_tools": ["ticket_worklog_add"],
+      "allowed_arguments": {"ticket_key": ["WEB-316"], "time_spent": ["50m"]},
+      "expected_tool": "ticket_worklog_add",
+      "expected_arguments": {"ticket_key": "WEB-316", "time_spent": "50m"}
+    },
+    {
+      "name": "search text only",
+      "user": "Look up any tickets mentioning keyboard layout",
+      "allowed_tools": ["ticket_search"],
+      "allowed_arguments": {},
+      "expected_tool": "ticket_search",
+      "expected_arguments": {"text": "keyboard layout"}
+    },
+    {
+      "name": "search text in project",
+      "user": "Pull the FIN issues that talk about invoice export",
+      "allowed_tools": ["ticket_search"],
+      "allowed_arguments": {"project_key": ["FIN"]},
+      "expected_tool": "ticket_search",
+      "expected_arguments": {"project_key": "FIN", "text": "invoice export"}
+    },
+    {
+      "name": "search text and status",
+      "user": "Which In Progress tickets are about laptop overheating?",
+      "allowed_tools": ["ticket_search"],
+      "allowed_arguments": {},
+      "expected_tool": "ticket_search",
+      "expected_arguments": {"status": "In Progress", "text": "laptop overheating"}
+    },
+    {
+      "name": "search text and priority",
+      "user": "Any Highest priority tickets that mention payroll mismatch?",
+      "allowed_tools": ["ticket_search"],
+      "allowed_arguments": {},
+      "expected_tool": "ticket_search",
+      "expected_arguments": {"priority": "Highest", "text": "payroll mismatch"}
+    },
+    {
+      "name": "search text project and status",
+      "user": "In DESK, show To Do tickets with the words badge reader",
+      "allowed_tools": ["ticket_search"],
+      "allowed_arguments": {"project_key": ["DESK"]},
+      "expected_tool": "ticket_search",
+      "expected_arguments": {"project_key": "DESK", "status": "To Do", "text": "badge reader"}
+    },
+    {
+      "name": "search four-word text in project",
+      "user": "Search CLOUD for anything regarding shared drive permission denied",
+      "allowed_tools": ["ticket_search"],
+      "allowed_arguments": {"project_key": ["CLOUD"]},
+      "expected_tool": "ticket_search",
+      "expected_arguments": {"project_key": "CLOUD", "text": "shared drive permission denied"}
+    },
+    {
+      "name": "search hyphenated text",
+      "user": "Search all tickets for wi-fi drops",
+      "allowed_tools": ["ticket_search"],
+      "allowed_arguments": {},
+      "expected_tool": "ticket_search",
+      "expected_arguments": {"text": "wi-fi drops"}
+    },
+    {
+      "name": "search text with digits in project",
+      "user": "List NET tickets mentioning port 8443",
+      "allowed_tools": ["ticket_search"],
+      "allowed_arguments": {"project_key": ["NET"]},
+      "expected_tool": "ticket_search",
+      "expected_arguments": {"project_key": "NET", "text": "port 8443"}
+    },
+    {
+      "name": "labels add one",
+      "user": "Stick the label quick-win on WEB-316",
+      "allowed_tools": ["ticket_update"],
+      "allowed_arguments": {"ticket_key": ["WEB-316"], "add_labels": ["quick-win"]},
+      "expected_tool": "ticket_update",
+      "expected_arguments": {"ticket_key": "WEB-316", "add_labels": ["quick-win"]}
+    },
+    {
+      "name": "labels add two",
+      "user": "DATA-1043 should carry the labels gdpr and compliance",
+      "allowed_tools": ["ticket_update"],
+      "allowed_arguments": {"ticket_key": ["DATA-1043"], "add_labels": ["gdpr", "compliance"]},
+      "expected_tool": "ticket_update",
+      "expected_arguments": {"ticket_key": "DATA-1043", "add_labels": ["gdpr", "compliance"]}
+    },
+    {
+      "name": "labels add three",
+      "user": "Apply labels ux, accessibility and customer-reported to MKT-9",
+      "allowed_tools": ["ticket_update"],
+      "allowed_arguments": {"ticket_key": ["MKT-9"], "add_labels": ["ux", "accessibility", "customer-reported"]},
+      "expected_tool": "ticket_update",
+      "expected_arguments": {"ticket_key": "MKT-9", "add_labels": ["ux", "accessibility", "customer-reported"]}
+    },
+    {
+      "name": "labels remove one",
+      "user": "The legacy label no longer applies to HR-212, please remove it",
+      "allowed_tools": ["ticket_update"],
+      "allowed_arguments": {"ticket_key": ["HR-212"], "remove_labels": ["legacy"]},
+      "expected_tool": "ticket_update",
+      "expected_arguments": {"ticket_key": "HR-212", "remove_labels": ["legacy"]}
+    },
+    {
+      "name": "labels remove two",
+      "user": "Strip tech-debt and flaky-test from the labels on OBS-8",
+      "allowed_tools": ["ticket_update"],
+      "allowed_arguments": {"ticket_key": ["OBS-8"], "remove_labels": ["tech-debt", "flaky-test"]},
+      "expected_tool": "ticket_update",
+      "expected_arguments": {"ticket_key": "OBS-8", "remove_labels": ["tech-debt", "flaky-test"]}
+    },
+    {
+      "name": "labels remove and add",
+      "user": "IAM-140: drop waiting-on-vendor from its labels and tag it sla-breach",
+      "allowed_tools": ["ticket_update"],
+      "allowed_arguments": {
+        "ticket_key": ["IAM-140"],
+        "remove_labels": ["waiting-on-vendor"],
+        "add_labels": ["sla-breach"]
+      },
+      "expected_tool": "ticket_update",
+      "expected_arguments": {
+        "ticket_key": "IAM-140",
+        "remove_labels": ["waiting-on-vendor"],
+        "add_labels": ["sla-breach"]
+      }
+    },
+    {
+      "name": "labels add and priority",
+      "user": "Give CLOUD-61 the label cost-saving and raise its priority to High",
+      "allowed_tools": ["ticket_update"],
+      "allowed_arguments": {"ticket_key": ["CLOUD-61"], "add_labels": ["cost-saving"], "priority": ["High"]},
+      "expected_tool": "ticket_update",
+      "expected_arguments": {"ticket_key": "CLOUD-61", "add_labels": ["cost-saving"], "priority": "High"}
+    },
+    {
+      "name": "labels remove and due date",
+      "user": "The due date for FIN-27 is now 2027-02-19; also clear its p1-incident label",
+      "allowed_tools": ["ticket_update"],
+      "allowed_arguments": {"ticket_key": ["FIN-27"], "due_date": ["2027-02-19"], "remove_labels": ["p1-incident"]},
+      "expected_tool": "ticket_update",
+      "expected_arguments": {"ticket_key": "FIN-27", "due_date": "2027-02-19", "remove_labels": ["p1-incident"]}
+    },
+    {
+      "name": "labels add with priority and due date",
+      "user": "For NET-58: priority Medium, due 2026-12-09, and add the label q4-roadmap",
+      "allowed_tools": ["ticket_update"],
+      "allowed_arguments": {
+        "ticket_key": ["NET-58"],
+        "priority": ["Medium"],
+        "due_date": ["2026-12-09"],
+        "add_labels": ["q4-roadmap"]
+      },
+      "expected_tool": "ticket_update",
+      "expected_arguments": {
+        "ticket_key": "NET-58",
+        "priority": "Medium",
+        "due_date": "2026-12-09",
+        "add_labels": ["q4-roadmap"]
+      }
+    },
+    {
+      "name": "labels remove two with priority",
+      "user": "Lower DESK-555 to Lowest priority and get rid of the labels duplicate-candidate and data-loss",
+      "allowed_tools": ["ticket_update"],
+      "allowed_arguments": {
+        "ticket_key": ["DESK-555"],
+        "priority": ["Lowest"],
+        "remove_labels": ["duplicate-candidate", "data-loss"]
+      },
+      "expected_tool": "ticket_update",
+      "expected_arguments": {
+        "ticket_key": "DESK-555",
+        "priority": "Lowest",
+        "remove_labels": ["duplicate-candidate", "data-loss"]
+      }
+    }
+  ]
+}

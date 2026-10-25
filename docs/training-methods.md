@@ -143,6 +143,21 @@ The initial validation loss is diagnostic: the untrained adapter is not a saved
 best-checkpoint candidate, and a low validation loss does not replace held-out
 tool evaluation or authorized live acceptance.
 
+## Jira evaluation case sets
+
+`jira_specialist_model_eval.py` scores the built-in `development` cases by
+default. They guided corpus changes, so a pass there is development evidence.
+`--cases learning/evaluation/evals/jira-specialist-holdout.json` scores the
+held-out set instead. Its coverage plan was fixed before any candidate was
+scored on it. A unit test rejects any held-out request that shares a request
+template or a free-text value (ticket key, label, search text, name) with a
+training record.
+Shared values from closed vocabularies are allowed (status, priority, ticket
+type, template, relationship). Every report records `case_set` and
+`case_set_sha256`. Promotion needs both sets at a strict pass. Do not tune
+the corpus on held-out failures: that turns the set into development data, and
+promotion then needs a newly written held-out set.
+
 ## Public retrieval snapshot
 
 Set `KNOWLEDGE_SNAPSHOT_PATH` and `KNOWLEDGE_SNAPSHOT_SHA256` alongside the local

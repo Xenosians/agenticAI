@@ -471,6 +471,12 @@ def _seed_examples(
         "Please show all available projects in Jira",
         "Read the Jira project listing",
         "Return the unfiltered Jira project collection",
+        "Pull up each project defined in Jira",
+        "I need the whole Jira project inventory",
+        "Print out all projects on the Jira instance",
+        "Give me an overview of every Jira project",
+        "Show me each and every Jira project",
+        "Return all Jira projects, please",
     ):
         examples.append((
             "jira_project_list",
@@ -613,6 +619,51 @@ def _seed_examples(
                 "status": "To Do",
                 "text": "staging",
             },
+        ),
+        # Search words are not router-bound: the model copies them alone and
+        # beside every filter, including a bound project. Plain searches stay
+        # the majority so a status or priority is emitted only when stated, and
+        # searches without a project stay few beside unfiltered project listing.
+        ("Find INFRA issues about disk full", {"project_key": "INFRA", "text": "disk full"}),
+        (
+            "Look in project QA for issues containing SSO redirect loop",
+            {"project_key": "QA", "text": "SSO redirect loop"},
+        ),
+        ("Find tickets in PAY regarding license expired", {"project_key": "PAY", "text": "license expired"}),
+        (
+            "In project HELP, find tickets with the words password reset",
+            {"project_key": "HELP", "text": "password reset"},
+        ),
+        (
+            "Search Jira issues for the text email bounce in project APP",
+            {"project_key": "APP", "text": "email bounce"},
+        ),
+        ("Search DEV tickets containing API 502", {"project_key": "DEV", "text": "API 502"}),
+        ("Which CS issues mention backup failed?", {"project_key": "CS", "text": "backup failed"}),
+        ("Show issues in INFRA that mention out of memory", {"project_key": "INFRA", "text": "out of memory"}),
+        ("Search ENG for issues about API 502", {"project_key": "ENG", "text": "API 502"}),
+        ("Find SEC issues mentioning MFA prompt", {"project_key": "SEC", "text": "MFA prompt"}),
+        ("Look for tickets in QA containing slow login", {"project_key": "QA", "text": "slow login"}),
+        ("Are there OPS tickets about DNS failure?", {"project_key": "OPS", "text": "DNS failure"}),
+        (
+            "Search the KAN project for issues regarding printer offline",
+            {"project_key": "KAN", "text": "printer offline"},
+        ),
+        ("Search Jira for tickets mentioning password reset", {"text": "password reset"}),
+        ("Are there any issues about MFA prompt?", {"text": "MFA prompt"}),
+        ("Show Blocked tickets that mention email bounce", {"status": "Blocked", "text": "email bounce"}),
+        ("Find High priority issues about slow login", {"priority": "High", "text": "slow login"}),
+        (
+            "Search DEV tickets with status In Review containing disk full",
+            {"project_key": "DEV", "status": "In Review", "text": "disk full"},
+        ),
+        (
+            "Show In Progress issues in PAY that mention license expired",
+            {"project_key": "PAY", "status": "In Progress", "text": "license expired"},
+        ),
+        (
+            "List CS issues with priority Highest that mention backup failed",
+            {"project_key": "CS", "priority": "Highest", "text": "backup failed"},
         ),
     ]
 
@@ -804,6 +855,43 @@ def _seed_examples(
             )
         )
 
+    # More creates with and without an explicit type, so a bound ticket_type
+    # is always carried into the call and never invented when absent.
+    for user_request, arguments in (
+        (
+            "Raise a Bug in QA titled Checkout button does nothing",
+            {"project_key": "QA", "summary": "Checkout button does nothing", "ticket_type": "Bug"},
+        ),
+        (
+            "Write up a Story in DEV with summary Export reports as CSV",
+            {"project_key": "DEV", "summary": "Export reports as CSV", "ticket_type": "Story"},
+        ),
+        (
+            "File a Task in INFRA titled Patch the jump host kernel",
+            {"project_key": "INFRA", "summary": "Patch the jump host kernel", "ticket_type": "Task"},
+        ),
+        (
+            "Open a Bug in PAY with summary Refund total shows twice",
+            {"project_key": "PAY", "summary": "Refund total shows twice", "ticket_type": "Bug"},
+        ),
+        (
+            "Open a ticket in CS titled Chat widget fails to load",
+            {"project_key": "CS", "summary": "Chat widget fails to load"},
+        ),
+        (
+            "Create an issue in QA with summary Nightly suite skips smoke tests",
+            {"project_key": "QA", "summary": "Nightly suite skips smoke tests"},
+        ),
+    ):
+        examples.append(
+            (
+                "ticket_create",
+                user_request,
+                arguments,
+                ["issue", "create", "mutation", *(["type"] if "ticket_type" in arguments else [])],
+            )
+        )
+
     assignees = [
         "alice@example.com",
         "bob@example.com",
@@ -910,6 +998,76 @@ def _seed_examples(
         (
             "Lower KAN-3 to priority Medium",
             {"ticket_key": "KAN-3", "priority": "Medium"},
+        ),
+        # Label lists of one to three items, alone and beside every companion
+        # field, so the list is always closed before the next key.
+        ("Tag QA-19 with the label regression", {"ticket_key": "QA-19", "add_labels": ["regression"]}),
+        ("Add labels frontend and mobile to INFRA-77", {"ticket_key": "INFRA-77", "add_labels": ["frontend", "mobile"]}),
+        (
+            "Put the labels audit, billing and onboarding on DEV-150",
+            {"ticket_key": "DEV-150", "add_labels": ["audit", "billing", "onboarding"]},
+        ),
+        ("Drop the label needs-info from CS-8", {"ticket_key": "CS-8", "remove_labels": ["needs-info"]}),
+        (
+            "Remove the labels hotfix and performance from PAY-23",
+            {"ticket_key": "PAY-23", "remove_labels": ["hotfix", "performance"]},
+        ),
+        (
+            "On ENG-88 add the label network and remove the label triage",
+            {"ticket_key": "ENG-88", "add_labels": ["network"], "remove_labels": ["triage"]},
+        ),
+        (
+            "Set QA-19 to priority Highest and label it security-review",
+            {"ticket_key": "QA-19", "priority": "Highest", "add_labels": ["security-review"]},
+        ),
+        (
+            "Clear the label documentation from INFRA-77 and push the due date to 2027-01-08",
+            {"ticket_key": "INFRA-77", "remove_labels": ["documentation"], "due_date": "2027-01-08"},
+        ),
+        (
+            "For DEV-150 add the labels backend and hotfix, set priority High and make it due 2026-11-14",
+            {"ticket_key": "DEV-150", "add_labels": ["backend", "hotfix"], "priority": "High", "due_date": "2026-11-14"},
+        ),
+        (
+            "Lower CS-8 to priority Low and take off the label regression",
+            {"ticket_key": "CS-8", "priority": "Low", "remove_labels": ["regression"]},
+        ),
+        (
+            "Label PAY-23 as billing and mobile, and remove the label audit",
+            {"ticket_key": "PAY-23", "add_labels": ["billing", "mobile"], "remove_labels": ["audit"]},
+        ),
+        (
+            "Please add the label performance to APP-41 with priority Medium",
+            {"ticket_key": "APP-41", "add_labels": ["performance"], "priority": "Medium"},
+        ),
+        (
+            "HELP-204 needs the labels onboarding and documentation",
+            {"ticket_key": "HELP-204", "add_labels": ["onboarding", "documentation"]},
+        ),
+        ("Untag SEC-12: remove the labels vpn and network", {"ticket_key": "SEC-12", "remove_labels": ["vpn", "network"]}),
+        (
+            "Give KAN-3 the label frontend and a due date of 2026-12-01",
+            {"ticket_key": "KAN-3", "add_labels": ["frontend"], "due_date": "2026-12-01"},
+        ),
+        (
+            "Remove the label release-blocker from OPS-17; it is now due 2026-10-31",
+            {"ticket_key": "OPS-17", "remove_labels": ["release-blocker"], "due_date": "2026-10-31"},
+        ),
+        (
+            "Set priority Lowest on QA-19 and drop the labels triage and needs-info",
+            {"ticket_key": "QA-19", "priority": "Lowest", "remove_labels": ["triage", "needs-info"]},
+        ),
+        (
+            "Mark INFRA-77 with the labels hotfix, network and security-review",
+            {"ticket_key": "INFRA-77", "add_labels": ["hotfix", "network", "security-review"]},
+        ),
+        (
+            "Take the label mobile off DEV-150 and add the label frontend instead",
+            {"ticket_key": "DEV-150", "remove_labels": ["mobile"], "add_labels": ["frontend"]},
+        ),
+        (
+            "Make CS-8 priority High, add the label backend, and set it due 2027-01-08",
+            {"ticket_key": "CS-8", "priority": "High", "add_labels": ["backend"], "due_date": "2027-01-08"},
         ),
     ]
 

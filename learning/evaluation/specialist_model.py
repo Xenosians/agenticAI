@@ -140,6 +140,18 @@ class SpecialistModelEvaluationReport(
 
     promotion_gate_passed: bool
 
+    # Which declared case list was scored, so a development-set pass is never
+    # read as a held-out pass. Reports written before this field carry None.
+    case_set: (
+        str
+        | None
+    ) = None
+
+    case_set_sha256: (
+        str
+        | None
+    ) = None
+
     cases: list[
         SpecialistModelCaseResult
     ] = Field(
@@ -179,6 +191,14 @@ def finalize_specialist_model_report(
     cases: list[
         SpecialistModelCaseResult
     ],
+    case_set: (
+        str
+        | None
+    ) = None,
+    case_set_sha256: (
+        str
+        | None
+    ) = None,
 ) -> SpecialistModelEvaluationReport:
     total = len(
         cases
@@ -278,6 +298,14 @@ def finalize_specialist_model_report(
             promotion_gate_passed=(
                 total > 0
                 and failed == 0
+            ),
+
+            case_set=(
+                case_set
+            ),
+
+            case_set_sha256=(
+                case_set_sha256
             ),
 
             cases=(
