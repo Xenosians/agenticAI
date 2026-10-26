@@ -190,6 +190,16 @@ wording every fifth is held for validation). The separate held-out set
 `jira-continuation-ids-holdout.json` covers each shape with names, ids,
 projects and requests that are absent from training (unit-enforced).
 
+### Ticket search wording
+
+`--cases learning/evaluation/evals/jira-search-holdout.json` scores ticket
+searches: search words beside a project, status or priority, digits, longer
+phrases, searches without a project, and project-only requests that must not
+gain search words. Its requests, projects and words are absent from training
+(unit-enforced), and every expected value passes the gateway's quoting rule
+(`docs/ticketing.md`). The strict check compares words exactly, including
+case; the gateway and Jira's text search ignore case.
+
 ## Public retrieval snapshot
 
 Set `KNOWLEDGE_SNAPSHOT_PATH` and `KNOWLEDGE_SNAPSHOT_SHA256` alongside the local
