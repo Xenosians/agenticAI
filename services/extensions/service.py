@@ -42,6 +42,7 @@ def workflow_capabilities(settings) -> list[dict]:
     from tools.capability_contract import build_capability_contract
     from tools.registry import TOOLS, get_tool
     from subagents.core.orchestration.intent_contract import trusted_success_continuations
+    from services.integration_readiness import provider_for_capability
 
     agents_dir = getattr(settings, "agents_dir", None)
     agents = load_agent_directory(agents_dir) if agents_dir is not None else []
@@ -57,6 +58,8 @@ def workflow_capabilities(settings) -> list[dict]:
             "risk": metadata.risk, "requires_approval": metadata.requires_approval,
             "resource_type": metadata.resource_type,
             "agent_names": owners,
+            # The provider whose setup this operation needs (see /v1/integrations).
+            "provider": provider_for_capability(name),
             "grounded_arguments": list(metadata.grounded_arguments),
             "required_arguments": list(metadata.required_arguments),
             "parameters": {

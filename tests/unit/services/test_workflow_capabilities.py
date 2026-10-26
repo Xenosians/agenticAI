@@ -46,3 +46,17 @@ def test_capabilities_without_loaded_owners_are_not_workflow_choices():
     rows = workflow_capabilities(SimpleNamespace())
     assert rows
     assert all(row["agent_names"] == [] for row in rows)
+
+
+def test_each_capability_names_the_provider_whose_setup_it_needs():
+    # The workspace joins each operation to its provider's setup state (FR-081).
+    from services.integration_readiness import provider_for_capability
+
+    settings = SimpleNamespace(agents_dir=Path(__file__).resolve().parents[3] / "subagents/agents")
+    rows = {row["id"]: row for row in workflow_capabilities(settings)}
+    assert rows["ticket_create"]["provider"] == "ticketing"
+    assert rows["account_create"]["provider"] == "directory"
+    assert rows["network_dhcp_leases"]["provider"] == "openwrt"
+    assert rows["workspace_git_status"]["provider"] == "workspace"
+    for name, row in rows.items():
+        assert row["provider"] == provider_for_capability(name), name

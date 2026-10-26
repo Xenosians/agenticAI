@@ -88,6 +88,7 @@ from subagents.llm.runtime.scheduler import (
     GpuScheduler,
 )
 
+from services.integration_readiness import integration_readiness
 from services.openwrt import openwrt_integration_status
 
 
@@ -1972,12 +1973,15 @@ async def reject(approval_id: str, request: Request) -> dict:
 
 @app.get("/v1/integrations")
 async def integration_status(request: Request):
+    # Setup readiness from configuration (FR-081); never a provider check.
     runtime = require_ready_runtime(request)
-    return {
-        "integrations": [
-            openwrt_integration_status(runtime.settings),
-        ]
-    }
+    openwrt = openwrt_integration_status(runtime.settings)
+    rows = []
+    for row in integration_readiness(runtime.settings):
+        if row["id"] == "openwrt":
+            row = {**row, "host": openwrt["host"], "verify_tls": openwrt["verify_tls"]}
+        rows.append(row)
+    return {"integrations": rows}
 
 
 from api.extensions import router as extension_router

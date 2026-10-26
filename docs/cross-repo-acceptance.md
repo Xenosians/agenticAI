@@ -152,6 +152,16 @@ export ACCEPTANCE_JIRA_PROJECT_KEY='...'
 OpenWrt read cases require the OpenWrt integration to be reported as
 configured by `/api/v1/integrations`.
 
+`/api/v1/integrations` lists every provider family behind the capability
+catalog (directory, lab mailboxes, ticketing, service desk, Jira and Atlassian
+administration, assets, knowledge, OpenWrt, platform operations and the local
+workspace). Each row has `state` (`configured`, `simulated` for an explicitly
+selected mock, or `not_configured`), the names of any `missing` settings
+(never their values), its `capabilities` and its `mode`. `configured` is true
+only for a fully set-up real provider. The state comes from configuration
+alone; it does not show that a provider is reachable or that an action
+succeeded. Each capability in the extension catalog names its `provider`.
+
 ## One case only
 
 ```bash
