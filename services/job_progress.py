@@ -216,6 +216,14 @@ class JobProgress:
 
 @asynccontextmanager
 async def job_progress(settings, job_id: str, attempt: int):
+    from services.job_metrics import job_metrics
+    async with job_metrics(settings, job_id, attempt):
+        async with _socket_job_progress(settings, job_id, attempt) as publisher:
+            yield publisher
+
+
+@asynccontextmanager
+async def _socket_job_progress(settings, job_id: str, attempt: int):
     publisher = None
     task = None
     token = None

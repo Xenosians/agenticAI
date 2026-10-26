@@ -401,6 +401,7 @@ class Settings(
     # ============================================================
 
     job_websocket_enabled: bool = True
+    job_metrics_enabled: bool = True
 
     phoenix_base_url: (
         str | None

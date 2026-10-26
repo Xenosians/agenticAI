@@ -11,6 +11,7 @@ This is an evolving local-first **MVP candidate**. Model output is a proposal, n
 - Typed tools for LDAP/Jira integrations, workspace inspection, builds/tests, and governed Git changes. Provider availability depends on configuration.
 - Durable approvals that retain the exact proposed action, plus a completion outbox for reliable delivery to Phoenix.
 - Authenticated WebSocket progress from the AI runtime to Phoenix, alongside durable job and approval state that can be restored after reconnecting.
+- Content-free, job-bound inference observations for the Operations view: measured stage duration, scheduler wait and available token counts, with missing measurements kept explicit.
 - A bounded account → Jira ticket → completion mail workflow on durable jobs, with verified account data, separate approvals, and saved continuation recovery.
 - Optional user-reviewed workflow contracts check complete operation lists, dependencies and exact target pins before dispatch for both local and outbound reasoning. Normal chat remains available; free-text submissions do not receive this completeness check.
 - Local Transformers models, quantization profiles, LoRA adapters, and serialized GPU scheduling.
@@ -53,6 +54,7 @@ Create a private `.env` in this repository, using [config/settings.py](config/se
 | --- | --- |
 | `PHOENIX_BASE_URL` | Backend origin, commonly `http://127.0.0.1:4000` |
 | `ITSM_INTERNAL_JOB_TOKEN` | Same private token as Phoenix |
+| `JOB_METRICS_ENABLED` | Optional content-free Operations observations; default `true` |
 | `MODEL_PROFILES` | JSON profiles with actual model paths and runtime settings |
 | `HUB_MODEL_KEY` | Hub profile; default `hub-main` |
 | `DIRECTORY_BACKEND` | Explicitly choose `ldap` for directory operations |

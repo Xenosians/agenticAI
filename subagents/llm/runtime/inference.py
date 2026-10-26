@@ -17,6 +17,7 @@ from subagents.llm.runtime.observability import (
 )
 from subagents.llm.runtime.scheduler import GpuScheduler, InferencePriority
 from subagents.llm.runtime.stages import InferenceStage, StagePolicy, resolve_stage_policy
+from services.job_metrics import report_inference_metric
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -250,3 +251,4 @@ class InferenceCoordinator:
                 role=active_role.get(),
             )
             _observe("metric_sink", lambda: self.metric_sink(metric))
+            _observe("job_metric", lambda: report_inference_metric(metric))
