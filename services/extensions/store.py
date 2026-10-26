@@ -13,6 +13,39 @@ from cryptography.fernet import Fernet
 # A role bound to this value runs on the specialist's own local model.
 LOCAL_ROLE_MODEL = "local"
 ROLE_PATTERN = re.compile(r"[a-z][a-z0-9-]{0,63}")
+NEWER_VERSION_EXISTS = "This dataset already has a newer version; replace the latest version"
+
+
+def _input_key(messages: list) -> str:
+    # The same input may never leak across splits, even with different targets.
+    return hashlib.sha256(json.dumps(messages[:-1], sort_keys=True).encode()).hexdigest()
+
+
+def _split_history(previous: dict | None) -> dict[str, str]:
+    """Every training input the earlier versions assigned, and the split it went to."""
+    if previous is None:
+        return {}
+    history = dict(previous.get("retired_splits", {}))
+    for split, rows in previous["content"].items():
+        for row in rows:
+            history[_input_key(row["messages"])] = split
+    return history
+
+
+def _training_splits(unique: dict[str, dict], history: dict[str, str]) -> tuple[dict, dict]:
+    """Fixed splits: an input keeps the split any earlier version gave it; new inputs
+    fill evaluation up to a fifth, in digest order."""
+    ordered = sorted(unique)
+    validation = {key for key in ordered if history.get(key) == "validation"}
+    fresh = [key for key in ordered if key not in history]
+    validation.update(fresh[:max(0, max(1, len(ordered) // 5) - len(validation))])
+    if not validation:
+        raise ValueError("A new version needs at least one evaluation example that was never used for training")
+    content = {"train": [unique[key] for key in ordered if key not in validation],
+               "validation": [unique[key] for key in ordered if key in validation]}
+    # Inputs this version dropped keep their split for any later version that restores them.
+    retired = {key: split for key, split in history.items() if key not in unique}
+    return content, retired
 
 
 class ExtensionStore:
@@ -41,6 +74,10 @@ class ExtensionStore:
                 CREATE TABLE IF NOT EXISTS role_assignment (
                     owner TEXT NOT NULL, role TEXT NOT NULL, model_id TEXT NOT NULL,
                     PRIMARY KEY(owner, role));
+                -- A dataset version has at most one newer version, so history stays linear.
+                CREATE UNIQUE INDEX IF NOT EXISTS dataset_successor
+                    ON resource(owner, json_extract(data, '$.previous_id'))
+                    WHERE kind = 'dataset' AND json_extract(data, '$.previous_id') IS NOT NULL;
             """)
 
     def connect(self):
@@ -48,10 +85,10 @@ class ExtensionStore:
         db.row_factory = sqlite3.Row
         return db
 
-    def put(self, owner: str, kind: str, data: dict, secret: str = "") -> dict:
+    def put(self, owner: str, kind: str, data: dict, secret: str = "", *, identity: str | None = None) -> dict:
         if not owner or len(owner) > 200:
             raise ValueError("Invalid owner")
-        identity = uuid.uuid4().hex
+        identity = identity or uuid.uuid4().hex
         stored = {**data, "id": identity, "kind": kind}
         encrypted = self.cipher.encrypt(secret.encode()) if secret else None
         with self.connect() as db:
@@ -66,6 +103,10 @@ class ExtensionStore:
             raise ValueError("Resource not found")
         data = json.loads(row["data"])
         data["credential_configured"] = row["secret"] is not None
+        if data.get("kind") == "dataset":
+            # A dataset saved before versioning is the first version of its own history.
+            data.setdefault("version", 1)
+            data.setdefault("lineage_id", data["id"])
         if secret:
             data["api_key"] = self.cipher.decrypt(row["secret"]).decode() if row["secret"] else ""
         return data
@@ -73,7 +114,17 @@ class ExtensionStore:
     def list(self, owner: str) -> list[dict]:
         with self.connect() as db:
             rows = db.execute("SELECT id FROM resource WHERE owner=? ORDER BY rowid", (owner,)).fetchall()
-        return [self.get(owner, row["id"]) for row in rows]
+        resources = [self.get(owner, row["id"]) for row in rows]
+        # A replaced dataset version names the next version of its history that still exists.
+        histories: dict[str, list[dict]] = {}
+        for row in resources:
+            if row.get("kind") == "dataset":
+                histories.setdefault(row["lineage_id"], []).append(row)
+        for history in histories.values():
+            history.sort(key=lambda row: row["version"])
+            for older, newer in zip(history, history[1:]):
+                older["superseded_by"] = newer["id"]
+        return resources
 
     def update_model_options(self, owner: str, identity: str, changes: dict) -> dict:
         """Patch only inference options without replacing identity or credentials."""
@@ -147,7 +198,8 @@ class ExtensionStore:
             db.execute("DELETE FROM resource WHERE owner=? AND id=?", (owner, identity))
 
     def dataset(self, owner: str, *, name: str, text: str, source: str, license: str,
-                purpose: str, reviewed: bool) -> dict:
+                purpose: str, reviewed: bool, replaces: str | None = None) -> dict:
+        """Admit a dataset, or a new version of the latest version named by ``replaces``."""
         if not name.strip() or not source.strip() or not license.strip():
             raise ValueError("Name, source and permitted-use/license metadata are required")
         if purpose not in {"rag", "training"} or reviewed is not True:
@@ -165,7 +217,12 @@ class ExtensionStore:
                     r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", r"\bsk-[A-Za-z0-9_-]{16,}\b"]
         if any(re.search(pattern, admission_text) for pattern in patterns):
             raise ValueError("Dataset contains possible secrets or personal identifiers; sanitize before admission")
+        previous = self._replaced_version(owner, replaces, purpose) if replaces else None
         digest = hashlib.sha256(text.encode()).hexdigest()
+        metadata = {"name": name[:120], "source": source[:500], "license": license[:200]}
+        if previous and previous["sha256"] == digest and all(previous[key] == value for key, value in metadata.items()):
+            raise ValueError("This version is identical to the one it replaces")
+        retired = {}
         if purpose == "training":
             records = [json.loads(line) for line in text.splitlines() if line.strip()]
             if len(records) < 10:
@@ -180,21 +237,47 @@ class ExtensionStore:
                 for msg in messages:
                     if not isinstance(msg, dict) or set(msg) != {"role", "content"} or msg["role"] not in {"system", "user", "assistant"} or not isinstance(msg["content"], str) or not msg["content"].strip():
                         raise ValueError("Invalid training message")
-                # Same input may never leak across splits, even with different targets.
-                key = hashlib.sha256(json.dumps(messages[:-1], sort_keys=True).encode()).hexdigest()
+                key = _input_key(messages)
                 if key in unique and unique[key] != row:
                     raise ValueError("Conflicting targets for the same training input")
                 unique[key] = row
             if len(unique) < 10:
                 raise ValueError("Training admission requires 10 distinct inputs")
-            ordered = sorted(unique)
-            validation_keys = set(ordered[:max(1, len(ordered)//5)])
-            content = {"train": [unique[k] for k in ordered if k not in validation_keys],
-                       "validation": [unique[k] for k in ordered if k in validation_keys]}
+            content, retired = _training_splits(unique, _split_history(previous))
+            if not content["train"]:
+                raise ValueError("A new version needs at least one training example")
         else:
             content = {"text": text}
-        return self.put(owner, "dataset", {"name": name[:120], "source": source[:500], "license": license[:200],
-                        "purpose": purpose, "sha256": digest, "state": "ready", "content": content})
+        identity = uuid.uuid4().hex
+        record = {**metadata, "purpose": purpose, "sha256": digest, "state": "ready", "content": content,
+                  "version": previous["version"] + 1 if previous else 1,
+                  "lineage_id": previous["lineage_id"] if previous else identity}
+        if previous:
+            record.update(previous_id=previous["id"], previous_sha256=previous["sha256"])
+        if retired:
+            record["retired_splits"] = retired
+        try:
+            return self.put(owner, "dataset", record, identity=identity)
+        except sqlite3.IntegrityError:
+            # Another upload replaced the same version first.
+            raise ValueError(NEWER_VERSION_EXISTS) from None
+
+    def _replaced_version(self, owner: str, identity: str, purpose: str) -> dict:
+        previous = self.get(owner, identity)
+        if previous["kind"] != "dataset":
+            raise ValueError("Resource not found")
+        if previous.get("purpose") != purpose:
+            raise ValueError("A new version must keep the dataset's purpose")
+        with self.connect() as db:
+            # Only the latest version of a history can be replaced, so history stays linear
+            # even after a middle version is deleted.
+            newer = db.execute("SELECT 1 FROM resource WHERE owner=? AND kind='dataset' AND "
+                               "(json_extract(data, '$.previous_id')=? OR "
+                               "(json_extract(data, '$.lineage_id')=? AND json_extract(data, '$.version')>?))",
+                               (owner, identity, previous["lineage_id"], previous["version"])).fetchone()
+        if newer is not None:
+            raise ValueError(NEWER_VERSION_EXISTS)
+        return previous
 
     def search(self, owner: str, identity: str, query: str, limit=5) -> list[dict]:
         from services.retrieval.fts import FtsRecord, search_fts

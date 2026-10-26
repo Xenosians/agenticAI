@@ -74,9 +74,28 @@ def workflow_capabilities(settings) -> list[dict]:
         })
     return result
 
+def replaced_dataset(payload: dict) -> str | None:
+    """The dataset version a new upload replaces; absent or empty means a new dataset."""
+    replaces = payload.get("replaces")
+    if replaces in (None, ""):
+        return None
+    if not isinstance(replaces, str) or not re.fullmatch(r"[0-9a-f]{32}", replaces):
+        raise ValueError("replaces must name a dataset version")
+    return replaces
+
+
+def dataset_version(row: dict) -> dict:
+    """A dataset's version identity: its history, its number and the version it replaced."""
+    identity = {"dataset_id": row["id"], "lineage_id": row["lineage_id"], "version": row["version"]}
+    if row.get("previous_id"):
+        identity.update(previous_id=row["previous_id"], previous_sha256=row["previous_sha256"])
+    return identity
+
+
 def public_resource(row):
-    # No dataset bodies, credentials or server filesystem paths in list responses.
-    public = {key: value for key, value in row.items() if key not in {"api_key", "content", "model_path"}}
+    # No dataset bodies, split history, credentials or server filesystem paths in list responses.
+    public = {key: value for key, value in row.items()
+              if key not in {"api_key", "content", "model_path", "retired_splits"}}
     if public.get("kind") == "model" and public.get("backend") == "http":
         from services.extensions.transport import is_insecure_transport
         public["insecure_transport"] = is_insecure_transport(public.get("url", ""))
@@ -542,13 +561,15 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
         fields = {key: payload.get(key) for key in ("name", "text", "source", "license", "purpose", "reviewed")}
         if not all(isinstance(fields[k], str) for k in ("name", "text", "source", "license", "purpose")):
             raise ValueError("Dataset fields must be text")
-        return public_resource(store.dataset(owner, **fields))
+        return public_resource(store.dataset(owner, **fields, replaces=replaced_dataset(payload)))
     if action == "dataset_url":
+        replaces = replaced_dataset(payload)
         data = await request_json(payload.get("url", ""), api_key=payload.get("api_key", ""))
         if not isinstance(data, dict) or not isinstance(data.get("text"), str):
             raise ValueError("Dataset API must return an object containing a text string")
         return public_resource(store.dataset(owner, name=payload.get("name", ""), text=data["text"],
-            source=payload["url"], license=payload.get("license", ""), purpose=payload.get("purpose", "rag"), reviewed=payload.get("reviewed")))
+            source=payload["url"], license=payload.get("license", ""), purpose=payload.get("purpose", "rag"), reviewed=payload.get("reviewed"),
+            replaces=replaces))
     if action == "search":
         return {"hits": store.search(owner, payload["id"], str(payload.get("query", ""))[:200])}
     if action == "workflow_validate":
@@ -564,7 +585,8 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
                    for split, rows in row["content"].items() for record in rows]
         return {"schema": "private-training-dataset.v1", "source": row["source"], "license": row["license"],
                 "records": records,
-                "sha256": row["sha256"], "splits": row["content"], "promotion": "requires_held_out_evaluation_and_separate_approval"}
+                "sha256": row["sha256"], "splits": row["content"], "promotion": "requires_held_out_evaluation_and_separate_approval",
+                **dataset_version(row)}
     if action == "upload_begin":
         identity = uuid.uuid4().hex
         upload_root(owner, identity).mkdir(parents=True, mode=0o700)

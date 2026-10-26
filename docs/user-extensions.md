@@ -131,6 +131,22 @@ records with provenance and split metadata for the existing adaptation recipes.
 Import does not start training or promote a model. Jobs using a private model or
 dataset are excluded from automatic shared trajectory training capture.
 
+### Dataset versions
+
+A changed dataset is uploaded as a new version: choose **Upload as → New version
+of …** (payload field `replaces`, the id of the version being replaced). Each
+version has its own id and content digest and records `version`, `lineage_id`
+(the first version's id), `previous_id` and `previous_sha256`. Earlier versions
+are kept unchanged, so a citation made against one still resolves; the catalog
+marks a replaced version with `superseded_by`. Only the latest version of a
+history can be replaced, the purpose cannot change, an identical upload is
+refused, and histories are owner-private.
+
+Training splits are fixed across versions: an input keeps the split an earlier
+version gave it, even if a version dropped it and a later one restores it. New
+inputs fill validation up to a fifth of the version, so evaluation examples
+never become training examples. The export carries the version identity.
+
 ## Future workflow connectors
 
 `workflow_validate` accepts a version-1 manifest with name and ordered nodes:
