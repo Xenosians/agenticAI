@@ -68,6 +68,9 @@ def test_all_registered_capabilities_have_standard_contract(monkeypatch):
         assert set(contract.grounded_arguments).isdisjoint(
             contract.derived_arguments
         )
+        assert set(contract.quoted_arguments).isdisjoint(
+            set(contract.grounded_arguments) | set(contract.derived_arguments)
+        )
         assert set(contract.required_arguments) <= (
             set(contract.grounded_arguments) | set(contract.derived_arguments)
         ), f"{contract.name} has required arguments without a trusted semantic role"

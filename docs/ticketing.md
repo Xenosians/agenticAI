@@ -16,11 +16,22 @@ arguments or results.
 | Tool | Provider call | Notes |
 |---|---|---|
 | `ticket_get` | `GET /issue/{key}` | One ticket's metadata; not comments or history. |
-| `ticket_search` | `POST /search/jql` | Project, status, priority and text filters; 1–25 results. |
+| `ticket_search` | `POST /search/jql` | Project, status, priority and text filters; 1–25 results. See below. |
 | `ticket_history` | `GET /issue/{key}/changelog` | Field changes with authors and times. |
 | `ticket_comments` | `GET /issue/{key}/comment` | Existing comments only. |
 | `ticket_links` | `GET /issue/{key}?fields=issuelinks` | See below. |
 | `ticket_assigned` | user lookup + `POST /search/jql` | See below. |
+
+### `ticket_search`
+
+The project is a grounded target. The search words, status and priority are
+the user's own wording: the model copies them, and the gateway refuses a
+search whose words are not in the request (`grounding_failed`) before the
+provider is called. "port 8433" for a request about port 8443 is refused, not
+run. The words are compared whole, ignoring case and the spacing between
+them, so "High" matches "high-priority". A filter the model leaves out is not
+forced back in; that search runs broader than asked, and only training
+improves it.
 
 ### `ticket_links`
 

@@ -52,6 +52,9 @@ class CapabilityContract:
     optional_arguments: tuple[str, ...]
     grounded_arguments: tuple[str, ...]
     derived_arguments: tuple[str, ...]
+    # Free-text filters the model must copy from the request (search words,
+    # a stated status): not router-bound targets, but never invented either.
+    quoted_arguments: tuple[str, ...]
     trusted_policy_arguments: tuple[str, ...]
     condition_fields: tuple[str, ...]
     requiredness_source: str
@@ -71,6 +74,7 @@ class CapabilityContract:
             "optional_arguments": list(self.optional_arguments),
             "grounded_arguments": list(self.grounded_arguments),
             "derived_arguments": list(self.derived_arguments),
+            "quoted_arguments": list(self.quoted_arguments),
             "trusted_policy_arguments": list(self.trusted_policy_arguments),
             "condition_fields": list(self.condition_fields),
             "requiredness_source": self.requiredness_source,
@@ -227,6 +231,7 @@ def build_capability_contract(tool_name: str, tool: Mapping[str, Any]) -> Capabi
 
     grounded = _string_list(tool_name, tool, "grounded_arguments")
     derived = _string_list(tool_name, tool, "derived_arguments")
+    quoted = _string_list(tool_name, tool, "quoted_arguments")
     trusted_policy = _string_list(tool_name, tool, "trusted_policy_arguments")
     trusted_policy_tuple = tuple(trusted_policy)
     trusted_policy_set = set(trusted_policy)
@@ -279,6 +284,7 @@ def build_capability_contract(tool_name: str, tool: Mapping[str, Any]) -> Capabi
         "optional_arguments": optional,
         "grounded_arguments": grounded,
         "derived_arguments": derived,
+        "quoted_arguments": quoted,
     }.items():
         unknown = set(values) - parameter_set
         if unknown:
@@ -292,6 +298,20 @@ def build_capability_contract(tool_name: str, tool: Mapping[str, Any]) -> Capabi
 
     if set(grounded) & set(derived):
         raise ValueError(f"Capability '{tool_name}' has grounded/derived argument overlap.")
+
+    if set(quoted) & (set(grounded) | set(derived)):
+        raise ValueError(
+            f"Capability '{tool_name}' marks quoted arguments as grounded or derived as well."
+        )
+
+    # Quoting compares the proposed text with the request's own words, so it
+    # applies only to free-text parameters, never to numbers or lists.
+    non_text_quoted = [name for name in quoted if parameters[name].get("type") != "str"]
+    if non_text_quoted:
+        raise ValueError(
+            f"Capability '{tool_name}' quoted arguments must be text parameters: "
+            + ", ".join(non_text_quoted)
+        )
 
     risk = tool.get("risk")
     if not isinstance(risk, str) or not risk.strip():
@@ -363,6 +383,7 @@ def build_capability_contract(tool_name: str, tool: Mapping[str, Any]) -> Capabi
         optional_arguments=tuple(optional),
         grounded_arguments=tuple(grounded),
         derived_arguments=tuple(derived),
+        quoted_arguments=tuple(quoted),
         trusted_policy_arguments=tuple(trusted_policy),
         condition_fields=tuple(condition_fields),
         requiredness_source=requiredness_source,

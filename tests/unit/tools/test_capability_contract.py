@@ -252,3 +252,35 @@ def test_declared_default_must_match_the_executable_default():
         build_capability_contract("listing", tool)
     tool["parameters"]["relative_path"]["default"] = "."
     assert build_capability_contract("listing", tool).optional_arguments == ("relative_path",)
+
+
+def test_quoted_arguments_are_their_own_role_on_text_parameters():
+    def finder(text: str | None = None, project: str | None = None, limit: int = 10):
+        return None
+
+    register_tool_callable(finder)
+    tool = {
+        "risk": "read",
+        "requires_approval": False,
+        "operation_kind": "search",
+        "resource_type": "example",
+        "effect": "read",
+        "permission": "example.search",
+        "grounded_arguments": ["project"],
+        "quoted_arguments": ["text"],
+        "parameters": {
+            "text": {"type": "str"},
+            "project": {"type": "str"},
+            "limit": {"type": "int", "default": 10},
+        },
+    }
+    assert build_capability_contract("finder", tool).quoted_arguments == ("text",)
+
+    for role, names in (("grounded_arguments", ["project", "text"]), ("derived_arguments", ["text"])):
+        with pytest.raises(ValueError, match="quoted"):
+            build_capability_contract("finder", {**tool, role: names})
+    with pytest.raises(ValueError, match="unknown parameters"):
+        build_capability_contract("finder", {**tool, "quoted_arguments": ["query"]})
+    # A number is never the user's wording; quoting it would refuse every use.
+    with pytest.raises(ValueError, match="quoted"):
+        build_capability_contract("finder", {**tool, "quoted_arguments": ["limit"]})

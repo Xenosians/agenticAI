@@ -1,0 +1,119 @@
+{
+  "schema": "jira-evaluation-cases.v1",
+  "case_set": "search-holdout",
+  "description": "Held-out ticket searches written before the next candidate was trained or scored: search words beside a project, status or priority, digits, longer phrases, searches without a project, and project-only controls that must not gain search words. Requests, project keys and search words are absent from training (enforced by a unit test).",
+  "cases": [
+    {
+      "name": "search words in project",
+      "user": "Which MOB tickets describe push notification delay?",
+      "allowed_tools": ["ticket_search"],
+      "allowed_arguments": {"project_key": ["MOB"]},
+      "expected_tool": "ticket_search",
+      "expected_arguments": {"project_key": "MOB", "text": "push notification delay"}
+    },
+    {
+      "name": "search words after anything in project",
+      "user": "Find anything in CRM about duplicate contact records",
+      "allowed_tools": ["ticket_search"],
+      "allowed_arguments": {"project_key": ["CRM"]},
+      "expected_tool": "ticket_search",
+      "expected_arguments": {"project_key": "CRM", "text": "duplicate contact records"}
+    },
+    {
+      "name": "search words on tickets in project",
+      "user": "Search POS for tickets on contactless payment declined",
+      "allowed_tools": ["ticket_search"],
+      "allowed_arguments": {"project_key": ["POS"]},
+      "expected_tool": "ticket_search",
+      "expected_arguments": {"project_key": "POS", "text": "contactless payment declined"}
+    },
+    {
+      "name": "search words with a number in project",
+      "user": "Get TEL tickets that reference SIP trunk 4021",
+      "allowed_tools": ["ticket_search"],
+      "allowed_arguments": {"project_key": ["TEL"]},
+      "expected_tool": "ticket_search",
+      "expected_arguments": {"project_key": "TEL", "text": "SIP trunk 4021"}
+    },
+    {
+      "name": "search words before a polite ending",
+      "user": "GIS issues mentioning map tiles missing, please",
+      "allowed_tools": ["ticket_search"],
+      "allowed_arguments": {"project_key": ["GIS"]},
+      "expected_tool": "ticket_search",
+      "expected_arguments": {"project_key": "GIS", "text": "map tiles missing"}
+    },
+    {
+      "name": "search words after within project",
+      "user": "Within AUD, look for tickets that mention evidence upload failing",
+      "allowed_tools": ["ticket_search"],
+      "allowed_arguments": {"project_key": ["AUD"]},
+      "expected_tool": "ticket_search",
+      "expected_arguments": {"project_key": "AUD", "text": "evidence upload failing"}
+    },
+    {
+      "name": "five search words in project",
+      "user": "Search MOB for app crash on login screen",
+      "allowed_tools": ["ticket_search"],
+      "allowed_arguments": {"project_key": ["MOB"]},
+      "expected_tool": "ticket_search",
+      "expected_arguments": {"project_key": "MOB", "text": "app crash on login screen"}
+    },
+    {
+      "name": "search phrase named as a phrase in project",
+      "user": "CRM tickets with the phrase quote approval stuck",
+      "allowed_tools": ["ticket_search"],
+      "allowed_arguments": {"project_key": ["CRM"]},
+      "expected_tool": "ticket_search",
+      "expected_arguments": {"project_key": "CRM", "text": "quote approval stuck"}
+    },
+    {
+      "name": "search words with status in project",
+      "user": "Show To Do tickets in IAM about token revocation",
+      "allowed_tools": ["ticket_search"],
+      "allowed_arguments": {"project_key": ["IAM"]},
+      "expected_tool": "ticket_search",
+      "expected_arguments": {"project_key": "IAM", "status": "To Do", "text": "token revocation"}
+    },
+    {
+      "name": "search words with priority in project",
+      "user": "Which ERP issues at High priority mention ledger import?",
+      "allowed_tools": ["ticket_search"],
+      "allowed_arguments": {"project_key": ["ERP"]},
+      "expected_tool": "ticket_search",
+      "expected_arguments": {"project_key": "ERP", "priority": "High", "text": "ledger import"}
+    },
+    {
+      "name": "search words without a project",
+      "user": "Find tickets anywhere that mention kiosk reboot loop",
+      "allowed_tools": ["ticket_search"],
+      "allowed_arguments": {},
+      "expected_tool": "ticket_search",
+      "expected_arguments": {"text": "kiosk reboot loop"}
+    },
+    {
+      "name": "search words with status without a project",
+      "user": "Done tickets mentioning VLAN 300 trunk",
+      "allowed_tools": ["ticket_search"],
+      "allowed_arguments": {},
+      "expected_tool": "ticket_search",
+      "expected_arguments": {"status": "Done", "text": "VLAN 300 trunk"}
+    },
+    {
+      "name": "project only stays without search words",
+      "user": "Show every ticket in POS",
+      "allowed_tools": ["ticket_search"],
+      "allowed_arguments": {"project_key": ["POS"]},
+      "expected_tool": "ticket_search",
+      "expected_arguments": {"project_key": "POS"}
+    },
+    {
+      "name": "project only question stays without search words",
+      "user": "What tickets does TEL have right now?",
+      "allowed_tools": ["ticket_search"],
+      "allowed_arguments": {"project_key": ["TEL"]},
+      "expected_tool": "ticket_search",
+      "expected_arguments": {"project_key": "TEL"}
+    }
+  ]
+}

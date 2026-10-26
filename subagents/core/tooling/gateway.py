@@ -301,6 +301,62 @@ def validate_grounded_arguments(
     )
 
 
+def wording_appears_in_request(
+    wording: str,
+    user_input: str,
+) -> bool:
+    """
+    True when the request contains these whole words in this order.
+
+    Free text is compared as words, not as an identifier: case and the
+    spacing or punctuation between words may differ ("High" in
+    "high-priority"), but no word may change, appear or disappear, and a
+    word never matches only part of a longer one ("print" is not "printer").
+    """
+
+    words = re.findall(r"\w+", wording.casefold())
+    if not words:
+        return False
+
+    pattern = r"\W+".join(re.escape(word) for word in words)
+    return re.search(rf"(?<!\w){pattern}(?!\w)", user_input.casefold()) is not None
+
+
+def validate_quoted_arguments(
+    user_input: str,
+    arguments: dict[str, Any],
+    quoted_arguments: list[str],
+) -> tuple[bool, str | None]:
+    """
+    Verify free-text filters the model copied from the ORIGINAL USER REQUEST.
+
+    Search words and a stated status or priority are not router-bound
+    targets, so the model writes them itself. They must still be the user's
+    own words: a changed word (port 8433 for port 8443) or an invented
+    filter would run a different search than the one requested.
+
+    Words are compared ignoring case and the spacing between them, as the
+    provider's text search does. Omitting a quoted argument stays allowed;
+    quoting is checked, not forced.
+    """
+
+    for field_name in quoted_arguments:
+        if field_name not in arguments:
+            continue
+
+        value = arguments[field_name]
+        if not isinstance(value, str) or not value.strip():
+            return False, f"{field_name} must be non-empty text."
+
+        if not wording_appears_in_request(value, user_input):
+            return False, (
+                f"The model produced {field_name} value '{value}', but those "
+                "words do not appear in the original request."
+            )
+
+    return True, None
+
+
 def resolve_policy_execution_arguments(
     *,
     tool_name: str,
@@ -724,6 +780,27 @@ class ToolGateway:
                     validation_error
                 ),
             )
+
+        # ========================================================
+        # REQUEST WORDING
+        # Free-text filters are the user's own words, not bound targets.
+        # ========================================================
+
+        quoted_arguments = tool.get("quoted_arguments", [])
+        if not isinstance(quoted_arguments, list) or not all(
+            isinstance(field_name, str) for field_name in quoted_arguments
+        ):
+            return gateway_result(ok=False, status="error",
+                decision_code="grounding_policy_invalid", error="Tool quoting policy is invalid.")
+
+        valid, validation_error = validate_quoted_arguments(
+            user_input=user_input,
+            arguments=arguments,
+            quoted_arguments=quoted_arguments,
+        )
+        if not valid:
+            return gateway_result(ok=False, status="denied",
+                decision_code="grounding_failed", error=validation_error)
 
         # ========================================================
         # EFFECTIVE TRUSTED POLICY

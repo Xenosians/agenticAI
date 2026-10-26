@@ -143,6 +143,17 @@ def test_built_in_and_held_out_cases_match_current_executable_capabilities():
     assert len(built_in) == 33
     assert len(held_out) == 40
     assert {case["expected_tool"] for case in held_out} == {case["expected_tool"] for case in built_in}
+    # The search set also loads against the executable contract, and every
+    # expected search word or filter is the request's own wording, so the
+    # gateway's quoting rule accepts each expected proposal.
+    from subagents.core.tooling.gateway import validate_quoted_arguments
+    from tools.registry import get_tool
+
+    _, _, searches = load_cases(root / "learning/evaluation/evals/jira-search-holdout.json")
+    assert {case["expected_tool"] for case in searches} == {"ticket_search"}
+    quoted = get_tool("ticket_search")["quoted_arguments"]
+    for case in searches:
+        assert validate_quoted_arguments(case["user"], case["expected_arguments"], quoted) == (True, None), case["name"]
 
 
 def test_existing_report_is_preserved_before_settings_or_inference(tmp_path, monkeypatch):

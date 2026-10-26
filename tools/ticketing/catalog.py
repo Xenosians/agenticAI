@@ -369,6 +369,14 @@ TICKETING_TOOLS = {
             "project_key",
         ],
 
+        # Search words and stated filters are copied from the request, so a
+        # changed or invented value is refused before the provider is called.
+        "quoted_arguments": [
+            "text",
+            "status",
+            "priority",
+        ],
+
         "parameters": {
             "text": {
                 "type":

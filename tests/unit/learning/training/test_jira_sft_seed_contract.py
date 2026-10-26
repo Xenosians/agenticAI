@@ -2,6 +2,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 from learning.training.jira_sft import (
     JIRA_HELD_OUT_EVAL_REQUESTS,
     _build_records,
@@ -14,6 +16,8 @@ from subagents.core.tooling.parser import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 HOLDOUT_CASES = PROJECT_ROOT / "learning/evaluation/evals/jira-specialist-holdout.json"
+SEARCH_HOLDOUT_CASES = PROJECT_ROOT / "learning/evaluation/evals/jira-search-holdout.json"
+HELD_OUT_CASE_FILES = (HOLDOUT_CASES, SEARCH_HOLDOUT_CASES)
 
 
 def _grounded_arguments():
@@ -233,11 +237,12 @@ def _request_template(request, arguments):
     return re.sub(r"\s+", " ", text.strip().casefold())
 
 
-def test_holdout_cases_share_no_request_template_or_value_with_training():
+@pytest.mark.parametrize("case_file", HELD_OUT_CASE_FILES, ids=lambda path: path.stem)
+def test_holdout_cases_share_no_request_template_or_value_with_training(case_file):
     # The held-out set scores generalization: a training record with the same
     # request shape, or the same ticket, label or search text, would turn it
     # into a replay check.
-    cases = json.loads(HOLDOUT_CASES.read_text(encoding="utf-8"))["cases"]
+    cases = json.loads(case_file.read_text(encoding="utf-8"))["cases"]
     records = [(record.user_request, _arguments(record)) for record in _build_records()]
     training_templates = {_request_template(request, arguments) for request, arguments in records}
     training_values = {str(value).casefold() for _, arguments in records for value in _values(arguments)}

@@ -23,6 +23,7 @@ from subagents.core.definitions.loader import load_agent_definition
 from subagents.core.tooling.capabilities import build_agent_capability_catalog
 from subagents.core.tooling.gateway import (
     validate_grounded_arguments,
+    validate_quoted_arguments,
 )
 from subagents.core.tooling.parser import parse_tool_calls
 from subagents.core.tooling.prompt import build_worker_system_prompt
@@ -165,6 +166,18 @@ def _proposal_fails_closed(
                 if error is None
                 else f"grounding_failed: {error}"
             ),
+        )
+
+    valid, error = validate_quoted_arguments(
+        user_input=user_input,
+        arguments=arguments,
+        quoted_arguments=tool.get("quoted_arguments", []),
+    )
+
+    if not valid:
+        return (
+            True,
+            f"grounding_failed: {error}",
         )
 
     policy_resolver = tool.get(

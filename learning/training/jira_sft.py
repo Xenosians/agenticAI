@@ -686,6 +686,33 @@ def _seed_examples(
             "List CS issues with priority Highest that mention backup failed",
             {"project_key": "CS", "priority": "Highest", "text": "backup failed"},
         ),
+        # Beside a bound project the model must still copy the search words.
+        # With few project-and-words targets among many project-only listings,
+        # candidates dropped the words and searched the whole project, so each
+        # phrasing below pairs a project with longer words and digits, while
+        # three project-only phrasings keep words from being invented.
+        ("Tickets in BUS describing print queue stuck", {"project_key": "BUS", "text": "print queue stuck"}),
+        ("Any SERV tickets on certificate renewal?", {"project_key": "SERV", "text": "certificate renewal"}),
+        ("Look in SCRUM for login loop tickets", {"project_key": "SCRUM", "text": "login loop"}),
+        ("LAB tickets referencing build 2417", {"project_key": "LAB", "text": "build 2417"}),
+        ("Bring up APP issues about mailbox full", {"project_key": "APP", "text": "mailbox full"}),
+        (
+            "For DEV, find tickets mentioning TLS handshake timeout after upgrade",
+            {"project_key": "DEV", "text": "TLS handshake timeout after upgrade"},
+        ),
+        ("Query INFRA tickets for disk quota exceeded on share", {"project_key": "INFRA", "text": "disk quota exceeded on share"}),
+        ("Check QA for issues named calendar sync conflict", {"project_key": "QA", "text": "calendar sync conflict"}),
+        ("Show OPS issues containing error 0x80070005", {"project_key": "OPS", "text": "error 0x80070005"}),
+        ("Locate SEC tickets about firewall rule 17 drift", {"project_key": "SEC", "text": "firewall rule 17 drift"}),
+        ("Look through HELP for SSO timeout reports", {"project_key": "HELP", "text": "SSO timeout"}),
+        ("ENG tickets where driver crash comes up", {"project_key": "ENG", "text": "driver crash"}),
+        ("List In Review KAN tickets about proxy error", {"project_key": "KAN", "status": "In Review", "text": "proxy error"}),
+        ("Medium priority PAY tickets about refund rounding", {"project_key": "PAY", "priority": "Medium", "text": "refund rounding"}),
+        ("Search every project for toner low", {"text": "toner low"}),
+        ("Find Done tickets that mention DNS lookup failure", {"status": "Done", "text": "DNS lookup failure"}),
+        ("Open the SERV ticket list", {"project_key": "SERV"}),
+        ("List tickets for BUS", {"project_key": "BUS"}),
+        ("Everything filed under SCRUM, please", {"project_key": "SCRUM"}),
     ]
 
     for user_request, arguments in search_variants:

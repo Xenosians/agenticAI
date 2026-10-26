@@ -80,6 +80,10 @@ def test_ticket_search_catalog_is_bounded_read_only():
         ]
     )
 
+    # Search words and stated filters are the user's own wording, so the
+    # gateway refuses a value the request does not contain.
+    assert tool["quoted_arguments"] == ["text", "status", "priority"]
+
 
 def test_mock_ticket_search_filters_results():
     service = (
