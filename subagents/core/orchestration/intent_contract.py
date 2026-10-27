@@ -15,6 +15,8 @@ from subagents.core.definitions.types import (
 from subagents.core.tooling.capabilities import (
     build_capability_spec,
     build_router_agent_spec,
+    trusted_argument_aliases,
+    uppercase_arguments,
 )
 
 from tools.registry import (
@@ -1541,6 +1543,12 @@ def parse_semantic_intent(
     required_argument_names: set[str] = set()
     derived_argument_names: set[str] = set()
 
+    # Other names users give trusted bounded values (for example a
+    # repository's folder name) and arguments compared upper-cased
+    # (Jira keys). Both come only from trusted capability metadata.
+    argument_aliases: dict[str, dict[str, str]] = {}
+    uppercase_argument_names: set[str] = set()
+
     for tool_name in allowed_tools:
 
         tool = (
@@ -1554,6 +1562,27 @@ def parse_semantic_intent(
             raise ValueError(
                 f"Unknown trusted capability: {tool_name}"
             )
+
+        for (
+            argument_name,
+            aliases,
+        ) in trusted_argument_aliases(
+            tool_name,
+            tool,
+        ).items():
+
+            argument_aliases.setdefault(
+                argument_name,
+                {},
+            ).update(
+                aliases
+            )
+
+        uppercase_argument_names.update(
+            uppercase_arguments(
+                tool
+            )
+        )
 
         allowed_tool_effects.add(
             trusted_tool_effect(
@@ -1817,29 +1846,99 @@ def parse_semantic_intent(
 
                 current_values: list[str] = []
 
+                aliases = argument_aliases.get(
+                    argument_name,
+                    {},
+                )
+
+                upper_case = (
+                    argument_name
+                    in uppercase_argument_names
+                )
+
                 for item in values:
+
+                    # A folder name the user typed binds the one
+                    # configured value it names, never anything else.
+                    alias_value = aliases.get(
+                        item.casefold()
+                    )
+
+                    if alias_value is not None:
+
+                        if _grounded_value_appears_in_request(
+                            item.casefold(),
+                            user_request.casefold(),
+                        ):
+                            current_values.append(
+                                alias_value
+                            )
+
+                        continue
+
+                    # A configured value the user named by one of its
+                    # folder names ("ai" requested as "agenticaiPersonal").
+                    named_value = next(
+                        (
+                            bound_value
+                            for (
+                                alias,
+                                bound_value,
+                            ) in aliases.items()
+                            if bound_value.casefold()
+                            == item.casefold()
+                            and _grounded_value_appears_in_request(
+                                alias,
+                                user_request.casefold(),
+                            )
+                        ),
+                        None,
+                    )
+
+                    if named_value is not None:
+
+                        current_values.append(
+                            named_value
+                        )
+
+                        continue
 
                     candidate = (
                         item.casefold()
-                        if allow_casefold_match
+                        if (
+                            allow_casefold_match
+                            or upper_case
+                        )
                         else item
+                    )
+
+                    request_text = (
+                        user_request.casefold()
+                        if upper_case
+                        else request_for_match
                     )
 
                     if (
                         _grounded_value_appears_in_request(
                             candidate,
-                            request_for_match,
+                            request_text,
                         )
                     ):
                         current_values.append(
-                            item
+                            item.upper()
+                            if upper_case
+                            else item
                         )
 
                 if current_values:
                     narrowed[
                         argument_name
                     ] = (
-                        current_values
+                        list(
+                            dict.fromkeys(
+                                current_values
+                            )
+                        )
                     )
 
             return narrowed

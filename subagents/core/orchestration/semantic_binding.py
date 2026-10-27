@@ -5,6 +5,7 @@ from typing import Any, Callable
 
 from subagents.core.definitions.types import SemanticIntent
 from subagents.core.orchestration.intent_contract import trusted_grounded_arguments
+from subagents.core.tooling.capabilities import normalize_argument_values
 from tools.registry import get_tool
 
 
@@ -144,9 +145,12 @@ def bind_authoritative_grounded_arguments(
         )
     )
 
+    # Trusted spelling rules (Jira keys are upper case) apply to the
+    # worker proposal first, so "sup-11" and "SUP-11" bind alike.
     rebound = (
-        dict(
-            arguments
+        normalize_argument_values(
+            tool,
+            arguments,
         )
     )
 

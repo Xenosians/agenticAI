@@ -33,6 +33,24 @@ def available_workspace_repositories(
     )
 
 
+def workspace_repository_aliases(
+) -> dict[
+    str,
+    list[str],
+]:
+    """
+    Configured repositories with the folder names people call them,
+    for example "ai" with "agenticaipersonal" and "itsm-agent".
+
+    Folder names only name configured repositories; they never add one.
+    """
+
+    return (
+        build_git_repository_registry()
+        .aliases()
+    )
+
+
 def resolve_workspace_repository(
     repository: (
         str

@@ -387,6 +387,9 @@ JIRA_TOOLS = {
 
         "parameters": {
             "project_id_or_key": {
+                "normalize":
+                    "uppercase",
+
                 "type":
                     "str",
 
@@ -437,6 +440,9 @@ JIRA_TOOLS = {
 
         "parameters": {
             "project_key": {
+                "normalize":
+                    "uppercase",
+
                 "type":
                     "str",
 
@@ -512,6 +518,9 @@ JIRA_TOOLS[
 
     "parameters": {
         "project_id_or_key": {
+            "normalize":
+                "uppercase",
+
             "type":
                 "str",
 
@@ -653,6 +662,9 @@ JIRA_TOOLS[
 
     "parameters": {
         "project_id_or_key": {
+            "normalize":
+                "uppercase",
+
             "type":
                 "str",
 
@@ -794,6 +806,9 @@ JIRA_TOOLS[
 
     "parameters": {
         "project_id_or_key": {
+            "normalize":
+                "uppercase",
+
             "type":
                 "str",
 

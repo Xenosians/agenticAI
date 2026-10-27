@@ -21,6 +21,10 @@ from subagents.core.orchestration.intent_contract import (
     trusted_tool_effect,
 )
 
+from subagents.core.tooling.capabilities import (
+    normalize_argument_values,
+)
+
 from tools.registry import (
     get_tool,
 )
@@ -371,6 +375,20 @@ class SemanticGuard:
                         "Trusted capability metadata could not "
                         "be resolved."
                     ),
+                )
+            )
+
+        # Bound values use trusted spelling (Jira keys upper case); compare
+        # the proposal in the same spelling.
+        if isinstance(
+            arguments,
+            dict,
+        ):
+
+            arguments = (
+                normalize_argument_values(
+                    tool,
+                    arguments,
                 )
             )
 

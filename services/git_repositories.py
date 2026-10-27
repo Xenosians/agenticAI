@@ -223,6 +223,98 @@ class GitRepositoryRegistry:
             )
         )
 
+    def aliases(
+        self,
+    ) -> dict[
+        str,
+        list[str],
+    ]:
+        """
+        Folder names that identify exactly one configured repository.
+
+        People name a repository by its folders, for example
+        "agenticaiPersonal" or "itsm-agent" for the repository
+        configured as "ai" at agenticaiPersonal/itsm-agent. Each folder
+        on a configured relative path is an alias of that repository,
+        unless it is a canonical name itself or lies on the path of
+        another repository too.
+
+        A repository inside a hidden folder (for example a runtime
+        workspace under ".runtime") is internal: its surrounding folder
+        names are generic words such as "workspace", so it is named only
+        by its configured name.
+
+        Aliases name configured repositories only; they never add one.
+        """
+
+        folders: dict[
+            str,
+            list[str],
+        ] = {}
+
+        for (
+            name,
+            configured_path,
+        ) in self.repositories.items():
+
+            requested = (
+                configured_path
+                .expanduser()
+            )
+
+            candidate = (
+                requested.resolve()
+                if requested.is_absolute()
+                else (
+                    self.root
+                    / requested
+                ).resolve()
+            )
+
+            # A path outside the workspace is refused by resolve(); it
+            # contributes no names either.
+            parts = (
+                candidate.relative_to(
+                    self.root
+                ).parts
+                if candidate.is_relative_to(
+                    self.root
+                )
+                else ()
+            )
+
+            folders[name] = (
+                []
+                if any(
+                    part.startswith(".")
+                    for part in parts
+                )
+                else [
+                    part.lower()
+                    for part in parts
+                    if REPOSITORY_ALIAS_PATTERN.fullmatch(part.lower())
+                ]
+            )
+
+        owners: dict[
+            str,
+            set[str],
+        ] = {}
+
+        for name, names in folders.items():
+            for alias in names:
+                owners.setdefault(alias, set()).add(name)
+
+        return {
+            name: sorted({
+                alias
+                for alias in folders[name]
+                if owners[alias] == {name}
+                and alias not in self.repositories
+            })
+            for name in self.available()
+        }
+
     def resolve(
         self,
         repository: (
@@ -241,6 +333,16 @@ class GitRepositoryRegistry:
                     repository
                 )
             )
+
+            if name not in self.repositories:
+                name = next(
+                    (
+                        canonical
+                        for canonical, aliases in self.aliases().items()
+                        if name in aliases
+                    ),
+                    name,
+                )
 
         configured_path = (
             self.repositories.get(

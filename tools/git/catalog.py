@@ -49,8 +49,12 @@ from tools.git.presentation import (
 def resolve_git_argument_values(
 ) -> dict[
     str,
-    list[str],
+    dict[
+        str,
+        list[str],
+    ],
 ]:
+    """Configured repositories, each with the folder names users call it by."""
 
     registry = (
         build_git_repository_registry()
@@ -58,7 +62,7 @@ def resolve_git_argument_values(
 
     return {
         "repository":
-            registry.available(),
+            registry.aliases(),
     }
 
 

@@ -67,6 +67,9 @@ SERVICE_DESK_TOOLS = {
         "grounded_arguments": ["request_key"],
         "parameters": {
             "request_key": {
+                "normalize":
+                    "uppercase",
+
                 "type": "str",
                 "description": "Exact service desk request or issue key supplied by the user, such as SUP-12.",
             },

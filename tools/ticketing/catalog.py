@@ -290,6 +290,9 @@ def format_ticket_mutation_changes_result(
 
 
 TICKET_KEY_PARAMETER = {
+    "normalize":
+        "uppercase",
+
     "type":
         "str",
 
@@ -326,6 +329,9 @@ TICKETING_TOOLS = {
 
         "parameters": {
             "ticket_key": {
+                "normalize":
+                    "uppercase",
+
                 "type":
                     "str",
 
@@ -388,6 +394,9 @@ TICKETING_TOOLS = {
             },
 
             "project_key": {
+                "normalize":
+                    "uppercase",
+
                 "type":
                     "str",
 
@@ -456,6 +465,9 @@ TICKETING_TOOLS = {
 
         "parameters": {
             "ticket_key": {
+                "normalize":
+                    "uppercase",
+
                 "type":
                     "str",
 
@@ -508,6 +520,9 @@ TICKETING_TOOLS = {
 
         "parameters": {
             "ticket_key": {
+                "normalize":
+                    "uppercase",
+
                 "type":
                     "str",
 
@@ -574,6 +589,9 @@ TICKETING_TOOLS = {
 
         "parameters": {
             "ticket_key": {
+                "normalize":
+                    "uppercase",
+
                 "type":
                     "str",
 
@@ -646,6 +664,9 @@ TICKETING_TOOLS = {
 
         "parameters": {
             "project_key": {
+                "normalize":
+                    "uppercase",
+
                 "type":
                     "str",
 
@@ -725,6 +746,9 @@ TICKETING_TOOLS = {
 
         "parameters": {
             "ticket_key": {
+                "normalize":
+                    "uppercase",
+
                 "type":
                     "str",
 
@@ -795,6 +819,9 @@ TICKETING_TOOLS = {
 
         "parameters": {
             "ticket_key": {
+                "normalize":
+                    "uppercase",
+
                 "type":
                     "str",
 
@@ -970,6 +997,9 @@ TICKETING_TOOLS = {
 
         "parameters": {
             "ticket_key": {
+                "normalize":
+                    "uppercase",
+
                 "type":
                     "str",
 
@@ -980,6 +1010,9 @@ TICKETING_TOOLS = {
             },
 
             "other_ticket_key": {
+                "normalize":
+                    "uppercase",
+
                 "type":
                     "str",
 

@@ -31,28 +31,39 @@ ToolLookup = Callable[
 ]
 
 
-def _resolve_argument_values(
+def _resolve_bounded_values(
     *,
     tool_name: str,
     tool: dict,
 ) -> dict[
     str,
-    list[str],
+    dict[
+        str,
+        list[str],
+    ],
 ]:
     """
-    Resolve optional trusted bounded argument values.
+    Resolve optional trusted bounded argument values with their aliases.
 
     Tool implementations may expose:
 
         argument_values_resolver
 
-    returning:
+    returning, per argument, either the allowed values:
 
         {
             "argument_name": [
                 "allowed-value-1",
                 "allowed-value-2",
             ]
+        }
+
+    or the allowed values with the other names users give them:
+
+        {
+            "repository": {
+                "ai": ["agenticaipersonal", "itsm-agent"],
+            }
         }
 
     These values are model-facing metadata only.
@@ -98,7 +109,10 @@ def _resolve_argument_values(
 
     normalized: dict[
         str,
-        list[str],
+        dict[
+            str,
+            list[str],
+        ],
     ] = {}
 
     for (
@@ -117,10 +131,29 @@ def _resolve_argument_values(
                 "returned an invalid field."
             )
 
-        if not isinstance(
+        if isinstance(
+            values,
+            dict,
+        ):
+
+            entries = list(
+                values.items()
+            )
+
+        elif isinstance(
             values,
             list,
         ):
+
+            entries = [
+                (
+                    value,
+                    [],
+                )
+                for value in values
+            ]
+
+        else:
 
             raise ValueError(
                 f"Capability '{tool_name}' "
@@ -128,15 +161,15 @@ def _resolve_argument_values(
                 f"'{field_name}' must be a list."
             )
 
-        normalized_values: list[
-            str
-        ] = []
+        normalized_values: dict[
+            str,
+            list[str],
+        ] = {}
 
-        seen: set[
-            str
-        ] = set()
-
-        for value in values:
+        for (
+            value,
+            aliases,
+        ) in entries:
 
             if not isinstance(
                 value,
@@ -163,17 +196,38 @@ def _resolve_argument_values(
                     f"'{field_name}'."
                 )
 
-            if normalized_value in seen:
+            if (
+                not isinstance(
+                    aliases,
+                    list,
+                )
+                or not all(
+                    isinstance(alias, str)
+                    and alias.strip()
+                    for alias in aliases
+                )
+            ):
 
-                continue
+                raise ValueError(
+                    f"Capability '{tool_name}' "
+                    f"contains invalid aliases "
+                    f"for '{field_name}'."
+                )
 
-            seen.add(
-                normalized_value
+            known = normalized_values.setdefault(
+                normalized_value,
+                [],
             )
 
-            normalized_values.append(
-                normalized_value
-            )
+            for alias in aliases:
+
+                folded = alias.strip().casefold()
+
+                if folded not in known:
+
+                    known.append(
+                        folded
+                    )
 
         if not normalized_values:
 
@@ -183,6 +237,33 @@ def _resolve_argument_values(
                 f"'{field_name}' are empty."
             )
 
+        # An alias must name exactly one value and never shadow a value.
+        values_folded = {
+            value.casefold()
+            for value in normalized_values
+        }
+
+        seen_aliases: set[str] = set()
+
+        for aliases in normalized_values.values():
+
+            for alias in aliases:
+
+                if (
+                    alias in values_folded
+                    or alias in seen_aliases
+                ):
+
+                    raise ValueError(
+                        f"Capability '{tool_name}' "
+                        f"alias '{alias}' for "
+                        f"'{field_name}' is ambiguous."
+                    )
+
+                seen_aliases.add(
+                    alias
+                )
+
         normalized[
             field_name.strip()
         ] = (
@@ -190,6 +271,178 @@ def _resolve_argument_values(
         )
 
     return normalized
+
+
+def _resolve_argument_values(
+    *,
+    tool_name: str,
+    tool: dict,
+) -> dict[
+    str,
+    list[str],
+]:
+    """Trusted bounded values per argument, in their canonical spelling."""
+
+    return {
+        field_name: list(
+            values
+        )
+        for (
+            field_name,
+            values,
+        ) in _resolve_bounded_values(
+            tool_name=tool_name,
+            tool=tool,
+        ).items()
+    }
+
+
+def trusted_argument_aliases(
+    tool_name: str,
+    tool: dict,
+) -> dict[
+    str,
+    dict[
+        str,
+        str,
+    ],
+]:
+    """
+    Other names users give trusted bounded values, case-folded.
+
+    Example:
+
+        repository:
+            "agenticaipersonal" -> "ai"
+
+    An alias only names a configured value; it never adds one.
+    """
+
+    return {
+        field_name: {
+            alias: value
+            for (
+                value,
+                aliases,
+            ) in values.items()
+            for alias in aliases
+        }
+        for (
+            field_name,
+            values,
+        ) in _resolve_bounded_values(
+            tool_name=tool_name,
+            tool=tool,
+        ).items()
+        if any(
+            values.values()
+        )
+    }
+
+
+def normalize_argument_values(
+    tool: dict,
+    arguments: dict[
+        str,
+        Any,
+    ],
+) -> dict[
+    str,
+    Any,
+]:
+    """
+    Apply trusted per-argument spelling rules before any check.
+
+    A parameter declaring "normalize": "uppercase" (Jira project,
+    ticket and request keys) is upper-cased, so "sup-11" and
+    "SUP-11" are the same target everywhere. Other values are
+    returned unchanged.
+    """
+
+    parameters = (
+        tool.get(
+            "parameters"
+        )
+        or {}
+    )
+
+    normalized = dict(
+        arguments
+    )
+
+    for (
+        argument_name,
+        value,
+    ) in arguments.items():
+
+        parameter = parameters.get(
+            argument_name
+        )
+
+        if (
+            not isinstance(
+                parameter,
+                dict,
+            )
+            or parameter.get(
+                "normalize"
+            )
+            != "uppercase"
+        ):
+
+            continue
+
+        if isinstance(
+            value,
+            str,
+        ):
+
+            normalized[
+                argument_name
+            ] = value.upper()
+
+        elif isinstance(
+            value,
+            list,
+        ):
+
+            normalized[
+                argument_name
+            ] = [
+                item.upper()
+                if isinstance(item, str)
+                else item
+                for item in value
+            ]
+
+    return normalized
+
+
+def uppercase_arguments(
+    tool: dict,
+) -> set[str]:
+    """Arguments whose values are compared and stored upper-cased."""
+
+    return {
+        argument_name
+        for (
+            argument_name,
+            parameter,
+        ) in (
+            tool.get(
+                "parameters"
+            )
+            or {}
+        ).items()
+        if isinstance(
+            parameter,
+            dict,
+        )
+        and parameter.get(
+            "normalize"
+        )
+        == "uppercase"
+    }
 
 
 def _build_argument_schema(
@@ -230,6 +483,20 @@ def _build_argument_schema(
             parameters
         )
     )
+
+    # Spelling rules are applied by trusted code, not followed by the
+    # model; keep them out of the model-facing schema.
+    for field_schema in argument_schema.values():
+
+        if isinstance(
+            field_schema,
+            dict,
+        ):
+
+            field_schema.pop(
+                "normalize",
+                None,
+            )
 
     bounded_values = (
         _resolve_argument_values(

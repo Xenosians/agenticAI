@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from services.workspace_repositories import (
-    available_workspace_repositories,
+    workspace_repository_aliases,
 )
 
 
@@ -22,10 +22,14 @@ WORKSPACE_REPOSITORY_PARAMETER = {
 def resolve_workspace_argument_values(
 ) -> dict[
     str,
-    list[str],
+    dict[
+        str,
+        list[str],
+    ],
 ]:
     """
-    Expose only trusted logical repository identifiers.
+    Expose only trusted logical repository identifiers, each with the
+    folder names users call it by.
 
     These values are model-facing bounded metadata only.
 
@@ -35,5 +39,5 @@ def resolve_workspace_argument_values(
 
     return {
         "repository":
-            available_workspace_repositories(),
+            workspace_repository_aliases(),
     }

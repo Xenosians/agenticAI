@@ -13,6 +13,11 @@ from subagents.core.definitions.types import (
     AgentDefinition,
 )
 
+from subagents.core.tooling.capabilities import (
+    normalize_argument_values,
+    trusted_argument_aliases,
+)
+
 
 VALID_RISKS = {
     "read",
@@ -207,6 +212,17 @@ def validate_grounded_arguments(
     grounded_arguments: list[
         str
     ],
+    *,
+    aliases: (
+        dict[
+            str,
+            dict[
+                str,
+                str,
+            ],
+        ]
+        | None
+    ) = None,
 ) -> tuple[
     bool,
     str | None,
@@ -232,9 +248,19 @@ def validate_grounded_arguments(
         specialist proposes:
             ["a.py", "b.py", "secret.py"]
 
+    A trusted bounded value is also grounded when the request names
+    it by one of its trusted aliases, for example the repository
+    "ai" requested as "agenticaiPersonal". Aliases come only from
+    trusted capability metadata and name exactly one value.
+
     Missing grounded fields remain allowed here because requiredness
     belongs to capability policy/schema.
     """
+
+    trusted_aliases = (
+        aliases
+        or {}
+    )
 
     for field_name in (
         grounded_arguments
@@ -275,25 +301,46 @@ def validate_grounded_arguments(
                 error,
             )
 
+        field_aliases = (
+            trusted_aliases.get(
+                field_name,
+                {},
+            )
+        )
+
         for identifier in values:
 
-            if not (
-                identifier_appears_in_request(
-                    identifier,
-                    user_input,
-                )
+            if identifier_appears_in_request(
+                identifier,
+                user_input,
             ):
 
-                return (
-                    False,
-                    (
-                        "The model produced "
-                        f"{field_name} value "
-                        f"'{identifier}', but that "
-                        "identifier does not appear "
-                        "exactly in the original request."
-                    ),
+                continue
+
+            if any(
+                bound_value == identifier
+                and identifier_appears_in_request(
+                    alias,
+                    user_input,
                 )
+                for (
+                    alias,
+                    bound_value,
+                ) in field_aliases.items()
+            ):
+
+                continue
+
+            return (
+                False,
+                (
+                    "The model produced "
+                    f"{field_name} value "
+                    f"'{identifier}', but that "
+                    "identifier does not appear "
+                    "exactly in the original request."
+                ),
+            )
 
     return (
         True,
@@ -699,6 +746,10 @@ class ToolGateway:
             return gateway_result(ok=False, status="denied",
                 decision_code="unknown_arguments", error="Proposal contains arguments outside the trusted capability schema.")
 
+        # Trusted spelling rules (Jira keys are upper case) apply before
+        # grounding, policy, approval and the provider see the values.
+        arguments = normalize_argument_values(tool, arguments)
+
         # ========================================================
         # USER-REQUEST GROUNDING
         # ========================================================
@@ -764,6 +815,13 @@ class ToolGateway:
 
                 grounded_arguments=(
                     grounded_arguments
+                ),
+
+                aliases=(
+                    trusted_argument_aliases(
+                        tool_name,
+                        tool,
+                    )
                 ),
             )
         )
