@@ -212,9 +212,19 @@ def sign_in(page, frontend_url: str, email: str, password: str, timeout_ms: int)
 
 
 def new_chat(page, timeout_ms: int) -> None:
-    page.get_by_title("More").click()
-    page.get_by_role("button", name="New chat", exact=True).click()
+    """Open an empty chat through the header menu's command.
+
+    A saved chat that kept its default title is also a button named
+    "New chat", so the command is located inside the menu. The menu is only
+    opened when closed: a case that failed after opening it leaves it open.
+    """
+    more = page.get_by_role("button", name="More", exact=True)
+    if more.get_attribute("aria-expanded") != "true":
+        more.click()
+    page.locator(".header-menu").get_by_role("button", name="New chat", exact=True).click()
     page.locator("#messageInput").wait_for(state="visible", timeout=timeout_ms)
+    # The command is asynchronous: wait until the previous chat's turns are gone.
+    page.locator(".message-row").first.wait_for(state="detached", timeout=timeout_ms)
     page.wait_for_timeout(300)
 
 

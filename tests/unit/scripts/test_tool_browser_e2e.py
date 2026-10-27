@@ -112,3 +112,73 @@ def test_initial_wait_without_approval_qualifier_keeps_existing_behavior(observa
 
     assert traffic.wait(page, "http://fixture.invalid", "fixture-job", {"waiting_approval"}, 1) is waiting
     assert page.waits == []
+
+
+# The live workspace has two buttons named exactly "New chat" once the header
+# menu is open: the menu's command and any saved chat that kept its default
+# title (agenticFrontend src/agenticFrontend.nim renderHeaderMenu,
+# src/components/sidebar.nim renderSavedChat; its icon is aria-hidden).
+WORKSPACE_WITH_A_SAVED_CHAT_NAMED_NEW_CHAT = """
+<aside class="sidebar">
+  <button class="new-session"><span>+</span>New chat</button>
+  <nav class="chat-nav-section">
+    <div class="chat-nav-row">
+      <button class="chat-nav-main" onclick="window.clicks.push('saved chat')">
+        <span class="nav-icon" aria-hidden="true">&#9671;</span><span class="chat-nav-title">New chat</span>
+      </button>
+    </div>
+  </nav>
+</aside>
+<header>
+  <button id="workspaceMoreButton" title="More" aria-label="More" aria-expanded="false"
+          onclick="toggleMenu()">&#8943;</button>
+  <div class="header-menu" hidden>
+    <button onclick="openEmptyChat()">New chat</button>
+  </div>
+</header>
+<section class="conversation"><div class="message-row user">An earlier turn</div></section>
+<textarea id="messageInput"></textarea>
+<script>
+  window.clicks = [];
+  function toggleMenu() {
+    const menu = document.querySelector('.header-menu');
+    menu.hidden = !menu.hidden;
+    document.getElementById('workspaceMoreButton').setAttribute('aria-expanded', String(!menu.hidden));
+  }
+  function openEmptyChat() {
+    window.clicks.push('menu');
+    setTimeout(() => document.querySelectorAll('.message-row').forEach(row => row.remove()), 50);
+  }
+</script>
+"""
+
+
+@pytest.fixture
+def workspace_page():
+    playwright_api = pytest.importorskip("playwright.sync_api")
+    with playwright_api.sync_playwright() as playwright:
+        chromium = playwright.chromium.launch(headless=True)
+        try:
+            page = chromium.new_page()
+            page.set_content(WORKSPACE_WITH_A_SAVED_CHAT_NAMED_NEW_CHAT)
+            yield page
+        finally:
+            chromium.close()
+
+
+def test_new_chat_uses_the_menu_command_not_a_saved_chat_with_the_same_name(workspace_page):
+    browser.new_chat(workspace_page, 2000)
+
+    assert workspace_page.evaluate("window.clicks") == ["menu"]
+    assert workspace_page.locator(".message-row").count() == 0
+
+
+def test_new_chat_keeps_an_already_open_menu_open(workspace_page):
+    # A case that failed after opening the menu leaves it open; toggling it
+    # closed again would leave only the saved chat to click.
+    workspace_page.get_by_role("button", name="More", exact=True).click()
+
+    browser.new_chat(workspace_page, 2000)
+
+    assert workspace_page.evaluate("window.clicks") == ["menu"]
+    assert workspace_page.locator(".message-row").count() == 0

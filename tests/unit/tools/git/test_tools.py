@@ -589,6 +589,52 @@ def test_git_diff_is_explicitly_unstaged(
     )
 
 
+def test_git_diff_returns_the_exact_patch_bytes(
+    monkeypatch,
+):
+    # A patch ends with a newline, and a diff of a file with significant
+    # leading/trailing whitespace must not be altered; the receipt has to
+    # equal what `git diff` printed so it can be compared byte for byte.
+    install_target(
+        monkeypatch
+    )
+
+    patch = (
+        "diff --git a/a b/a\n"
+        "--- a/a\n"
+        "+++ b/a\n"
+        "@@ -1 +1,2 @@\n"
+        " keep\n"
+        "+  \n"
+    )
+
+    install_runner(
+        monkeypatch,
+        stdout=patch,
+    )
+
+    result = (
+        git_tools
+        .workspace_git_diff(
+            repository="frontend"
+        )
+    )
+
+    assert (
+        result[
+            "diff"
+        ]
+        == patch
+    )
+
+    assert (
+        result[
+            "has_changes"
+        ]
+        is True
+    )
+
+
 def test_git_changed_files_includes_all_working_tree_classes(
     monkeypatch,
 ):

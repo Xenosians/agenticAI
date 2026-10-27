@@ -1306,6 +1306,8 @@ def _workspace_git_diff(
         )
     )
 
+    # The patch is returned exactly as Git printed it, so it can be applied
+    # and compared byte for byte; only change detection ignores whitespace.
     return {
         "ok":
             True,
@@ -1320,7 +1322,7 @@ def _workspace_git_diff(
             scope,
 
         "diff":
-            diff.strip(),
+            diff,
 
         "has_changes":
             bool(
