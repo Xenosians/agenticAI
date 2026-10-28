@@ -200,6 +200,31 @@ gain search words. Its requests, projects and words are absent from training
 (`docs/ticketing.md`). The strict check compares words exactly, including
 case; the gateway and Jira's text search ignore case.
 
+## Learning plans for a future web/app control
+
+`services/learning_control` prepares SFT, DPO and PPO candidate plans and
+continual-learning evidence cycles as data only. It starts no process, loads no
+model and promotes nothing. The caller supplies the session owner and a trusted
+registry that resolves resource ids; request bodies carry ids, never paths or an
+owner. Another owner's resource is reported exactly like a missing one.
+
+| Method | Required inputs (resource kind) | Entry point recorded in the plan |
+|---|---|---|
+| SFT | model, `adaptation_recipe`, `evaluation_suite` | `scripts/train_recipe.py` |
+| DPO | model, `dpo_settings`, `preference_train`, `preference_validation`, `evaluation_suite` | `scripts/train_preferences.py` |
+| PPO (Hub only) | model, `ppo_settings`, `adapter_checkpoint`, `simulator_episodes`, `evaluation_suite` | `scripts/train_ppo.py` |
+| Evidence cycle | `trajectory_ledger`, `correction_ledger`, `review_ledger`, `context_ledger` | `learning/cli/run_continual_cycle.py` |
+
+Method, role and tuning follow the matrix above. A plan is refused when inputs
+have different base/tokenizer/prompt/catalog identities, when training and
+evaluation records overlap (including DPO train/validation), or when the
+evaluation suite is empty. Unreviewed, unlicensed or reference-only sources mark
+it `blocked`. A resource observation counts only when it is less than five
+minutes old and matches the plan's model and configuration. Without one, the
+resource state is `unknown`. Every plan also lists trainer admission, host
+dispatch, fixed evaluation and separate promotion as outstanding gates, so a
+prepared plan is not evidence that training ran or may run.
+
 ## Public retrieval snapshot
 
 Set `KNOWLEDGE_SNAPSHOT_PATH` and `KNOWLEDGE_SNAPSHOT_SHA256` alongside the local
