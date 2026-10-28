@@ -1147,7 +1147,7 @@ async def execute_job(
             )
         )
 
-        from services.extensions.context import owner_execution
+        from services.extensions.context import answer_references, owner_execution
         from services.job_progress import job_progress
         async with job_progress(runtime.settings, job_id, payload.attempt):
             with owner_execution(payload.user_id, payload.message) as (profile, has_dataset):
@@ -1158,6 +1158,8 @@ async def execute_job(
                 result = await runtime.hub.run(
                     payload.message, context=conversation_context, **workflow_options,
                 )
+                # Citations of the reference passages a model was actually given.
+                references = answer_references()
                 from api.workflows import persist_workflow_continuation
                 workflow = persist_workflow_continuation(runtime, payload, result)
 
@@ -1169,6 +1171,9 @@ async def execute_job(
 
         if workflow is not None:
             result_dict["workflow"] = workflow
+
+        if references:
+            result_dict["references"] = references
 
         print(
             "[JOB] AI finished "

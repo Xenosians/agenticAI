@@ -572,6 +572,12 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
             replaces=replaces))
     if action == "search":
         return {"hits": store.search(owner, payload["id"], str(payload.get("query", ""))[:200])}
+    if action == "resolve":
+        # Reopen one cited passage: the owner's dataset at the exact cited version.
+        chunk, digest = payload.get("chunk"), payload.get("sha256")
+        if type(chunk) is not int or not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest):
+            raise ValueError("Invalid citation")
+        return {"hit": store.resolve(owner, payload["id"], chunk, digest)}
     if action == "workflow_validate":
         from services.extensions.workflow import admit_workflow
         from tools.registry import TOOLS

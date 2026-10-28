@@ -123,6 +123,21 @@ history, never the semantic authority or permission inputs. Networking inference
 does not receive this additional dataset. Retrieval currently uses local FTS;
 embedding/vector-provider connectors remain future work.
 
+### Cited answers
+
+A completed answer records `result.references`: one citation for each reference
+passage its model calls were actually given, in the order given, at most ten and
+without passage text. A citation has exactly `locator`, `dataset_id`, `chunk`,
+`sha256`, `content_sha256`, `source` and `license`. Phoenix keeps only well-formed
+citations whose locator matches their own dataset, chunk and version, and stores
+them with the chat turn so they survive a reload. Each request starts with an
+empty list, so a continuation never inherits another request's citations.
+
+`resolve` with payload `{"id", "chunk", "sha256"}` reopens one cited passage for
+its owner only, at that exact version. A malformed citation is refused before the
+store is read. The reopened passage is still `untrusted_retrieval`: the client
+shows it quoted under the answer, never as an instruction.
+
 Training JSONL rows must contain only a `messages` array of role/content pairs,
 ending with an assistant target. At least 10 distinct inputs are required.
 Conflicting targets are rejected and inputs are split deterministically into
@@ -169,7 +184,7 @@ require CSRF. Phoenix derives the owner from the session and calls the AI's
 execution endpoints also require that token. Keep both services' tokens aligned.
 
 Commands: `list`, `model`, `select`, `delete`, `probe`, `dataset`, `dataset_url`,
-`search`, `export_dataset`, `workflow_validate`, `upload_begin`, `upload_chunk`,
+`search`, `resolve`, `export_dataset`, `workflow_validate`, `upload_begin`, `upload_chunk`,
 `upload_finish`. Each command has `action` and `payload`; only the trusted internal
 envelope contains `owner`.
 

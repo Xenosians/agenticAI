@@ -23,6 +23,12 @@ retrieval_evidence: ContextVar[
     default=[],
 )
 
+# Citations of the passages this request actually disclosed to a model, in the
+# order first given. None outside a request; content never enters this list.
+disclosed_references: ContextVar[list | None] = ContextVar("disclosed_references", default=None)
+MAX_ANSWER_REFERENCES = 10
+CITATION_FIELDS = ("locator", "dataset_id", "chunk", "sha256", "content_sha256", "source", "license")
+
 # Resource identifiers only. Continuations pin the original owner selection
 # without serializing API credentials or changing the user's preferences.
 execution_selection: ContextVar[dict | None] = ContextVar("execution_selection", default=None)
@@ -115,6 +121,7 @@ def owner_execution(
 
     selection_token = execution_selection.set({**selection, "roles": dict(role_ids)})
     roles_token = execution_roles.set(roles)
+    references_token = disclosed_references.set([])
 
     try:
         yield (
@@ -127,6 +134,7 @@ def owner_execution(
         )
 
     finally:
+        disclosed_references.reset(references_token)
         execution_roles.reset(roles_token)
         execution_selection.reset(selection_token)
         retrieval_evidence.reset(
@@ -166,6 +174,8 @@ def with_retrieval(
     if not bounded:
         return messages
 
+    _record_disclosure(bounded)
+
     reference = {
         "role":
             "user",
@@ -202,6 +212,30 @@ def with_retrieval(
             -1
         ],
     ]
+
+
+def _record_disclosure(bounded: list[dict]) -> None:
+    """Remember the citation of every versioned passage given to a model.
+
+    Only full owner-retrieval.v1 hits are citable; unversioned evidence is
+    still quoted as untrusted text but never presented as a source.
+    """
+    sink = disclosed_references.get()
+    if sink is None:
+        return
+    seen = {item["locator"] for item in sink}
+    for hit in bounded:
+        if hit.get("schema") != "owner-retrieval.v1" or hit["locator"] in seen:
+            continue
+        if len(sink) >= MAX_ANSWER_REFERENCES:
+            return
+        sink.append({field: hit[field] for field in CITATION_FIELDS})
+        seen.add(hit["locator"])
+
+
+def answer_references() -> list[dict]:
+    """Citations disclosed so far in this request, as an independent copy."""
+    return [dict(item) for item in (disclosed_references.get() or [])]
 
 
 @contextmanager
