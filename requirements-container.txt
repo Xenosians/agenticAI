@@ -1,0 +1,6 @@
+# Container API additions to the existing application dependencies.
+# These two versions match the inspected working runtime; this is not a full
+# transitive lock. Produce/review a complete lock before release acceptance.
+-r requirements.txt
+fastapi==0.141.1
+uvicorn==0.52.4

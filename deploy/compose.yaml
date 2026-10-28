@@ -1,0 +1,177 @@
+# Single-host application foundation. Lab providers remain separate deployments.
+# Run with an explicit reviewed --env-file; no production defaults or secrets.
+name: ${COMPOSE_PROJECT_NAME:-janus}
+
+x-backend-build: &backend-build
+  context: ${BACKEND_CONTEXT:-../../../agenticBackend/itsm_backend}
+  args:
+    ELIXIR_BUILD_IMAGE: ${ELIXIR_BUILD_IMAGE:?Set the reviewed Elixir build image}
+    DEBIAN_RUNTIME_IMAGE: ${DEBIAN_RUNTIME_IMAGE:?Set the matching Debian runtime image}
+
+x-backend-env: &backend-env
+  PHX_SERVER: "true"
+  PHX_BIND_IP: 0.0.0.0
+  PORT: "4000"
+  RELEASE_DISTRIBUTION: none
+  RELEASE_TMP: /tmp/janus-release
+  PHX_PUBLIC_URL: ${PUBLIC_ORIGIN:?Set the external HTTPS origin}
+  APP_FRONTEND_URL: ${PUBLIC_ORIGIN:?Set the external HTTPS origin}
+  CORS_ALLOWED_ORIGINS: ${PUBLIC_ORIGIN:?Set the external HTTPS origin}
+  AUTH_COOKIE_SECURE: "true"
+  AI_SERVICE_URL: http://ai:8000
+  SURREALDB_URL: http://database:8000
+
+services:
+  database:
+    image: ${SURREALDB_IMAGE:?Set the reviewed SurrealDB image}
+    user: "10001:10001"
+    command: [start, --bind, "0.0.0.0:8000", "rocksdb:/data/database.db"]
+    env_file:
+      - path: ${DATABASE_ENV_FILE:?Set a private database credential file}
+        required: true
+    volumes:
+      - type: bind
+        source: ${DATABASE_DATA_ROOT:?Set a dedicated persistent database directory}
+        target: /data
+        bind: {create_host_path: false}
+    networks: [service]
+    healthcheck:
+      test: [CMD, /surreal, isready, --endpoint, "http://127.0.0.1:8000"]
+      interval: 15s
+      timeout: 5s
+      start_period: 15s
+      retries: 4
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+
+  backend:
+    image: ${BACKEND_IMAGE:?Set the application backend image tag}
+    build: *backend-build
+    env_file:
+      - path: ${BACKEND_ENV_FILE:?Set a private backend runtime env file}
+        required: true
+    environment: *backend-env
+    depends_on:
+      database: {condition: service_healthy}
+    networks: [service]
+    read_only: true
+    tmpfs: [/tmp]
+    stop_grace_period: 45s
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+
+  frontend:
+    image: ${FRONTEND_IMAGE:?Set the application frontend image tag}
+    build:
+      context: ${FRONTEND_CONTEXT:-../../../agenticFrontend}
+      args:
+        NIM_BUILD_IMAGE: ${NIM_BUILD_IMAGE:?Set the reviewed Nim build image}
+        NGINX_RUNTIME_IMAGE: ${NGINX_RUNTIME_IMAGE:?Set the reviewed Alpine nginx image}
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST:?Set the certificate hostname}
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?Set the external HTTPS origin}
+    depends_on:
+      backend: {condition: service_started}
+    ports:
+      - target: 8443
+        published: ${PUBLIC_TLS_PORT:-8443}
+        host_ip: ${PUBLIC_BIND_IP:-127.0.0.1}
+        protocol: tcp
+    volumes:
+      - type: bind
+        source: ${TLS_CERT_FILE:?Set a trusted TLS certificate file}
+        target: /run/tls/tls.crt
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${TLS_KEY_FILE:?Set the TLS private key file}
+        target: /run/tls/tls.key
+        read_only: true
+        bind: {create_host_path: false}
+    networks:
+      service:
+        aliases: ["${PUBLIC_HOST:?Set the certificate hostname}"]
+    tmpfs: [/tmp]
+    stop_grace_period: 20s
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+
+  ai:
+    image: ${AI_IMAGE:?Set the application AI image tag}
+    build:
+      context: ${AI_CONTEXT:-..}
+      args:
+        PYTHON_RUNTIME_IMAGE: ${PYTHON_RUNTIME_IMAGE:?Set the reviewed Python runtime image}
+    env_file:
+      - path: ${AI_ENV_FILE:?Set a private AI runtime env file}
+        required: true
+    environment:
+      # HTTPS is retained on internal Phoenix requests; this port is not public.
+      PHOENIX_BASE_URL: "https://${PUBLIC_HOST:?Set the certificate hostname}:9443"
+      COMPLETION_OUTBOX_PATH: /state/completion_outbox.sqlite3
+      APPROVAL_STORE_PATH: /state/approvals.sqlite3
+      EXTENSION_STORAGE_ROOT: /state/extensions
+      USER_MODEL_ROOT: /state/user-models
+      MODEL_ARTIFACT_CACHE_ROOT: /state/model-cache
+      CONTINUAL_STATE_DB: /state/learning/continuous/state.sqlite3
+      LEARNING_TRAJECTORY_PATH: /state/learning/trajectories.jsonl
+      LEARNING_CORRECTION_PATH: /state/learning/corrections.jsonl
+      MAILBOX_PROVISIONING_LOCK_PATH: /state/mailbox-provisioning.lock
+      PROCESS_WORKSPACE_ROOT: /workspace
+      HF_HOME: /state/huggingface
+      XDG_CACHE_HOME: /state/cache
+      TORCH_HOME: /state/torch
+      TRITON_CACHE_DIR: /state/triton
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    depends_on:
+      backend: {condition: service_started}
+      frontend: {condition: service_started}
+    volumes:
+      - type: bind
+        source: ${MODELS_ROOT:?Set the acquired model directory}
+        target: /models
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${AI_STATE_ROOT:?Set a dedicated writable AI state directory}
+        target: /state
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${WORKSPACE_ROOT:?Set the explicitly approved tool workspace}
+        target: /workspace
+        bind: {create_host_path: false}
+    networks: [service]
+    read_only: true
+    tmpfs: [/tmp]
+    stop_grace_period: 60s
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+
+  schema:
+    # Explicit one-off schema bootstrap; normal startup does not run DDL.
+    profiles: [bootstrap]
+    image: ${BACKEND_IMAGE:?Set the application backend image tag}
+    build: *backend-build
+    command: [schema]
+    env_file:
+      - path: ${BACKEND_ENV_FILE:?Set a private backend runtime env file}
+        required: true
+    environment: *backend-env
+    depends_on:
+      database: {condition: service_healthy}
+    networks: [service]
+    read_only: true
+    tmpfs: [/tmp]
+    restart: "no"
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+
+networks:
+  # Egress is needed for explicitly configured model/Jira/mail providers.
+  # Only the frontend HTTPS port is published; no Docker socket is mounted.
+  service: {}

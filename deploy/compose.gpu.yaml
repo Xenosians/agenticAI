@@ -1,0 +1,11 @@
+# Optional overlay. Requires an already configured compatible GPU runtime.
+# This file installs nothing and cannot manufacture additional GPU capacity.
+services:
+  ai:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

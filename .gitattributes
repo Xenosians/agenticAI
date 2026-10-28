@@ -1,0 +1,6 @@
+# Container inputs must remain usable from Windows and Linux checkouts.
+/Dockerfile text eol=lf
+/.dockerignore text eol=lf
+/requirements-container.txt text eol=lf
+/docker/*.py text eol=lf
+/deploy/** text eol=lf
