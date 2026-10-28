@@ -503,6 +503,10 @@ class Settings(
         )
     )
 
+    learning_context_path: Path = (
+        Path(".runtime/learning/continual/context-records.jsonl")
+    )
+
     # ============================================================
     # DEVELOPER WORKSPACE
     # ============================================================

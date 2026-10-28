@@ -175,6 +175,7 @@ class ApplicationRuntime:
 
         self.learning_hooks = (
             ContinualLearningRuntimeHooks(
+                path=self.settings.resolve_runtime_path(self.settings.learning_context_path),
                 enabled=(
                     self.settings
                     .learning_capture_enabled

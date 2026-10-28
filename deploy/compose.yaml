@@ -119,6 +119,7 @@ services:
       CONTINUAL_STATE_DB: /state/learning/continuous/state.sqlite3
       LEARNING_TRAJECTORY_PATH: /state/learning/trajectories.jsonl
       LEARNING_CORRECTION_PATH: /state/learning/corrections.jsonl
+      LEARNING_CONTEXT_PATH: /state/learning/continual/context-records.jsonl
       MAILBOX_PROVISIONING_LOCK_PATH: /state/mailbox-provisioning.lock
       PROCESS_WORKSPACE_ROOT: /workspace
       HF_HOME: /state/huggingface

@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 janus && useradd --uid 10001 --gid janus --create-home janus
 WORKDIR /app
-COPY requirements.txt requirements-container.txt ./
+COPY requirements.txt requirements-container.txt requirements-container.constraints ./
 RUN python -m pip install --no-cache-dir -r requirements-container.txt
 COPY --chown=10001:10001 . ./
 RUN mkdir -p /state /workspace && chown 10001:10001 /state /workspace
@@ -19,6 +19,7 @@ ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 HF_HUB_OFFLINE=1 TRANSFORMERS_O
     CONTINUAL_STATE_DB=/state/learning/continuous/state.sqlite3 \
     LEARNING_TRAJECTORY_PATH=/state/learning/trajectories.jsonl \
     LEARNING_CORRECTION_PATH=/state/learning/corrections.jsonl \
+    LEARNING_CONTEXT_PATH=/state/learning/continual/context-records.jsonl \
     MAILBOX_PROVISIONING_LOCK_PATH=/state/mailbox-provisioning.lock
 USER 10001:10001
 EXPOSE 8000

@@ -2,5 +2,6 @@
 /Dockerfile text eol=lf
 /.dockerignore text eol=lf
 /requirements-container.txt text eol=lf
+/requirements-container.constraints text eol=lf
 /docker/*.py text eol=lf
 /deploy/** text eol=lf

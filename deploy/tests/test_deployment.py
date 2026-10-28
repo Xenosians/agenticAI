@@ -128,7 +128,7 @@ class ComposeContractTests(unittest.TestCase):
         env = self.model["services"]["ai"]["environment"]
         self.reject(lambda s: s["ai"]["environment"].pop("CONTINUAL_STATE_DB"), "durable_ai_state_not_persisted")
         dockerfile = (AI / "Dockerfile").read_text()
-        for key in ("CONTINUAL_STATE_DB", "LEARNING_TRAJECTORY_PATH", "LEARNING_CORRECTION_PATH", "MAILBOX_PROVISIONING_LOCK_PATH"):
+        for key in ("CONTINUAL_STATE_DB", "LEARNING_TRAJECTORY_PATH", "LEARNING_CORRECTION_PATH", "LEARNING_CONTEXT_PATH", "MAILBOX_PROVISIONING_LOCK_PATH"):
             self.assertIn(f"{key}={env[key]}", dockerfile)
         with tempfile.TemporaryDirectory(dir=OUT) as directory:
             path = Path(directory) / Path(env["CONTINUAL_STATE_DB"]).relative_to("/state")
