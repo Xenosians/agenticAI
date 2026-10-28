@@ -130,7 +130,7 @@ def test_socket_evidence_excludes_historical_frames_and_supports_persistent_sock
 def test_lost_submission_response_preserves_predispatch_record_and_observed_identities(tmp_path, monkeypatch):
     row = {"verdict": "blocked"}
     checkpoints = []
-    monkeypatch.setattr(harness, "new_chat", lambda *_: None)
+    monkeypatch.setattr(harness, "new_chat", lambda *_: "original-chat")
     def lost_response(page, message, timeout_ms, *, on_submission):
         assert checkpoints[-1]["stage"] == "submitting"
         assert checkpoints[-1]["submission_outcome"] == "outcome_unknown"
@@ -148,7 +148,7 @@ def test_lost_submission_response_preserves_predispatch_record_and_observed_iden
 def test_timeout_after_job_acknowledgement_keeps_job_identity(tmp_path, monkeypatch):
     row = {"verdict": "blocked"}
     checkpoints = []
-    monkeypatch.setattr(harness, "new_chat", lambda *_: None)
+    monkeypatch.setattr(harness, "new_chat", lambda *_: "original-chat")
     monkeypatch.setattr(harness, "send", lambda *_, **__: ("original-job", "original-chat"))
     def stalled(*_):
         raise TimeoutError("job still running")
@@ -160,6 +160,21 @@ def test_timeout_after_job_acknowledgement_keeps_job_identity(tmp_path, monkeypa
     assert row["submission_outcome"] == "acknowledged" and row["reconciliation_required"] is True
 
 
+def test_a_job_acknowledged_in_another_chat_is_never_verified(tmp_path, monkeypatch):
+    row = {"verdict": "blocked"}
+    checkpoints = []
+    monkeypatch.setattr(harness, "new_chat", lambda *_: "selected-chat")
+    monkeypatch.setattr(harness, "send", lambda *_, **__: ("original-job", "other-chat"))
+    def unexpected(*_):
+        raise AssertionError("a job in another chat must not be awaited")
+    with pytest.raises(AssertionError, match="different chat than the selected empty chat"):
+        harness.run_case(None, SimpleNamespace(sockets=[], wait=unexpected), arguments(tmp_path), CASE, {},
+                          row=row, checkpoint=lambda: checkpoints.append(deepcopy(row)))
+    # The acknowledged job stays recorded for reconciliation; nothing passes.
+    assert checkpoints[-1]["job_id"] == "original-job" and checkpoints[-1]["chat_id"] == "other-chat"
+    assert row["reconciliation_required"] is True and row["verdict"] != "pass"
+
+
 @pytest.mark.parametrize("frames,expected", [(0, "fail"), (1, "pass")])
 def test_provider_success_without_live_update_evidence_does_not_pass(tmp_path, monkeypatch, frames, expected):
     row = {"verdict": "blocked"}
@@ -169,7 +184,7 @@ def test_provider_success_without_live_update_evidence_does_not_pass(tmp_path, m
         traffic.sockets[0]["frames_in"] += frames
         return final
     traffic.wait = completed
-    monkeypatch.setattr(harness, "new_chat", lambda *_: None)
+    monkeypatch.setattr(harness, "new_chat", lambda *_: "chat")
     monkeypatch.setattr(harness, "send", lambda *_, **__: ("job", "chat"))
     monkeypatch.setattr(harness, "chat_history", lambda *_: {})
     monkeypatch.setattr(harness, "_assert_history_roundtrip", lambda *_ , **__: None)
