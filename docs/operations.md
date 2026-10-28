@@ -63,8 +63,16 @@ registered application user through the backend's durable mail outbox.
 | `OPERATIONS_DOCKER_SOCKET` | Docker Engine unix socket. | `/var/run/docker.sock` (default) |
 | `OPERATIONS_HEALTH_URLS` | Comma-separated `name=url` pairs (at most 10, http/https, no credentials, query or fragment). Empty derives `phoenix` = `PHOENIX_BASE_URL` + `/api/health` and `ai` = `http://AI_HOST:AI_PORT/health` (a wildcard bind address is probed through loopback). | `phoenix=http://127.0.0.1:4000/api/health,ai=http://127.0.0.1:8000/health` |
 | `OPERATIONS_TIMEOUT_SECONDS` | Per-request timeout for Docker and health probes (max 10). | `3` (default) |
+| `ENGINEERING_ROUTER_INTERFACES` | Comma-separated logical OpenWrt interfaces the drift check always reads, besides those a topology names (at most 16 in total). | `lan,wan` (default) |
 
 ## Limits
+
+- Infrastructure drift (`/internal/v1/engineering/topology/drift`, reached only
+  through Phoenix) reuses these read adapters and nothing else: only the
+  containers in `OPERATIONS_CONTAINERS`, the endpoints in
+  `OPERATIONS_HEALTH_URLS` and at most 16 interfaces on the configured OpenWrt
+  router. Only properties the saved design declares are compared, and an
+  unreachable source marks its nodes `unknown` rather than drifted.
 
 - `notify_user` cannot reach unregistered addresses and does not create
   mailboxes; in the lab, `.test` recipients are delivered by the local mail relay.

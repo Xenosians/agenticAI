@@ -581,6 +581,8 @@ class Settings(
     # PHOENIX_BASE_URL and AI_HOST/AI_PORT settings.
     operations_health_urls: Annotated[dict[str, str], NoDecode] = Field(default_factory=dict)
     operations_timeout_seconds: float = Field(default=3.0, gt=0, le=10)
+    # Router interfaces the engineering drift view reads besides those a topology names.
+    engineering_router_interfaces: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["lan", "wan"])
 
     @field_validator("operations_containers", mode="before")
     @classmethod
@@ -621,6 +623,24 @@ class Settings(
         if len(urls) > 10:
             raise ValueError("OPERATIONS_HEALTH_URLS accepts at most 10 endpoints.")
         return urls
+
+    @field_validator("engineering_router_interfaces", mode="before")
+    @classmethod
+    def parse_engineering_router_interfaces(cls, value) -> list[str]:
+        import re
+        items = value.split(",") if isinstance(value, str) else list(value or [])
+        names: list[str] = []
+        for item in items:
+            name = str(item).strip()
+            if not name:
+                continue
+            if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_-]{0,31}", name):
+                raise ValueError("ENGINEERING_ROUTER_INTERFACES must list logical OpenWrt interface names.")
+            if name not in names:
+                names.append(name)
+        if len(names) > 16:
+            raise ValueError("ENGINEERING_ROUTER_INTERFACES accepts at most 16 interfaces.")
+        return names
 
     model_profiles: dict[
         str,

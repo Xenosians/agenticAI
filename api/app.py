@@ -1988,3 +1988,5 @@ from api.extensions import router as extension_router
 app.include_router(extension_router)
 from api.learning import router as learning_router
 app.include_router(learning_router)
+from api.engineering import router as engineering_router
+app.include_router(engineering_router)

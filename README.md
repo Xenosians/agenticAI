@@ -20,6 +20,7 @@ This is an evolving local-first **MVP candidate**. Model output is a proposal, n
 - Validated uploads of local safetensors model folders, private reference datasets, and reviewed JSONL training data.
 - Local full-text retrieval for reference datasets, with source and trust metadata kept separate from execution authority.
 - Training/evaluation infrastructure for curated datasets, candidate adapters, behavioral checks, and promotion gates.
+- Advisory infrastructure drift: a saved desired topology is compared with what the read-only operations adapters observe (allow-listed containers, configured health endpoints, the configured OpenWrt router). The report is labelled simulated and never changes a device. KiCad netlists are inspected as text for connectivity findings, with no EDA tool or hardware attached.
 
 ## How the repositories fit together
 
