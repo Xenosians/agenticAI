@@ -225,6 +225,23 @@ resource state is `unknown`. Every plan also lists trainer admission, host
 dispatch, fixed evaluation and separate promotion as outstanding gates, so a
 prepared plan is not evidence that training ran or may run.
 
+### Readiness check in the app
+
+The app's Learning page (command palette → "Learning readiness") reads the
+owner's models and training dataset versions and checks one selection:
+
+| Route | Purpose |
+|---|---|
+| `GET /api/v1/learning` (Phoenix) → `POST /internal/v1/learning/catalog` | SFT/DPO/PPO methods, the owner's models and training dataset versions with train/validation counts |
+| `POST /api/v1/learning/preflight` (Phoenix, CSRF) → `POST /internal/v1/learning/preflight` | Pins the model and the dataset version by digest, then lists every gate that still blocks a candidate run |
+
+Phoenix supplies the owner from the session and forwards only the six selection
+fields. Installed profiles and admitted uploads count as local weights; outbound
+connections are inference-only. A replaced or changed dataset version is
+refused. Every answer is `blocked`, with `execution_enabled`, `model_loaded`,
+`live_tool_execution` and `promotion_enabled` all false. Submitting a candidate
+run, observing it, evaluating it and promoting it remain separate, unbuilt steps.
+
 ## Public retrieval snapshot
 
 Set `KNOWLEDGE_SNAPSHOT_PATH` and `KNOWLEDGE_SNAPSHOT_SHA256` alongside the local

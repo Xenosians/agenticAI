@@ -1986,3 +1986,5 @@ async def integration_status(request: Request):
 
 from api.extensions import router as extension_router
 app.include_router(extension_router)
+from api.learning import router as learning_router
+app.include_router(learning_router)
