@@ -31,11 +31,12 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -196,7 +197,41 @@ class BrowserTraffic:
         raise TimeoutError(f"job did not finish after approval; last={self.jobs.get(job_id, {}).get('status')}")
 
 
+def enable_required_operations(page, frontend_url: str) -> None:
+    """Expose reviewed workflow controls only in this acceptance page.
+
+    The product hides these controls by default. Preserve its actual runtime
+    configuration, including future fields, and append the explicit test opt-in
+    to the response for this frontend's config.js. No file or server changes.
+    Failed configuration responses retain their original status and body.
+    """
+    config_url = urljoin(frontend_url.rstrip("/") + "/", "config.js")
+    pattern = re.compile(rf"^{re.escape(config_url)}(?:\?[^#]*)?$")
+
+    def configured(route):
+        response = route.fetch()
+        if not response.ok:
+            route.fulfill(response=response)
+            return
+        suffix = b"""
+;(() => {
+  const config = window.AGENTIC_CONFIG;
+  if (typeof config !== 'object' || config === null || Array.isArray(config)) {
+    throw new Error('Acceptance runtime configuration is missing or invalid.');
+  }
+  window.AGENTIC_CONFIG = Object.freeze({...config, requiredOperations: true});
+})();
+"""
+        headers = {key: value for key, value in response.headers.items()
+                   if key.lower() not in {"content-length", "content-encoding", "etag", "last-modified"}}
+        headers["cache-control"] = "no-store"
+        route.fulfill(response=response, headers=headers, body=response.body() + suffix)
+
+    page.route(pattern, configured)
+
+
 def sign_in(page, frontend_url: str, email: str, password: str, timeout_ms: int) -> None:
+    enable_required_operations(page, frontend_url)
     page.goto(frontend_url, wait_until="domcontentloaded")
     try:
         page.locator("#messageInput").wait_for(state="visible", timeout=4000)
@@ -211,21 +246,49 @@ def sign_in(page, frontend_url: str, email: str, password: str, timeout_ms: int)
     page.locator("#messageInput").wait_for(state="visible", timeout=timeout_ms)
 
 
-def new_chat(page, timeout_ms: int) -> None:
+def new_chat(page, timeout_ms: int) -> str:
     """Open an empty chat through the header menu's command.
 
     A saved chat that kept its default title is also a button named
     "New chat", so the command is located inside the menu. The menu is only
     opened when closed: a case that failed after opening it leaves it open.
+    An already empty selected chat is deliberately reused by the product.
+    Otherwise require its real creation receipt and the exact selected identity
+    before returning; detached old messages alone cannot prove navigation.
     """
+    workspace = page.locator("main.workspace")
+    previous = workspace.get_attribute("data-chat-id")
+    if not previous:
+        raise AssertionError("The workspace has no selected chat identity")
+    reuse = page.locator(".message-row").count() == 0
     more = page.get_by_role("button", name="More", exact=True)
     if more.get_attribute("aria-expanded") != "true":
         more.click()
-    page.locator(".header-menu").get_by_role("button", name="New chat", exact=True).click()
+    command = page.locator(".header-menu").get_by_role("button", name="New chat", exact=True)
+    if reuse:
+        command.click()
+        chat_id = previous
+    else:
+        with page.expect_response(
+            lambda response: urlsplit(response.url).path.rstrip("/") == "/api/v1/chats"
+            and response.request.method == "POST", timeout=timeout_ms
+        ) as creation:
+            command.click()
+        response = creation.value
+        if response.status != 201:
+            raise RuntimeError(f"chat creation returned HTTP {response.status}")
+        payload = response.json()
+        chat = payload.get("chat") if isinstance(payload, dict) else None
+        chat_id = chat.get("chat_id") if isinstance(chat, dict) else None
+        if not isinstance(chat_id, str) or not chat_id.strip() or chat_id == previous:
+            raise AssertionError("Chat creation returned an invalid new chat identity")
+    page.wait_for_function(
+        "chatId => document.querySelector('main.workspace')?.getAttribute('data-chat-id') === chatId",
+        arg=chat_id, timeout=timeout_ms,
+    )
     page.locator("#messageInput").wait_for(state="visible", timeout=timeout_ms)
-    # The command is asynchronous: wait until the previous chat's turns are gone.
     page.locator(".message-row").first.wait_for(state="detached", timeout=timeout_ms)
-    page.wait_for_timeout(300)
+    return chat_id
 
 
 def send(page, prompt: str, timeout_ms: int, *, on_submission) -> tuple[str, str]:
@@ -281,7 +344,7 @@ def run_case(page, traffic: BrowserTraffic, args, case: tuple, context: dict, *,
     started = time.monotonic()
     timeout_ms = int(args.timeout * 1000)
 
-    new_chat(page, timeout_ms)
+    expected_chat_id = new_chat(page, timeout_ms)
     sockets_before = [entry["frames_in"] for entry in traffic.sockets]
 
     def observed(identities):
@@ -294,6 +357,8 @@ def run_case(page, traffic: BrowserTraffic, args, case: tuple, context: dict, *,
     job_id, chat_id = send(page, message, timeout_ms, on_submission=observed)
     row.update(job_id=job_id, chat_id=chat_id, submission_outcome="acknowledged", stage="waiting_for_job")
     checkpoint()
+    if chat_id != expected_chat_id:
+        raise AssertionError("The job was submitted to a different chat than the selected empty chat")
     first = traffic.wait(page, args.backend_url, job_id, {"waiting_approval"} | TERMINAL, args.timeout)
     row["first_status"] = first.get("status")
     row["first_tool"] = _tool_name(first)

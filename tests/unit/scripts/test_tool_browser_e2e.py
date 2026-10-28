@@ -1,4 +1,8 @@
-"""Deterministic browser observation waits; no browser or provider is started."""
+"""Offline acceptance observations with disposable browser/server fixtures."""
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
 import pytest
 
 from scripts import tool_browser_e2e as browser
@@ -136,18 +140,35 @@ WORKSPACE_WITH_A_SAVED_CHAT_NAMED_NEW_CHAT = """
     <button onclick="openEmptyChat()">New chat</button>
   </div>
 </header>
-<section class="conversation"><div class="message-row user">An earlier turn</div></section>
-<textarea id="messageInput"></textarea>
+<main class="workspace" data-chat-id="old-chat">
+  <section class="conversation"><div class="message-row user">An earlier turn</div></section>
+  <textarea id="messageInput"></textarea>
+</main>
 <script>
   window.clicks = [];
+  window.creations = 0;
   function toggleMenu() {
     const menu = document.querySelector('.header-menu');
     menu.hidden = !menu.hidden;
     document.getElementById('workspaceMoreButton').setAttribute('aria-expanded', String(!menu.hidden));
   }
-  function openEmptyChat() {
+  async function openEmptyChat() {
     window.clicks.push('menu');
-    setTimeout(() => document.querySelectorAll('.message-row').forEach(row => row.remove()), 50);
+    document.querySelector('.header-menu').hidden = true;
+    document.getElementById('workspaceMoreButton').setAttribute('aria-expanded', 'false');
+    if (document.querySelectorAll('.message-row').length === 0) return;
+    window.creations += 1;
+    const response = await fetch('/api/v1/chats', {method: 'POST'});
+    const payload = await response.json();
+    if (!response.ok) return;
+    document.querySelectorAll('.message-row').forEach(row => row.remove());
+    // Empty messages precede the selected identity: waiting for detachment
+    // alone would permit a job to be submitted to the old chat.
+    setTimeout(() => {
+      if (!window.freezeSelection) {
+        document.querySelector('main.workspace').dataset.chatId = payload.chat?.chat_id || '';
+      }
+    }, 50);
   }
 </script>
 """
@@ -160,16 +181,25 @@ def workspace_page():
         chromium = playwright.chromium.launch(headless=True)
         try:
             page = chromium.new_page()
-            page.set_content(WORKSPACE_WITH_A_SAVED_CHAT_NAMED_NEW_CHAT)
+            def response(route):
+                if route.request.url.endswith('/api/v1/chats'):
+                    route.fulfill(status=201, content_type='application/json',
+                                  body=json.dumps({'chat': {'chat_id': 'created-chat'}}))
+                else:
+                    route.fulfill(content_type='text/html', body=WORKSPACE_WITH_A_SAVED_CHAT_NAMED_NEW_CHAT)
+            page.route('http://fixture.invalid/**', response)
+            page.goto('http://fixture.invalid/')
             yield page
         finally:
             chromium.close()
 
 
 def test_new_chat_uses_the_menu_command_not_a_saved_chat_with_the_same_name(workspace_page):
-    browser.new_chat(workspace_page, 2000)
+    chat_id = browser.new_chat(workspace_page, 2000)
 
+    assert chat_id == 'created-chat'
     assert workspace_page.evaluate("window.clicks") == ["menu"]
+    assert workspace_page.locator('main.workspace').get_attribute('data-chat-id') == chat_id
     assert workspace_page.locator(".message-row").count() == 0
 
 
@@ -182,3 +212,118 @@ def test_new_chat_keeps_an_already_open_menu_open(workspace_page):
 
     assert workspace_page.evaluate("window.clicks") == ["menu"]
     assert workspace_page.locator(".message-row").count() == 0
+
+
+def test_new_chat_reuses_an_already_empty_chat_without_creating_another(workspace_page):
+    workspace_page.locator('.message-row').evaluate_all('(rows) => rows.forEach(row => row.remove())')
+
+    assert browser.new_chat(workspace_page, 2000) == 'old-chat'
+    assert workspace_page.evaluate('window.creations') == 0
+
+
+@pytest.mark.parametrize('payload', [{}, {'chat': {}}, {'chat': {'chat_id': ''}},
+                                    {'chat': {'chat_id': 'old-chat'}}])
+def test_new_chat_refuses_malformed_or_reused_creation_receipts(workspace_page, payload):
+    workspace_page.route('**/api/v1/chats', lambda route: route.fulfill(
+        status=201, content_type='application/json', body=json.dumps(payload)))
+
+    with pytest.raises(AssertionError, match='invalid new chat identity'):
+        browser.new_chat(workspace_page, 2000)
+
+
+def test_new_chat_does_not_treat_a_failed_create_as_an_empty_chat(workspace_page):
+    workspace_page.route('**/api/v1/chats', lambda route: route.fulfill(
+        status=503, content_type='application/json', body='{"error":"uncertain"}'))
+
+    with pytest.raises(RuntimeError, match='HTTP 503'):
+        browser.new_chat(workspace_page, 2000)
+    assert workspace_page.locator('main.workspace').get_attribute('data-chat-id') == 'old-chat'
+
+
+def test_detached_messages_do_not_prove_the_created_chat_was_selected(workspace_page):
+    from playwright.sync_api import TimeoutError
+    workspace_page.evaluate('window.freezeSelection = true')
+
+    with pytest.raises(TimeoutError):
+        browser.new_chat(workspace_page, 400)
+    assert workspace_page.locator('.message-row').count() == 0
+    assert workspace_page.locator('main.workspace').get_attribute('data-chat-id') == 'old-chat'
+
+
+@pytest.fixture
+def config_server():
+    state = {'body': '', 'status': 200}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            config = self.path.split('?')[0].endswith('/config.js')
+            body = state['body'] if config else '<script src="./config.js?v=fixture"></script><textarea id="messageInput"></textarea>'
+            data = body.encode()
+            self.send_response(state['status'] if config else 200)
+            self.send_header('Content-Type', 'application/javascript' if config else 'text/html')
+            self.send_header('Content-Length', str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f'http://127.0.0.1:{server.server_port}', state
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+@pytest.mark.parametrize('setting', [None, False])
+def test_required_operations_is_an_acceptance_page_only_opt_in(config_server, setting):
+    from playwright.sync_api import sync_playwright
+    origin, state = config_server
+    config = {'backendBaseUrl': 'http://backend.invalid', 'pollIntervalMs': 1000,
+              'futureSetting': {'nested': [1, 2], 'enabled': False}}
+    if setting is not None:
+        config['requiredOperations'] = setting
+    original = 'window.AGENTIC_CONFIG = Object.freeze(' + json.dumps(config) + ');'
+    state['body'] = original
+
+    with sync_playwright() as playwright:
+        instance = playwright.chromium.launch(headless=True)
+        try:
+            acceptance = instance.new_page()
+            browser.sign_in(acceptance, origin, 'fixture@example.test', 'fixture-only', 2000)
+            assert acceptance.evaluate('window.AGENTIC_CONFIG') == {**config, 'requiredOperations': True}
+            assert acceptance.evaluate('Object.isFrozen(window.AGENTIC_CONFIG)') is True
+
+            normal = instance.new_page()
+            normal.goto(origin)
+            assert normal.evaluate('window.AGENTIC_CONFIG') == config
+            assert state['body'] == original
+
+            # A config script outside the declared frontend path is untouched.
+            other = acceptance.evaluate("async () => (await fetch('/other/config.js')).text()")
+            assert other == original
+        finally:
+            instance.close()
+
+
+@pytest.mark.parametrize('status', [404, 503])
+def test_acceptance_config_override_preserves_upstream_failures(config_server, status):
+    from playwright.sync_api import sync_playwright
+    origin, state = config_server
+    state.update(status=status, body='/* upstream configuration unavailable */')
+
+    with sync_playwright() as playwright:
+        instance = playwright.chromium.launch(headless=True)
+        try:
+            page = instance.new_page()
+            browser.enable_required_operations(page, origin)
+            page.goto(origin)
+            observed = page.evaluate("async () => { const r = await fetch('/config.js'); return {status:r.status, body:await r.text()}; }")
+            assert observed == {'status': status, 'body': state['body']}
+            assert page.evaluate('typeof window.AGENTIC_CONFIG') == 'undefined'
+        finally:
+            instance.close()
