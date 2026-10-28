@@ -70,6 +70,37 @@ def test_drift_without_a_topology_returns_the_observation_only(client):
     assert response.json()["not_in_design"] == ["container:itsm-surrealdb", "endpoint:phoenix"]
 
 
+def test_observation_never_blocks_the_event_loop(monkeypatch):
+    """The health probe includes this service's own /health, so a blocking read
+    on the event loop would make the AI service report itself as down."""
+    import asyncio
+
+    loop_threads = []
+
+    class LoopAware:
+        def service_health(self):
+            try:
+                asyncio.get_running_loop()
+                loop_threads.append(True)
+            except RuntimeError:
+                loop_threads.append(False)
+            return Endpoints().service_health()
+
+        def container_status(self):
+            return Containers().container_status()
+
+    settings = SimpleNamespace(require_internal_job_token=lambda: TOKEN)
+    monkeypatch.setattr(extensions, "get_settings", lambda: settings)
+    monkeypatch.setattr(engineering, "observation_sources",
+                        lambda: {"containers": LoopAware(), "endpoints": LoopAware(), "router": None,
+                                 "default_interfaces": []})
+    app = FastAPI()
+    app.include_router(engineering.router)
+    response = TestClient(app).post(DRIFT, json=drift_body(), headers=HEADERS)
+    assert response.status_code == 200
+    assert loop_threads == [False], "observation must run off the event loop thread"
+
+
 @pytest.mark.parametrize("body", [
     drift_body(topology_id="../x"), drift_body(version=0), drift_body(version=True), drift_body(owner="alice"),
     drift_body(topology={"nodes": [{"id": "bad id", "kind": "x", "label": "", "properties": {}}], "edges": []}),
