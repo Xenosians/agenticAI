@@ -246,6 +246,7 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
             connection_presets,
             provider_presets,
         )
+        from services.extensions.transform import transforms_available
         return {"schema": "extension-catalog.v1", "resources": [public_resource(r) for r in store.list(owner)],
                 "selected": store.selected(owner),
                 "role_assignments": store.role_assignments(owner),
@@ -257,6 +258,7 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
                 "local_profiles": [{"id": key, "backend": profile.backend} for key, profile in settings.model_profiles.items() if profile.enabled and not key.startswith("user-upload-")],
                 "capabilities": workflow_capabilities(settings),
                 "harnesses": [{"id": kind, "available": _installed(kind)} for kind in ["opencode", "pi"]],
+                "transforms": [{"id": "lua-row-transform", "available": transforms_available()}],
                 "connections": [{"id": "rag", "state": "ready", "contract": "owner-retrieval.v1"},
                                 {"id": "n8n", "state": "prepared", "contract": "governed-workflow.v1"}]}
     if action == "model":
@@ -562,6 +564,25 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
         if not all(isinstance(fields[k], str) for k in ("name", "text", "source", "license", "purpose")):
             raise ValueError("Dataset fields must be text")
         return public_resource(store.dataset(owner, **fields, replaces=replaced_dataset(payload)))
+    if action == "dataset_transform":
+        # The owner's Lua script reshapes their own rows in an isolated worker. A preview
+        # admits nothing; with apply, the output goes through the same admission as any upload.
+        from services.extensions.transform import TransformError, run_transform
+        source, text, apply = payload.get("script"), payload.get("text"), payload.get("apply", False)
+        if not isinstance(source, str) or not isinstance(text, str) or type(apply) is not bool:
+            raise TransformError("transform_request_invalid", "Send the script, the rows and whether to apply.")
+        result = await asyncio.to_thread(run_transform, source, text)
+        if not apply:
+            preview = [json.loads(line) for line in result["text"].splitlines()[:5]]
+            return {key: value for key, value in result.items() if key != "text"} | {"preview": preview}
+        fields = {key: payload.get(key) for key in ("name", "source", "license", "purpose", "reviewed")}
+        if not all(isinstance(fields[k], str) for k in ("name", "source", "license", "purpose")):
+            raise ValueError("Dataset fields must be text")
+        provenance = {"schema": result["schema"], "script_sha256": hashlib.sha256(source.encode()).hexdigest(),
+                      "input_sha256": hashlib.sha256(text.encode()).hexdigest(),
+                      "input_rows": result["input_rows"], "output_rows": result["output_rows"]}
+        return public_resource(store.dataset(owner, **fields, text=result["text"], replaces=replaced_dataset(payload),
+                                             provenance=provenance))
     if action == "dataset_url":
         replaces = replaced_dataset(payload)
         data = await request_json(payload.get("url", ""), api_key=payload.get("api_key", ""))

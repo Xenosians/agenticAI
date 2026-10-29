@@ -20,6 +20,8 @@ websockets>=15,<18
 # Private extension credentials and safe uploaded model inspection
 cryptography>=43
 safetensors>=0.4
+# Optional Lua row transforms for dataset admission (MIT; bundles Lua 5.4), run in an isolated worker
+lupa>=2.8,<3
 # Continual learning / LoRA training
 peft
 

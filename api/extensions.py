@@ -7,6 +7,7 @@ from config import get_settings
 from services.extensions.service import command
 from services.extensions.probe import ProviderProbeError
 from services.extensions.diagnostics import HarnessFailure
+from services.extensions.transform import TransformError
 
 
 router = APIRouter()
@@ -38,6 +39,10 @@ async def extensions(body: ExtensionCommand, request: Request):
             422,
             exc.public_detail(),
         ) from None
+
+    except TransformError as exc:
+        # A transform's code and a bounded message about the owner's own script.
+        raise HTTPException(422, exc.public_detail()) from None
 
     except HarnessFailure as exc:
         # HarnessFailure contains only server-generated backend/provider

@@ -198,8 +198,13 @@ class ExtensionStore:
             db.execute("DELETE FROM resource WHERE owner=? AND id=?", (owner, identity))
 
     def dataset(self, owner: str, *, name: str, text: str, source: str, license: str,
-                purpose: str, reviewed: bool, replaces: str | None = None) -> dict:
-        """Admit a dataset, or a new version of the latest version named by ``replaces``."""
+                purpose: str, reviewed: bool, replaces: str | None = None,
+                provenance: dict | None = None) -> dict:
+        """Admit a dataset, or a new version of the latest version named by ``replaces``.
+
+        ``provenance`` records how server-side code derived ``text`` (for example a
+        Lua transform's script and input digests); it never bypasses admission.
+        """
         if not name.strip() or not source.strip() or not license.strip():
             raise ValueError("Name, source and permitted-use/license metadata are required")
         if purpose not in {"rag", "training"} or reviewed is not True:
@@ -256,6 +261,8 @@ class ExtensionStore:
             record.update(previous_id=previous["id"], previous_sha256=previous["sha256"])
         if retired:
             record["retired_splits"] = retired
+        if provenance:
+            record["transform"] = provenance
         try:
             return self.put(owner, "dataset", record, identity=identity)
         except sqlite3.IntegrityError:

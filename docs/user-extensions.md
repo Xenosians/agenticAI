@@ -162,6 +162,66 @@ version gave it, even if a version dropped it and a later one restores it. New
 inputs fill validation up to a fifth of the version, so evaluation examples
 never become training examples. The export carries the version identity.
 
+### Lua row transforms
+
+An optional Lua script can reshape your own JSON Lines rows before they are
+admitted, for example to turn ticket fields into chat messages. On the Data tab,
+open **Transform rows with Lua**, choose the file, edit the script and press
+**Preview**. **Apply and upload** is offered only after a preview of the
+current script. Command `dataset_transform` takes `script` and `text` (the JSON
+Lines rows). Without `apply`, it returns the counts, at most five transformed
+rows and the isolation layers used, and admits nothing. With `apply: true` and
+the usual dataset fields, the output is admitted exactly like a `dataset`
+upload. The same secret/PII scan, license, review and training-row checks apply
+to what the script produced. The dataset records `transform` provenance: the
+script and input digests and the row counts.
+
+```lua
+return function(row)            -- row is one JSON object
+  if row.internal then return nil end   -- nil drops the row
+  return {messages = {
+    {role = "user", content = row.question},
+    {role = "assistant", content = row.answer},
+  }}
+end
+```
+
+The script never runs in the AI service or the browser. Each transform starts a
+separate worker process (`services/extensions/transform_worker.py`). The worker
+inherits no environment beyond `PATH` and the locale, so it has no credentials
+or tokens. Before the script runs it locks itself down:
+
+- no new privileges and no child processes;
+- no file writes and no new descriptors (no file or socket can be opened);
+- CPU-time and address-space limits;
+- where the host allows it, a private network namespace and an empty Landlock
+  rule set (no file access, no TCP).
+
+The script sees only `assert`, `error`, `ipairs`, `next`, `pairs`, `rawequal`,
+`rawlen`, `select`, `tonumber`, `tostring` and `type`, and selected pure
+functions of `string`, `table`, `math` and `utf8`. It cannot use `io`, `os`,
+`require`, `load`, `debug`, `coroutine`, `pcall`, metatables, `print` or random
+numbers. Only text chunks load; precompiled bytecode is refused.
+
+Limits per transform: script 20,000 bytes, input 2,000,000 bytes and 10,000 rows,
+output 2,000,000 bytes, 20 million Lua instructions, 64 MiB Lua memory, 10 s CPU
+and 20 s wall time.
+
+Only JSON data leaves the worker: tables with text keys, arrays with keys 1..n,
+text, finite numbers and booleans, nested at most 16 deep. A refusal crosses
+the API as `{code, message}`; the codes are `transform_syntax_error`,
+`transform_contract_invalid`, `transform_failed` (with the row number),
+`transform_instruction_limit`, `transform_memory_limit`, `transform_time_limit`,
+`transform_output_invalid`, `transform_output_empty`,
+`transform_output_too_large`, `transform_input_invalid`,
+`transform_input_too_large` and `transform_script_*`. The catalog's
+`transforms` entry says whether this host can run them; transforms need Linux
+and the `lupa` package (MIT, bundles Lua 5.4).
+
+Lua is an optional entry point, not a security boundary: the isolation comes
+from the separate locked-down process, and admission still decides what is
+stored. Models, connections and tools never pass through Lua.
+
 ## Future workflow connectors
 
 `workflow_validate` accepts a version-1 manifest with name and ordered nodes:
@@ -184,8 +244,8 @@ require CSRF. Phoenix derives the owner from the session and calls the AI's
 execution endpoints also require that token. Keep both services' tokens aligned.
 
 Commands: `list`, `model`, `select`, `delete`, `probe`, `dataset`, `dataset_url`,
-`search`, `resolve`, `export_dataset`, `workflow_validate`, `upload_begin`, `upload_chunk`,
-`upload_finish`. Each command has `action` and `payload`; only the trusted internal
+`dataset_transform`, `search`, `resolve`, `export_dataset`, `workflow_validate`, `upload_begin`,
+`upload_chunk`, `upload_finish`. Each command has `action` and `payload`; only the trusted internal
 envelope contains `owner`.
 
 Configuration:

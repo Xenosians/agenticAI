@@ -98,8 +98,15 @@ dedicated `/state` mount. Continual-control SQLite, capture ledgers and mailbox
 provisioning locks use that mount too. The control store is initialized even
 when learning is disabled; persisting it does not enable training. An explicitly
 selected SQLite asset provider also needs an explicit `/state/...` database path.
-Training dispatch/artifact paths need separate review before enabling candidate
-jobs in a container; these files do not provide that integration.
+Candidate SFT runs started from the Learning page write their inputs, status and
+adapter under `LEARNING_RUN_ROOT` (`/state/learning/runs`). The trainer reads base
+weights from an enabled local profile's `model_path` (such as `/models/...`) or a
+sealed upload under `/state`, needs a GPU (see the overlay below), and never
+changes what serves requests.
+Lua row transforms run in a separate locked-down worker process inside the AI
+container (`docs/user-extensions.md`). The worker opens a private network
+namespace and applies Landlock only where the container runtime allows them;
+its descriptor, process and file-write limits apply everywhere.
 Run one AI worker per mutable storage root. A second
 container sharing that root is not supported by this foundation.
 
