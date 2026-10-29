@@ -173,6 +173,11 @@ class ComposeContractTests(unittest.TestCase):
         self.reject(lambda s: s["backend"].update(privileged=True), "privileged_container_forbidden")
         self.reject(lambda s: s["ai"]["volumes"].append({"source": "/var/run/docker.sock", "target": "/var/run/docker.sock"}), "docker_socket_forbidden")
 
+    def test_application_containers_cannot_write_their_image(self):
+        for name in ("backend", "frontend", "ai", "schema"):
+            self.assertTrue(self.model["services"][name]["read_only"], name)
+            self.reject(lambda s, name=name: s[name].pop("read_only"), "application_root_filesystem_must_be_read_only")
+
     def test_secure_origin_and_callback_bindings_cannot_drift(self):
         self.reject(lambda s: s["backend"]["environment"].update(AUTH_COOKIE_SECURE="false"), "production_endpoint_policy_mismatch")
         self.reject(lambda s: s["backend"]["environment"].update(CORS_ALLOWED_ORIGINS="https://other.example.test"), "public_origin_binding_mismatch")
@@ -264,34 +269,45 @@ class EntrypointTests(unittest.TestCase):
     def test_frontend_renders_an_actual_origin_and_keeps_nginx_socket_variables(self):
         with tempfile.TemporaryDirectory(dir=OUT) as directory:
             root = Path(directory)
-            html = root / "html"
-            html.mkdir()
-            (html / "index.html").write_text('<script src="./config.js?v=' + '0' * 32 + '"></script>')
+            runtime = root / "runtime"
             cert = root / "tls.crt"
             key = root / "tls.key"
             cert.write_text("synthetic-readable-certificate-not-a-live-cert")
             key.write_text("synthetic-readable-key-not-a-live-key")
+            # The image's web root is read-only; runtime values go to the container's tmpfs.
             env = dict(os.environ, PUBLIC_HOST="itsm.example.test", PUBLIC_ORIGIN="https://itsm.example.test:8443",
-                       FRONTEND_HTML_ROOT=str(html), NGINX_CONFIG_TEMPLATE=str(FRONTEND / "docker/nginx.conf.template"),
+                       FRONTEND_RUNTIME_DIR=str(runtime), NGINX_CONFIG_TEMPLATE=str(FRONTEND / "docker/nginx.conf.template"),
                        NGINX_CONFIG_OUTPUT=str(root / "nginx.conf"), TLS_CERT_PATH=str(cert), TLS_KEY_PATH=str(key))
             result = subprocess.run(["sh", str(FRONTEND / "docker/entrypoint.sh"), "true"], env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
-            config = (html / "config.js").read_text()
+            config = (runtime / "config.js").read_text()
             self.assertIn('backendBaseUrl:"https://itsm.example.test:8443"', config)
             self.assertNotIn("requiredOperations", config)
-            self.assertEqual((html / "index.html").read_text(), '<script src="./config.js?v=' + hashlib.md5(config.encode()).hexdigest() + '"></script>')
             rendered = (root / "nginx.conf").read_text()
+            public, private = rendered.split("listen 9443 ssl;", 1)
+            served = re.search(r"location = /config\.js\s*\{([^}]+)\}", public)
+            self.assertIsNotNone(served, "the browser must receive the rendered runtime configuration")
+            self.assertIn("root " + str(runtime) + ";", served.group(1))
+            # Never cached, so a browser always reads the current origin after a redeploy.
+            self.assertIn("add_header Cache-Control 'no-store' always;", served.group(1))
             self.assertIn("$http_upgrade", rendered)
             self.assertIn("$connection_upgrade", rendered)
             self.assertNotIn("${PUBLIC_HOST}", rendered)
+            self.assertNotIn("${FRONTEND_RUNTIME_DIR}", rendered)
             self.assertIn("ssl_certificate " + str(cert), rendered)
-            private = rendered.split("listen 9443 ssl;", 1)[1]
             health = re.search(r"location = /api/health\s*\{([^}]+)\}", private)
             self.assertIsNotNone(health, "Operations needs its real backend health endpoint on the callback origin")
             self.assertIn("proxy_pass http://phoenix;", health.group(1))
             self.assertIn("proxy_set_header X-Forwarded-Proto https;", health.group(1))
             self.assertNotRegex(private, r"location\s+(?:\^~\s+)?/api/\s*\{")
             self.assertIn("location / { return 404; }", private)
+
+    def test_frontend_rejects_an_unsafe_runtime_directory(self):
+        for runtime in ("relative/runtime", "/tmp/runtime;}", "/tmp/run time", "/tmp/runtime\nmalicious"):
+            result = subprocess.run(["sh", str(FRONTEND / "docker/entrypoint.sh"), "true"], capture_output=True,
+                                    env=dict(os.environ, PUBLIC_HOST="itsm.example.test", PUBLIC_ORIGIN="https://itsm.example.test",
+                                             FRONTEND_RUNTIME_DIR=runtime))
+            self.assertEqual(result.returncode, 64, runtime)
 
     def test_frontend_rejects_injected_insecure_or_mismatched_origins(self):
         for origin in ("http://itsm.example.test", 'https://itsm.example.test\";alert(1)//',

@@ -35,6 +35,9 @@ def validate_model(model: dict) -> dict:
         require("ALL" in service.get("cap_drop", []), "capability_drop_required")
         require(any(value in {"no-new-privileges:true", "no-new-privileges=true"} for value in service.get("security_opt", [])), "no_new_privileges_required")
         require(name == "frontend" or not service.get("ports"), "internal_port_published")
+        if name != "database":
+            # Application images are immutable at runtime; writable state uses mounts or tmpfs.
+            require(service.get("read_only") is True, "application_root_filesystem_must_be_read_only")
         for volume in service.get("volumes", []):
             require("docker.sock" not in volume.get("source", "") and "docker.sock" not in volume.get("target", ""), "docker_socket_forbidden")
             if volume.get("type") == "bind":

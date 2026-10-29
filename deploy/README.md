@@ -196,7 +196,10 @@ command. Add `-f deploy/compose.profile.yaml` and/or
 `-f deploy/compose.trust.yaml` to those same commands when selected. Do not start
 the normal services until explicit schema bootstrap passes.
 The schema task starts Req only and calls the existing canonical schema helper;
-it does not start application workers, dispatch jobs or send mail.
+it does not start application workers, dispatch jobs or send mail. On a fresh
+database it first defines the configured namespace and database (SurrealDB does
+not create them on first use); every statement is `IF NOT EXISTS`. A failure
+prints only its reason codes.
 
 The backend remains a production release with secure cookies, the exact public
 origin/CORS policy and HTTPS forwarding. `MAILER_MODE=local` remains prohibited
@@ -212,7 +215,10 @@ application filesystem. Future distributed deployment needs a reviewed network
 and runtime cookie policy; an image-generated release cookie is not a production
 credential to share across nodes.
 
-The frontend terminates TLS and preserves WebSocket upgrade headers. Public
+The frontend terminates TLS and preserves WebSocket upgrade headers. Its image,
+including the web root, is read-only at runtime: the entrypoint renders the
+browser's `config.js` (the public origin) into `/tmp/janus-frontend` on the
+tmpfs, and nginx serves it with `Cache-Control: no-store`. Public
 requests cannot route to `/api/internal/` or `/ai_socket`; AI callbacks and the
 AI status socket use the separate non-published TLS listener. That listener also
 proxies the exact `/api/health` read used by Operations, while refusing other
