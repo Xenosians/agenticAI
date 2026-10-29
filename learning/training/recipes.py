@@ -94,7 +94,19 @@ def encode_record(tokenizer, row: dict, recipe: AdaptationRecipe) -> dict:
     return {"input_ids": ids, "attention_mask": [1] * len(ids), "labels": labels}
 
 
-def train_recipe(recipe: AdaptationRecipe, *, allow_training: bool = False) -> Path:
+def progress_callback(report):
+    """A Trainer callback that passes each logged step and loss to ``report``."""
+    from transformers import TrainerCallback
+
+    class Progress(TrainerCallback):
+        def on_log(self, args, state, control, logs=None, **kwargs):
+            logs = logs or {}
+            report(state.global_step, train_loss=logs.get("loss"), validation_loss=logs.get("eval_loss"))
+
+    return Progress()
+
+
+def train_recipe(recipe: AdaptationRecipe, *, allow_training: bool = False, progress=None) -> Path:
     if not allow_training:
         raise PermissionError("Training requires explicit --allow-training.")
     train_rows, validation_rows = admit_records(recipe)
@@ -143,7 +155,8 @@ def train_recipe(recipe: AdaptationRecipe, *, allow_training: bool = False) -> P
             report_to="none", save_strategy="no", logging_steps=10, seed=recipe.seed,
             dataloader_num_workers=0, optim="adamw_torch")
         trainer = Trainer(model=model, args=args, train_dataset=SpecialistTokenDataset(train_data),
-            eval_dataset=SpecialistTokenDataset(validation_data), data_collator=SpecialistCollator(pad_token_id=tokenizer.pad_token_id))
+            eval_dataset=SpecialistTokenDataset(validation_data), data_collator=SpecialistCollator(pad_token_id=tokenizer.pad_token_id),
+            callbacks=[progress_callback(progress)] if progress is not None else None)
         trained = trainer.train()
         evaluated = trainer.evaluate()
         artifact = run / ("model" if recipe.tuning == "full" else "adapter")

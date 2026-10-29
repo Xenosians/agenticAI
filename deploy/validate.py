@@ -81,7 +81,7 @@ def validate_model(model: dict) -> dict:
     require(volumes["/models"].get("read_only") is True and not volumes["/state"].get("read_only") and not volumes["/workspace"].get("read_only"), "ai_storage_modes_mismatch")
     require(ai.get("read_only") is True and ai.get("deploy", {}).get("replicas", 1) == 1, "single_ai_process_storage_required")
     for key in ("COMPLETION_OUTBOX_PATH", "APPROVAL_STORE_PATH", "EXTENSION_STORAGE_ROOT", "USER_MODEL_ROOT", "MODEL_ARTIFACT_CACHE_ROOT",
-                "CONTINUAL_STATE_DB", "LEARNING_TRAJECTORY_PATH", "LEARNING_CORRECTION_PATH", "LEARNING_CONTEXT_PATH", "MAILBOX_PROVISIONING_LOCK_PATH"):
+                "CONTINUAL_STATE_DB", "LEARNING_TRAJECTORY_PATH", "LEARNING_CORRECTION_PATH", "LEARNING_CONTEXT_PATH", "LEARNING_RUN_ROOT", "MAILBOX_PROVISIONING_LOCK_PATH"):
         path = PurePosixPath(ai_env.get(key, ""))
         require(path.is_absolute() and path.parts[:2] == ("/", "state") and len(path.parts) > 2 and ".." not in path.parts,
                 "durable_ai_state_not_persisted")

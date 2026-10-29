@@ -1,15 +1,18 @@
 """Owned resource selection preflight; candidate admission remains separate.
 
-The extension registry holds inference connections and reviewed dataset splits,
-not the model/tokenizer/prompt/catalog/evaluation identities required by the
-candidate planner. Do not invent those identities or report a training job.
+The extension registry holds inference connections and reviewed dataset splits.
+A check is `ready` only when a candidate SFT run can start here: the model is
+owned local weights the host can read, the method is SFT with LoRA or QLoRA,
+and the dataset version is current. DPO and PPO keep their own open gates.
+A ready check is still not a training job, and never changes serving.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import re
-from typing import Annotated
+from pathlib import Path
+from typing import Annotated, Callable
 
 from pydantic import Field
 
@@ -19,6 +22,26 @@ ResourceId = Annotated[str, Field(strict=True, pattern=r"^[a-f0-9]{32}$")]
 # Installed profiles and admitted uploads are owned weights; the rest are outbound connections.
 LOCAL_BACKENDS = {"local", "uploaded"}
 BACKENDS = LOCAL_BACKENDS | {"http", "pi", "opencode"}
+# Candidate runs this host can start from the web: SFT with adapter tuning only.
+RUNNABLE_TUNING = {"lora", "qlora"}
+LATER_GATES = ["fixed_evaluation_required", "separate_promotion_required"]
+
+
+def model_weights(row: dict) -> Path | None:
+    """The local weights directory of an owned model, or None when the host has none."""
+    if row.get("backend") == "uploaded":
+        path = row.get("model_path")
+        if isinstance(path, str) and path and (Path(path) / ".sealed").is_file():
+            return Path(path)
+        return None
+    if row.get("backend") == "local":
+        from config.settings import get_settings
+        profile = get_settings().model_profiles.get(str(row.get("model", "")))
+        if profile is None or not profile.enabled or profile.adapter_path is not None or profile.model_path is None:
+            return None
+        path = Path(profile.model_path).expanduser()
+        return path if (path / "config.json").is_file() else None
+    return None
 
 
 class SelectionRequest(Contract):
@@ -44,14 +67,16 @@ def _owner(owner: str) -> None:
         raise LearningSelectionError("invalid_learning_request")
 
 
-def _model(row: dict) -> dict:
+def _model(row: dict, weights: Callable[[dict], Path | None] | None = None) -> dict:
     if (row.get("kind") != "model" or row.get("backend") not in BACKENDS or
             not isinstance(row.get("id"), str) or not re.fullmatch(r"[a-f0-9]{32}", row["id"]) or
             not isinstance(row.get("name"), str) or not 0 < len(row["name"]) <= 120 or
             row.get("state") not in {"ready", "pending", "rejected"}):
         raise LearningSelectionError("learning_resource_unavailable")
+    source = "local" if row["backend"] in LOCAL_BACKENDS else "outbound"
+    available = source == "local" and row["state"] == "ready" and weights is not None and weights(row) is not None
     return {"id": row["id"], "name": row["name"], "backend": row["backend"], "state": row["state"],
-            "source_kind": "local" if row["backend"] in LOCAL_BACKENDS else "outbound", "training_available": False}
+            "source_kind": source, "training_available": available}
 
 
 def _dataset(row: dict) -> dict:
@@ -98,23 +123,41 @@ def _dataset(row: dict) -> dict:
             "superseded_by": newer}
 
 
-def learning_catalog(owner: str, store) -> dict:
+def learning_catalog(owner: str, store, *, weights: Callable[[dict], Path | None] = model_weights) -> dict:
     _owner(owner)
     from learning.training.methods import METHODS
     models, datasets = [], []
     for row in store.list(owner):
         if row.get("kind") == "model":
-            models.append(_model(row))
+            models.append(_model(row, weights))
         elif row.get("kind") == "dataset" and row.get("purpose") == "training":
             datasets.append(_dataset(row))
     if len({row["id"] for row in models + datasets}) != len(models + datasets):
         raise LearningSelectionError("learning_resource_unavailable")
-    return {"schema": "learning-catalog.v1",
+    return {"schema": "learning-catalog.v2",
             "methods": [{"id": key, **METHODS[key]} for key in ("sft", "dpo", "ppo")],
-            "models": models, "datasets": datasets, "execution_enabled": False, "promotion_enabled": False}
+            "models": models, "datasets": datasets, "promotion_enabled": False}
 
 
-def selection_preflight(owner: str, request: SelectionRequest, store) -> dict:
+def run_blockers(request: SelectionRequest, model: dict, has_weights: bool) -> list[str]:
+    """What still prevents a candidate run of this selection on this host (empty when it can start)."""
+    blockers = []
+    if model["source_kind"] == "outbound":
+        blockers.append("outbound_connection_is_inference_only")
+    elif not has_weights:
+        blockers.append("local_weights_unavailable")
+    if request.method == "dpo":
+        blockers += ["reviewed_preference_partitions_required", "host_dispatch_not_integrated"]
+    elif request.method == "ppo":
+        blockers += ["evaluated_adapter_checkpoint_required", "independent_simulator_episodes_required",
+                     "host_dispatch_not_integrated"]
+    elif request.tuning not in RUNNABLE_TUNING:
+        blockers.append("full_tuning_not_offered")
+    return sorted(blockers)
+
+
+def selection_preflight(owner: str, request: SelectionRequest, store, *,
+                        weights: Callable[[dict], Path | None] = model_weights) -> dict:
     _owner(owner)
     request = SelectionRequest.model_validate(request.model_dump())
     from learning.training.methods import validate_method_role
@@ -136,24 +179,18 @@ def selection_preflight(owner: str, request: SelectionRequest, store) -> dict:
         raise LearningSelectionError("learning_dataset_changed")
     if dataset["superseded_by"] is not None:
         raise LearningSelectionError("learning_dataset_superseded")
-    blockers = ["trusted_model_identity_required", "trusted_training_configuration_required",
-                "fixed_evaluation_required", "resource_unknown", "host_dispatch_not_integrated",
-                "separate_promotion_required"]
-    if model["source_kind"] == "outbound":
-        blockers.append("outbound_connection_is_inference_only")
-    if request.method == "dpo":
-        blockers.append("reviewed_preference_partitions_required")
-    elif request.method == "ppo":
-        blockers.extend(["evaluated_adapter_checkpoint_required", "independent_simulator_episodes_required"])
+    has_weights = model["source_kind"] == "local" and weights(model_row) is not None
+    blockers = run_blockers(request, model, has_weights)
+    status = "blocked" if blockers else "ready"
     pinned_model = {key: model[key] for key in ("id", "backend", "source_kind", "state")}
     pinned_dataset = {key: dataset[key] for key in ("id", "sha256", "lineage_id", "version", "train_count", "validation_count")}
-    # Include current memberships as well as immutable-version metadata. The
-    # digest is an inspection identity, not a trainer admission certificate.
+    # Binds current memberships as well as immutable-version metadata; a run must
+    # present this exact digest, so a changed selection or host needs a new check.
     preflight_sha256 = _digest({"owner": owner, "request": request.model_dump(mode="json"),
                                "model": pinned_model, "dataset": pinned_dataset,
-                               "membership": dataset_row["content"], "blockers": sorted(blockers)})
-    return {"schema": "learning-selection-preflight.v1", "status": "blocked", "preflight_sha256": preflight_sha256,
+                               "membership": dataset_row["content"], "status": status, "blockers": blockers})
+    return {"schema": "learning-selection-preflight.v2", "status": status, "preflight_sha256": preflight_sha256,
             "method": request.method, "role": request.role, "tuning": request.tuning,
             "model": pinned_model, "dataset": pinned_dataset, "entrypoint": method["entrypoint"],
-            "resource_state": "unknown", "blockers": sorted(blockers), "execution_enabled": False,
+            "blockers": blockers, "later_gates": list(LATER_GATES),
             "model_loaded": False, "live_tool_execution": False, "promotion_enabled": False}

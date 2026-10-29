@@ -20,6 +20,7 @@ ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 HF_HUB_OFFLINE=1 TRANSFORMERS_O
     LEARNING_TRAJECTORY_PATH=/state/learning/trajectories.jsonl \
     LEARNING_CORRECTION_PATH=/state/learning/corrections.jsonl \
     LEARNING_CONTEXT_PATH=/state/learning/continual/context-records.jsonl \
+    LEARNING_RUN_ROOT=/state/learning/runs \
     MAILBOX_PROVISIONING_LOCK_PATH=/state/mailbox-provisioning.lock
 USER 10001:10001
 EXPOSE 8000

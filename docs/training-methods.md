@@ -225,22 +225,52 @@ resource state is `unknown`. Every plan also lists trainer admission, host
 dispatch, fixed evaluation and separate promotion as outstanding gates, so a
 prepared plan is not evidence that training ran or may run.
 
-### Readiness check in the app
+### Readiness check and candidate runs in the app
 
 The app's Learning page (command palette → "Learning readiness") reads the
-owner's models and training dataset versions and checks one selection:
+owner's models and training dataset versions, checks one selection and, when
+that check is `ready`, starts one candidate SFT run:
 
 | Route | Purpose |
 |---|---|
-| `GET /api/v1/learning` (Phoenix) → `POST /internal/v1/learning/catalog` | SFT/DPO/PPO methods, the owner's models and training dataset versions with train/validation counts |
-| `POST /api/v1/learning/preflight` (Phoenix, CSRF) → `POST /internal/v1/learning/preflight` | Pins the model and the dataset version by digest, then lists every gate that still blocks a candidate run |
+| `GET /api/v1/learning` (Phoenix) → `POST /internal/v1/learning/catalog` | SFT/DPO/PPO methods, the owner's models (with `training_available`) and training dataset versions with train/validation counts |
+| `POST /api/v1/learning/preflight` (Phoenix, CSRF) → `POST /internal/v1/learning/preflight` | Pins the model and the dataset version by digest and returns `ready`, or `blocked` with every gate that still blocks a run, plus the check's `preflight_sha256` |
+| `GET /api/v1/learning/runs` → `POST /internal/v1/learning/runs` | The owner's 20 newest runs with progress, losses and outcome |
+| `POST /api/v1/learning/runs` (CSRF) → `POST /internal/v1/learning/runs/start` | Starts a run from exactly that check: the six selection fields plus its `preflight_sha256` |
+| `POST /api/v1/learning/runs/:id/cancel` (CSRF) → `POST /internal/v1/learning/runs/cancel` | Stops the owner's active run |
 
-Phoenix supplies the owner from the session and forwards only the six selection
-fields. Installed profiles and admitted uploads count as local weights; outbound
-connections are inference-only. A replaced or changed dataset version is
-refused. Every answer is `blocked`, with `execution_enabled`, `model_loaded`,
-`live_tool_execution` and `promotion_enabled` all false. Submitting a candidate
-run, observing it, evaluating it and promoting it remain separate, unbuilt steps.
+Phoenix supplies the owner from the session, forwards only the declared fields
+and checks every receipt before the browser sees it.
+
+A check is `ready` only for SFT with LoRA or QLoRA on owned local weights the
+host can read: a sealed upload, or an enabled installed profile with a complete
+checkpoint (no adapter-only profile). Outbound connections are inference-only
+(`outbound_connection_is_inference_only`); ready local models whose weights are
+missing are `local_weights_unavailable`. DPO and PPO stay readiness-only and
+keep their method gates. A replaced or changed dataset version is refused.
+
+A start re-runs the check. It is refused with `learning_check_changed` when the
+answer's digest differs from the one the owner saw, `learning_run_not_ready`
+when it is no longer ready, and `learning_host_busy` (HTTP 409) while another run
+trains on the host; one run trains at a time. The registry writes the run's
+inputs under `LEARNING_RUN_ROOT/<run_id>/`: `recipe.json` and `dataset.jsonl`
+(the admitted train/validation split, server-chosen; requests never carry a
+path). `scripts/run_candidate_training.py` then trains in a detached process
+with only `PATH`, `HOME`, locale, cache and CUDA variables, offline model
+loading and no provider or service credentials.
+
+The trainer reports progress in `status.json`; the registry alone writes
+`run.json`, and a finished record never changes. A trainer failure is shown as
+one known code (`insufficient_gpu_memory`, `cuda_unavailable`,
+`chat_template_unsupported`, `example_too_long`, `dataset_admission_failed`,
+otherwise `training_failed`); details stay in the run's private `trainer.log`.
+A trainer that exits without a result, or whose process id was reused, is
+`interrupted`. A completed run shows its candidate digest. It never changes
+what serves requests (`serving_changed` and `promotion_enabled` are always
+false); evaluating and promoting a candidate remain separate steps.
+
+`LEARNING_RUN_ROOT` defaults to `.runtime/learning/runs`. The container sets
+`/state/learning/runs`, because the image's file system is read-only.
 
 ## Public retrieval snapshot
 

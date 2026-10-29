@@ -41,6 +41,22 @@ def test_no_implicit_training(tmp_path):
     with pytest.raises(PermissionError): train_recipe(recipe(tmp_path, records()))
 
 
+def test_progress_reports_steps_and_losses_from_the_trainer_log():
+    from learning.training.recipes import progress_callback
+    seen = []
+    callback = progress_callback(lambda step, train_loss=None, validation_loss=None:
+                                 seen.append((step, train_loss, validation_loss)))
+
+    class State:
+        global_step = 3
+    callback.on_log(None, State(), None, logs={"loss": 1.5})
+    State.global_step = 4
+    callback.on_log(None, State(), None, logs={"eval_loss": 0.75})
+    callback.on_log(None, State(), None, logs={"learning_rate": 0.1})
+
+    assert seen == [(3, 1.5, None), (4, None, 0.75), (4, None, None)]
+
+
 def test_assistant_only_loss_and_no_truncation(tmp_path):
     class Tokenizer:
         def apply_chat_template(self, messages, **kwargs):

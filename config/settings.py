@@ -507,6 +507,11 @@ class Settings(
         Path(".runtime/learning/continual/context-records.jsonl")
     )
 
+    # Candidate training runs started from the Learning page (one at a time).
+    learning_run_root: Path = (
+        Path(".runtime/learning/runs")
+    )
+
     # ============================================================
     # DEVELOPER WORKSPACE
     # ============================================================

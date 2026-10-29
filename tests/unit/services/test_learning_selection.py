@@ -1,10 +1,13 @@
 """Learning selection: the owner's catalog and a readiness check, never a run.
 
 Both read the owner's real extension registry. The check pins the chosen model
-and dataset version, lists every gate that still blocks training, and never
+and dataset version and says whether a candidate run can start on this host:
+`ready` only for SFT with LoRA/QLoRA on owned local weights the host can read.
+Every other selection is `blocked` with the gates it still needs. Checking never
 starts, loads or promotes anything.
 """
 import json
+from pathlib import Path
 
 import pytest
 
@@ -17,11 +20,17 @@ from services.learning_control.application import (
 )
 
 OWNER, OTHER = "owner-a", "owner-b"
-COMMON_BLOCKERS = {"trusted_model_identity_required", "trusted_training_configuration_required",
-                   "fixed_evaluation_required", "resource_unknown", "host_dispatch_not_integrated",
-                   "separate_promotion_required"}
+LATER_GATES = ["fixed_evaluation_required", "separate_promotion_required"]
 ENTRYPOINTS = {"sft": "scripts/train_recipe.py", "dpo": "scripts/train_preferences.py",
                "ppo": "scripts/train_ppo.py"}
+
+
+def has_weights(row):
+    return Path("/weights") if row.get("backend") in {"local", "uploaded"} else None
+
+
+def no_weights(row):
+    return None
 
 
 def examples(count=12):
@@ -68,69 +77,85 @@ def test_catalog_lists_only_the_owners_models_and_training_datasets(store):
     model(store, owner=OTHER, name="Another owner's model")
     training(store, owner=OTHER)
 
-    catalog = learning_catalog(OWNER, store)
+    catalog = learning_catalog(OWNER, store, weights=has_weights)
 
-    assert catalog["schema"] == "learning-catalog.v1"
+    assert catalog["schema"] == "learning-catalog.v2"
     assert [row["id"] for row in catalog["methods"]] == ["sft", "dpo", "ppo"]
     assert catalog["models"] == [
         {"id": local["id"], "name": "Hub model", "backend": "local", "state": "ready",
-         "source_kind": "local", "training_available": False},
+         "source_kind": "local", "training_available": True},
         {"id": outbound["id"], "name": "Outbound model", "backend": "http", "state": "ready",
          "source_kind": "outbound", "training_available": False}]
     assert catalog["datasets"] == [
         {"id": data["id"], "name": "Ticket triage", "purpose": "training", "state": "ready",
          "sha256": data["sha256"], "lineage_id": data["id"], "version": 1,
          "train_count": 10, "validation_count": 2, "superseded_by": None}]
-    assert catalog["execution_enabled"] is False and catalog["promotion_enabled"] is False
+    assert catalog["promotion_enabled"] is False
     # Dataset bodies never leave the registry.
     assert "question 0" not in json.dumps(catalog)
+
+
+def test_training_is_available_only_for_ready_local_weights_the_host_can_read(store):
+    local, pending = model(store), model(store, state="pending", name="Pending")
+
+    for weights, expected in ((has_weights, {local["id"]: True, pending["id"]: False}),
+                              (no_weights, {local["id"]: False, pending["id"]: False})):
+        catalog = learning_catalog(OWNER, store, weights=weights)
+        assert {row["id"]: row["training_available"] for row in catalog["models"]} == expected
 
 
 def test_an_uploaded_model_is_the_owners_local_weights(store):
     weights = uploaded(store)
     training(store)
 
-    catalog = learning_catalog(OWNER, store)
+    catalog = learning_catalog(OWNER, store, weights=has_weights)
 
     assert catalog["models"] == [{"id": weights["id"], "name": "My weights", "backend": "uploaded",
-                                  "state": "ready", "source_kind": "local", "training_available": False}]
+                                  "state": "ready", "source_kind": "local", "training_available": True}]
     assert "/state/" not in json.dumps(catalog)
-    receipt = selection_preflight(OWNER, choose(weights, catalog["datasets"][0]), store)
+    receipt = selection_preflight(OWNER, choose(weights, catalog["datasets"][0]), store, weights=has_weights)
     assert receipt["model"]["source_kind"] == "local"
-    assert "outbound_connection_is_inference_only" not in receipt["blockers"]
+    assert receipt["status"] == "ready" and receipt["blockers"] == []
 
 
-def test_the_check_pins_the_selection_and_lists_every_gate_without_running(store):
+def test_a_runnable_check_is_ready_and_pins_the_selection_without_running(store):
     hub, data = model(store), training(store)
 
-    receipt = selection_preflight(OWNER, choose(hub, data), store)
+    receipt = selection_preflight(OWNER, choose(hub, data), store, weights=has_weights)
 
-    assert receipt["schema"] == "learning-selection-preflight.v1"
-    assert receipt["status"] == "blocked"
-    assert receipt["blockers"] == sorted(COMMON_BLOCKERS)
+    assert receipt["schema"] == "learning-selection-preflight.v2"
+    assert receipt["status"] == "ready" and receipt["blockers"] == []
+    assert receipt["later_gates"] == LATER_GATES
     assert (receipt["method"], receipt["role"], receipt["tuning"]) == ("sft", "hub", "qlora")
     assert receipt["entrypoint"] == "scripts/train_recipe.py"
     assert receipt["model"] == {"id": hub["id"], "backend": "local", "source_kind": "local", "state": "ready"}
     assert receipt["dataset"] == {"id": data["id"], "sha256": data["sha256"], "lineage_id": data["id"],
                                   "version": 1, "train_count": 10, "validation_count": 2}
-    assert receipt["resource_state"] == "unknown"
-    for flag in ("execution_enabled", "model_loaded", "live_tool_execution", "promotion_enabled"):
+    for flag in ("model_loaded", "live_tool_execution", "promotion_enabled"):
         assert receipt[flag] is False
     # The same selection always has the same inspection identity.
-    assert selection_preflight(OWNER, choose(hub, data), store)["preflight_sha256"] == receipt["preflight_sha256"]
+    assert selection_preflight(OWNER, choose(hub, data), store, weights=has_weights)["preflight_sha256"] == \
+        receipt["preflight_sha256"]
+    # The same selection on a host without its weights is a different, blocked check.
+    blocked = selection_preflight(OWNER, choose(hub, data), store, weights=no_weights)
+    assert blocked["status"] == "blocked" and blocked["blockers"] == ["local_weights_unavailable"]
+    assert blocked["preflight_sha256"] != receipt["preflight_sha256"]
 
 
-@pytest.mark.parametrize("method, role, tuning, extra", [
-    ("sft", "specialist", "lora", set()),
-    ("dpo", "specialist", "qlora", {"reviewed_preference_partitions_required"}),
-    ("ppo", "hub", "qlora", {"evaluated_adapter_checkpoint_required", "independent_simulator_episodes_required"}),
+@pytest.mark.parametrize("method, role, tuning, blockers", [
+    ("sft", "specialist", "lora", []),
+    ("sft", "hub", "full", ["full_tuning_not_offered"]),
+    ("dpo", "specialist", "qlora", ["host_dispatch_not_integrated", "reviewed_preference_partitions_required"]),
+    ("ppo", "hub", "qlora", ["evaluated_adapter_checkpoint_required", "host_dispatch_not_integrated",
+                             "independent_simulator_episodes_required"]),
 ])
-def test_each_method_reports_its_own_prerequisites(store, method, role, tuning, extra):
+def test_each_method_reports_its_own_prerequisites(store, method, role, tuning, blockers):
     hub, data = model(store), training(store)
 
-    receipt = selection_preflight(OWNER, choose(hub, data, method, role, tuning), store)
+    receipt = selection_preflight(OWNER, choose(hub, data, method, role, tuning), store, weights=has_weights)
 
-    assert set(receipt["blockers"]) == COMMON_BLOCKERS | extra
+    assert receipt["blockers"] == blockers
+    assert receipt["status"] == ("ready" if not blockers else "blocked")
     assert receipt["entrypoint"] == ENTRYPOINTS[method]
 
 
@@ -147,10 +172,10 @@ def test_unsupported_method_settings_are_refused(store, method, role, tuning):
 def test_an_outbound_connection_is_inference_only(store):
     remote, data = model(store, backend="http"), training(store)
 
-    receipt = selection_preflight(OWNER, choose(remote, data), store)
+    receipt = selection_preflight(OWNER, choose(remote, data), store, weights=has_weights)
 
     assert receipt["model"]["source_kind"] == "outbound"
-    assert set(receipt["blockers"]) == COMMON_BLOCKERS | {"outbound_connection_is_inference_only"}
+    assert receipt["status"] == "blocked" and receipt["blockers"] == ["outbound_connection_is_inference_only"]
 
 
 def test_a_new_dataset_version_supersedes_the_one_it_replaces(store):
@@ -217,3 +242,35 @@ def test_an_unknown_model_backend_is_never_offered(store):
 def test_an_invalid_owner_is_refused(store, owner):
     with pytest.raises(LearningSelectionError, match="^invalid_learning_request$"):
         learning_catalog(owner, store)
+
+
+def test_weights_are_only_sealed_uploads_and_enabled_full_local_checkpoints(tmp_path, monkeypatch):
+    """Training needs a complete base checkpoint the host can read; nothing else counts as weights."""
+    from types import SimpleNamespace
+
+    import config.settings
+    from config.settings import ModelProfileSettings
+    from services.learning_control.application import model_weights
+
+    sealed, unsealed, checkpoint, empty = (tmp_path / name for name in ("sealed", "unsealed", "checkpoint", "empty"))
+    for path in (sealed, unsealed, checkpoint, empty):
+        path.mkdir()
+    (sealed / ".sealed").write_text("")
+    (checkpoint / "config.json").write_text("{}")
+    profiles = {
+        "full": ModelProfileSettings(backend="transformers", model_path=checkpoint),
+        "disabled": ModelProfileSettings(backend="transformers", model_path=checkpoint, enabled=False),
+        "adapter": ModelProfileSettings(backend="transformers", model_path=checkpoint, adapter_path=tmp_path),
+        "no-config": ModelProfileSettings(backend="transformers", model_path=empty),
+        "no-path": ModelProfileSettings(backend="transformers"),
+    }
+    monkeypatch.setattr(config.settings, "get_settings", lambda: SimpleNamespace(model_profiles=profiles))
+
+    assert model_weights({"backend": "uploaded", "model_path": str(sealed)}) == sealed
+    assert model_weights({"backend": "local", "model": "full"}) == checkpoint
+    for row in ({"backend": "uploaded", "model_path": str(unsealed)}, {"backend": "uploaded", "model_path": ""},
+                {"backend": "uploaded"}, {"backend": "local", "model": "disabled"},
+                {"backend": "local", "model": "adapter"}, {"backend": "local", "model": "no-config"},
+                {"backend": "local", "model": "no-path"}, {"backend": "local", "model": "unknown"},
+                {"backend": "http", "model": "full", "model_path": str(sealed)}):
+        assert model_weights(row) is None, row
