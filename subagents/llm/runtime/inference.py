@@ -135,6 +135,7 @@ class InferenceCoordinator:
     ):
         from services.extensions.budget import ExternalInferenceBudgetError
         from services.extensions.context import active_role, selected_profile, with_retrieval
+        from services.lua_adapters.host_boundaries import model_request, model_response
 
         started = time.perf_counter()
         stage_label, repair_label, adapter, outcome = "INVALID", None, "unresolved", "error"
@@ -161,9 +162,13 @@ class InferenceCoordinator:
             if operation == "generate" and progress_stage:
                 report_progress(progress_stage)
             profile = selected_profile(stage=stage, repair_of=repair_of)
+            lua_binding = {"model_key": model_key, "connection_id": profile.get("id") if profile else None,
+                           "stage": stage_label, "repair_of": repair_label, "role": active_role.get()}
             if operation == "generate":
                 messages = with_retrieval(messages, stage=stage, repair_of=repair_of)
                 input_message_count = len(messages)
+            messages, max_new_tokens = await model_request(messages, max_new_tokens, binding=lua_binding,
+                                                           warm=operation == "warm")
             if profile:
                 backend = profile["backend"]
                 if backend not in {"http", "opencode", "pi", "local", "uploaded"}:
@@ -192,7 +197,7 @@ class InferenceCoordinator:
                         from services.extensions.harness import harness_generate
                         result = await harness_generate(profile, budget.messages, budget.max_output_tokens)
                     outcome = "success"
-                    return result
+                    return await model_response(result, binding=lua_binding)
                 if backend == "local":
                     model_key = profile["model"]
                 else:
@@ -213,7 +218,7 @@ class InferenceCoordinator:
             if operation == "generate":
                 generation = scheduled.value
             outcome = "success"
-            return generation.text if generation is not None else None
+            return await model_response(generation.text, binding=lua_binding) if generation is not None else None
         except asyncio.CancelledError:
             outcome, error_type = "cancelled", "CancelledError"
             raise

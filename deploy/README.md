@@ -103,10 +103,15 @@ adapter under `LEARNING_RUN_ROOT` (`/state/learning/runs`). The trainer reads ba
 weights from an enabled local profile's `model_path` (such as `/models/...`) or a
 sealed upload under `/state`, needs a GPU (see the overlay below), and never
 changes what serves requests.
-Lua row transforms run in a separate locked-down worker process inside the AI
-container (`docs/user-extensions.md`). The worker opens a private network
-namespace and applies Landlock only where the container runtime allows them;
-its descriptor, process and file-write limits apply everywhere.
+Lua runs in separate locked-down worker processes inside the AI container: the
+mandatory adapter stage in front of every model, connection, link and tool
+(`docs/lua-adapters.md`) and the optional dataset row transforms
+(`docs/user-extensions.md`). The worker opens a private network namespace and
+applies Landlock only where the container runtime allows them; its descriptor,
+process and file-write limits apply everywhere. To replace the packaged
+pass-through script, mount a reviewed script read-only and set
+`ITSM_LUA_ADAPTER_FILE` (absolute path) and `ITSM_LUA_ADAPTER_SHA256`; a
+mismatched digest refuses every boundary rather than skipping Lua.
 Run one AI worker per mutable storage root. A second
 container sharing that root is not supported by this foundation.
 

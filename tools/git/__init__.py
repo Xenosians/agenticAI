@@ -22,6 +22,9 @@ from services.process_runner import (
 
 DEFAULT_TIMEOUT_SECONDS = 10
 
+# Git subcommands that contact a remote; they are outbound links (Lua first).
+GIT_NETWORK_COMMANDS = frozenset({"clone", "fetch", "ls-remote", "pull", "push"})
+
 MAX_STAGE_PATHS = 50
 MAX_GIT_PATH_CHARS = 512
 
@@ -248,6 +251,13 @@ def _run_git(
     str,
     Any,
 ]:
+    # Commands that reach a remote are outbound links and cross Lua first.
+    command = next((arg for index, arg in enumerate(args)
+                    if not arg.startswith("-") and (index == 0 or args[index - 1] != "-c")), "")
+    if command in GIT_NETWORK_COMMANDS:
+        from services.lua_adapters.host_boundaries import inspect_link
+
+        inspect_link("git", f"git:{target.name}", operation=command)
 
     return (
         run_trusted_process(

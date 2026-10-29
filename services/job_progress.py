@@ -194,9 +194,13 @@ class JobProgress:
                 return
         else:
             connect = self.connect
+
+        from services.lua_adapters.host_boundaries import inspect_data_async
         delay = 1.0
         while True:
             try:
+                await inspect_data_async("connection", "request", {"url": self.url},
+                                         {"transport": "websocket", "topic": self.topic, "attempt": self.attempt})
                 async with connect(
                     self.url, additional_headers={"X-Internal-Token": self.token},
                     open_timeout=3, close_timeout=1, ping_interval=15, ping_timeout=10,

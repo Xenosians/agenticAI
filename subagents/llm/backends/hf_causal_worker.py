@@ -15,6 +15,8 @@ from transformers import (
     AutoTokenizer,
 )
 
+from services.lua_adapters.model_loading import from_pretrained as lua_from_pretrained
+
 from subagents.llm.runtime.base import (
     GenerationOutput,
     LLMBackend,
@@ -74,8 +76,8 @@ class HFCausalWorkerBackend(
         self._closed = False
 
         self.tokenizer = (
-            AutoTokenizer
-            .from_pretrained(
+            lua_from_pretrained(AutoTokenizer
+            .from_pretrained,
                 str(
                     self.model_path
                 ),
@@ -84,8 +86,8 @@ class HFCausalWorkerBackend(
         )
 
         self.model = (
-            AutoModelForCausalLM
-            .from_pretrained(
+            lua_from_pretrained(AutoModelForCausalLM
+            .from_pretrained,
                 str(
                     self.model_path
                 ),

@@ -15,6 +15,8 @@ Contract references (Claude Platform docs):
 
 from __future__ import annotations
 
+from services.lua_adapters.http_clients import async_client as lua_async_http_client
+
 from dataclasses import dataclass
 import json
 import os
@@ -347,7 +349,7 @@ async def post_messages(url: str, payload: dict, api_key: str) -> dict:
 
     target = endpoint(url, "messages")
     try:
-        async with httpx.AsyncClient(
+        async with lua_async_http_client(
             timeout=_timeout(), follow_redirects=False, trust_env=False,
         ) as client:
             async with client.stream(
@@ -463,7 +465,7 @@ async def _get_json(url: str, path: str, api_key: str, params: dict | None = Non
 
     target = endpoint(url, path)
     try:
-        async with httpx.AsyncClient(
+        async with lua_async_http_client(
             timeout=_timeout(), follow_redirects=False, trust_env=False,
         ) as client:
             async with client.stream(

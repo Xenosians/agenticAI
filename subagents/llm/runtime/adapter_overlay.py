@@ -1,4 +1,6 @@
 from __future__ import annotations
+from services.lua_adapters.model_loading import from_pretrained as lua_from_pretrained
+
 
 import hashlib
 import json
@@ -358,8 +360,8 @@ def apply_hub_adapter_overlay(
     from peft import PeftModel
 
     backend.model = (
-        PeftModel
-        .from_pretrained(
+        lua_from_pretrained(PeftModel
+        .from_pretrained,
             backend.model,
             str(adapter_directory),
             is_trainable=False,
@@ -470,8 +472,8 @@ def apply_profile_adapter_overlay(
     from peft import PeftModel
 
     backend.model = (
-        PeftModel
-        .from_pretrained(
+        lua_from_pretrained(PeftModel
+        .from_pretrained,
             backend.model,
             str(adapter_directory),
             is_trainable=False,

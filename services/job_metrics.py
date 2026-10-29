@@ -6,6 +6,8 @@ or credentials are part of a metric payload.
 """
 from __future__ import annotations
 
+from services.lua_adapters.http_clients import async_client as lua_async_http_client
+
 import asyncio
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
@@ -117,7 +119,7 @@ class JobMetricPublisher:
         import httpx
         # No redirects/proxies can forward the internal credential elsewhere.
         # An uncertain observational write may retry only its same immutable ID.
-        async with httpx.AsyncClient(timeout=0.75, follow_redirects=False, trust_env=False) as client:
+        async with lua_async_http_client(timeout=0.75, follow_redirects=False, trust_env=False) as client:
             for index in range(2):
                 try:
                     response = await client.post(self.url, json=payload, headers={"X-Internal-Token": self.token})

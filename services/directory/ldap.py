@@ -541,6 +541,9 @@ class LdapDirectoryService(
     def _create_server(
         self,
     ) -> Server:
+        from services.lua_adapters.host_boundaries import inspect_link
+
+        inspect_link("ldap", f"{'ldaps' if self.use_ssl else 'ldap'}://{self.host}:{self.port}", operation="bind")
         return Server(
             self.host,
             port=self.port,

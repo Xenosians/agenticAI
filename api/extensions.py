@@ -8,6 +8,7 @@ from services.extensions.service import command
 from services.extensions.probe import ProviderProbeError
 from services.extensions.diagnostics import HarnessFailure
 from services.extensions.transform import TransformError
+from services.lua_adapters.runtime import LuaAdapterError
 
 
 router = APIRouter()
@@ -43,6 +44,11 @@ async def extensions(body: ExtensionCommand, request: Request):
     except TransformError as exc:
         # A transform's code and a bounded message about the owner's own script.
         raise HTTPException(422, exc.public_detail()) from None
+
+    except LuaAdapterError as exc:
+        # The Lua stage refused before dispatch: a stable lua_adapter_* code and a
+        # generic message, never the script's own error text or the payload.
+        raise HTTPException(422, {"code": exc.code, "message": exc.message}) from None
 
     except HarnessFailure as exc:
         # HarnessFailure contains only server-generated backend/provider

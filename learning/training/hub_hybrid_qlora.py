@@ -15,6 +15,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from services.lua_adapters.model_loading import from_pretrained as lua_from_pretrained
+
 from config.path_portability import (
     resolve_portable_path,
 )
@@ -645,15 +647,15 @@ def _load_model(
         )
 
         tokenizer = (
-            MistralCommonBackend
-            .from_pretrained(
+            lua_from_pretrained(MistralCommonBackend
+            .from_pretrained,
                 str(model_path)
             )
         )
 
         model = (
-            Mistral3ForConditionalGeneration
-            .from_pretrained(
+            lua_from_pretrained(Mistral3ForConditionalGeneration
+            .from_pretrained,
                 str(model_path),
                 local_files_only=True,
                 torch_dtype=(
@@ -667,16 +669,16 @@ def _load_model(
 
     else:
         tokenizer = (
-            AutoTokenizer
-            .from_pretrained(
+            lua_from_pretrained(AutoTokenizer
+            .from_pretrained,
                 str(model_path),
                 local_files_only=True,
             )
         )
 
         model = (
-            AutoModelForCausalLM
-            .from_pretrained(
+            lua_from_pretrained(AutoModelForCausalLM
+            .from_pretrained,
                 str(model_path),
                 local_files_only=True,
                 torch_dtype=(
@@ -729,8 +731,8 @@ def _load_model(
             )
 
         model = (
-            PeftModel
-            .from_pretrained(
+            lua_from_pretrained(PeftModel
+            .from_pretrained,
                 model,
                 str(
                     seed_adapter_directory

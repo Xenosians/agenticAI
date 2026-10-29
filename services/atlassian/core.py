@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from services.lua_adapters.http_clients import client as lua_http_client
+
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qs, quote, urlsplit
@@ -224,7 +226,7 @@ class AtlassianAdminClient:
             raise ValueError("Atlassian timeout must be greater than zero.")
 
         self.credentials = credentials
-        self.client = httpx.Client(
+        self.client = lua_http_client(
             base_url=ATLASSIAN_API_ORIGIN,
             timeout=float(timeout_seconds),
             follow_redirects=False,

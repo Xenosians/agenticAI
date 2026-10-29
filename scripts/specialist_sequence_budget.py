@@ -13,6 +13,8 @@ if str(PROJECT_ROOT) not in sys.path:
         str(PROJECT_ROOT),
     )
 
+from services.lua_adapters.model_loading import from_pretrained as lua_from_pretrained
+
 from config import Settings
 from learning.training.specialist_sft import (
     _render_prompt,
@@ -59,7 +61,7 @@ def main() -> int:
 
     from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(
+    tokenizer = lua_from_pretrained(AutoTokenizer.from_pretrained,
         str(
             profile.model_path
             .expanduser()

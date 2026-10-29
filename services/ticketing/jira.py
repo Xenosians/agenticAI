@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from services.lua_adapters.http_clients import client as lua_http_client
+
 import re
 
 from typing import (
@@ -125,7 +127,7 @@ class JiraTicketService(
             )
 
         self.client = (
-            httpx.Client(
+            lua_http_client(
                 base_url=(
                     self.base_url
                 ),

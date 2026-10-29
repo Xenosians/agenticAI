@@ -218,9 +218,11 @@ the API as `{code, message}`; the codes are `transform_syntax_error`,
 `transforms` entry says whether this host can run them; transforms need Linux
 and the `lupa` package (MIT, bundles Lua 5.4).
 
-Lua is an optional entry point, not a security boundary: the isolation comes
-from the separate locked-down process, and admission still decides what is
-stored. Models, connections and tools never pass through Lua.
+Lua is not a security boundary: the isolation comes from the separate
+locked-down process, and admission still decides what is stored. Row
+transforms are one use of Lua; every model, connection, link and tool also
+passes through the mandatory Lua adapter layer (see
+[Lua protocol adapters](lua-adapters.md)).
 
 ## Future workflow connectors
 

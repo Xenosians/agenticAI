@@ -24,6 +24,8 @@ from pydantic import (
     field_validator,
 )
 
+from services.lua_adapters.model_loading import from_pretrained as lua_from_pretrained
+
 from learning.evidence.execution_provenance import (
     PROVENANCE_SCHEMA,
     RuntimeModelArtifactFingerprint,
@@ -2423,8 +2425,8 @@ class SpecialistDpoQloraDryRun:
         )
 
         tokenizer = (
-            AutoTokenizer
-            .from_pretrained(
+            lua_from_pretrained(AutoTokenizer
+            .from_pretrained,
                 str(
                     self.settings
                     .base_model_path

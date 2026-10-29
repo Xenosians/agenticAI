@@ -28,6 +28,8 @@ if str(PROJECT_ROOT) not in sys.path:
     )
 
 
+from services.lua_adapters.model_loading import from_pretrained as lua_from_pretrained
+
 from config import Settings  # noqa: E402
 
 from learning.training.jira_sft import (  # noqa: E402
@@ -352,8 +354,8 @@ def main() -> int:
     # The adapter tokenizer is the tokenizer actually persisted by
     # the completed training run.
     tokenizer = (
-        AutoTokenizer
-        .from_pretrained(
+        lua_from_pretrained(AutoTokenizer
+        .from_pretrained,
             str(
                 adapter_directory
             ),
@@ -367,8 +369,8 @@ def main() -> int:
     )
 
     merge_base = (
-        AutoModelForCausalLM
-        .from_pretrained(
+        lua_from_pretrained(AutoModelForCausalLM
+        .from_pretrained,
             str(
                 base_model_path
             ),
@@ -386,8 +388,8 @@ def main() -> int:
     )
 
     merge_model = (
-        PeftModel
-        .from_pretrained(
+        lua_from_pretrained(PeftModel
+        .from_pretrained,
             merge_base,
             str(
                 adapter_directory

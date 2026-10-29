@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from services.lua_adapters.http_clients import client as lua_http_client
+
 import hashlib
 import re
 import secrets
@@ -80,7 +82,7 @@ class UserNotificationService:
         outbox_id = expected_outbox_id(dedupe_key)
         try:
             # trust_env=False: the internal token never goes through an environment proxy.
-            with httpx.Client(transport=self._transport, timeout=self.settings.phoenix_http_timeout_seconds,
+            with lua_http_client(transport=self._transport, timeout=self.settings.phoenix_http_timeout_seconds,
                               trust_env=False) as client:
                 response = client.post(self.settings.require_phoenix_base_url() + NOTIFICATION_PATH,
                                        headers={"x-internal-token": self.settings.require_internal_job_token()},

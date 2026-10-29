@@ -10,6 +10,8 @@ boundary.
 
 from __future__ import annotations
 
+from services.lua_adapters.http_clients import async_client as lua_async_http_client
+
 import json
 import os
 from urllib.parse import urlsplit
@@ -243,7 +245,7 @@ async def request_json(
 
     try:
         async with (
-            httpx.AsyncClient(
+            lua_async_http_client(
                 timeout=90,
                 follow_redirects=False,
                 trust_env=False,

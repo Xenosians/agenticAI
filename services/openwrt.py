@@ -1,6 +1,8 @@
 """Bounded read-only OpenWrt ubus provider. Credentials never enter tool arguments."""
 from __future__ import annotations
 
+from services.lua_adapters.http_clients import client as lua_http_client
+
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import ipaddress
@@ -43,7 +45,7 @@ class OpenWrtService:
     def __init__(self, config: OpenWrtConfig, client: httpx.Client | None = None):
         self.config = config
         self.origin = config.origin()
-        self.client = client or httpx.Client(verify=config.verify_tls, timeout=config.timeout_seconds)
+        self.client = client or lua_http_client(verify=config.verify_tls, timeout=config.timeout_seconds)
         self.owns_client = client is None
         self.session: str | None = None
 

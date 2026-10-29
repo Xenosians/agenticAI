@@ -4,6 +4,8 @@ import sys
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+from services.lua_adapters.model_loading import from_pretrained as lua_from_pretrained
+
 from config import Settings
 from transformers import AutoTokenizer
 from learning.training.hub_training_contracts import build_hub_training_environment
@@ -14,7 +16,7 @@ def main():
     settings = Settings()
     env = build_hub_training_environment(agent_directory=ROOT / "subagents/agents")
     legacy = load_prompt("hub_router.txt").replace("{{SPECIALISTS_JSON}}", json.dumps(env["specialists"], indent=2)) + "\n\n" + load_prompt("hub_conditional_workflow.txt")
-    tokenizer = AutoTokenizer.from_pretrained(settings.require_model_profile(settings.hub_model_key).model_path, local_files_only=True)
+    tokenizer = lua_from_pretrained(AutoTokenizer.from_pretrained, settings.require_model_profile(settings.hub_model_key).model_path, local_files_only=True)
     counts = {name:len(tokenizer.encode(prompt, add_special_tokens=False))
         for name,prompt in [("legacy_tokens", legacy), ("deduplicated_tokens", env["system_prompt"]) ]}
     report = {"schema":"router-prompt-budget.v1", **counts, "specialists":len(env["specialists"]),

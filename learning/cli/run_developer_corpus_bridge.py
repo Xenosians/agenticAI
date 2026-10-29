@@ -5,6 +5,8 @@ import json
 
 from pathlib import Path
 
+from services.lua_adapters.model_loading import from_pretrained as lua_from_pretrained
+
 from config import Settings
 
 from learning.continual.corpus_materializer import (
@@ -102,8 +104,8 @@ def _build_token_length_resolver(
         )
 
         tokenizer = (
-            MistralCommonBackend
-            .from_pretrained(
+            lua_from_pretrained(MistralCommonBackend
+            .from_pretrained,
                 str(
                     model_path
                 )
@@ -117,8 +119,8 @@ def _build_token_length_resolver(
         )
 
         tokenizer = (
-            AutoTokenizer
-            .from_pretrained(
+            lua_from_pretrained(AutoTokenizer
+            .from_pretrained,
                 str(
                     model_path
                 ),

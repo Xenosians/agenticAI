@@ -112,6 +112,7 @@ class ContractAwareMCPServer(MCPServer):
 
         def decorator(fn):
             register_tool_callable(fn)
-            return parent_decorator(fn)
+            from services.lua_adapters.host_boundaries import adapt_tool_callable
+            return parent_decorator(adapt_tool_callable(fn))
 
         return decorator

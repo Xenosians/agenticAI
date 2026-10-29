@@ -451,3 +451,60 @@ def test_failed_final_memory_observation_preserves_generation_error(runtime, mon
     assert len(metrics) == 1
     assert metrics[0].outcome == "error" and metrics[0].error_type == "RuntimeError"
     assert metrics[0].memory_before == memory() and metrics[0].memory_after is None
+
+
+@pytest.fixture
+def lua_script(tmp_path, monkeypatch):
+    def configure(source):
+        import hashlib
+        path = tmp_path / "adapter.lua"
+        path.write_text(source)
+        monkeypatch.setenv("ITSM_LUA_ADAPTER_FILE", str(path))
+        monkeypatch.setenv("ITSM_LUA_ADAPTER_SHA256", hashlib.sha256(path.read_bytes()).hexdigest())
+    return configure
+
+
+ADAPT_BOTH_WAYS = """return function(e)
+  if e.kind == 'model' and e.phase == 'request' then
+    local last = e.payload.messages[#e.payload.messages]
+    last.content = '[adapted] ' .. last.content
+  elseif e.kind == 'model' and e.phase == 'response' then
+    e.payload.text = string.upper(e.payload.text)
+  end
+  return e
+end"""
+
+
+@pytest.mark.parametrize("backend, stage", [
+    (None, InferenceStage.CONTROL_ROUTING),
+    ("http", InferenceStage.PRIMARY_RESPONSE),
+    ("pi", InferenceStage.PRIMARY_RESPONSE),
+    ("uploaded", InferenceStage.PRIMARY_RESPONSE),
+])
+def test_every_model_path_sends_the_lua_request_and_returns_the_lua_response(runtime, lua_script, backend, stage):
+    """Local, outbound HTTP, harness and uploaded models: Lua shapes what is sent and what comes back."""
+    coordinator, manager, _, external = runtime
+    lua_script(ADAPT_BOTH_WAYS)
+    profiles = {"http": {"backend": "http", "url": "https://api.groq.com/openai/v1", "model": "selected"},
+                "pi": {"backend": "pi", "model": "groq/selected"},
+                "uploaded": {"backend": "uploaded", "model": "upload", "model_path": "/state/upload"}}
+    token = execution_profile.set(profiles.get(backend))
+    try:
+        result = generate(coordinator, stage)
+    finally:
+        execution_profile.reset(token)
+    sent = external[0][1] if backend in {"http", "pi"} else manager.calls[0]["messages"]
+    assert sent[-1]["content"] == "[adapted] Read status"
+    assert result == ("REMOTE RESULT" if backend in {"http", "pi"} else "LOCAL RESULT")
+
+
+def test_a_lua_refusal_sends_nothing_to_any_model(runtime, lua_script):
+    from services.lua_adapters import LuaAdapterError
+
+    coordinator, manager, _, external = runtime
+    lua_script("return function(e) if e.kind == 'model' then error('refused') end return e end")
+    with pytest.raises(LuaAdapterError):
+        generate(coordinator, InferenceStage.PRIMARY_RESPONSE)
+    with pytest.raises(LuaAdapterError):
+        generate(coordinator, InferenceStage.CONTROL_ROUTING)
+    assert external == [] and manager.calls == []

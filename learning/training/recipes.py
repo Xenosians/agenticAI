@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from services.lua_adapters.model_loading import from_pretrained as lua_from_pretrained
+
 from learning.evidence.sanitizer import sanitize_text
 
 
@@ -125,7 +127,7 @@ def train_recipe(recipe: AdaptationRecipe, *, allow_training: bool = False, prog
     if torch.cuda.mem_get_info()[0] / 1024**3 < minimum:
         raise RuntimeError(f"Resource preflight requires {minimum:g} GiB free VRAM; no model loaded.")
     set_seed(recipe.seed)
-    tokenizer = AutoTokenizer.from_pretrained(recipe.model_path, local_files_only=True)
+    tokenizer = lua_from_pretrained(AutoTokenizer.from_pretrained, recipe.model_path, local_files_only=True)
     if tokenizer.eos_token_id is None:
         raise ValueError("A causal EOS token is required.")
     if tokenizer.pad_token_id is None:
@@ -136,7 +138,7 @@ def train_recipe(recipe: AdaptationRecipe, *, allow_training: bool = False, prog
     kwargs = {"local_files_only": True, "dtype": dtype, "device_map": {"": 0}}
     if recipe.tuning == "qlora":
         kwargs["quantization_config"] = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=dtype, bnb_4bit_use_double_quant=True)
-    model = AutoModelForCausalLM.from_pretrained(recipe.model_path, **kwargs)
+    model = lua_from_pretrained(AutoModelForCausalLM.from_pretrained, recipe.model_path, **kwargs)
     try:
         model.config.use_cache = False
         if recipe.tuning == "qlora":

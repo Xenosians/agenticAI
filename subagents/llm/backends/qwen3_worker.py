@@ -7,6 +7,8 @@ from transformers import (
     AutoTokenizer,
 )
 
+from services.lua_adapters.model_loading import from_pretrained as lua_from_pretrained
+
 from subagents.llm.runtime.base import LLMBackend
 
 
@@ -39,7 +41,7 @@ class Qwen3WorkerBackend(LLMBackend):
         )
 
         self.tokenizer = (
-            AutoTokenizer.from_pretrained(
+            lua_from_pretrained(AutoTokenizer.from_pretrained,
                 str(self.model_path),
                 local_files_only=True,
                 trust_remote_code=True,
@@ -47,7 +49,7 @@ class Qwen3WorkerBackend(LLMBackend):
         )
 
         self.model = (
-            AutoModelForCausalLM.from_pretrained(
+            lua_from_pretrained(AutoModelForCausalLM.from_pretrained,
                 str(self.model_path),
                 trust_remote_code=True,
                 **model_load_kwargs,

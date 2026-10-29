@@ -15,6 +15,7 @@ from services.extensions.transport import request_json
 from services.extensions.admission import admit_external_request, record_external_usage
 from services.extensions.budget import estimate_messages_tokens
 from services.extensions.options import reasoning_effort
+from services.lua_adapters.host_boundaries import model_request
 
 
 PROBE_CONTRACT = "provider-probe.v1"
@@ -299,6 +300,10 @@ async def remote_probe(
     )
 
     from services.extensions import anthropic
+
+    # A probe is a model request: it crosses the same Lua stage as inference first.
+    await model_request([{"role": "user", "content": "Reply with exactly: PROVIDER_OK"}], token_budget,
+                        binding={"connection_id": profile.get("id"), "stage": "CONNECTION_PROBE"})
 
     if anthropic.uses_messages_api(profile):
         return await _messages_probe(profile, token_budget)

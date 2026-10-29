@@ -22,6 +22,8 @@ from pydantic import (
     Field,
 )
 
+from services.lua_adapters.model_loading import from_pretrained as lua_from_pretrained
+
 from config import (
     ModelProfileSettings,
     Settings,
@@ -3149,7 +3151,7 @@ def train_jira_sft(
         BitsAndBytesConfig,
     )
 
-    tokenizer = AutoTokenizer.from_pretrained(
+    tokenizer = lua_from_pretrained(AutoTokenizer.from_pretrained,
         str(
             base_model_path
         ),
@@ -3198,7 +3200,7 @@ def train_jira_sft(
         bnb_4bit_use_double_quant=True,
     )
 
-    model = AutoModelForCausalLM.from_pretrained(
+    model = lua_from_pretrained(AutoModelForCausalLM.from_pretrained,
         str(
             base_model_path
         ),
@@ -3328,7 +3330,7 @@ def train_jira_sft(
         PeftModel,
     )
 
-    merge_base = AutoModelForCausalLM.from_pretrained(
+    merge_base = lua_from_pretrained(AutoModelForCausalLM.from_pretrained,
         str(
             base_model_path
         ),
@@ -3340,7 +3342,7 @@ def train_jira_sft(
         low_cpu_mem_usage=True,
     )
 
-    merge_model = PeftModel.from_pretrained(
+    merge_model = lua_from_pretrained(PeftModel.from_pretrained,
         merge_base,
         str(
             adapter_directory

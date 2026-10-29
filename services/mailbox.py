@@ -1,6 +1,8 @@
 """Governed local Maddy mailboxes; directory identities and Brevo stay separate."""
 from __future__ import annotations
 
+from services.lua_adapters.http_clients import client as lua_http_client
+
 import imaplib
 import os
 import re
@@ -70,7 +72,7 @@ class PhoenixMailboxCredentialStore:
     def persist(self, *, email: str, password: str) -> dict[str, str]:
         self.validate_configuration()
         try:
-            with httpx.Client(timeout=self.settings.phoenix_http_timeout_seconds) as client:
+            with lua_http_client(timeout=self.settings.phoenix_http_timeout_seconds) as client:
                 response = client.post(
                     self.settings.require_phoenix_base_url() + "/api/internal/v1/provisioned-mailboxes",
                     headers={"x-internal-token": self.settings.require_internal_job_token()},
@@ -181,6 +183,10 @@ class MaddyMailboxService:
         message["Subject"] = "ITSM mailbox provisioning verification"
         message["Message-ID"] = message_id
         message.set_content("This local test message verifies SMTP submission and IMAP delivery.")
+        from services.lua_adapters.host_boundaries import inspect_link
+
+        inspect_link("smtp", f"smtp://127.0.0.1:{self.settings.mailbox_smtp_port}", operation="submit")
+        inspect_link("imap", f"imap://127.0.0.1:{self.settings.mailbox_imap_port}", operation="read")
         try:
             with smtplib.SMTP("127.0.0.1", self.settings.mailbox_smtp_port,
                               timeout=self.settings.mailbox_timeout_seconds) as smtp:

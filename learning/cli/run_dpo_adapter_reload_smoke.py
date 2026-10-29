@@ -22,6 +22,8 @@ from pydantic import (
     Field,
 )
 
+from services.lua_adapters.model_loading import from_pretrained as lua_from_pretrained
+
 from learning.training.dpo_qlora import (
     ModelArtifactFingerprint,
     fingerprint_base_model,
@@ -1114,8 +1116,8 @@ def verify_tokenizer_compatibility(
     )
 
     base_tokenizer = (
-        AutoTokenizer
-        .from_pretrained(
+        lua_from_pretrained(AutoTokenizer
+        .from_pretrained,
             base_model_path,
             local_files_only=True,
             fix_mistral_regex=True,
@@ -1123,8 +1125,8 @@ def verify_tokenizer_compatibility(
     )
 
     adapter_tokenizer = (
-        AutoTokenizer
-        .from_pretrained(
+        lua_from_pretrained(AutoTokenizer
+        .from_pretrained,
             adapter_directory,
             local_files_only=True,
             fix_mistral_regex=True,
@@ -1438,8 +1440,8 @@ def run_adapter_reload_smoke(
     )
 
     tokenizer = (
-        AutoTokenizer
-        .from_pretrained(
+        lua_from_pretrained(AutoTokenizer
+        .from_pretrained,
             base_model_path,
             local_files_only=True,
             fix_mistral_regex=True,
@@ -1473,8 +1475,8 @@ def run_adapter_reload_smoke(
         torch.cuda.reset_peak_memory_stats()
 
         base_model = (
-            AutoModelForCausalLM
-            .from_pretrained(
+            lua_from_pretrained(AutoModelForCausalLM
+            .from_pretrained,
                 base_model_path,
 
                 local_files_only=True,
@@ -1494,8 +1496,8 @@ def run_adapter_reload_smoke(
         )
 
         model = (
-            PeftModel
-            .from_pretrained(
+            lua_from_pretrained(PeftModel
+            .from_pretrained,
                 base_model,
 
                 verified.adapter_directory,

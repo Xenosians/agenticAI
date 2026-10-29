@@ -11,6 +11,8 @@ import re
 import uuid
 import threading
 
+from services.lua_adapters.model_loading import from_pretrained as lua_from_pretrained
+
 from services.extensions.store import ExtensionStore
 from services.extensions.transport import request_json, validate_url
 from services.extensions.harness import harness_binary, harness_generate
@@ -218,6 +220,9 @@ def validate_model_bundle(root: Path):
 
 
 async def command(owner: str, action: str, payload: dict, settings) -> dict:
+    from services.lua_adapters.host_boundaries import inspect_data_async
+    await inspect_data_async("source" if action.startswith(("dataset", "upload", "transform")) else "connection",
+                             "admission", payload, {"owner": owner, "action": action})
     # Initialize the durable store on the application loop before dispatching
     # blocking filesystem/tokenizer/weight inspection to a worker thread.
     extension_store()
@@ -484,22 +489,12 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
             "opencode",
             "pi",
         }:
-            text = await harness_generate(
-                profile,
-                [
-                    {
-                        "role":
-                            "user",
-
-                        "content":
-                            (
-                                "Reply with exactly: "
-                                "HARNESS_OK"
-                            ),
-                    }
-                ],
-                256,
-            )
+            from services.lua_adapters.host_boundaries import model_request, model_response
+            # A harness probe is a model request: Lua first, then the harness.
+            binding = {"connection_id": profile.get("id"), "stage": "CONNECTION_PROBE"}
+            messages, budget = await model_request(
+                [{"role": "user", "content": "Reply with exactly: HARNESS_OK"}], 256, binding=binding)
+            text = await model_response(await harness_generate(profile, messages, budget), binding=binding)
 
             return {
                 "schema":
@@ -646,10 +641,10 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
         from safetensors import safe_open
         from transformers import AutoConfig, AutoTokenizer, AutoModelForCausalLM
         import torch
-        configuration = AutoConfig.from_pretrained(str(root), local_files_only=True, trust_remote_code=False)
+        configuration = lua_from_pretrained(AutoConfig.from_pretrained, str(root), local_files_only=True, trust_remote_code=False)
         if type(configuration) not in AutoModelForCausalLM._model_mapping:
             raise ValueError("Model architecture does not support causal language generation")
-        AutoTokenizer.from_pretrained(str(root), local_files_only=True, trust_remote_code=False)
+        lua_from_pretrained(AutoTokenizer.from_pretrained, str(root), local_files_only=True, trust_remote_code=False)
         parameters = 0
         for p in root.glob("*.safetensors"):
             with safe_open(p, framework="pt", device="cpu") as weights:

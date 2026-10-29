@@ -4,6 +4,8 @@ from typing import Any
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from services.lua_adapters.model_loading import from_pretrained as lua_from_pretrained
+
 from subagents.llm.runtime.base import LLMBackend
 
 
@@ -24,13 +26,13 @@ class QwenFuncCallBackend(LLMBackend):
                 f"Model not found: {self.model_path}"
             )
 
-        self.tokenizer = AutoTokenizer.from_pretrained(
+        self.tokenizer = lua_from_pretrained(AutoTokenizer.from_pretrained,
             self.model_path,
             local_files_only=True,
             fix_mistral_regex=True,
         )
 
-        self.model = AutoModelForCausalLM.from_pretrained(
+        self.model = lua_from_pretrained(AutoModelForCausalLM.from_pretrained,
             self.model_path,
             **model_load_kwargs,
         )

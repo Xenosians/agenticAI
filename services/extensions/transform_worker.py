@@ -36,6 +36,7 @@ HOOK_INTERVAL = 1000
 LUA_INTEGER = (-(2**63), 2**63 - 1)
 PR_SET_NO_NEW_PRIVS = 38
 LANDLOCK_CREATE_RULESET, LANDLOCK_RESTRICT_SELF = 444, 446
+CLOSE_RANGE = 436  # close_range(2): one call however large the descriptor table is
 SAFE_GLOBALS = ("assert", "error", "ipairs", "next", "pairs", "rawequal", "rawlen", "select",
                 "tonumber", "tostring", "type")
 SAFE_LIBRARIES = {
@@ -132,7 +133,9 @@ def lockdown(cpu_seconds: int, address_space_bytes: int) -> list[str]:
                          (resource.RLIMIT_CPU, cpu_seconds), (resource.RLIMIT_AS, address_space_bytes)):
         resource.setrlimit(limit, (value, value))
     # Only the three pipes stay open, and no descriptor can be added: no new file or socket.
-    os.closerange(3, resource.getrlimit(resource.RLIMIT_NOFILE)[1])
+    # close_range does this in one call; walking a container's million-slot table took ~0.3 s.
+    if libc.syscall(CLOSE_RANGE, ctypes.c_uint(3), ctypes.c_uint(0xFFFFFFFF), ctypes.c_uint(0)) != 0:
+        os.closerange(3, resource.getrlimit(resource.RLIMIT_NOFILE)[1])
     resource.setrlimit(resource.RLIMIT_NOFILE, (3, 3))
     layers += ["resource_limits", "no_new_descriptors"]
     return layers

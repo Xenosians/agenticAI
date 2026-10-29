@@ -10,6 +10,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from services.lua_adapters.model_loading import from_pretrained as lua_from_pretrained
+
 from config import Settings  # noqa: E402
 from learning.training.jira_sft import (  # noqa: E402
     _tokenize_record,
@@ -105,7 +107,7 @@ def main(argv=None) -> int:
 
     from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(str(model_path), local_files_only=True)
+    tokenizer = lua_from_pretrained(AutoTokenizer.from_pretrained, str(model_path), local_files_only=True)
     if tokenizer.pad_token_id is None:
         if tokenizer.eos_token_id is None:
             raise ValueError("BLOOMZ tokenizer has neither pad nor EOS token.")

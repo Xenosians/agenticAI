@@ -104,6 +104,10 @@ def build_model_backend(
         )
     )
 
+    from services.lua_adapters.host_boundaries import inspect_data
+    inspect_data("model", "admission", profile.model_dump(mode="json"),
+                 {"backend": backend_type, "model_path": str(model_path)})
+
     # ========================================================
     # ACCELERATOR LIFECYCLE BOUNDARY
     # ========================================================

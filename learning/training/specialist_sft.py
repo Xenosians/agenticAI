@@ -12,6 +12,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from services.lua_adapters.model_loading import from_pretrained as lua_from_pretrained
+
 from config import Settings
 from learning.training.capability_curriculum import (
     build_agent_capability_records,
@@ -1162,7 +1164,7 @@ def preflight_specialist_sft(
 
     from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(
+    tokenizer = lua_from_pretrained(AutoTokenizer.from_pretrained,
         str(model_path),
         local_files_only=True,
         fix_mistral_regex=True,
@@ -1299,7 +1301,7 @@ def _checkpoint_model_type(
 ) -> str:
     from transformers import AutoConfig
 
-    config = AutoConfig.from_pretrained(
+    config = lua_from_pretrained(AutoConfig.from_pretrained,
         str(model_path),
         local_files_only=True,
     )
@@ -1377,7 +1379,7 @@ def _load_specialist_base_model(
             low_cpu_mem_usage
         )
 
-    return model_class.from_pretrained(
+    return lua_from_pretrained(model_class.from_pretrained,
         str(model_path),
         **kwargs,
     )
@@ -1485,7 +1487,7 @@ def train_specialist_sft(
         Trainer,
     )
 
-    tokenizer = AutoTokenizer.from_pretrained(
+    tokenizer = lua_from_pretrained(AutoTokenizer.from_pretrained,
         str(base_model_path),
         local_files_only=True,
         fix_mistral_regex=True,
@@ -1582,7 +1584,7 @@ def train_specialist_sft(
             base_adapter_path,
         )
 
-        model = PeftModel.from_pretrained(
+        model = lua_from_pretrained(PeftModel.from_pretrained,
             model,
             str(base_adapter_path),
             is_trainable=True,

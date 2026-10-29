@@ -1,3 +1,5 @@
+
+from services.lua_adapters.http_clients import async_client as lua_async_http_client
 from contextlib import (
     asynccontextmanager,
 )
@@ -1371,7 +1373,7 @@ async def lifespan(
     )
 
     phoenix_client = (
-        httpx.AsyncClient(
+        lua_async_http_client(
             timeout=(
                 settings
                 .phoenix_http_timeout_seconds

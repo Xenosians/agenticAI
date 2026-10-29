@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from services.lua_adapters.http_clients import client as lua_http_client
+
 import json
 
 from typing import (
@@ -324,7 +326,7 @@ class JiraProjectMutationService:
             )
 
         self.client = (
-            httpx.Client(
+            lua_http_client(
                 base_url=(
                     self.base_url
                 ),

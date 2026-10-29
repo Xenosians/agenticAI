@@ -110,7 +110,11 @@ def test_transport_retries_only_same_observation_and_does_not_follow_redirects(m
         payload = metric_payload(observation(), attempt=1, event_id="a" * 32)
         await publisher._send(payload)
         assert len(calls) == 2 and calls[0][1]["json"] == calls[1][1]["json"] == payload
+        assert len(options) == 1
+        # Same transport options as before, plus the Lua stage every outbound request crosses.
+        hooks = options[0].pop("event_hooks")
         assert options == [{"timeout": 0.75, "follow_redirects": False, "trust_env": False}]
+        assert [hook.__name__ for hook in hooks["request"]] == ["_async_request"]
         calls.clear()
         async def conflict(_self, url, **kwargs):
             calls.append((url, kwargs))

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from services.lua_adapters.http_clients import client as lua_http_client
+
 import re
 import time
 from collections.abc import Iterable
@@ -67,7 +69,7 @@ class OperationsService:
 
     def _docker(self) -> httpx.Client:
         transport = self._docker_transport or httpx.HTTPTransport(uds=str(self.settings.operations_docker_socket))
-        return httpx.Client(transport=transport, base_url="http://docker",
+        return lua_http_client(transport=transport, base_url="http://docker",
                             timeout=self.settings.operations_timeout_seconds, trust_env=False)
 
     def _check_container(self, container: str | None) -> dict | None:
@@ -161,7 +163,7 @@ class OperationsService:
             return _failure("error", "not_configured",
                             "No health endpoints are configured (OPERATIONS_HEALTH_URLS or PHOENIX_BASE_URL).", "http")
         # trust_env=False: no proxy or .netrc credentials are ever attached to a probe.
-        with httpx.Client(transport=self._health_transport, timeout=self.settings.operations_timeout_seconds,
+        with lua_http_client(transport=self._health_transport, timeout=self.settings.operations_timeout_seconds,
                           follow_redirects=False, trust_env=False) as client:
             services = [_probe(client, name, url) for name, url in targets.items()]
         up = sum(1 for item in services if item["up"])

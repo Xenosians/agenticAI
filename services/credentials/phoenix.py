@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from services.lua_adapters.http_clients import client as lua_http_client
+
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
@@ -60,7 +62,7 @@ class PhoenixCredentialStore:
         token = self._settings.require_internal_job_token()
         self._require_safe_transport(base_url)
         try:
-            with httpx.Client(timeout=self._settings.phoenix_http_timeout_seconds) as client:
+            with lua_http_client(timeout=self._settings.phoenix_http_timeout_seconds) as client:
                 response = client.post(f"{base_url}{path}", headers={"x-internal-token": token}, json=payload)
         except httpx.HTTPError as exc:
             raise CredentialPersistenceError("Phoenix credential persistence transport failed.") from exc
@@ -122,7 +124,7 @@ class PhoenixCredentialStore:
         }
 
         try:
-            with httpx.Client(timeout=timeout) as client:
+            with lua_http_client(timeout=timeout) as client:
                 response = client.post(
                     url,
                     headers={

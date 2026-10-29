@@ -19,6 +19,8 @@ from transformers import (
     MistralCommonBackend,
 )
 
+from services.lua_adapters.model_loading import from_pretrained as lua_from_pretrained
+
 from subagents.llm.runtime.base import (
     GenerationOutput,
     LLMBackend,
@@ -167,8 +169,8 @@ class MinistralHubBackend(
         # --------------------------------------------------------
 
         self.tokenizer = (
-            MistralCommonBackend
-            .from_pretrained(
+            lua_from_pretrained(MistralCommonBackend
+            .from_pretrained,
                 str(
                     self.model_path
                 )
@@ -267,8 +269,8 @@ class MinistralHubBackend(
             )
 
         self.model = (
-            Mistral3ForConditionalGeneration
-            .from_pretrained(
+            lua_from_pretrained(Mistral3ForConditionalGeneration
+            .from_pretrained,
                 str(
                     self.model_path
                 ),
@@ -366,8 +368,8 @@ class MinistralHubBackend(
             PeftModel,
         ):
             self.model = (
-                PeftModel
-                .from_pretrained(
+                lua_from_pretrained(PeftModel
+                .from_pretrained,
                     self.model,
                     str(
                         adapter_directory

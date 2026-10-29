@@ -299,3 +299,38 @@ def test_the_worker_has_a_wall_clock_limit(monkeypatch):
     refused("transform_time_limit", "return function(row) return row end", '{"a": 1}',
             TransformLimits(wall_seconds=7))
     assert seen["timeout"] == 7 and seen["env"] == worker_environment() and seen["close_fds"] is True
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux descriptor limits")
+def test_lockdown_closes_inherited_descriptors_without_walking_the_whole_table(tmp_path):
+    """Every Lua adapter call pays the lockdown, so it must not scale with RLIMIT_NOFILE.
+
+    Containers commonly allow a million descriptors; closing them one by one took
+    about 0.3 s per call. Inherited descriptors must still end up closed.
+    """
+    probe = f"""
+import json, os, resource, sys, time
+sys.path.insert(0, {json.dumps(os.getcwd())})
+from services.extensions import transform_worker as worker
+soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
+inherited = os.open({json.dumps(str(tmp_path / "inherited"))}, os.O_WRONLY | os.O_CREAT, 0o600)
+high = os.dup2(inherited, min(hard - 1, 100_000))
+started = time.perf_counter()
+worker.lockdown(5, 768 * 1024 * 1024)
+elapsed = time.perf_counter() - started
+closed = []
+for fd in (inherited, high):
+    try:
+        os.fstat(fd)
+        closed.append(False)
+    except OSError:
+        closed.append(True)
+print(json.dumps({{"hard": hard, "elapsed": elapsed, "closed": closed}}))
+"""
+    completed = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=60,
+                               env=worker_environment())
+    result = json.loads(completed.stdout.strip().splitlines()[-1])
+    assert result["closed"] == [True, True], result
+    if result["hard"] >= 100_000:
+        assert result["elapsed"] < 0.05, result
