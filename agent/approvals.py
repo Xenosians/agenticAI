@@ -477,6 +477,34 @@ class ApprovalManager:
                 ),
             }
 
+        successful_statuses = {"executed", "success"}
+        failed_statuses = {
+            "denied", "error", "conflict", "incomplete", "rate_limited",
+            "not_found", "unsupported", "failed",
+        }
+        ambiguous_statuses = {"outcome_unknown", "unknown"}
+        status = result.get("status")
+        receipt_valid = (
+            type(result.get("ok")) is bool
+            and isinstance(status, str)
+            and (
+                (result["ok"] is True and status in successful_statuses)
+                or (result["ok"] is False and status in failed_statuses | ambiguous_statuses)
+            )
+        )
+        if not receipt_valid:
+            # A structured MCP value is not necessarily a domain receipt. The
+            # SDK can wrap a primitive as {"result": ...} after a tool acted.
+            # Preserve that evidence without declaring a known failure or
+            # discarding the durable claim that prevents duplicate execution.
+            result = {
+                "ok": False,
+                "status": "outcome_unknown",
+                "error_code": "tool_receipt_invalid",
+                "error": "The tool did not confirm a valid operation outcome.",
+                "provider_receipt": result,
+            }
+
         # ========================================================
         # AMBIGUOUS REMOTE MUTATION OUTCOME
         #
@@ -491,15 +519,6 @@ class ApprovalManager:
         # Keep the durable approval in executing state and persist
         # the provider evidence for later reconciliation.
         # ========================================================
-
-        ambiguous_statuses = {
-            "outcome_unknown",
-
-            # Compatibility with older mutation adapters.
-            # New hardened providers should prefer
-            # ``outcome_unknown``.
-            "unknown",
-        }
 
         if (
             result.get(
@@ -576,11 +595,6 @@ class ApprovalManager:
                     "trusted reconciliation."
                 ),
             }
-
-        successful_statuses = {
-            "executed",
-            "success",
-        }
 
         execution_succeeded = (
             result.get(

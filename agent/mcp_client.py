@@ -21,6 +21,24 @@ DEFAULT_MCP_SERVER_PATH = (
 )
 
 
+def _unconfirmed_result(code: str) -> dict:
+    """A protocol failure after submission says nothing about a tool's effect.
+
+    The server may have acted before raising, losing its reply or failing output
+    validation. ApprovalManager must keep its durable execution claim unresolved.
+    Raw exception/SDK text can contain arguments or provider credentials.
+    """
+    return {
+        "ok": False,
+        "status": "outcome_unknown",
+        "error_code": code,
+        "error": (
+            "The MCP tool outcome could not be confirmed. "
+            "Reconcile the operation before attempting another execution."
+        ),
+    }
+
+
 class MCPRuntime:
     """
     Explicit lifecycle owner for the persistent MCP subprocess.
@@ -187,52 +205,21 @@ class MCPRuntime:
                 )
             )
 
-        except Exception as exc:
-            return {
-                "ok":
-                    False,
-
-                "status":
-                    "error",
-
-                "error": (
-                    "MCP call failed: "
-                    f"{exc}"
-                ),
-            }
+        except Exception:
+            return _unconfirmed_result("mcp_call_unconfirmed")
 
         if result.is_error:
-            return {
-                "ok":
-                    False,
-
-                "status":
-                    "error",
-
-                "error": (
-                    f"MCP tool '{tool_name}' "
-                    "returned an error."
-                ),
-            }
+            return _unconfirmed_result("mcp_tool_error")
 
         if (
             result
             .structured_content
             is None
         ):
-            return {
-                "ok":
-                    False,
+            return _unconfirmed_result("mcp_structured_receipt_missing")
 
-                "status":
-                    "error",
-
-                "error": (
-                    f"MCP tool '{tool_name}' "
-                    "returned no structured "
-                    "content."
-                ),
-            }
+        if not isinstance(result.structured_content, dict):
+            return _unconfirmed_result("mcp_structured_receipt_invalid")
 
         return (
             result

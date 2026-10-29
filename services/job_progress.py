@@ -201,10 +201,17 @@ class JobProgress:
             try:
                 await inspect_data_async("connection", "request", {"url": self.url},
                                          {"transport": "websocket", "topic": self.topic, "attempt": self.attempt})
+                tls_options = {}
+                if urlsplit(self.url).scheme == "wss":
+                    from services.transport_tls import configured_context
+                    context = configured_context()
+                    if context is not None:
+                        tls_options["ssl"] = context
                 async with connect(
                     self.url, additional_headers={"X-Internal-Token": self.token},
                     open_timeout=3, close_timeout=1, ping_interval=15, ping_timeout=10,
-                    max_size=8192, max_queue=4, logger=_wire_logger,
+                    max_size=8192, max_queue=4, logger=_wire_logger, proxy=None,
+                    **tls_options,
                 ) as socket:
                     join_ref = await self._join(socket)
                     delay = 1.0

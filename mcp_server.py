@@ -166,6 +166,9 @@ class MutationResult(
     ok: bool
     status: str
     changed: bool | None = None
+    mutation_performed: bool | None = None
+    verification_ok: bool | None = None
+    retry_safe: bool | None = None
     user_id: str | None = None
     password_reset_count: int | None = None
     message: str | None = None

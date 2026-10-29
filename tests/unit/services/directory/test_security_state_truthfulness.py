@@ -132,6 +132,42 @@ def test_unlock_success_requires_explicit_zero_read_back():
     assert len(directory.connection.writes) == 1
 
 
+@pytest.mark.parametrize("verified", [True, False])
+def test_unlock_mcp_serialization_preserves_real_ldap_readback_evidence(verified):
+    from mcp_server import MutationResult
+
+    after = entry(lockoutTime=[b"0"]) if verified else Entry()
+    directory = Directory(entry(lockoutTime=[b"123"]), after)
+    observed = directory.unlock_user("audit_user")
+    payload = MutationResult(**observed).model_dump(mode="json")
+
+    assert payload["status"] == ("executed" if verified else "outcome_unknown")
+    assert payload["ok"] is verified
+    assert payload["changed"] is (True if verified else None)
+    assert payload["mutation_performed"] is True
+    assert payload["retry_safe"] is False
+    # The LDAP adapter reports True only on verified readback; absence is not
+    # evidence of verification and must stay unknown at the MCP boundary.
+    assert payload["verification_ok"] is observed.get("verification_ok")
+    assert len(directory.connection.writes) == 1
+
+
+def test_unlock_mcp_schema_preserves_explicit_negative_and_absent_evidence():
+    from mcp_server import MutationResult
+
+    unknown = MutationResult(
+        ok=False, status="outcome_unknown", changed=None,
+        mutation_performed=None, verification_ok=False, retry_safe=False,
+    ).model_dump(mode="json")
+    assert unknown["verification_ok"] is False
+    assert unknown["retry_safe"] is False
+    assert unknown["mutation_performed"] is None
+    unspecified = MutationResult(ok=False, status="error").model_dump(mode="json")
+    assert all(unspecified[key] is None for key in (
+        "mutation_performed", "verification_ok", "retry_safe",
+    ))
+
+
 def test_unlock_noop_requires_explicit_observed_zero():
     directory = Directory(entry(lockoutTime=[b"0"]))
     result = directory.unlock_user("audit_user")

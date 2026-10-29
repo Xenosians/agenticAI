@@ -16,6 +16,8 @@ agenticaiPersonal/itsm-agent/
   deploy/
     compose.yaml                database, backend, frontend, AI and explicit schema task
     compose.gpu.yaml            optional existing-GPU-runtime reservation
+    compose.profile.yaml        read-only machine profile and host secret references
+    compose.trust.yaml          optional deployment-scoped private CA trust bundle
     *.env.example              deployment and separate private runtime inputs
     validate.py                configuration-only check; never calls compose up
     tests/test_deployment.py    rejection, context and rendering checks
@@ -62,9 +64,9 @@ Jira and mail providers; a private container network is not an egress policy.
    and published port, for example `https://itsm.example:8443` (illustrative only).
    Use a lowercase DNS hostname; omit `:443` when using the default HTTPS port.
    The same hostname is a service-network alias for HTTPS callbacks on private
-   port 9443. Both browser and AI must trust the certificate. The foundation
-   expects a publicly trusted chain; it does not disable verification or install
-   a private CA into the host or dependencies. TLS files mounted into the
+   port 9443. Both browser and AI must trust the certificate. Use a publicly
+   trusted chain, or the explicit private-CA overlay below. No client disables
+   verification or installs trust into the host or dependencies. TLS files mounted into the
    frontend must be readable by its UID/GID **101:101**, including its private key.
    Prepare appropriately protected deployment copies; do not make a system key
    world-readable to work around permissions.
@@ -108,10 +110,11 @@ mandatory adapter stage in front of every model, connection, link and tool
 (`docs/lua-adapters.md`) and the optional dataset row transforms
 (`docs/user-extensions.md`). The worker opens a private network namespace and
 applies Landlock only where the container runtime allows them; its descriptor,
-process and file-write limits apply everywhere. To replace the packaged
-pass-through script, mount a reviewed script read-only and set
-`ITSM_LUA_ADAPTER_FILE` (absolute path) and `ITSM_LUA_ADAPTER_SHA256`; a
-mismatched digest refuses every boundary rather than skipping Lua.
+process and file-write limits apply everywhere. To replace the generic boundary
+script, use the machine-profile overlay below. Named protocol behavior lives in
+the packaged `.lua` files described by [Lua plugins](../docs/lua-plugins.md),
+with optional reviewed overrides selected in that profile. A mismatched digest
+refuses dispatch rather than skipping Lua.
 Run one AI worker per mutable storage root. A second
 container sharing that root is not supported by this foundation.
 
@@ -127,6 +130,42 @@ a container means that container. Existing lab providers are not implicitly
 attached, enabled or reconfigured. Container-operation tools need a separately
 reviewed provider endpoint; no blanket Docker socket is exposed.
 
+## Portable machine configuration
+
+Use `compose.profile.yaml` when this deployment selects its links, model profiles
+and protocol files through a [machine profile](../docs/lua-machine-profiles.md).
+Prepare a directory containing `machine.lua` and any selected `plugins/*.lua`
+files. Set `LUA_PROFILE_ROOT` to that directory and `LUA_PROFILE_SHA256` to the
+lowercase SHA256 of the exact `machine.lua` bytes. Review each selected plugin's
+digest separately in the Lua declaration. The directory is mounted read-only
+at `/run/janus/profiles`; source paths and local-model paths in the declaration
+must refer to their actual container locations.
+
+Set `LUA_LINK_SECRETS_FILE` to the separate protected JSON secret-reference store.
+It is mounted read-only at `/run/secrets/itsm-links.json` and must be readable by
+UID10001 with mode0600 (no group/other permission bits). Prepare that deployment
+copy explicitly; the container never changes host ownership. A profile with no
+credential references can use an empty JSON object. Credentials are resolved by
+the host after Lua runs, and never enter the Lua worker or image.
+
+Declared link sections replace every setting they control, including omitted
+credentials; stale runtime env-file entries cannot supplement them. Undeclared
+sections retain the application's existing configuration. Missing files,
+symlinks, invalid references or changed digests refuse configuration. Model and
+provider admission still validate actual resources and permissions; a valid Lua
+declaration does not prove readiness.
+
+For a private issuing CA, set `TLS_CA_BUNDLE_FILE` and add `compose.trust.yaml`.
+The reviewed PEM bundle must include the ordinary public trust roots alongside
+the private CA, so external provider verification stays available. It is mounted
+read-only for AI's explicit `ITSM_HTTP_CA_BUNDLE` and frontend health's
+`CURL_CA_BUNDLE`. Clients still verify issuer, validity and hostname. Browser
+trust is a separate client configuration: isolated acceptance uses a dedicated
+browser trust store and hostname mapping, never global trust/DNS edits or ignored
+certificate errors. The AI HTTP helper reads the dedicated setting even while
+environment proxy discovery stays disabled. Do not add a private key to a trust
+bundle.
+
 ## Validate, then deliberately build/bootstrap/start
 
 From the AI checkout, configuration validation uses Docker Compose without
@@ -136,7 +175,8 @@ building, starting or reading the private runtime env files into its output:
 python deploy/validate.py --env-file /absolute/path/deployment.private.env
 ```
 
-Use `--gpu` to validate the optional overlay too. A successful result says
+Use `--gpu`, `--machine-profile` and/or `--private-ca` to validate the selected
+overlays too. A successful result says
 `configuration_validated`, `images_built: false`, `runtime_started: false` and
 `e2e_verified: false`. It does not establish certificate validity, provider
 connectivity, usable weights or a passing deployment.
@@ -152,7 +192,9 @@ docker compose --env-file /absolute/path/deployment.private.env -f deploy/compos
 ```
 
 For a reviewed GPU deployment, add `-f deploy/compose.gpu.yaml` to each relevant
-command. Do not start the normal services until explicit schema bootstrap passes.
+command. Add `-f deploy/compose.profile.yaml` and/or
+`-f deploy/compose.trust.yaml` to those same commands when selected. Do not start
+the normal services until explicit schema bootstrap passes.
 The schema task starts Req only and calls the existing canonical schema helper;
 it does not start application workers, dispatch jobs or send mail.
 

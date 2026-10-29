@@ -1,0 +1,19 @@
+# Explicit portable machine selection. Contains no selected provider or secret.
+# The mounted directory carries machine.lua and its reviewed plugins/ subtree.
+services:
+  ai:
+    environment:
+      ITSM_LUA_ADAPTER_FILE: /run/janus/profiles/machine.lua
+      ITSM_LUA_ADAPTER_SHA256: ${LUA_PROFILE_SHA256:?Set the reviewed machine.lua SHA256}
+      ITSM_LINK_SECRETS_FILE: /run/secrets/itsm-links.json
+    volumes:
+      - type: bind
+        source: ${LUA_PROFILE_ROOT:?Set the reviewed machine profile directory}
+        target: /run/janus/profiles
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${LUA_LINK_SECRETS_FILE:?Set the separately protected link secret file}
+        target: /run/secrets/itsm-links.json
+        read_only: true
+        bind: {create_host_path: false}

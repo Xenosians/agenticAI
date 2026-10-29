@@ -1,3 +1,7 @@
+"""Manual read-only LDAP check: reads AD_TEST_USER's status through the configured
+directory backend. Nothing is changed; printed output is not acceptance evidence.
+See scripts/ldap_preflight.py for the full connectivity preflight.
+"""
 import sys
 
 from pathlib import (

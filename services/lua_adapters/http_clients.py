@@ -10,6 +10,7 @@ import hashlib
 import httpx
 
 from services.lua_adapters.host_boundaries import inspect_data, inspect_data_async
+from services.transport_tls import configured_context
 
 
 def _event(request):
@@ -35,6 +36,10 @@ async def _async_request(request):
 
 def _options(options, hook):
     options = dict(options)
+    if options.get("verify", True) is True:
+        context = configured_context()
+        if context is not None:
+            options["verify"] = context
     hooks = {name: list(callbacks) for name, callbacks in options.pop("event_hooks", {}).items()}
     # Run last, so the adapter observes the request after other host hooks.
     hooks.setdefault("request", []).append(hook)

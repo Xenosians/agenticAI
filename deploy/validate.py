@@ -9,6 +9,7 @@ import argparse
 import ipaddress
 import json
 from pathlib import Path, PurePosixPath
+import re
 import subprocess
 from urllib.parse import urlsplit
 
@@ -77,7 +78,30 @@ def validate_model(model: dict) -> dict:
     ai_env = ai.get("environment", {})
     require(ai_env.get("PHOENIX_BASE_URL") == f"https://{host}:9443", "private_tls_callback_required")
     volumes = {volume.get("target"): volume for volume in ai.get("volumes", [])}
-    require(set(volumes) == {"/models", "/state", "/workspace"}, "ai_mount_layout_mismatch")
+    base_mounts = {"/models", "/state", "/workspace"}
+    profile_mounts = {"/run/janus/profiles", "/run/secrets/itsm-links.json"}
+    trust_target = "/run/janus/trust/ca-bundle.pem"
+    trust_mounts = {trust_target} if trust_target in volumes else set()
+    machine_profile = bool(set(volumes) & profile_mounts)
+    require(set(volumes) == base_mounts | (profile_mounts if machine_profile else set()) | trust_mounts, "ai_mount_layout_mismatch")
+    if trust_mounts:
+        require(volumes[trust_target].get("read_only") is True and tls.get(trust_target, {}).get("read_only") is True and
+                volumes[trust_target].get("source") == tls[trust_target].get("source") and
+                ai_env.get("ITSM_HTTP_CA_BUNDLE") == trust_target and
+                frontend.get("environment", {}).get("CURL_CA_BUNDLE") == trust_target,
+                "tls_trust_binding_invalid")
+    else:
+        require(trust_target not in tls and "ITSM_HTTP_CA_BUNDLE" not in ai_env and
+                "CURL_CA_BUNDLE" not in frontend.get("environment", {}), "tls_trust_mounts_missing")
+    if machine_profile:
+        require(all(volumes[target].get("read_only") is True for target in profile_mounts), "lua_profile_mounts_must_be_read_only")
+        require(ai_env.get("ITSM_LUA_ADAPTER_FILE") == "/run/janus/profiles/machine.lua" and
+                ai_env.get("ITSM_LINK_SECRETS_FILE") == "/run/secrets/itsm-links.json" and
+                re.fullmatch(r"[a-f0-9]{64}", ai_env.get("ITSM_LUA_ADAPTER_SHA256", "")) is not None,
+                "lua_profile_binding_invalid")
+    else:
+        require(not any(key in ai_env for key in ("ITSM_LUA_ADAPTER_FILE", "ITSM_LUA_ADAPTER_SHA256", "ITSM_LINK_SECRETS_FILE")),
+                "lua_profile_mounts_missing")
     require(volumes["/models"].get("read_only") is True and not volumes["/state"].get("read_only") and not volumes["/workspace"].get("read_only"), "ai_storage_modes_mismatch")
     require(ai.get("read_only") is True and ai.get("deploy", {}).get("replicas", 1) == 1, "single_ai_process_storage_required")
     for key in ("COMPLETION_OUTBOX_PATH", "APPROVAL_STORE_PATH", "EXTENSION_STORAGE_ROOT", "USER_MODEL_ROOT", "MODEL_ARTIFACT_CACHE_ROOT",
@@ -94,11 +118,15 @@ def validate_model(model: dict) -> dict:
             "images_built": False, "runtime_started": False, "e2e_verified": False}
 
 
-def render_compose(env_file: Path, *, gpu: bool = False) -> dict:
+def render_compose(env_file: Path, *, gpu: bool = False, machine_profile: bool = False, private_ca: bool = False) -> dict:
     root = Path(__file__).resolve().parent
     command = ["docker", "compose", "--env-file", str(env_file.resolve()), "-f", str(root / "compose.yaml")]
     if gpu:
         command += ["-f", str(root / "compose.gpu.yaml")]
+    if machine_profile:
+        command += ["-f", str(root / "compose.profile.yaml")]
+    if private_ca:
+        command += ["-f", str(root / "compose.trust.yaml")]
     command += ["--profile", "bootstrap", "config", "--no-env-resolution", "--format", "json"]
     try:
         completed = subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
@@ -117,9 +145,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env-file", required=True, type=Path)
     parser.add_argument("--gpu", action="store_true")
+    parser.add_argument("--machine-profile", action="store_true")
+    parser.add_argument("--private-ca", action="store_true")
     args = parser.parse_args()
     try:
-        print(json.dumps(validate_model(render_compose(args.env_file, gpu=args.gpu))))
+        print(json.dumps(validate_model(render_compose(args.env_file, gpu=args.gpu,
+                                                     machine_profile=args.machine_profile, private_ca=args.private_ca))))
         return 0
     except DeploymentError as error:
         print(json.dumps({"status": "configuration_rejected", "code": str(error)}))

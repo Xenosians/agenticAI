@@ -414,3 +414,47 @@ def test_verified_provider_success_becomes_terminal_approved(
     assert persisted.result == provider_result
 
     assert mcp.calls == 1
+
+
+@pytest.mark.parametrize("receipt", [
+    {},
+    {"result": "acknowledged"},
+    {"ok": "false", "status": "error"},
+    {"ok": 1, "status": "success"},
+    {"ok": True},
+    {"ok": False, "status": None},
+    {"ok": False, "status": []},
+    {"ok": False, "status": "unrecognized"},
+    {"ok": True, "status": "denied"},
+    {"ok": False, "status": "success"},
+    {"ok": True, "status": "outcome_unknown"},
+    {"ok": False, "status": "timeout"},
+    {"ok": False, "status": "cancelled"},
+])
+def test_malformed_or_contradictory_receipt_preserves_evidence_without_retry(tmp_path, receipt):
+    store, mcp, manager, approval = build_manager(tmp_path, receipt)
+    first = asyncio.run(manager.approve_approval(approval["id"]))
+    assert first["ok"] is False
+    assert first["approval"]["status"] == "executing"
+    assert first["result"]["status"] == "outcome_unknown"
+    assert first["result"]["error_code"] == "tool_receipt_invalid"
+    assert first["result"]["provider_receipt"] == receipt
+    assert store.get(approval["id"]).result == first["result"]
+    second = asyncio.run(manager.approve_approval(approval["id"]))
+    assert second["replayed"] is True
+    assert second["result"] == first["result"]
+    assert mcp.calls == 1
+
+
+@pytest.mark.parametrize("status", [
+    "denied", "error", "conflict", "incomplete", "rate_limited",
+    "not_found", "unsupported", "failed",
+])
+def test_valid_negative_outcome_remains_a_known_failure(tmp_path, status):
+    receipt = {"ok": False, "status": status, "changed": False}
+    store, mcp, manager, approval = build_manager(tmp_path, receipt)
+    result = asyncio.run(manager.approve_approval(approval["id"]))
+    assert result["approval"]["status"] == "failed"
+    assert result["result"] == receipt
+    assert store.get(approval["id"]).result == receipt
+    assert mcp.calls == 1

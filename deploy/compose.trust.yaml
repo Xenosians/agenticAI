@@ -1,0 +1,21 @@
+# Optional deployment-scoped CA bundle. Verification remains enabled.
+# Include ordinary public roots as well as any reviewed private issuing CA.
+services:
+  frontend:
+    environment:
+      CURL_CA_BUNDLE: /run/janus/trust/ca-bundle.pem
+    volumes:
+      - type: bind
+        source: ${TLS_CA_BUNDLE_FILE:?Set the reviewed CA trust bundle file}
+        target: /run/janus/trust/ca-bundle.pem
+        read_only: true
+        bind: {create_host_path: false}
+  ai:
+    environment:
+      ITSM_HTTP_CA_BUNDLE: /run/janus/trust/ca-bundle.pem
+    volumes:
+      - type: bind
+        source: ${TLS_CA_BUNDLE_FILE:?Set the reviewed CA trust bundle file}
+        target: /run/janus/trust/ca-bundle.pem
+        read_only: true
+        bind: {create_host_path: false}

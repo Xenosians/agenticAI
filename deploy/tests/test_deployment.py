@@ -67,6 +67,15 @@ class ComposeContractTests(unittest.TestCase):
             path = cls.root / key.lower()
             path.mkdir()
             values[key] = str(path)
+        profile_root = cls.root / "profile"
+        profile_root.mkdir()
+        (profile_root / "machine.lua").write_text("return {links = {}}\n")
+        values["LUA_PROFILE_ROOT"] = str(profile_root)
+        values["LUA_PROFILE_SHA256"] = hashlib.sha256((profile_root / "machine.lua").read_bytes()).hexdigest()
+        values["LUA_LINK_SECRETS_FILE"] = str(cls.root / "fixture-link-secrets.json")
+        Path(values["LUA_LINK_SECRETS_FILE"]).write_text("{}\n")
+        values["TLS_CA_BUNDLE_FILE"] = str(cls.root / "fixture-ca-bundle.pem")
+        Path(values["TLS_CA_BUNDLE_FILE"]).write_text("fixture-marker-not-a-certificate\n")
         cls.env = cls.root / "deployment.env"
         cls.env.write_text("\n".join(f"{key}={value}" for key, value in values.items()) + "\n")
         cls.model = validation.render_compose(cls.env)
@@ -106,6 +115,58 @@ class ComposeContractTests(unittest.TestCase):
         missing.write_text(self.env.read_text().replace("PYTHON_RUNTIME_IMAGE=python:fixture@sha256:" + "1" * 64, "PYTHON_RUNTIME_IMAGE="))
         with self.assertRaisesRegex(validation.DeploymentError, "compose_configuration_rejected"):
             validation.render_compose(missing)
+
+    def test_machine_profile_overlay_mounts_reviewed_files_separately_from_credentials(self):
+        model = validation.render_compose(self.env, machine_profile=True, gpu=True)
+        validation.validate_model(model)
+        ai = model["services"]["ai"]
+        mounts = {item["target"]: item for item in ai["volumes"]}
+        self.assertTrue(mounts["/run/janus/profiles"]["read_only"])
+        self.assertTrue(mounts["/run/secrets/itsm-links.json"]["read_only"])
+        self.assertNotEqual(mounts["/run/janus/profiles"]["source"], mounts["/run/secrets/itsm-links.json"]["source"])
+        self.assertEqual(ai["environment"]["ITSM_LUA_ADAPTER_FILE"], "/run/janus/profiles/machine.lua")
+
+    def test_machine_profile_cannot_use_writable_missing_or_unpinned_artifacts(self):
+        original = validation.render_compose(self.env, machine_profile=True)
+        for target in ("/run/janus/profiles", "/run/secrets/itsm-links.json"):
+            model = copy.deepcopy(original)
+            next(item for item in model["services"]["ai"]["volumes"] if item["target"] == target)["read_only"] = False
+            with self.assertRaisesRegex(validation.DeploymentError, "lua_profile_mounts_must_be_read_only"):
+                validation.validate_model(model)
+        for value in ("", "placeholder", "a" * 63, "A" * 64):
+            model = copy.deepcopy(original)
+            model["services"]["ai"]["environment"]["ITSM_LUA_ADAPTER_SHA256"] = value
+            with self.assertRaisesRegex(validation.DeploymentError, "lua_profile_binding_invalid"):
+                validation.validate_model(model)
+        model = copy.deepcopy(original)
+        model["services"]["ai"]["volumes"] = [item for item in model["services"]["ai"]["volumes"] if item["target"] != "/run/secrets/itsm-links.json"]
+        with self.assertRaisesRegex(validation.DeploymentError, "ai_mount_layout_mismatch"):
+            validation.validate_model(model)
+
+    def test_machine_profile_requires_its_explicit_mounts(self):
+        self.reject(lambda s: s["ai"]["environment"].update(ITSM_LUA_ADAPTER_FILE="/workspace/unreviewed.lua"), "lua_profile_mounts_missing")
+
+    def test_private_ca_overlay_scopes_trust_without_disabling_verification(self):
+        model = validation.render_compose(self.env, machine_profile=True, private_ca=True)
+        validation.validate_model(model)
+        for name, variable in (("ai", "ITSM_HTTP_CA_BUNDLE"), ("frontend", "CURL_CA_BUNDLE")):
+            service = model["services"][name]
+            target = service["environment"][variable]
+            self.assertEqual(target, "/run/janus/trust/ca-bundle.pem")
+            self.assertTrue(next(item for item in service["volumes"] if item["target"] == target)["read_only"])
+
+    def test_private_ca_overlay_requires_matching_readonly_trust_mounts(self):
+        original = validation.render_compose(self.env, private_ca=True)
+        for name in ("ai", "frontend"):
+            model = copy.deepcopy(original)
+            next(item for item in model["services"][name]["volumes"] if item["target"] == "/run/janus/trust/ca-bundle.pem")["read_only"] = False
+            with self.assertRaisesRegex(validation.DeploymentError, "tls_trust_binding_invalid"):
+                validation.validate_model(model)
+        model = copy.deepcopy(original)
+        model["services"]["ai"]["environment"]["ITSM_HTTP_CA_BUNDLE"] = "/other/file.pem"
+        with self.assertRaisesRegex(validation.DeploymentError, "tls_trust_binding_invalid"):
+            validation.validate_model(model)
+        self.reject(lambda s: s["ai"]["environment"].update(ITSM_HTTP_CA_BUNDLE="/unmounted-ca.pem"), "tls_trust_mounts_missing")
 
     def test_internal_ports_privilege_and_docker_socket_are_refused(self):
         self.reject(lambda s: s["ai"].update(ports=[{"target": 8000, "published": "8000"}]), "internal_port_published")

@@ -1,5 +1,28 @@
 # Directory and Atlassian outcome verification
 
+## MCP transport and operation receipts
+
+A successful MCP handshake or a structured reply does not certify an operation.
+The server can act before raising an exception, failing output validation or
+losing its reply. The client reports these protocol failures as
+`outcome_unknown`, with a stable `mcp_*` reason code and no raw exception text.
+It does not resend a call. Actual typed provider receipts, including a denial or
+known error, retain their original fields and classification.
+
+Approval execution requires a boolean `ok` and a recognized, consistent operation
+status. Missing, malformed or contradictory receipts remain unresolved; their
+original data is retained under `provider_receipt` for reconciliation. A timeout
+or cancellation alone also cannot certify whether a mutation took effect. The
+approval stays `executing`, and a repeated decision reads the saved result rather
+than dispatching the tool again. Confirm the actual target state before any
+independently authorized recovery action.
+
+The protocol regression fixtures use the installed SDK, temporary files and an
+isolated approval database. Registered-tool schema/read checks use explicit
+in-memory registration dependencies and a temporary repository, including the
+real Lua adapter. They establish protocol handling and scoped reads, not live
+acceptance of the registered directory, mail, Jira or other providers.
+
 ## LDAP security state
 
 Account state reads require readable, single-valued nonnegative decimal security
