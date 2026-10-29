@@ -16,7 +16,7 @@ def _event(request):
     url = request.url
     host = f"[{url.host}]" if ":" in url.host else url.host
     origin = f"{url.scheme}://{host}" + (f":{url.port}" if url.port is not None else "")
-    payload = {"origin": origin, "path": url.path, "method": request.method,
+    payload = {"origin": origin, "path_sha256": hashlib.sha256(url.path.encode()).hexdigest(), "method": request.method,
                "query_fields": sorted(set(url.params.keys()))}
     binding = {"transport": "httpx", "origin": origin, "method": request.method,
                "target_sha256": hashlib.sha256(str(url).encode()).hexdigest()}

@@ -133,16 +133,25 @@ def _digest(value) -> str:
 
 
 def run_adapter(*, kind: str, phase: str, payload: Any, binding: dict,
-                source: str | None = None, limits: AdapterLimits = AdapterLimits()) -> AdapterResult:
+                source: str | None = None, limits: AdapterLimits = AdapterLimits(),
+                read_links: bool = False, read_profile: bool = False,
+                require_mapping: bool = False) -> AdapterResult:
     """Map one event in actual Lua; the returned payload still needs host validation.
 
     ``binding`` is trusted host metadata, never credentials. Source text can be
     selected by an admitted connection, but cannot change this binding. API
     credentials and passwords must be stripped/replaced by host-owned opaque
     markers before calling this function, then reattached only by the transport.
+    ``read_links`` retains the link-only inspection contract. ``read_profile``
+    returns both declarative links and reviewed plugin-file references.
+    Named protocol plugins set ``require_mapping`` so a declarations-only
+    profile cannot silently stand in for executable codec behavior.
     """
     started = time.perf_counter()
-    if type(kind) is not str or type(phase) is not str or kind not in KINDS or phase not in PHASES or not isinstance(limits, AdapterLimits):
+    if (type(kind) is not str or type(phase) is not str or kind not in KINDS or phase not in PHASES
+            or not isinstance(limits, AdapterLimits) or type(read_links) is not bool
+            or type(read_profile) is not bool or type(require_mapping) is not bool
+            or (read_links and read_profile) or (require_mapping and (read_links or read_profile))):
         raise LuaAdapterError("lua_adapter_invalid_input")
     if type(binding) is not dict or not binding:
         raise LuaAdapterError("lua_adapter_binding_invalid")
@@ -167,6 +176,10 @@ def run_adapter(*, kind: str, phase: str, payload: Any, binding: dict,
     event = json.loads(_canonical({"schema": EVENT_SCHEMA, "kind": kind, "phase": phase,
                                    "binding": binding, "payload": payload}))
     request = {"source": source, "event": event, "limits": asdict(limits)}
+    if read_links or read_profile:
+        request["read"] = "profile" if read_profile else "links"
+    if require_mapping:
+        request["require_mapping"] = True
     try:
         completed = subprocess.run([sys.executable, "-I", "-B", str(WORKER)], input=_canonical(request),
                                    capture_output=True, env=worker_environment(), cwd="/",

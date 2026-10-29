@@ -51,12 +51,7 @@ _STOP_REASON_FAILURES = {
     "tool_use": "provider_unexpected_tool_use",
 }
 
-# System prompts at least this long are marked cacheable. Shorter prompts are
-# below the provider's minimum cacheable size and are sent as plain text.
-CACHE_MIN_SYSTEM_CHARS = 4096
-
 THINKING_MODES = ("adaptive", "disabled")
-EFFORT_LEVELS = ("low", "medium", "high")
 DEFAULT_THINKING_ALLOWANCE = 4096
 _CAPABILITY_TTL_SECONDS = 3600.0
 _CAPABILITY_FAILURE_TTL_SECONDS = 60.0
@@ -313,34 +308,9 @@ def build_request(
     thinking: str | None = None,
     max_tokens_limit: int | None = None,
 ) -> dict:
-    system, turns = split_system(messages)
-    tokens = int(max_tokens)
-    if max_tokens_limit is not None:
-        tokens = min(tokens, max_tokens_limit)
-    body: dict = {
-        "model": profile["model"],
-        "max_tokens": tokens,
-        "messages": turns,
-        "stream": False,
-    }
-    if system:
-        if len(system) >= CACHE_MIN_SYSTEM_CHARS:
-            # The routing catalog and specialist protocols repeat across
-            # requests; caching them cuts cost and latency. Content unchanged.
-            body["system"] = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
-        else:
-            body["system"] = system
-    if thinking is not None:
-        if thinking not in THINKING_MODES:
-            raise ValueError("Unsupported thinking mode")
-        body["thinking"] = {"type": thinking}
-    if effort is not None:
-        if effort not in EFFORT_LEVELS:
-            raise ValueError("Unsupported Anthropic effort level")
-        body["output_config"] = {"effort": effort}
-    # Intentionally DO NOT add tools, tool_choice, mcp_servers or any server
-    # tool. A remote model is an inference engine, not an authorization boundary.
-    return body
+    from services.lua_adapters.plugins import anthropic_request
+    return anthropic_request(profile, messages, max_tokens, effort=effort, thinking=thinking,
+                             max_tokens_limit=max_tokens_limit)
 
 
 async def post_messages(url: str, payload: dict, api_key: str) -> dict:
@@ -437,10 +407,10 @@ def response_text(data: dict) -> str:
         else:
             # Tool use or server-tool blocks were never requested.
             raise ExternalProviderError("provider_unexpected_tool_use")
-    text = "".join(text_parts)
-    if not text.strip():
+    if not any(part.strip() for part in text_parts):
         raise ExternalProviderError("provider_empty_response")
-    return text
+    from services.lua_adapters.plugins import anthropic_response
+    return anthropic_response({"content": [{"type": "text", "text": part} for part in text_parts]})
 
 
 def total_usage_tokens(data: dict) -> int | None:

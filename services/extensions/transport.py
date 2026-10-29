@@ -59,11 +59,15 @@ DEFAULT_ORIGINS = (
 MAX_PROVIDER_ERROR_BYTES = 64_000
 
 
+def _origin_setting(name: str) -> tuple[str, bool]:
+    from services.lua_adapters import profile
+    if "models" in profile.load_links().declared:
+        return profile.process_policy().get(name, ""), True
+    return os.environ.get(name, ""), False
+
+
 def _configured_origins() -> set[str]:
-    value = os.environ.get(
-        "EXTENSION_ALLOWED_ORIGINS",
-        "",
-    )
+    value, _ = _origin_setting("EXTENSION_ALLOWED_ORIGINS")
 
     return {
         entry.strip().rstrip("/")
@@ -80,10 +84,7 @@ def insecure_http_origins() -> set[str]:
     an explicit, per-origin operator decision (typically a lab gateway with no
     TLS). Each origin must also be listed in EXTENSION_ALLOWED_ORIGINS.
     """
-    value = os.environ.get(
-        "EXTENSION_INSECURE_HTTP_ORIGINS",
-        "",
-    )
+    value, _ = _origin_setting("EXTENSION_INSECURE_HTTP_ORIGINS")
 
     origins = set()
 
@@ -161,10 +162,8 @@ def validate_url(
         f"{parts.netloc}"
     )
 
-    origins = (
-        DEFAULT_ORIGINS
-        | _configured_origins()
-    )
+    _, declared = _origin_setting("EXTENSION_ALLOWED_ORIGINS")
+    origins = _configured_origins() if declared else DEFAULT_ORIGINS | _configured_origins()
 
     if origin not in origins:
         raise ValueError(
@@ -432,27 +431,11 @@ async def remote_generate(
     #
     # A remote model is an inference engine,
     # not an authorization boundary.
-    body = {
-        "model":
-            profile[
-                "model"
-            ],
-
-        "messages":
-            budget.messages,
-
-        "max_tokens":
-            budget.max_output_tokens,
-
-        "stream":
-            False,
-    }
-
-    if effort is not None:
-        body["reasoning_effort"] = effort
-
-    if response_format is not None:
-        body["response_format"] = {"type": response_format.value}
+    from services.lua_adapters.plugins import openai_request_async
+    body = await openai_request_async(
+        profile, budget, effort=effort,
+        response_format=response_format.value if response_format is not None else None,
+    )
 
     admission = await admit_external_request(profile, budget.estimated_request_tokens)
 
@@ -508,7 +491,8 @@ async def remote_generate(
         ):
             raise ExternalProviderError("provider_empty_response")
 
-        return content
+        from services.lua_adapters.plugins import openai_response_async
+        return await openai_response_async(data, binding={"backend": "http", "model": profile["model"]})
 
     except (
         KeyError,
@@ -523,7 +507,8 @@ async def remote_generate(
 async def _messages_generate(profile: dict, budget, effort: str | None) -> str:
     """Anthropic Messages API inference with the same budget and admission rules."""
     plan = await anthropic.request_plan(profile, effort)
-    body = anthropic.build_request(
+    from services.lua_adapters.plugins import anthropic_request_async
+    body = await anthropic_request_async(
         profile,
         budget.messages,
         budget.max_output_tokens + plan.thinking_allowance,

@@ -104,7 +104,8 @@ def test_connection_adapter_failure_prevents_transport(script):
 
 
 def test_adapter_observes_the_final_request_after_other_host_hooks(script):
-    script("return function(e) assert(e.payload.path == '/final'); return e end")
+    digest = hashlib.sha256(b"/final").hexdigest()
+    script("return function(e) assert(e.payload.path == nil); assert(e.payload.path_sha256 == '" + digest + "'); return e end")
     def prepare(request):
         request.url = httpx.URL("https://fixture.example/final")
     with client(event_hooks={"request": [prepare]},

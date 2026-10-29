@@ -90,14 +90,51 @@ def from_lua(value, kind_of, depth=0):
     raise Failure("lua_adapter_output_invalid", "Unsupported JSON object keys")
 
 
+def adapter_of(loaded):
+    """A script returns its mapping function, or a profile: {links = ..., adapt = ...}.
+
+    A profile without ``adapt`` keeps the protocol unchanged. Any other key is
+    refused, so a misspelled profile cannot silently declare nothing.
+    """
+    if lua54.lua_type(loaded) == "function":
+        return loaded, None, None
+    if lua54.lua_type(loaded) == "table":
+        keys = list(loaded.keys())
+        mapper, links, plugins = loaded["adapt"], loaded["links"], loaded["plugins"]
+        if (all(key in ("links", "adapt", "plugins") for key in keys)
+                and (mapper is None or lua54.lua_type(mapper) == "function")
+                and (links is None or lua54.lua_type(links) == "table")
+                and (plugins is None or lua54.lua_type(plugins) == "table")):
+            return mapper, links, plugins
+    raise Failure("lua_adapter_contract_invalid", "An adapter must return a function or a profile")
+
+
 def map_event(request, layers, runtime, load_text, env, new, null, kind_of):
     started = time.perf_counter()
     chunk, problem = load_text(request["source"], env)
     if chunk is None:
         raise Failure("lua_adapter_syntax_error", "Invalid Lua source")
-    mapper = chunk()
-    if lua54.lua_type(mapper) != "function":
-        raise Failure("lua_adapter_contract_invalid", "An adapter must return a function")
+    mapper, links, plugins = adapter_of(chunk())
+    if request.get("require_mapping") and mapper is None:
+        raise Failure("lua_adapter_contract_invalid", "A named codec must return a mapping function")
+    if request.get("read") in {"links", "profile"}:
+        # Profile read: the declared links are plain data; no mapping runs.
+        declared = {} if links is None else from_lua(links, kind_of, depth=-1)
+        if type(declared) is list and not declared:
+            declared = {}
+        if type(declared) is not dict:
+            raise Failure("lua_adapter_output_invalid", "Profile links must be a table")
+        if request["read"] == "profile":
+            references = {} if plugins is None else from_lua(plugins, kind_of, depth=-1)
+            if type(references) is not dict:
+                raise Failure("lua_adapter_output_invalid", "Profile plugins must be a table")
+            declared = {"links": declared, "plugins": references}
+        event = {**request["event"], "payload": declared}
+        return {"schema": "lua-adapter-worker.v1", "event": event, "isolation": layers,
+                "elapsed_ms": round((time.perf_counter() - started) * 1000)}
+    if mapper is None:
+        return {"schema": "lua-adapter-worker.v1", "event": request["event"], "isolation": layers,
+                "elapsed_ms": round((time.perf_counter() - started) * 1000)}
     # Count JSON payload nesting independently of the outer protocol envelope.
     event = from_lua(mapper(to_lua(request["event"], new, null)), kind_of, depth=-1)
     original = request["event"]
@@ -117,7 +154,12 @@ def main():
         if len(raw) > shared["REQUEST_LIMIT"]:
             raise Failure("lua_adapter_input_too_large", "Input size limit")
         request = json.loads(raw, parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
-        if type(request) is not dict or set(request) != {"event", "source", "limits"}:
+        if type(request) is not dict or not {"event", "source", "limits"} <= set(request) <= {"event", "source", "limits", "read", "require_mapping"}:
+            raise Failure("lua_adapter_invalid_input", "Invalid request")
+        if request.get("read", "links") not in {"links", "profile"}:
+            raise Failure("lua_adapter_invalid_input", "Invalid request")
+        if (type(request.get("require_mapping", False)) is not bool
+                or (request.get("require_mapping") and "read" in request)):
             raise Failure("lua_adapter_invalid_input", "Invalid request")
         event = request["event"]
         if type(event) is not dict or set(event) != {"schema", "kind", "phase", "binding", "payload"} or event["schema"] != EVENT_SCHEMA:

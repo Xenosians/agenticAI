@@ -18,8 +18,10 @@ from pydantic import (
 from pydantic_settings import (
     BaseSettings,
     NoDecode,
+    PydanticBaseSettingsSource,
     SettingsConfigDict,
 )
+from pydantic_settings.sources import EnvSettingsSource, DotEnvSettingsSource, SecretsSettingsSource
 
 
 PROJECT_ROOT = (
@@ -357,6 +359,71 @@ class ModelProfileSettings(
         return normalized
 
 
+class MachineProfileSource(
+    PydanticBaseSettingsSource
+):
+    """
+    Settings declared by this machine's Lua profile.
+
+    Links (directory, router, ticketing, mailbox lab, model profiles) are
+    declared once per machine in the mounted Lua profile; credentials are
+    resolved from its private secrets file. See services/lua_adapters/profile.py.
+    """
+
+    def get_field_value(
+        self,
+        field,
+        field_name,
+    ):
+        # Values are supplied together by __call__.
+        return None, field_name, False
+
+    def __call__(
+        self,
+    ) -> dict:
+        from services.lua_adapters.profile import settings_values
+        if not hasattr(self, "profile_values"):
+            self.profile_values = settings_values()
+        omitted = getattr(self, "explicit_fields", set())
+        return {key: value for key, value in self.profile_values.items() if key not in omitted}
+
+
+class _ProfileSourceFilter:
+    """Filter app-owned source instances before they parse stale link values."""
+
+    def __init__(self, original, controlled):
+        self.__dict__.update(original.__dict__)
+        self.controlled = controlled
+        if hasattr(self, "env_vars"):
+            prefix = self.env_prefix if self.case_sensitive else self.env_prefix.lower()
+            names = {prefix + (name if self.case_sensitive else name.lower()) for name in controlled}
+            delimiter = getattr(self, "env_nested_delimiter", None)
+            self.env_vars = {key: value for key, value in self.env_vars.items()
+                if key not in names and not (delimiter and any(key.startswith(name + delimiter) for name in names))}
+
+    def get_field_value(self, field, field_name):
+        if field_name in self.controlled:
+            return None, field_name, False
+        return super().get_field_value(field, field_name)
+
+    def prepare_field_value(self, field_name, field, value, value_is_complex):
+        if field_name in self.controlled:
+            return None
+        return super().prepare_field_value(field_name, field, value, value_is_complex)
+
+
+class _ProfileEnvSource(_ProfileSourceFilter, EnvSettingsSource):
+    pass
+
+
+class _ProfileDotEnvSource(_ProfileSourceFilter, DotEnvSettingsSource):
+    pass
+
+
+class _ProfileSecretSource(_ProfileSourceFilter, SecretsSettingsSource):
+    pass
+
+
 class Settings(
     BaseSettings
 ):
@@ -381,6 +448,29 @@ class Settings(
             extra="ignore",
         )
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls,
+        init_settings,
+        env_settings,
+        dotenv_settings,
+        file_secret_settings,
+    ):
+        # The machine's Lua profile declares its links; it outranks the
+        # environment and .env, so a container never connects to a stale
+        # host or credential left in either. Explicit arguments still win.
+        machine = MachineProfileSource(settings_cls)
+        controlled = set(machine())
+        machine.explicit_fields = set(init_settings())
+        return (
+            init_settings,
+            machine,
+            _ProfileEnvSource(env_settings, controlled),
+            _ProfileDotEnvSource(dotenv_settings, controlled),
+            _ProfileSecretSource(file_secret_settings, controlled),
+        )
 
     # ============================================================
     # AI SERVICE
@@ -1736,20 +1826,30 @@ PROCESS_ENV_FROM_DOTENV = (
 def export_process_env_from_dotenv(
     path: Path = PROJECT_ROOT / ".env",
 ) -> list[str]:
-    """Copy the provider-endpoint policy from .env into os.environ.
+    """Backward-compatible startup entry point for the machine's policy."""
+    return export_process_policy(path)
 
-    A value already present in the process environment wins. Returns the
-    names that were exported (never their values).
+
+def export_process_policy(path: Path = PROJECT_ROOT / ".env") -> list[str]:
+    """Apply Lua-declared policy first, then legacy policy only where undeclared.
+
+    For undeclared policy fields, a value already present in the process
+    environment wins. Returns exported names, never their values.
     """
     import os
 
     from dotenv import dotenv_values
 
-    if not path.is_file():
-        return []
-    values = dotenv_values(path)
+    from services.lua_adapters.profile import process_policy
+    declared = process_policy()
+    remaining = set(PROCESS_ENV_FROM_DOTENV) - set(declared)
+    values = dotenv_values(path) if remaining and path.is_file() else {}
     exported = []
     for name in PROCESS_ENV_FROM_DOTENV:
+        if name in declared:
+            os.environ[name] = declared[name]
+            exported.append(name)
+            continue
         value = values.get(name)
         if value and name not in os.environ:
             os.environ[name] = value
@@ -1757,12 +1857,20 @@ def export_process_env_from_dotenv(
     return exported
 
 
-@lru_cache
-def get_settings(
-) -> Settings:
+@lru_cache(maxsize=4)
+def _settings_for_profile(identity: str | None) -> Settings:
     """
     Return the process-cached validated Settings instance.
     """
 
     export_process_env_from_dotenv()
     return Settings()
+
+
+def get_settings() -> Settings:
+    from services.lua_adapters.profile import configuration_identity
+    return _settings_for_profile(configuration_identity())
+
+
+get_settings.cache_clear = _settings_for_profile.cache_clear
+get_settings.cache_info = _settings_for_profile.cache_info

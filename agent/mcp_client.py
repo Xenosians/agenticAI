@@ -1,4 +1,5 @@
 import sys
+import os
 
 from pathlib import Path
 
@@ -105,6 +106,12 @@ class MCPRuntime:
                         self.server_path
                     )
                 ],
+                # The trusted provider server needs the reviewed application
+                # settings in env-only deployments. SDK defaults inherit only
+                # shell basics. Isolated Lua workers keep their separate,
+                # credential-free environment.
+                env=dict(os.environ),
+                cwd=str(PROJECT_ROOT),
             )
         )
 

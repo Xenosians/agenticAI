@@ -10,6 +10,7 @@ missing visible output remains a hard failure.
 from __future__ import annotations
 
 import re
+from types import SimpleNamespace
 
 from services.extensions.transport import request_json
 from services.extensions.admission import admit_external_request, record_external_usage
@@ -302,40 +303,18 @@ async def remote_probe(
     from services.extensions import anthropic
 
     # A probe is a model request: it crosses the same Lua stage as inference first.
-    await model_request([{"role": "user", "content": "Reply with exactly: PROVIDER_OK"}], token_budget,
-                        binding={"connection_id": profile.get("id"), "stage": "CONNECTION_PROBE"})
+    messages, token_budget = await model_request(
+        [{"role": "user", "content": "Reply with exactly: PROVIDER_OK"}], token_budget,
+        binding={"connection_id": profile.get("id"), "stage": "CONNECTION_PROBE"})
 
     if anthropic.uses_messages_api(profile):
-        return await _messages_probe(profile, token_budget)
-
-    body = {
-        "model":
-            model.strip(),
-
-        "messages": [
-            {
-                "role":
-                    "user",
-
-                "content":
-                    (
-                        "Reply with exactly: "
-                        "PROVIDER_OK"
-                    ),
-            }
-        ],
-
-        "max_tokens":
-            token_budget,
-
-        "stream":
-            False,
-    }
+        return await _messages_probe(profile, token_budget, messages=messages)
 
     try:
+        from services.lua_adapters.plugins import openai_request_async
         effort = reasoning_effort(profile)
-        if effort is not None:
-            body["reasoning_effort"] = effort
+        body = await openai_request_async(profile,
+            SimpleNamespace(messages=messages, max_output_tokens=token_budget), effort=effort)
         admission = await admit_external_request(profile, estimate_messages_tokens(body["messages"]) + token_budget)
         data = await request_json(
             url.rstrip(
@@ -546,14 +525,17 @@ async def remote_probe(
     return result
 
 
-async def _messages_probe(profile: dict, token_budget: int) -> dict:
+async def _messages_probe(profile: dict, token_budget: int, *, messages: list[dict] | None = None) -> dict:
     """Probe an Anthropic connection: model visibility, then one short reply."""
     from services.extensions import anthropic
     from services.extensions.diagnostics import ExternalProviderError
 
     model = profile["model"].strip()
     api_key = profile.get("api_key", "")
-    messages = [{"role": "user", "content": "Reply with exactly: PROVIDER_OK"}]
+    if messages is None:
+        messages, token_budget = await model_request(
+            [{"role": "user", "content": "Reply with exactly: PROVIDER_OK"}], token_budget,
+            binding={"connection_id": profile.get("id"), "stage": "CONNECTION_PROBE"})
     try:
         record = await anthropic.get_model(profile["url"], model, api_key)
         anthropic.remember_capabilities(profile, record)

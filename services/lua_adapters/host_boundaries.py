@@ -16,7 +16,7 @@ import os
 from pathlib import Path
 import re
 
-from services.lua_adapters.runtime import LuaAdapterError, is_secret_field, run_adapter, run_adapter_async
+from services.lua_adapters.runtime import LuaAdapterError, is_secret_field, run_adapter
 
 LOG = logging.getLogger(__name__)
 MAX_SCRIPT_BYTES = 20_000
@@ -35,7 +35,7 @@ def configured_source():
     if not filename or not re.fullmatch(r"[a-f0-9]{64}", digest):
         raise LuaAdapterError("lua_adapter_configuration_invalid")
     path = Path(filename)
-    if not path.is_absolute() or path.is_symlink():
+    if not path.is_absolute() or path.suffix != ".lua" or path.is_symlink():
         raise LuaAdapterError("lua_adapter_configuration_invalid")
     try:
         with path.open("rb") as handle:
@@ -63,13 +63,25 @@ def _record(result):
              receipt["input_sha256"], receipt["output_sha256"], receipt["elapsed_ms"])
 
 
+def _map(kind, phase, payload, binding):
+    from services.lua_adapters.plugins import run_plugin
+    source = configured_source()
+    if source is not None:
+        adapted = run_adapter(kind=kind, phase=phase, payload=payload, binding=binding, source=source)
+        _record(adapted)
+        payload = adapted.payload
+    plugin_id = "model.local" if kind == "model" else kind + ".default"
+    result = run_plugin(plugin_id, payload, binding=binding, phase=phase)
+    _record(result)
+    return result
+
+
 def inspect_data(kind, phase, payload, binding):
     """Approved targets and effect receipts cannot be rewritten by an adapter."""
     public = _public(payload)
-    result = run_adapter(kind=kind, phase=phase, payload=public, binding=binding, source=configured_source())
+    result = _map(kind, phase, public, binding)
     if _canonical(result.payload) != _canonical(public):
         raise LuaAdapterError("lua_adapter_binding_changed")
-    _record(result)
     return result.receipt
 
 
@@ -89,9 +101,8 @@ def inspect_link(transport: str, origin: str, *, operation: str, details: dict |
 
 async def model_request(messages, max_new_tokens, *, binding, warm=False):
     original = copy.deepcopy(messages)
-    result = await run_adapter_async(kind="model", phase="warm" if warm else "request",
-        payload={"messages": original, "max_new_tokens": max_new_tokens}, binding=binding,
-        source=configured_source())
+    result = await asyncio.to_thread(_map, "model", "warm" if warm else "request",
+        {"messages": original, "max_new_tokens": max_new_tokens}, binding)
     value = result.payload
     if not isinstance(value, dict) or set(value) != {"messages", "max_new_tokens"}:
         raise LuaAdapterError("lua_adapter_output_invalid")
@@ -109,16 +120,13 @@ async def model_request(messages, max_new_tokens, *, binding, warm=False):
                 or not isinstance(row.get("content"), str)
                 or any(_canonical(row[key]) != _canonical(previous[key]) for key in row if key != "content")):
             raise LuaAdapterError("lua_adapter_output_invalid")
-    _record(result)
     return rows, limit
 
 
 async def model_response(text, *, binding):
-    result = await run_adapter_async(kind="model", phase="response", payload={"text": text},
-        binding=binding, source=configured_source())
+    result = await asyncio.to_thread(_map, "model", "response", {"text": text}, binding)
     if not isinstance(result.payload, dict) or set(result.payload) != {"text"} or not isinstance(result.payload["text"], str):
         raise LuaAdapterError("lua_adapter_output_invalid")
-    _record(result)
     return result.payload["text"]
 
 

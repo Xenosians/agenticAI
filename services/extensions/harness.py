@@ -525,19 +525,18 @@ async def harness_generate(
                 "1",
         }
 
-        prompt = (
-            "Follow this conversation as an inference engine. "
-            "Return only the assistant response. "
-            "Do not execute tools. Any proposed tool call is "
-            "text for the ITSM gateway to validate.\n"
-            + json.dumps(
-                budget.messages,
-                separators=(
-                    ",",
-                    ":",
-                ),
+        from services.lua_adapters.plugins import harness_prompt_async
+        from services.extensions.budget import estimate_text_tokens
+        prompt = await harness_prompt_async(budget.messages, max_prompt_bytes=MAX_PROMPT_BYTES,
+                                            binding={"backend": kind, "model": model})
+        prompt_tokens = estimate_text_tokens(prompt)
+        if prompt_tokens + budget.max_output_tokens > budget.request_token_budget:
+            raise ExternalInferenceBudgetError(
+                "The Lua harness prompt exceeds the admitted request budget",
+                request_token_budget=budget.request_token_budget,
+                output_tokens=budget.max_output_tokens,
+                mandatory_tokens=prompt_tokens,
             )
-        )
 
         if (
             len(
