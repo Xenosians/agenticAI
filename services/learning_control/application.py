@@ -179,7 +179,8 @@ def selection_preflight(owner: str, request: SelectionRequest, store, *,
         raise LearningSelectionError("learning_dataset_changed")
     if dataset["superseded_by"] is not None:
         raise LearningSelectionError("learning_dataset_superseded")
-    has_weights = model["source_kind"] == "local" and weights(model_row) is not None
+    resolved_weights = weights(model_row) if model["source_kind"] == "local" else None
+    has_weights = resolved_weights is not None
     blockers = run_blockers(request, model, has_weights)
     status = "blocked" if blockers else "ready"
     pinned_model = {key: model[key] for key in ("id", "backend", "source_kind", "state")}
@@ -188,6 +189,8 @@ def selection_preflight(owner: str, request: SelectionRequest, store, *,
     # present this exact digest, so a changed selection or host needs a new check.
     preflight_sha256 = _digest({"owner": owner, "request": request.model_dump(mode="json"),
                                "model": pinned_model, "dataset": pinned_dataset,
+                               "model_configuration": {"reference": model_row.get("model"),
+                                   "weights_path": str(Path(resolved_weights).resolve()) if resolved_weights is not None else None},
                                "membership": dataset_row["content"], "status": status, "blockers": blockers})
     return {"schema": "learning-selection-preflight.v2", "status": status, "preflight_sha256": preflight_sha256,
             "method": request.method, "role": request.role, "tuning": request.tuning,

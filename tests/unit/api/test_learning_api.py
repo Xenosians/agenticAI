@@ -14,6 +14,7 @@ HEADERS = {"x-internal-token": TOKEN}
 CATALOG, PREFLIGHT = "/internal/v1/learning/catalog", "/internal/v1/learning/preflight"
 RUNS, START, CANCEL = ("/internal/v1/learning/runs", "/internal/v1/learning/runs/start",
                        "/internal/v1/learning/runs/cancel")
+RESOLVE = "/internal/v1/learning/runs/resolve"
 
 
 def examples():
@@ -54,7 +55,15 @@ class FakeRegistry:
 
     def list(self, owner):
         self.calls.append(("list", owner))
+        if self.refusal:
+            raise learning.LearningSelectionError(self.refusal)
         return [{"run_id": "a" * 32}]
+
+    def resolve(self, owner, submission_id):
+        self.calls.append(("resolve", owner, submission_id))
+        if self.refusal:
+            raise learning.LearningSelectionError(self.refusal)
+        return {"run_id": "b" * 32, "submission_id": submission_id}
 
     def start(self, owner, run, store):
         self.calls.append(("start", owner, run.model_dump()))
@@ -77,21 +86,22 @@ def runs(monkeypatch):
 
 
 def test_run_routes_require_the_internal_token(client, runs):
-    run = {**owned_selection(), "preflight_sha256": "c" * 64}
+    run = {**owned_selection(), "preflight_sha256": "c" * 64, "submission_id": "d" * 32}
     for path, body in ((RUNS, {"owner": "alice"}), (START, {"owner": "alice", "run": run}),
-                       (CANCEL, {"owner": "alice", "run_id": "a" * 32})):
+                       (CANCEL, {"owner": "alice", "run_id": "a" * 32}),
+                       (RESOLVE, {"owner": "alice", "submission_id": "d" * 32})):
         assert client.post(path, json=body).status_code == 401
     assert runs.calls == []
 
 
 def test_runs_are_listed_started_and_cancelled_for_the_named_owner(client, runs):
-    run = {**owned_selection(), "preflight_sha256": "c" * 64}
+    run = {**owned_selection(), "preflight_sha256": "c" * 64, "submission_id": "d" * 32}
 
     listed = client.post(RUNS, json={"owner": "alice"}, headers=HEADERS)
     started = client.post(START, json={"owner": "alice", "run": run}, headers=HEADERS)
     cancelled = client.post(CANCEL, json={"owner": "alice", "run_id": "b" * 32}, headers=HEADERS)
 
-    assert listed.json() == {"schema": "learning-runs.v1", "runs": [{"run_id": "a" * 32}]}
+    assert listed.json() == {"schema": "learning-runs.v2", "runs": [{"run_id": "a" * 32}]}
     assert started.status_code == 200 and started.json()["state"] == "running"
     assert cancelled.json() == {"run_id": "b" * 32, "state": "cancelled"}
     assert runs.calls == [("list", "alice"), ("start", "alice", run), ("cancel", "alice", "b" * 32)]
@@ -99,7 +109,7 @@ def test_runs_are_listed_started_and_cancelled_for_the_named_owner(client, runs)
 
 @pytest.mark.parametrize("change", [{"preflight_sha256": "short"}, {"start_now": True}, {"owner": "mallory"}])
 def test_a_malformed_run_request_never_reaches_the_registry(client, runs, change):
-    run = {**owned_selection(), "preflight_sha256": "c" * 64, **change}
+    run = {**owned_selection(), "preflight_sha256": "c" * 64, "submission_id": "d" * 32, **change}
 
     response = client.post(START, json={"owner": "alice", "run": run}, headers=HEADERS)
 
@@ -107,10 +117,11 @@ def test_a_malformed_run_request_never_reaches_the_registry(client, runs, change
 
 
 @pytest.mark.parametrize("code, status", [("learning_host_busy", 409), ("learning_check_changed", 422),
-                                          ("learning_run_not_ready", 422)])
+                                          ("learning_run_not_ready", 422), ("learning_submission_conflict", 409),
+                                          ("learning_registry_unavailable", 503), ("learning_run_outcome_unknown", 503)])
 def test_run_refusals_keep_their_code(client, runs, code, status):
     runs.refusal = code
-    run = {**owned_selection(), "preflight_sha256": "c" * 64}
+    run = {**owned_selection(), "preflight_sha256": "c" * 64, "submission_id": "d" * 32}
 
     response = client.post(START, json={"owner": "alice", "run": run}, headers=HEADERS)
 
@@ -123,6 +134,24 @@ def test_cancelling_an_unavailable_run_is_not_found(client, runs):
     response = client.post(CANCEL, json={"owner": "alice", "run_id": "a" * 32}, headers=HEADERS)
 
     assert response.status_code == 404 and response.json() == {"detail": "learning_run_unavailable"}
+
+
+def test_submission_resolution_is_an_authenticated_read_without_starting(client, runs):
+    body = {"owner": "alice", "submission_id": "d" * 32}
+    response = client.post(RESOLVE, json=body, headers=HEADERS)
+    assert response.status_code == 200 and response.json()["submission_id"] == body["submission_id"]
+    assert runs.calls == [("resolve", "alice", body["submission_id"])]
+    runs.refusal = "learning_run_unavailable"
+    assert client.post(RESOLVE, json=body, headers=HEADERS).status_code == 404
+
+
+@pytest.mark.parametrize("route, body", [(RUNS, {"owner": "alice"}),
+    (RESOLVE, {"owner": "alice", "submission_id": "d" * 32}),
+    (CANCEL, {"owner": "alice", "run_id": "a" * 32})])
+def test_corrupt_registry_is_unavailable_at_every_read_or_cancel_boundary(client, runs, route, body):
+    runs.refusal = "learning_registry_unavailable"
+    response = client.post(route, json=body, headers=HEADERS)
+    assert response.status_code == 503 and response.json() == {"detail": "learning_registry_unavailable"}
 
 
 def test_both_routes_require_the_internal_token(client):

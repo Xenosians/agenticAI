@@ -249,23 +249,49 @@ checkpoint (no adapter-only profile). Outbound connections are inference-only
 missing are `local_weights_unavailable`. DPO and PPO stay readiness-only and
 keep their method gates. A replaced or changed dataset version is refused.
 
-A start re-runs the check. It is refused with `learning_check_changed` when the
+A new submission re-runs the check. It is refused with `learning_check_changed` when the
 answer's digest differs from the one the owner saw, `learning_run_not_ready`
 when it is no longer ready, and `learning_host_busy` (HTTP 409) while another run
-trains on the host; one run trains at a time. The registry writes the run's
+trains or its process is still releasing resources; one trainer holds the host
+at a time. Every start must include a lowercase 32-hex `submission_id`, created
+and persisted by the caller before dispatch. The exact owner/request identity
+always returns its original run, including after completion, service restart or
+dataset supersession. Changing the request under that identity is a 409
+`learning_submission_conflict`. A read-only resolve-by-submission endpoint can
+recover a lost acknowledgement without submitting another run.
+
+`learning-run.v2` receipts carry the submission and canonical `request_sha256`;
+the digest is SHA-256 of the sorted compact UTF-8 JSON of the complete run
+request, including `submission_id`, without the separately authenticated owner.
+Historical records retain their original outcomes and have null submission/hash
+fields; no recovery identity is invented for them.
+
+The registry writes the run's
 inputs under `LEARNING_RUN_ROOT/<run_id>/`: `recipe.json` and `dataset.jsonl`
 (the admitted train/validation split, server-chosen; requests never carry a
-path). `scripts/run_candidate_training.py` then trains in a detached process
+path). Inputs and the run claim are persisted before launch. A standard-library
+launcher records the exact child PID, kernel-boot/start identity and launch
+token before executing `scripts/run_candidate_training.py` in the same process.
+The trainer runs detached
 with only `PATH`, `HOME`, locale, cache and CUDA variables, offline model
 loading and no provider or service credentials.
 
-The trainer reports progress in `status.json`; the registry alone writes
+The launcher writes `process.json`; the trainer reports progress in `status.json`; the registry alone writes
 `run.json`, and a finished record never changes. A trainer failure is shown as
 one known code (`insufficient_gpu_memory`, `cuda_unavailable`,
 `chat_template_unsupported`, `example_too_long`, `dataset_admission_failed`,
 otherwise `training_failed`); details stay in the run's private `trainer.log`.
 A trainer that exits without a result, or whose process id was reused, is
-`interrupted`. A completed run shows its candidate digest. It never changes
+`interrupted` when the exact process is known to have exited. An unobserved or
+ambiguous launch is `outcome_unknown` and retains its host lease, requiring
+reconciliation rather than automatic relaunch. Missing or corrupted
+authoritative records make the registry unavailable instead of appearing empty.
+Legacy active records without a reliable process identity likewise require
+reconciliation. Cancellation remains `cancelling` until process exit is
+observed; a process handle prevents signalling a reused PID. A completed report
+must match the expected step budget, manifest, recipe and actual artifact hash
+before its candidate digest is accepted. A terminal report does not release a
+still-running trainer's host lease. The completed candidate never changes
 what serves requests (`serving_changed` and `promotion_enabled` are always
 false); evaluating and promoting a candidate remain separate steps.
 
