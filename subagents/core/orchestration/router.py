@@ -48,7 +48,7 @@ from subagents.core.definitions.types import (
 )
 
 from subagents.core.orchestration.conversation_context import (
-    conversation_messages,
+    quoted_conversation_messages,
 )
 
 from subagents.core.orchestration.condition_contract import (
@@ -466,8 +466,10 @@ class LLMRouter:
 
             reset_hub_routing_trace()
 
+        # Routing must answer in JSON: earlier turns are quoted evidence, so a
+        # prior prose answer cannot set this generation's reply format.
         context_messages = (
-            conversation_messages(
+            quoted_conversation_messages(
                 context,
                 max_turns=24,
             )

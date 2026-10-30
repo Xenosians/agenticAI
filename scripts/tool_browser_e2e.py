@@ -42,7 +42,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from dotenv import dotenv_values  # noqa: E402
-from playwright.sync_api import sync_playwright  # noqa: E402
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright  # noqa: E402
 
 from scripts.cross_repo_acceptance import _assert_history_roundtrip, _tool_name  # noqa: E402
 from scripts import tool_matrix as matrix  # noqa: E402
@@ -257,9 +257,17 @@ def new_chat(page, timeout_ms: int) -> str:
     before returning; detached old messages alone cannot prove navigation.
     """
     workspace = page.locator("main.workspace")
+    # Sign-in shows the composer before the chat list arrives; the workspace
+    # then selects the newest chat (or creates the first). Wait for that
+    # selection rather than reading it once.
+    try:
+        page.wait_for_function(
+            "() => Boolean(document.querySelector('main.workspace')?.getAttribute('data-chat-id'))",
+            timeout=timeout_ms,
+        )
+    except PlaywrightTimeoutError:
+        raise AssertionError("The workspace has no selected chat identity") from None
     previous = workspace.get_attribute("data-chat-id")
-    if not previous:
-        raise AssertionError("The workspace has no selected chat identity")
     reuse = page.locator(".message-row").count() == 0
     more = page.get_by_role("button", name="More", exact=True)
     if more.get_attribute("aria-expanded") != "true":

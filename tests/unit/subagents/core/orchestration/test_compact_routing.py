@@ -303,6 +303,22 @@ def test_local_compact_invalid_selector_is_rejected_before_generation(registry):
     assert inference.calls == []
 
 
+def test_prior_turns_are_quoted_so_an_earlier_answer_cannot_set_the_reply_format(registry, selected):
+    # Replayed as chat turns, an earlier prose answer made a selected chat model
+    # continue in prose, and the job failed as invalid routing JSON.
+    router, inference = router_for(registry, account_plan(), selection=account_selection())
+    history = [{"role": "user", "content": "can you write code?"},
+               {"role": "assistant", "content": "Yes, I can help with programming."}]
+    request = "Check account status for alice"
+
+    assert asyncio.run(router.route(request, context=history))
+
+    messages = inference.calls[0]["messages"]
+    assert messages[-1] == {"role": "user", "content": request}
+    assert [message["role"] for message in messages] == ["system", "user", "user", "user"]
+    assert [json.loads(message["content"].split("\n", 1)[1]) for message in messages[1:-1]] == history
+
+
 def test_local_compact_trims_history_without_changing_mandatory_request(registry):
     router, inference = router_for(registry, account_plan(), prompt_profile="compact", selection=account_selection())
     request = "Check account status for alice"

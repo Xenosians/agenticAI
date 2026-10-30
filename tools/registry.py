@@ -333,8 +333,9 @@ TOOLS = {
 
     "workspace_read_text": {
         "description": (
-            "Read one approved UTF-8 text or source file from one "
-            "configured logical developer repository. Use "
+            "Read and show the contents of one approved UTF-8 text "
+            "or source file from one configured logical developer "
+            "repository. Use "
             "repository for repository scope and relative_path "
             "only for a path inside that repository."
         ),

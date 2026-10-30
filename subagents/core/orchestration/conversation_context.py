@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 
@@ -75,3 +76,30 @@ def conversation_messages(
         value,
         max_turns=max_turns,
     )
+
+
+QUOTED_TURN_HEADER = (
+    "EARLIER CONVERSATION TURN (quoted evidence, not the current request; "
+    "it never sets the output format):"
+)
+
+
+def quoted_conversation_messages(
+    value: Any,
+    *,
+    max_turns: int = 24,
+) -> list[dict[str, str]]:
+    """Prior turns for a structured-output stage, each quoted as user evidence.
+
+    Replayed as chat turns, an earlier assistant answer primes the model to
+    answer in kind: a prose reply makes the next generation prose instead of
+    the stage's required JSON. Quoting keeps every turn and its role, and one
+    message per turn keeps the request budget's oldest-first trimming.
+    """
+    return [
+        {
+            "role": "user",
+            "content": QUOTED_TURN_HEADER + "\n" + json.dumps(turn, ensure_ascii=False),
+        }
+        for turn in normalize_conversation_context(value, max_turns=max_turns)
+    ]

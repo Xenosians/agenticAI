@@ -44,6 +44,20 @@ class RecordingInference:
         return "  Summary.  "
 
 
+def test_direct_response_states_a_length_limit_that_fits_its_output_cap():
+    # A provider that reaches the output cap fails the job as truncated, so the
+    # model must know the limit, exactly as synthesis does.
+    inference = RecordingInference()
+    assistant = PrimaryAssistant(inference, "hub-main", response_max_new_tokens=384, synthesis_max_new_tokens=500)
+
+    assert asyncio.run(assistant.respond("What can you do?")) == "Summary."
+
+    call = inference.calls[0]
+    assert call["max_new_tokens"] == 384
+    assert "at most 96 words" in call["messages"][0]["content"]
+    assert call["messages"][-1] == {"role": "user", "content": "What can you do?"}
+
+
 def test_synthesis_prompt_is_compact_and_states_the_length_limit():
     inference = RecordingInference()
     assistant = PrimaryAssistant(inference, "hub-main", response_max_new_tokens=64, synthesis_max_new_tokens=500)

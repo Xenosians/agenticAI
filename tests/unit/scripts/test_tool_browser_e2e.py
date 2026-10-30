@@ -203,6 +203,26 @@ def test_new_chat_uses_the_menu_command_not_a_saved_chat_with_the_same_name(work
     assert workspace_page.locator(".message-row").count() == 0
 
 
+def test_new_chat_waits_for_the_workspace_to_select_its_first_chat(workspace_page):
+    # Right after sign-in the chat list is still loading and no chat is
+    # selected; the workspace selects the newest chat once the list arrives.
+    workspace_page.evaluate("""() => {
+        const workspace = document.querySelector('main.workspace');
+        workspace.dataset.chatId = '';
+        setTimeout(() => { workspace.dataset.chatId = 'old-chat'; }, 200);
+    }""")
+
+    assert browser.new_chat(workspace_page, 2000) == 'created-chat'
+
+
+def test_new_chat_refuses_a_workspace_that_never_selects_a_chat(workspace_page):
+    workspace_page.evaluate("document.querySelector('main.workspace').dataset.chatId = ''")
+
+    with pytest.raises(AssertionError, match='no selected chat identity'):
+        browser.new_chat(workspace_page, 300)
+    assert workspace_page.evaluate('window.creations') == 0
+
+
 def test_new_chat_keeps_an_already_open_menu_open(workspace_page):
     # A case that failed after opening the menu leaves it open; toggling it
     # closed again would leave only the saved chat to click.

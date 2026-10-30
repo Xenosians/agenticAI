@@ -38,6 +38,7 @@ def production_registry():
     ("List jira projects and account status", "account_status"),
     ("Show git status for /tmp/demo", "workspace_git_status"),
     ("Show git log for /tmp/demo", "workspace_git_log"),
+    ("Show me the contents of calculator.py in the mvp repository.", "workspace_read_text"),
     ("Execute a native process", "process_exec"),
 ])
 def test_tiny_production_requests_have_small_trusted_packets(production_registry, user_request, expected):

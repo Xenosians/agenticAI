@@ -40,6 +40,12 @@ SYNTHESIS_FIELDS = (
 )
 
 
+def answer_word_limit(max_new_tokens: int) -> int:
+    """Words that fit an output cap: formatted answers cost two to three tokens
+    per word, so a quarter of the cap keeps an answer from being cut off."""
+    return max(40, max_new_tokens // 4)
+
+
 def synthesis_evidence(result: AgentResult) -> dict:
     evidence = {
         field: getattr(result, field)
@@ -150,13 +156,18 @@ class PrimaryAssistant:
         *,
         context: list[dict[str, str]] | None = None,
     ) -> str:
+        # A provider that reaches the output cap fails the job as truncated,
+        # so the model is told the limit, as in synthesis.
+        word_limit = answer_word_limit(self.response_max_new_tokens)
+
         messages = [
             {
                 "role":
                     "system",
 
                 "content":
-                    self.system_prompt,
+                    self.system_prompt
+                    + f"\n\nAnswer in at most {word_limit} words.",
             },
 
             *conversation_messages(
@@ -217,12 +228,7 @@ class PrimaryAssistant:
             for result in results
         ]
 
-        # Formatted answers cost two to three tokens per word, so a quarter of
-        # the output cap in words keeps the answer from being cut off.
-        word_limit = max(
-            40,
-            self.synthesis_max_new_tokens // 4,
-        )
+        word_limit = answer_word_limit(self.synthesis_max_new_tokens)
 
         messages = [
             {
