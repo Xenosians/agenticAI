@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 
 import pytest
 
@@ -285,6 +286,42 @@ def test_external_failure_emits_counts_without_prompt_credentials_or_exception_t
     assert "stage=PRIMARY_RESPONSE" in output and "outcome=error" in output
     assert "credential-value" not in output and "private reference" not in output
     assert "GPU_METRIC" not in output
+
+
+@pytest.mark.parametrize("stage,adapter", [
+    (InferenceStage.NETWORKING, "local"),
+    (InferenceStage.PRIMARY_RESPONSE, "http"),
+])
+def test_lua_response_refusal_is_observed_as_failure_without_generation_retry(
+    runtime, monkeypatch, tmp_path, stage, adapter,
+):
+    from services.lua_adapters.runtime import LuaAdapterError
+
+    script = tmp_path / "refuse_response.lua"
+    source = b'''return {adapt = function(event)
+      if event.kind == "model" and event.phase == "response" then
+        error("synthetic response refusal")
+      end
+      return event
+    end}
+'''
+    script.write_bytes(source)
+    monkeypatch.setenv("ITSM_LUA_ADAPTER_FILE", str(script))
+    monkeypatch.setenv("ITSM_LUA_ADAPTER_SHA256", hashlib.sha256(source).hexdigest())
+    coordinator, manager, metrics, external = runtime
+    with pytest.raises(LuaAdapterError) as caught:
+        generate(coordinator, stage)
+    assert caught.value.code == "lua_adapter_failed"
+    assert len(manager.calls) == (1 if adapter == "local" else 0)
+    assert len(external) == (1 if adapter == "http" else 0)
+    assert len(metrics) == 1
+    assert metrics[0].adapter == adapter
+    assert metrics[0].outcome == "error"
+    assert metrics[0].error_type == "LuaAdapterError"
+    # Failure after generation must retain measured work, not erase it or run
+    # another provider attempt. Remote inference has no local GPU evidence.
+    assert metrics[0].generated_tokens == (4 if adapter == "local" else None)
+    assert (metrics[0].execution_seconds is not None) is (adapter == "local")
 
 
 def test_metric_names_the_specialist_role_that_ran(runtime, capsys):

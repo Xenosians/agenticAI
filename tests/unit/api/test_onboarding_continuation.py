@@ -148,6 +148,35 @@ async def approve_source(env):
             "replayed": False, "result": outcome["result"], "error": None}
 
 
+@run_async
+async def test_unverified_source_does_not_release_or_replay_saved_continuation(env, monkeypatch):
+    from api.app import build_approval_protocol_payload
+
+    receipt = account_result(verification_ok=False)
+
+    async def unverified(name, arguments):
+        env.provider.calls.append((name, arguments))
+        return dict(receipt)
+
+    monkeypatch.setattr(env.provider, "call_tool", unverified)
+    continuation_store = WorkflowStore(env.store.path)
+    before = continuation_store.get(env.source)
+    first = await env.manager.approve_approval(env.source)
+    protocol = build_approval_protocol_payload(env.source, first)
+    assert protocol["execution_status"] == "unresolved"
+    assert protocol["approval_status"] == "executing"
+    assert protocol["result"]["provider_receipt"] == receipt
+    assert await continue_after_approval(env.runtime, env.source, protocol) == protocol
+    second = await env.manager.approve_approval(env.source)
+    replay = build_approval_protocol_payload(env.source, second)
+    assert replay["replayed"] is True
+    assert replay["execution_status"] == "unresolved"
+    assert await continue_after_approval(env.runtime, env.source, replay) == replay
+    assert continuation_store.get(env.source) == before
+    assert env.ticket.calls == []
+    assert len(env.provider.calls) == 1
+
+
 @pytest.mark.parametrize("env", ["local-contract", "http-contract"], indirect=True)
 @run_async
 async def test_reviewed_scope_is_pinned_and_rechecked_for_saved_continuation(env):

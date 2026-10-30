@@ -451,10 +451,40 @@ def test_malformed_or_contradictory_receipt_preserves_evidence_without_retry(tmp
     "not_found", "unsupported", "failed",
 ])
 def test_valid_negative_outcome_remains_a_known_failure(tmp_path, status):
-    receipt = {"ok": False, "status": status, "changed": False}
+    receipt = {"ok": False, "status": status, "changed": False, "verification_ok": False}
     store, mcp, manager, approval = build_manager(tmp_path, receipt)
     result = asyncio.run(manager.approve_approval(approval["id"]))
     assert result["approval"]["status"] == "failed"
+    assert result["result"] == receipt
+    assert store.get(approval["id"]).result == receipt
+    assert mcp.calls == 1
+
+
+@pytest.mark.parametrize("status", ["success", "executed"])
+@pytest.mark.parametrize("verification", [False, 0, 1, "false", "true", [], {}])
+def test_explicit_unverified_or_malformed_success_stays_unresolved(tmp_path, status, verification):
+    receipt = {"ok": True, "status": status, "verification_ok": verification}
+    store, mcp, manager, approval = build_manager(tmp_path, receipt)
+    first = asyncio.run(manager.approve_approval(approval["id"]))
+    assert first["ok"] is False
+    assert first["approval"]["status"] == "executing"
+    assert first["result"]["status"] == "outcome_unknown"
+    assert first["result"]["provider_receipt"] == receipt
+    assert store.get(approval["id"]).result == first["result"]
+    second = asyncio.run(manager.approve_approval(approval["id"]))
+    assert second["replayed"] is True
+    assert second["result"] == first["result"]
+    assert mcp.calls == 1
+
+
+@pytest.mark.parametrize("status", ["success", "executed"])
+@pytest.mark.parametrize("evidence", [{}, {"verification_ok": None}, {"verification_ok": True}])
+def test_legacy_absent_or_unknown_and_positive_verification_remain_compatible(tmp_path, status, evidence):
+    receipt = {"ok": True, "status": status, **evidence}
+    store, mcp, manager, approval = build_manager(tmp_path, receipt)
+    result = asyncio.run(manager.approve_approval(approval["id"]))
+    assert result["ok"] is True
+    assert result["approval"]["status"] == "approved"
     assert result["result"] == receipt
     assert store.get(approval["id"]).result == receipt
     assert mcp.calls == 1

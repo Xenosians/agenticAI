@@ -17,6 +17,13 @@ approval stays `executing`, and a repeated decision reads the saved result rathe
 than dispatching the tool again. Confirm the actual target state before any
 independently authorized recovery action.
 
+An explicit `verification_ok: false` contradicts a successful operation receipt;
+an explicit non-boolean verification value cannot certify it either. Both remain
+unresolved, retain the original receipt and do not release a saved continuation.
+Legacy receipts with no verification field or with null remain compatible; that
+absence is not a new claim of verified readback. Each provider's own completion
+contract still determines what evidence its operation requires.
+
 The protocol regression fixtures use the installed SDK, temporary files and an
 isolated approval database. Registered-tool schema/read checks use explicit
 in-memory registration dependencies and a temporary repository, including the

@@ -484,11 +484,16 @@ class ApprovalManager:
         }
         ambiguous_statuses = {"outcome_unknown", "unknown"}
         status = result.get("status")
+        verification = result.get("verification_ok")
         receipt_valid = (
             type(result.get("ok")) is bool
             and isinstance(status, str)
             and (
-                (result["ok"] is True and status in successful_statuses)
+                (
+                    result["ok"] is True
+                    and status in successful_statuses
+                    and (verification is None or verification is True)
+                )
                 or (result["ok"] is False and status in failed_statuses | ambiguous_statuses)
             )
         )

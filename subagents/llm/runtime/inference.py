@@ -196,8 +196,9 @@ class InferenceCoordinator:
                     else:
                         from services.extensions.harness import harness_generate
                         result = await harness_generate(profile, budget.messages, budget.max_output_tokens)
+                    result = await model_response(result, binding=lua_binding)
                     outcome = "success"
-                    return await model_response(result, binding=lua_binding)
+                    return result
                 if backend == "local":
                     model_key = profile["model"]
                 else:
@@ -217,8 +218,9 @@ class InferenceCoordinator:
             scheduled = await self.scheduler.run_observed(priority=priority, work=work)
             if operation == "generate":
                 generation = scheduled.value
+            result = await model_response(generation.text, binding=lua_binding) if generation is not None else None
             outcome = "success"
-            return await model_response(generation.text, binding=lua_binding) if generation is not None else None
+            return result
         except asyncio.CancelledError:
             outcome, error_type = "cancelled", "CancelledError"
             raise

@@ -1,611 +1,149 @@
 # Architecture
 
-## Overview
+Janus separates presentation, durable coordination, inference and governed ITSM
+execution across three repositories. Models, provider endpoints and credentials
+are deployment/account selections; the application does not require one named
+model or commercial provider. This describes source boundaries, not a declaration
+that every provider or deployment passed live acceptance.
 
-ITSM Agent is evolving from a single local-agent prototype into a hub/worker multi-agent system.
-
-The architecture separates:
-
-* natural-language routing
-* specialist reasoning
-* structured tool selection
-* authorization
-* privileged execution
-* directory-service implementation
-
-The primary design principle is:
+## Runtime and authority
 
 ```text
-Hub decides who should handle the request.
-
-Worker proposes what operation should be performed.
-
-Application code decides whether the operation is allowed.
-
-MCP and DirectoryService perform permitted execution.
+Nim/Karax browser
+    -> Phoenix API: session, owner, CSRF, chats, durable jobs and request intents
+        -> Python AI: configured Hub, specialists, inference and reference context
+            -> Lua adapter: selected protocol/data mapping, without credentials
+            -> strict proposal parser / SemanticGuard / ToolGateway
+                -> read: registered MCP capability
+                -> mutation: exact durable approval, then registered MCP capability
+                    -> configured provider adapter -> receipt and readback
+        <- durable completion callback / saved job state
+    <- authenticated WebSocket progress and authoritative state reconciliation
 ```
 
-Language-model output is never treated as authorization.
-
-## Target Runtime Flow
-
-```text
-                           User
-                            |
-                            v
-                    +---------------+
-                    |   Hub Agent   |
-                    | Qwen3-0.6B    |
-                    +-------+-------+
-                            |
-                       delegation
-                            |
-               +------------+------------+
-               |                         |
-               v                         v
-      Account Specialist        Access Specialist
-      Qwen2.5-0.5B              worker model TBD
-      FuncCall
-               |                         |
-               +------------+------------+
-                            |
-                            v
-                     Tool-call Parser
-                            |
-                            v
-                       ToolGateway
-                            |
-             +--------------+--------------+
-             |                             |
-           read                         mutation
-             |                             |
-             v                             v
-            MCP                     Approval Manager
-             |                             |
-             |                       Human Approval
-             |                             |
-             +--------------+--------------+
-                            |
-                            v
-                    Persistent MCP Server
-                            |
-                            v
-                    DirectoryService
-                       /          \
-                      /            \
-                 Mock backend    LDAP backend
-                                   |
-                                   v
-                                 LDAPS
-                                   |
-                                   v
-                               Samba AD
-```
-
-## Hub Layer
-
-### Responsibility
-
-The hub determines which registered specialist or specialists should receive a user request.
-
-The hub does not directly authorize privileged execution.
-
-Current target hub model:
-
-```text
-Qwen3-0.6B
-```
-
-Current development components:
-
-* `QwenHubBackend`
-* `LLMRouter`
-* deterministic `Router`
-* `Orchestrator`
-
-The deterministic router remains useful as:
-
-* a development baseline
-* a predictable unit-test implementation
-* a potential fallback for known request classes
-
-The Qwen3-based router is implemented and unit-tested but still requires real-model routing validation before becoming the default production path.
-
-## Specialist Layer
-
-Specialists are defined through Markdown files containing metadata and system prompts.
-
-Example concept:
-
-```yaml
----
-name: account-specialist
-description: Handles account-management operations.
-tools:
-  - account_status
-  - unlock_user
-  - reset_password
-model: qwen2.5-0.5b-funccall
-max_steps: 3
----
-```
-
-This allows specialist behavior to be defined without hardcoding every agent as a dedicated Python class.
-
-### Current Account worker
-
-Model:
-
-```text
-Qwen2.5-0.5B FuncCall
-```
-
-Responsibilities:
-
-* account-status lookup
-* account lock-state lookup
-* account-unlock proposal
-* password-reset proposal
-
-The model produces structured JSON function calls rather than directly executing tools.
-
-Example:
-
-```json
-[
-  {
-    "name": "account_status",
-    "arguments": {
-      "user_id": "jdoe"
-    }
-  }
-]
-```
-
-A real Account-worker read path has been validated end-to-end against MCP and LDAP.
-
-### Access worker
-
-The Access specialist definition exists.
-
-Its final model and real execution path remain under development.
-
-## Agent Registry
-
-`AgentRegistry` stores available specialist definitions.
-
-The hub and runtime resolve agents by registered names rather than constructing hardcoded specialist classes.
-
-This allows additional workers to be added without changing orchestration logic.
-
-## Agent Loader
-
-Specialist definitions are loaded from Markdown files with YAML front matter.
-
-The loader converts these definitions into `AgentDefinition` instances.
-
-This keeps specialist configuration data-driven.
-
-## Model Registry
-
-`ModelRegistry` maps logical model identifiers to actual loaded inference backends.
-
-Example:
-
-```text
-qwen2.5-0.5b-funccall
-        |
-        v
-QwenFuncCallBackend
-        |
-        v
-local model checkpoint
-```
-
-The runtime therefore does not assume every worker uses the same model.
-
-Future specialists may use:
-
-* different base models
-* different fine-tunes of the same base model
-* different inference backends
-
-without changing the worker runtime contract.
-
-## Agent Runtime
-
-`AgentRuntime` executes an `AgentTask`.
-
-Current flow:
-
-```text
-AgentTask
-    |
-    v
-AgentRegistry
-    |
-    v
-AgentDefinition
-    |
-    v
-ModelRegistry
-    |
-    v
-Worker model
-    |
-    v
-raw structured output
-    |
-    v
-Tool Parser
-    |
-    v
-ToolGateway
-    |
-    v
-MCP / Approval
-    |
-    v
-AgentResult
-```
-
-The runtime currently permits exactly one tool call per worker task.
-
-This is an intentional V1 restriction that simplifies validation and prevents small worker models from creating uncontrolled multi-step execution chains.
-
-## Tool Prompt Construction
-
-Worker prompts are generated from the worker's explicit tool allowlist.
-
-An Account worker therefore receives only Account tools.
-
-For example:
-
-```text
-account_status
-unlock_user
-reset_password
-```
-
-It does not automatically receive unrelated tools such as `check_access`.
-
-Tool metadata includes structured parameter descriptions.
-
-This creates two independent boundaries:
-
-```text
-Prompt:
-"Only use these tools."
-        |
-        v
-soft behavioral constraint
-
-ToolGateway:
-tool_name must exist in agent.tools
-        |
-        v
-hard application constraint
-```
-
-## Tool-call Parser
-
-Worker output is expected to be structured JSON.
-
-The parser validates:
-
-* valid JSON
-* array format
-* object format
-* tool name
-* argument object
-* non-empty call list
-
-Malformed output does not reach the execution gateway.
-
-## ToolGateway
-
-`ToolGateway` is the primary application-side execution boundary for sub-agents.
-
-It performs:
-
-1. worker tool-allowlist validation
-2. tool-registry validation
-3. identifier validation
-4. approval checks
-5. MCP dispatch for permitted reads
-
-Example:
-
-```text
-Worker:
-unlock_user(user_id="jdoe")
-        |
-        v
-ToolGateway
-        |
-        +-- account worker may use unlock_user?
-        |
-        +-- unlock_user exists?
-        |
-        +-- jdoe exists in original user request?
-        |
-        +-- mutation requires approval?
-        |
-        v
-approval_required
-```
-
-The mutation is not executed immediately.
-
-## Identifier Boundary
-
-Identity-sensitive arguments proposed by a model are validated against the original user request.
-
-Example:
-
-```text
-User:
-"Is jdoe locked?"
-
-Worker:
-account_status(user_id="jsmith")
-```
-
-The gateway rejects the operation because `jsmith` was not present in the original request.
-
-This prevents a model from silently substituting a different account identifier.
-
-## Approval Boundary
-
-Mutation operations remain protected by human approval.
-
-Current mutation tools include:
-
-```text
-unlock_user
-reset_password
-```
-
-The execution sequence is:
-
-```text
-Worker proposes mutation
-        |
-        v
-ToolGateway
-        |
-        v
-Approval record
-        |
-        v
-Human approval
-        |
-        v
-MCP mutation
-        |
-        v
-Directory permissions
-        |
-        v
-Result verification
-```
-
-No worker or hub model may bypass this process.
-
-## MCP Boundary
-
-MCP remains the separation between agent reasoning and directory execution.
-
-Both read operations and approved mutation operations ultimately cross the MCP boundary.
-
-This keeps:
-
-```text
-agent orchestration
-```
-
-separate from:
-
-```text
-directory implementation
-```
-
-and makes it possible to change backend infrastructure without rewriting specialist-agent reasoning.
-
-## DirectoryService
-
-`DirectoryService` is the backend abstraction consumed by MCP tools.
-
-Current implementations:
-
-* `MockDirectoryService`
-* `LdapDirectoryService`
-
-Backend selection uses:
-
-```env
-DIRECTORY_BACKEND=mock
-```
-
-or:
-
-```env
-DIRECTORY_BACKEND=ldap
-```
-
-## LDAP Backend
-
-Current LDAP functionality includes:
-
-* account status
-* enabled-state lookup
-* lock-state lookup
-* direct group-based access checks
-* experimental approved account unlock
-
-Password reset remains disabled.
-
-Separate read and mutation credentials are supported.
-
-## Tested Integration Paths
-
-### Account worker E2E
-
-Validated:
-
-```text
-"Is jdoe locked?"
-        |
-        v
-Qwen2.5-0.5B Account worker
-        |
-        v
-account_status(user_id="jdoe")
-        |
-        v
-ToolParser
-        |
-        v
-ToolGateway
-        |
-        v
-MCP
-        |
-        v
-LDAP
-        |
-        v
-Samba AD
-```
-
-The test successfully returned:
-
-```text
-enabled=True
-locked=False
-```
-
-for the development `jdoe` account.
-
-### Current Hub E2E
-
-Validated with deterministic routing:
-
-```text
-User
-    |
-    v
-Orchestrator
-    |
-    v
-Deterministic Router
-    |
-    v
-Account worker
-    |
-    v
-ToolGateway
-    |
-    v
-MCP
-    |
-    v
-LDAP
-```
-
-The next integration milestone is replacing the deterministic routing decision with validated Qwen3-0.6B routing.
-
-## Security Boundaries
-
-The complete intended enforcement stack is:
-
-```text
-User input
-    |
-    v
-Hub routing
-    |
-    v
-Registered specialist validation
-    |
-    v
-Worker inference
-    |
-    v
-Structured-output validation
-    |
-    v
-Worker tool allowlist
-    |
-    v
-Tool registry
-    |
-    v
-Identifier validation
-    |
-    v
-Approval policy
-    |
-    v
-MCP
-    |
-    v
-Directory permissions
-    |
-    v
-Execution/result verification
-```
-
-No individual layer should be considered sufficient on its own.
-
-## Current Limitations
-
-* Qwen3 real-model routing has not yet replaced deterministic Hub routing.
-* Access specialist execution is incomplete.
-* One tool call is allowed per `AgentTask`.
-* Workers do not communicate directly with one another.
-* Multi-worker result composition is currently basic.
-* Main CLI still uses the older single-agent flow.
-* Approval persistence is in-memory.
-* No durable audit store exists.
-* Password reset is disabled.
-* Direct group membership is used for access checks.
-* Samba AD configuration is development-only.
-* Production authentication and authorization are not implemented.
-* Production API/microservice boundaries are not implemented.
-
-## Future Service Boundary
-
-A later service architecture may separate the agent runtime from the public API.
-
-Potential structure:
-
-```text
-Client
-    |
-    v
-Elixir / Phoenix REST layer
-    |
-    v
-Python Agent Service
-    |
-    v
-Qwen Hub
-    |
-    v
-Specialist workers
-    |
-    v
-ToolGateway
-    |
-    v
-MCP / Directory infrastructure
-```
-
-```text
-https://www.srajdev.com/p/a-deep-dive-into-llm-post-training
-
-https://www.marktechpost.com/2023/11/26/how-to-train-your-llm-efficiently-best-practices-for-small-scale-implementation/
-```
-
-This service split is intentionally deferred until the core hub/worker runtime is stable.
+| Component | Responsibility | Cannot establish |
+| --- | --- | --- |
+| Browser | Render actual state; select owned connections/resources; request decisions | Ownership, execution permission or completed effects |
+| Phoenix | Authentication, owner/session scope, request identities, durable jobs, workflow versions and approval coordination | Provider success from an HTTP acknowledgement |
+| AI orchestration | Route to registered specialists; generate and validate proposals; compose evidence-backed answers | Authority from model output, prior chat, RAG or a workflow |
+| Lua adapters | Map an admitted protocol using real `.lua` artifacts and pinned bindings | Credentials, additional grants, a replacement approved target or invented receipts |
+| SemanticGuard / ToolGateway | Validate registered capabilities, arguments, grounding and effect/approval policy | Permission from an inference provider or plugin |
+| MCP / provider adapters | Execute the admitted operation and preserve actual provider observations | Verified completion from malformed or missing evidence |
+
+The public browser talks to Phoenix. Internal AI requests use service credentials.
+WebSockets carry progress/reconciliation hints and lease heartbeats; they do not
+execute user tools or turn an uncertain operation into success.
+
+## Durable requests and outcomes
+
+Phoenix reserves an owner-scoped submission intent before job, workflow or
+candidate-training submission. It pins the exact request and existing operation
+identity. Recovery reads server state and retries only through the same explicit
+identity; it does not depend on browser local/session storage or automatically
+dispatch work when the page reloads.
+
+Mutations require the saved exact action and arguments to be approved. Repeated
+decisions must read the durable outcome instead of performing the action again.
+An MCP/transport failure can happen after the provider acted. Missing,
+contradictory or unverified receipts remain unresolved and require reconciliation.
+Provider acceptance, successful readback and final mail delivery are distinct.
+
+See [provider outcomes](docs/provider-outcomes.md), the canonical Phoenix
+contracts and [cross-repository acceptance](docs/cross-repo-acceptance.md).
+
+## Models, harnesses and Lua plugins
+
+Specialist definitions under `subagents/agents/` declare their tool allowlists.
+The capability registry and gateway independently enforce those limits. A worker
+proposal currently contains one tool call per task; saved workflows compose
+governed steps rather than granting unrestricted model tool access.
+
+`services/extensions/context.py` resolves an immutable owner/role selection.
+`subagents/llm/runtime/inference.py` applies stage policy, disclosure/budget checks,
+the scheduler and local/outbound generation. Pi/OpenCode and hosted model
+connections supply inference through the same governed application path.
+Networking retains its explicit routing/private-context restrictions.
+
+Machine `.lua` profiles declare deployment links and model references. Named
+`.lua` codec files implement protocol behavior. The isolated worker sees bounded
+data; host code resolves protected credential references, validates the output and
+performs network/model/process I/O. A missing/invalid required adapter refuses
+dispatch; there is no silent Python-only substitute.
+
+Normal model/API/dataset uploads and connection settings use the frontend.
+Integrity digests and credential encryption are host responsibilities. A digest
+is an identity/integrity check, not encryption or permission to install a plugin.
+Custom machine-profile/plugin installation is currently operator-managed; a
+complete owner-scoped frontend Lua plugin lifecycle is still separate work.
+
+See [Lua adapters](docs/lua-adapters.md), [protocol plugins](docs/lua-plugins.md),
+[machine profiles](docs/lua-machine-profiles.md) and
+[user extensions](docs/user-extensions.md).
+
+## Existing feature boundaries
+
+| Area | Source boundary | Scope and limits |
+| --- | --- | --- |
+| ITSM tools | `tools/registry.py`, `tools/`, `services/` | Registered directory/access, ticketing, Git/workspace, operations, knowledge, mailbox and network adapters; actual setup and provider permissions still matter |
+| Ticketing | `services/ticketing/`, `tools/ticketing/` | Jira reads and selected governed writes; no automatic migration of a failed Jira action to another provider |
+| Workflows | Phoenix `Workflows`, `api/workflows.py`, frontend workflow canvas | Saved/versioned capability request contracts and durable runs; not a general arbitrary-code graph runtime |
+| Engineering | `services/engineering/`, `api/engineering.py` | Read-only topology drift and KiCad netlist inspection; labelled advisory/simulated, with no infrastructure or physical actuation |
+| RAG | `services/extensions/{store,context,service}.py` | Owned dataset versions, local retrieval, bounded untrusted context and exact citation resolution; external connector integration remains incomplete |
+| Learning | `services/learning_control/`, `learning/` | Readiness/admission, candidate SFT controls and durable artifacts; DPO/PPO web dispatch and automatic serving promotion are not implied |
+| Deployment | `Dockerfile`, `docker/`, `deploy/` | Compose, explicit database/schema bootstrap, GPU/profile/private-CA overlays and persistent state; readiness and provider E2E need independent evidence |
+
+Use configured real providers explicitly. Mock/demo adapters are test selections,
+not fallback evidence of a real provider's effect. A `.test` mailbox lab does not
+provide public Internet verification mail for external accounts.
+
+## Incremental architecture roadmap
+
+The 30 October architecture review is an advisory source snapshot. SRS 1.8
+remains the MVP trust/release baseline; SRS 1.9 work extends it without weakening
+the existing gate. These work packages are not claims of implementation:
+
+1. **Inference failover.** Persist an explicit ordered owner/specialist policy.
+   Resolve eligibility before disclosure: consent, privacy/residency, stage,
+   context support and shared total budgets. Record bounded attempts and health
+   observations/circuit state. A connection probe is not a circuit breaker.
+   Put inference-only switching at the coordinator; never wrap tool execution,
+   approvals or workflow continuation in a retry loop. Security/policy refusals,
+   denied approvals and unknown tool effects are not inference-availability
+   failures and must never trigger failover. Existing format repair is not general
+   provider failover.
+2. **Consistent UI typography.** Share semantic size/font tokens, include native
+   select/option controls and keep code/log/identifier monospace intentional.
+   Verify computed styles, focus, responsive layout and zoom on actual views.
+3. **Additional capabilities and a second ticket provider.** Extend the existing
+   registry/adapters. Pin provider instance, target, preconditions and approval;
+   execute once and read back. Evaluate GLPI/API/license compatibility separately
+   before adoption. Provider identity must survive results and recovery; a failed
+   Jira write must never silently become a GLPI write.
+4. **Separate host operations agent.** Keep machine inspection, package/service
+   management and any per-operation privileged broker outside the unprivileged AI
+   container. Use authenticated host-scoped typed requests, protected paths,
+   reviewed repositories/templates, deadlines, audit and recovery. Do not turn
+   the existing restricted process runner into an arbitrary root shell.
+5. **Executable workflow IR.** Start with one typed/versioned intermediate
+   representation and one emitter, stable node/edge IDs, explicit secret
+   references, bounded control flow and durable per-node state. Generated code
+   uses the same capability/approval path. Saved canvas/request contracts alone
+   are not a compiler, resumable graph executor or source round-trip.
+6. **Deployment and further learning/RAG.** Keep images model/credential-free,
+   declare all providers and verify bootstrap, TLS, sockets, persistence and
+   interrupted outcomes. Kubernetes remains conditional. Preserve reviewed data
+   admission and SFT -> DPO -> PPO ordering, independent evaluation and separately
+   authorized promotion; a candidate run must not modify serving weights.
+
+## Verification
+
+Run appropriate isolated source/contract tests, frontend build/browser checks and
+backend `mix precommit` for affected changes. The repo acceptance command is
+documented in [cross-repository acceptance](docs/cross-repo-acceptance.md); inspect
+its runtime/database configuration before running it. Do not run tests against
+an application database or mail real recipients as an incidental test setup.
+
+Keep source checks, model interpretation, provider restrictions, tool correctness,
+container readiness and real local/outbound E2E results separate. Skipped,
+unconfigured, denied-by-plan and outcome-unknown cases are incomplete acceptance.
+Use the [release gate](docs/mvp-release-gate.md) for the actual MVP decision.
