@@ -31,6 +31,10 @@ from subagents.llm.runtime.memory import (
     release_unused_accelerator_memory,
 )
 
+from subagents.llm.runtime.prompt_guard import (
+    ControlTokenGuard,
+)
+
 from subagents.llm.runtime.registry import (
     ModelRegistry,
 )
@@ -96,6 +100,12 @@ class ModelManager:
         self.allow_unpromoted_checkpoint_override = (
             allow_unpromoted_checkpoint_override
         )
+
+        # Per tokenizer object: its control tokens never change while it is loaded.
+        self._prompt_guards: dict[
+            int,
+            tuple[object, ControlTokenGuard],
+        ] = {}
 
         self.artifact_cache = (
             ModelArtifactCache(
@@ -734,6 +744,51 @@ class ModelManager:
     # GENERATION
     # ========================================================
 
+    def _guarded(
+        self,
+        backend: LLMBackend,
+        messages: list[
+            dict[str, str]
+        ],
+    ) -> list[dict[str, str]]:
+        """
+        Message text with the backend tokenizer's control-token strings defused.
+
+        Every local backend renders its prompt with its own tokenizer, which would
+        otherwise encode such strings found in retrieved, crawled or tool text as
+        real turn boundaries. A backend without a Hugging Face tokenizer (the
+        Ministral hub's mistral-common tokenizer never parses control tokens out
+        of text) needs no change.
+        """
+        tokenizer = getattr(
+            backend,
+            "tokenizer",
+            None,
+        )
+
+        if tokenizer is None:
+            return messages
+
+        guard = self._prompt_guards.get(
+            id(tokenizer)
+        )
+
+        if guard is None or guard[0] is not tokenizer:
+            guard = (
+                tokenizer,
+                ControlTokenGuard.for_tokenizer(
+                    tokenizer
+                ),
+            )
+
+            self._prompt_guards[
+                id(tokenizer)
+            ] = guard
+
+        return guard[1].messages(
+            messages
+        )
+
     def generate(
         self,
         model_key: str,
@@ -751,7 +806,10 @@ class ModelManager:
         try:
             return (
                 backend.generate(
-                    messages,
+                    self._guarded(
+                        backend,
+                        messages,
+                    ),
                     max_new_tokens=(
                         max_new_tokens
                     ),
@@ -793,7 +851,10 @@ class ModelManager:
             return (
                 backend
                 .generate_observed(
-                    messages,
+                    self._guarded(
+                        backend,
+                        messages,
+                    ),
                     max_new_tokens=(
                         max_new_tokens
                     ),
