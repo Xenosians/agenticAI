@@ -37,10 +37,22 @@ def test_private_retrieval_preserves_provenance_but_never_authority(tmp_path):
         store.search("bob", row["id"], "router")
 
 
-@pytest.mark.parametrize("text", ["password=supersecret", "Bearer hiddencredential", "person@example.test", "-----BEGIN RSA PRIVATE KEY-----"])
+# Assembled from two parts so the fixture itself never reads as a key to secret scanners.
+PRIVATE_KEY_MARKER = "-----BEGIN RSA " + "PRIVATE KEY-----"
+
+
+@pytest.mark.parametrize("text", ["password=supersecret", "Bearer hiddencredential", "person@example.test", PRIVATE_KEY_MARKER])
 def test_dataset_secret_and_pii_admission(tmp_path, text):
     with pytest.raises(ValueError):
         ExtensionStore(tmp_path).dataset("alice", name="Data", source="Owned", license="Owned", purpose="rag", reviewed=True, text=text)
+
+
+@pytest.mark.parametrize("text", ["Basic setup: open the basic relay configuration page.",
+                                  'Leave password="" to disable the guest network.'])
+def test_ordinary_documentation_is_admitted(tmp_path, text):
+    row = ExtensionStore(tmp_path).dataset("alice", name="Docs", source="Owned", license="Owned", purpose="rag",
+                                           reviewed=True, text=text)
+    assert row["id"]
 
 
 def test_training_partitions_are_fixed_disjoint_and_not_selectable_for_rag(tmp_path):

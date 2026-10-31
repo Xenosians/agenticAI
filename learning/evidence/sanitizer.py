@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import re
 
 from typing import (
@@ -43,8 +45,15 @@ BEARER_PATTERN = re.compile(
     r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+"
 )
 
+# In an Authorization header, whatever follows Basic is a credential.
+AUTHORIZATION_BASIC_PATTERN = re.compile(
+    r"(?i)\b(Authorization\s*:\s*Basic)\s+[A-Za-z0-9+/=]+"
+)
+
+# Elsewhere "Basic" is often an ordinary word ("Basic setup"); the token after
+# it is a credential only when _basic_credential decodes it to user:password.
 BASIC_PATTERN = re.compile(
-    r"(?i)\bBasic\s+[A-Za-z0-9+/=]+"
+    r"(?i)\bBasic\s+([A-Za-z0-9+/]+=*)"
 )
 
 SECRET_ASSIGNMENT_PATTERN = re.compile(
@@ -55,8 +64,14 @@ SECRET_ASSIGNMENT_PATTERN = re.compile(
         r"api[_-]?key|token|"
         r"client[_-]?secret"
         r")"
-        r"\s*[:=]\s*"
-        r"([^\s,;]+)"
+        r"\s*(?::=|[:=])\s*"
+        # A quoted value is redacted whole, an unterminated one from its quote;
+        # an empty one ("", '', “”) holds no secret.
+        r"("
+        r"\"[^\"\n]+\"|'[^'\n]+'"
+        r"|\u201c[^\u201d\n]+\u201d|\u2018[^\u2019\n]+\u2019"
+        r"|[\"'\u201c\u2018]?[^\s,;\"'\u201c\u201d\u2018\u2019][^\s,;]*"
+        r")"
     )
 )
 
@@ -128,6 +143,45 @@ def _sensitive_key(
     )
 
 
+def _basic_credential(
+    token: str,
+) -> bool:
+    """
+    Whether the token after "Basic" is a credential rather than a word:
+    the base64 form of user-id ":" password in UTF-8 (RFC 7617), with or
+    without padding, or a long opaque token such as an API key (16 or
+    more characters with a digit, "+", "/", "=" or an inner capital).
+    """
+
+    if (
+        len(token) >= 16
+        and (
+            re.search(r"[0-9+/=]", token)
+            or any(character.isupper() for character in token[1:])
+        )
+    ):
+        return True
+
+    data = token.rstrip(
+        "="
+    )
+
+    try:
+        decoded = base64.b64decode(
+            data + "=" * (-len(data) % 4),
+            validate=True,
+        ).decode(
+            "utf-8"
+        )
+    except (binascii.Error, UnicodeDecodeError):
+        return False
+
+    return (
+        ":" in decoded
+        and decoded.isprintable()
+    )
+
+
 def sanitize_text(
     value: str,
 ) -> str:
@@ -144,8 +198,23 @@ def sanitize_text(
     )
 
     result = (
+        AUTHORIZATION_BASIC_PATTERN.sub(
+            lambda match: (
+                f"{match.group(1)} <redacted>"
+            ),
+            result,
+        )
+    )
+
+    result = (
         BASIC_PATTERN.sub(
-            "Basic <redacted>",
+            lambda match: (
+                "Basic <redacted>"
+                if _basic_credential(
+                    match.group(1)
+                )
+                else match.group(0)
+            ),
             result,
         )
     )
