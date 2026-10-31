@@ -303,6 +303,13 @@ class EntrypointTests(unittest.TestCase):
             self.assertNotIn("${PUBLIC_HOST}", rendered)
             self.assertNotIn("${FRONTEND_RUNTIME_DIR}", rendered)
             self.assertIn("ssl_certificate " + str(cert), rendered)
+            api = re.search(r"location /api/\s*\{([^}]+)\}", public)
+            assert api is not None, "the browser's API location must exist"
+            # nginx is the edge: it replaces any X-Forwarded-For a client sent with the
+            # address it saw, so a client cannot choose the address the backend's
+            # per-client sign-in limits count.
+            self.assertIn("proxy_set_header X-Forwarded-For $remote_addr;", api.group(1))
+            self.assertNotIn("$proxy_add_x_forwarded_for", rendered)
             health = re.search(r"location = /api/health\s*\{([^}]+)\}", private)
             self.assertIsNotNone(health, "Operations needs its real backend health endpoint on the callback origin")
             self.assertIn("proxy_pass http://phoenix;", health.group(1))
