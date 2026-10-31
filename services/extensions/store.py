@@ -218,7 +218,8 @@ class ExtensionStore:
 
     def dataset(self, owner: str, *, name: str, text: str, source: str, license: str,
                 purpose: str, reviewed: bool, replaces: str | None = None,
-                provenance: dict | None = None, crawl: dict | None = None) -> dict:
+                provenance: dict | None = None, crawl: dict | None = None,
+                document: dict | None = None) -> dict:
         """Admit a dataset, or a new version of the latest version named by ``replaces``.
 
         ``provenance`` records how server-side code derived ``text`` (for example a
@@ -279,6 +280,8 @@ class ExtensionStore:
             record["transform"] = provenance
         if crawl:
             record["crawl"] = crawl
+        if document:
+            record["document"] = document
         try:
             return self.put(owner, "dataset", record, identity=identity)
         except sqlite3.IntegrityError:

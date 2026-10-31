@@ -14,6 +14,11 @@ import threading
 from services.lua_adapters.model_loading import from_pretrained as lua_from_pretrained
 
 from services.extensions.store import ExtensionStore
+from services.extensions.document_ingestion import (
+    DocumentIngestionError,
+    MAX_BASE64_BYTES,
+    extract_document,
+)
 from services.extensions.transport import request_json, validate_url
 from services.extensions.harness import harness_binary, harness_generate
 from services.extensions.options import MODEL_OPTION_FIELDS, inference_option_support, networking_inference_options, validate_model_options
@@ -221,6 +226,14 @@ def validate_model_bundle(root: Path):
 
 async def command(owner: str, action: str, payload: dict, settings) -> dict:
     from services.lua_adapters.host_boundaries import inspect_data_async
+    # Reject an oversized binary envelope before Lua inspects it; accepted
+    # document bytes still cross the configured Lua admission boundary before parsing.
+    if action == "dataset" and "base64" in payload:
+        encoded = payload["base64"]
+        if not isinstance(encoded, str):
+            raise ValueError("Expected a text field")
+        if len(encoded) > MAX_BASE64_BYTES:
+            raise DocumentIngestionError("document_upload_too_large")
     await inspect_data_async("source" if action.startswith(("dataset", "upload", "transform")) else "connection",
                              "admission", payload, {"owner": owner, "action": action})
     # Initialize the durable store on the application loop before dispatching
@@ -558,10 +571,23 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
         except ExternalProviderError as exc:
             raise _category_error(exc) from None
     if action == "dataset":
-        fields = {key: payload.get(key) for key in ("name", "text", "source", "license", "purpose", "reviewed")}
-        if not all(isinstance(fields[k], str) for k in ("name", "text", "source", "license", "purpose")):
+        fields = {key: payload.get(key) for key in ("name", "source", "license", "purpose", "reviewed")}
+        if not all(isinstance(fields[k], str) for k in ("name", "source", "license", "purpose")):
             raise ValueError("Dataset fields must be text")
-        return public_resource(store.dataset(owner, **fields, replaces=replaced_dataset(payload)))
+        replaces = replaced_dataset(payload)
+        if "base64" in payload:
+            if fields["purpose"] != "rag":
+                raise DocumentIngestionError("document_training_not_supported")
+            if "text" in payload:
+                raise DocumentIngestionError("document_format_not_supported")
+            extracted = await extract_document(payload.get("filename", ""), payload["base64"])
+            return public_resource(store.dataset(
+                owner, **fields, text=extracted.text, replaces=replaces, document=extracted.metadata,
+            ))
+        fields["text"] = payload.get("text")
+        if not isinstance(fields["text"], str):
+            raise ValueError("Dataset fields must be text")
+        return public_resource(store.dataset(owner, **fields, replaces=replaces))
     if action == "dataset_transform":
         # The owner's Lua script reshapes their own rows in an isolated worker. A preview
         # admits nothing; with apply, the output goes through the same admission as any upload.

@@ -112,10 +112,22 @@ when deploying this option.
 
 Upload UTF-8 text, Markdown, CSV, JSON or a supported plain-text source/config
 file for reference retrieval, or JSONL examples for training, up to 2 MB. The
-Data tab offers common Python, Lua, Elixir, Nim, JavaScript/TypeScript, SQL,
-shell, HTML/CSS, YAML, TOML, INI/CFG and log files. Files are read as plain
-UTF-8 text; PDF and Word documents need a separate parser and are not accepted
-yet. Training uploads still pass the JSONL schema and split validation.
+Data tab also accepts PDF and DOCX files as RAG references. The AI service
+extracts selectable text in a separate worker process with the Lua workers'
+sandbox: once it has loaded its parsers it can open no file, socket or process,
+and it is limited by CPU time (5 s), memory (512 MiB), wall time (15 s), page
+count (100), expanded DOCX size and extracted-text size. Password-protected PDFs,
+PDFs whose author forbids text extraction, malformed documents and files without
+selectable text are refused; a PDF encrypted only to declare permissions (an empty
+user password, common for vendor manuals) is read. Scanned-image OCR, macros,
+images and embedded attachments are not processed. The original binary
+is not retained: the owner-scoped dataset stores extracted text, its digest, the
+source file digest/name and parser version, then uses the normal licence, review,
+privacy-scan, owner and version checks. Document uploads are reference-only;
+training still accepts JSONL and passes its schema and split validation.
+
+Plain-text references include common Python, Lua, Elixir, Nim,
+JavaScript/TypeScript, SQL, shell, HTML/CSS, YAML, TOML, INI/CFG and log files.
 Alternatively, provide an allowed dataset API URL that returns
 `{"text":"..."}` and an optional bearer API key, or crawl a documentation site
 the machine's profile allows (below). Supply source and usage permission

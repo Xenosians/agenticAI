@@ -25,6 +25,10 @@ lupa>=2.8,<3
 # Continual learning / LoRA training
 peft
 
+# Bounded text extraction for owner-uploaded RAG references (never training).
+pypdf>=6.9.1,<7
+python-docx>=1.2,<2
+
 # Streaming external continual-learning corpora
 datasets>=2.20,<6
 pyarrow>=25.0.1,<26

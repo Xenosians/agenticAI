@@ -7,6 +7,7 @@ from config import get_settings
 from services.extensions.service import command
 from services.extensions.probe import ProviderProbeError
 from services.extensions.diagnostics import HarnessFailure
+from services.extensions.document_ingestion import DocumentIngestionError
 from services.extensions.transform import TransformError
 from services.knowledge.crawler import CrawlError
 from services.lua_adapters.runtime import LuaAdapterError
@@ -48,6 +49,10 @@ async def extensions(body: ExtensionCommand, request: Request):
 
     except CrawlError as exc:
         # A crawl refusal: a stable crawl_* code and a fixed message, never page content.
+        raise HTTPException(422, exc.public_detail()) from None
+
+    except DocumentIngestionError as exc:
+        # Stable parser outcomes; never reveal the uploaded binary or parser internals.
         raise HTTPException(422, exc.public_detail()) from None
 
     except LuaAdapterError as exc:

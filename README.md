@@ -17,7 +17,7 @@ This is an evolving local-first **MVP candidate**. Model output is a proposal, n
 - Local Transformers models, quantization profiles, LoRA adapters, and serialized GPU scheduling.
 - Per-account model connections: compatible chat-completion APIs, including Groq; installed local profiles; and Pi/OpenCode inference adapters.
 - Shared provider usage queues, editable quota settings, and verified reasoning controls for supported connections.
-- Validated uploads of local safetensors model folders, private reference datasets, and reviewed JSONL training data.
+- Validated uploads of local safetensors model folders, private reference datasets (including bounded selectable-text PDF/DOCX extraction), and reviewed JSONL training data.
 - Local full-text retrieval for reference datasets, with source and trust metadata kept separate from execution authority.
 - Training/evaluation infrastructure for curated datasets, candidate adapters, behavioral checks, and promotion gates.
 - Advisory infrastructure drift: a saved desired topology is compared with what the read-only operations adapters observe (allow-listed containers, configured health endpoints, the configured OpenWrt router). The report is labelled simulated and never changes a device. KiCad netlists are inspected as text for connectivity findings, with no EDA tool or hardware attached.
@@ -106,6 +106,7 @@ The [tool acceptance matrix](docs/tool-acceptance-matrix.md) inventories all 67 
 - This is an MVP candidate with model-dependent routing and argument accuracy; configured integrations are not proof of live connectivity, and release status depends on the cross-repository acceptance gate.
 - Live account → Jira → mailer acceptance and complete execution coverage across local models and outbound adapters remain incomplete. WebSocket progress and passing proposal contracts do not establish successful provider actions or email delivery.
 - Dataset retrieval uses local full-text search, not embeddings or an external vector database.
+- PDF/DOCX ingestion extracts selectable text only in an isolated, resource-limited worker; scanned-image OCR, macros, images and attachments are not processed, and source binaries are not retained.
 - The n8n/workflow surface validates manifests only. It neither runs workflows nor registers webhooks.
 - Uploaded models reject custom executable code and pickle weights. Format admission does not guarantee inference quality or sufficient GPU memory.
 - Ambiguous mutation outcomes require reconciliation; they are not automatically retried.
