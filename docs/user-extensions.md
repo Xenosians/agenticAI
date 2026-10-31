@@ -110,8 +110,13 @@ when deploying this option.
 
 ## Datasets and retrieval
 
-Upload UTF-8 text/Markdown for reference retrieval or JSONL for training, up to
-2 MB. Alternatively, provide an allowed dataset API URL that returns
+Upload UTF-8 text, Markdown, CSV, JSON or a supported plain-text source/config
+file for reference retrieval, or JSONL examples for training, up to 2 MB. The
+Data tab offers common Python, Lua, Elixir, Nim, JavaScript/TypeScript, SQL,
+shell, HTML/CSS, YAML, TOML, INI/CFG and log files. Files are read as plain
+UTF-8 text; PDF and Word documents need a separate parser and are not accepted
+yet. Training uploads still pass the JSONL schema and split validation.
+Alternatively, provide an allowed dataset API URL that returns
 `{"text":"..."}` and an optional bearer API key, or crawl a documentation site
 the machine's profile allows (below). Supply source and usage permission
 metadata and confirm review. The shared sanitizer and additional conservative
