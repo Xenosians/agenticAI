@@ -8,6 +8,7 @@ from services.extensions.service import command
 from services.extensions.probe import ProviderProbeError
 from services.extensions.diagnostics import HarnessFailure
 from services.extensions.transform import TransformError
+from services.knowledge.crawler import CrawlError
 from services.lua_adapters.runtime import LuaAdapterError
 
 
@@ -43,6 +44,10 @@ async def extensions(body: ExtensionCommand, request: Request):
 
     except TransformError as exc:
         # A transform's code and a bounded message about the owner's own script.
+        raise HTTPException(422, exc.public_detail()) from None
+
+    except CrawlError as exc:
+        # A crawl refusal: a stable crawl_* code and a fixed message, never page content.
         raise HTTPException(422, exc.public_detail()) from None
 
     except LuaAdapterError as exc:

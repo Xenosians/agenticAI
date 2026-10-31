@@ -112,10 +112,37 @@ when deploying this option.
 
 Upload UTF-8 text/Markdown for reference retrieval or JSONL for training, up to
 2 MB. Alternatively, provide an allowed dataset API URL that returns
-`{"text":"..."}` and an optional bearer API key. Supply source and usage permission
+`{"text":"..."}` and an optional bearer API key, or crawl a documentation site
+the machine's profile allows (below). Supply source and usage permission
 metadata and confirm review. The shared sanitizer and additional conservative
 secret/identifier checks apply to contents and metadata; manual review remains
 necessary.
+
+### Crawling a site
+
+`dataset_crawl` reads one site into a reference dataset: payload `url` (the page
+to start from), `name`, `license`, `reviewed` and optional `replaces`. Only
+origins the machine profile lists under `sources` can be crawled, so what is
+reachable is the operator's decision, per machine ([Lua machine
+profiles](lua-machine-profiles.md#knowledge-sources)). The crawl stays on that
+origin beneath the starting path, honours `robots.txt` (with `Crawl-delay`) and
+robots meta tags, follows a redirect only when its target passes the same checks
+as a link (at most three hops), reads only HTML, Markdown and plain text, and
+stops at 25 pages, depth 3, 1.5 MB of text or 110 seconds, keeping the pages read
+so far. Each request crosses the Lua connection boundary.
+
+Pages are reduced to visible text: scripts, styles, navigation, headers, footers
+and forms are dropped. The admitted text is one reference dataset in which each
+page begins with its title and address, and the dataset records each page's
+address and SHA-256 together with skip counts (`robots`, `noindex`, `duplicate`,
+`redirect`, `unsupported_content`, `too_large`, `unavailable`, `sensitive`). A
+page that admission would refuse (a possible credential or personal identifier,
+including in its title) is withheld and counted as `sensitive`, so one page
+cannot block the rest of a site; when every page is withheld nothing is saved
+(`crawl_all_pages_withheld`). Crawled third-party text is reference knowledge
+only and is never admitted for training. A refused crawl returns a `crawl_*`
+code and saves nothing. Crawling again with `replaces` stores a new version, so
+a changed site never silently rewrites earlier citations.
 
 Reference datasets are owner-private. Search returns chunks with source, digest
 and trust metadata. Evidence enters model context separately from user-authored
@@ -246,7 +273,7 @@ require CSRF. Phoenix derives the owner from the session and calls the AI's
 execution endpoints also require that token. Keep both services' tokens aligned.
 
 Commands: `list`, `model`, `select`, `delete`, `probe`, `dataset`, `dataset_url`,
-`dataset_transform`, `search`, `resolve`, `export_dataset`, `workflow_validate`, `upload_begin`,
+`dataset_crawl`, `dataset_transform`, `search`, `resolve`, `export_dataset`, `workflow_validate`, `upload_begin`,
 `upload_chunk`, `upload_finish`. Each command has `action` and `payload`; only the trusted internal
 envelope contains `owner`.
 

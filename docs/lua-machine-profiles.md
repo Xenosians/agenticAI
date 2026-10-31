@@ -57,6 +57,7 @@ and a malformed host, port, origin or name.
 | `atlassian` | `org_id`, `jira_resource`, `secret` | Atlassian organization administration |
 | `mailbox` | `enabled`, `domain`, `smtp_port`, `imap_port` | Lab mailbox provisioning |
 | `models` | `hub`, `profiles`, `allowed_origins`, `insecure_http_origins` | Hub model, local model profiles and the outbound model origins |
+| `sources` | `allowed_origins`, `insecure_http_origins` | The web origins the knowledge crawler may read (see below) |
 
 A declared section replaces every setting it controls, including ones it leaves
 out, which take their defaults. A stale host or credential left in the
@@ -67,6 +68,33 @@ arguments still win.
 Relative model paths resolve beside the profile. `allowed_origins` lists exact
 `scheme://host[:port]` origins; plain HTTP is allowed only for an origin listed
 in both `allowed_origins` and `insecure_http_origins`.
+
+## Knowledge sources
+
+`sources` lists the documentation sites this machine lets a user crawl into
+reference knowledge (Knowledge → **Crawl a site**), with the same exact-origin and
+plain-HTTP rules as `models`. The two lists are separate: a crawlable site never
+becomes a model endpoint, and a model endpoint is never crawled. A machine that
+declares no `sources` can crawl nothing.
+
+```lua
+sources = {allowed_origins = {"https://docs.example.org", "http://wiki.lan:8090"},
+           insecure_http_origins = {"http://wiki.lan:8090"}},
+```
+
+A crawl reads one site: it stays on the starting origin and beneath the starting
+path, honours the site's `robots.txt` (including `Crawl-delay`, capped at 10 s)
+and robots meta tags, follows a redirect only when its target passes the same
+checks as a link (at most three hops), reads only HTML, Markdown and plain text,
+stores identical pages once, and stops at 25 pages, depth 3, 1.5 MB
+of text or 110 seconds, keeping the pages read so far. A `robots.txt` that is
+missing allows crawling; one that cannot be read (server error or no connection)
+stops the crawl, as RFC 9309 directs. Every request crosses the Lua connection
+boundary like any other outbound link. The result is admitted like an uploaded
+file (licence, review confirmation, secret and personal-data scan, versions) for
+retrieval only: crawled third-party text is never training data. A page the scan
+would refuse is withheld and counted rather than blocking the site. The dataset
+records each page's address and SHA-256.
 
 ## Credentials
 

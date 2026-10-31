@@ -14,6 +14,25 @@ from cryptography.fernet import Fernet
 LOCAL_ROLE_MODEL = "local"
 ROLE_PATTERN = re.compile(r"[a-z][a-z0-9-]{0,63}")
 NEWER_VERSION_EXISTS = "This dataset already has a newer version; replace the latest version"
+# Admission is conservative: these spans make a dataset possibly identifying or secret-bearing.
+_SENSITIVE_PATTERNS = tuple(re.compile(pattern) for pattern in (
+    r"-----BEGIN .*PRIVATE KEY-----", r"(?i)(api[_-]?key|password|secret|token)\s*[:=]\s*[^\s]{6,}",
+    r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", r"\bsk-[A-Za-z0-9_-]{16,}\b"))
+
+
+def sensitive_content(text: str) -> str | None:
+    """Why text may not be admitted (a credential or personal identifier), or None.
+
+    The one admission check for dataset text: the store applies it to every upload,
+    and the crawler applies it page by page so one page cannot block a whole site.
+    Detection is not a guarantee of de-identification; manual review remains necessary.
+    """
+    from learning.evidence.sanitizer import sanitize_text
+    if sanitize_text(text) != text:
+        return "Dataset failed the shared training privacy/secret scanner"
+    if any(pattern.search(text) for pattern in _SENSITIVE_PATTERNS):
+        return "Dataset contains possible secrets or personal identifiers; sanitize before admission"
+    return None
 
 
 def _input_key(messages: list) -> str:
@@ -199,11 +218,12 @@ class ExtensionStore:
 
     def dataset(self, owner: str, *, name: str, text: str, source: str, license: str,
                 purpose: str, reviewed: bool, replaces: str | None = None,
-                provenance: dict | None = None) -> dict:
+                provenance: dict | None = None, crawl: dict | None = None) -> dict:
         """Admit a dataset, or a new version of the latest version named by ``replaces``.
 
         ``provenance`` records how server-side code derived ``text`` (for example a
-        Lua transform's script and input digests); it never bypasses admission.
+        Lua transform's script and input digests), and ``crawl`` which pages a site
+        crawl read and their digests; neither ever bypasses admission.
         """
         if not name.strip() or not source.strip() or not license.strip():
             raise ValueError("Name, source and permitted-use/license metadata are required")
@@ -211,17 +231,11 @@ class ExtensionStore:
             raise ValueError("Choose a purpose and confirm review/permission to use this dataset")
         if not 0 < len(text.encode()) <= 2_000_000:
             raise ValueError("Dataset must contain 1 to 2,000,000 UTF-8 bytes")
-        from learning.evidence.sanitizer import sanitize_text
-        admission_text = "\n".join([name, source, license, text])
         if len(name) > 120 or len(source) > 500 or len(license) > 200:
             raise ValueError("Dataset metadata exceeds field limits")
-        if sanitize_text(admission_text) != admission_text:
-            raise ValueError("Dataset failed the shared training privacy/secret scanner")
-        # Admission is conservative. Detection is not a guarantee of de-identification.
-        patterns = [r"-----BEGIN .*PRIVATE KEY-----", r"(?i)(api[_-]?key|password|secret|token)\s*[:=]\s*[^\s]{6,}",
-                    r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", r"\bsk-[A-Za-z0-9_-]{16,}\b"]
-        if any(re.search(pattern, admission_text) for pattern in patterns):
-            raise ValueError("Dataset contains possible secrets or personal identifiers; sanitize before admission")
+        refusal = sensitive_content("\n".join([name, source, license, text]))
+        if refusal:
+            raise ValueError(refusal)
         previous = self._replaced_version(owner, replaces, purpose) if replaces else None
         digest = hashlib.sha256(text.encode()).hexdigest()
         metadata = {"name": name[:120], "source": source[:500], "license": license[:200]}
@@ -263,6 +277,8 @@ class ExtensionStore:
             record["retired_splits"] = retired
         if provenance:
             record["transform"] = provenance
+        if crawl:
+            record["crawl"] = crawl
         try:
             return self.put(owner, "dataset", record, identity=identity)
         except sqlite3.IntegrityError:

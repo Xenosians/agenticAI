@@ -252,6 +252,7 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
             provider_presets,
         )
         from services.extensions.transform import transforms_available
+        from services.lua_adapters.profile import source_policy
         return {"schema": "extension-catalog.v1", "resources": [public_resource(r) for r in store.list(owner)],
                 "selected": store.selected(owner),
                 "role_assignments": store.role_assignments(owner),
@@ -264,6 +265,8 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
                 "capabilities": workflow_capabilities(settings),
                 "harnesses": [{"id": kind, "available": _installed(kind)} for kind in ["opencode", "pi"]],
                 "transforms": [{"id": "lua-row-transform", "available": transforms_available()}],
+                # Sites this machine's profile lets a user crawl into reference knowledge.
+                "crawl_sources": source_policy()["allowed_origins"],
                 "connections": [{"id": "rag", "state": "ready", "contract": "owner-retrieval.v1"},
                                 {"id": "n8n", "state": "prepared", "contract": "governed-workflow.v1"}]}
     if action == "model":
@@ -586,6 +589,25 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
         return public_resource(store.dataset(owner, name=payload.get("name", ""), text=data["text"],
             source=payload["url"], license=payload.get("license", ""), purpose=payload.get("purpose", "rag"), reviewed=payload.get("reviewed"),
             replaces=replaces))
+    if action == "dataset_crawl":
+        # Reads one site this machine's profile allows into reference knowledge. Crawled
+        # pages are third-party text, so they are admitted for retrieval only, never training.
+        from services.knowledge.crawler import crawl
+        if payload.get("purpose", "rag") != "rag":
+            raise ValueError("Crawled sites are admitted as reference knowledge only")
+        from services.extensions.store import sensitive_content
+        from services.knowledge.crawler import CrawlError
+        replaces = replaced_dataset(payload)
+        crawled = await crawl(payload.get("url", ""))
+        # A page that admission would refuse (a credential or personal identifier) is
+        # withheld and counted, so one page cannot block the rest of a site.
+        crawled.withhold(lambda page: sensitive_content(page) is None)
+        if not crawled.pages:
+            raise CrawlError("crawl_all_pages_withheld", "Every page read contained possible credentials or "
+                             "personal identifiers, so nothing was saved.")
+        return public_resource(store.dataset(owner, name=payload.get("name", ""), text=crawled.corpus(),
+            source=crawled.start_url, license=payload.get("license", ""), purpose="rag",
+            reviewed=payload.get("reviewed"), replaces=replaces, crawl=crawled.provenance()))
     if action == "search":
         return {"hits": store.search(owner, payload["id"], str(payload.get("query", ""))[:200])}
     if action == "resolve":

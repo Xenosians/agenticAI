@@ -37,6 +37,7 @@ SECTIONS = {
     "atlassian": {"org_id", "jira_resource", "secret"},
     "mailbox": {"enabled", "domain", "smtp_port", "imap_port"},
     "models": {"hub", "profiles", "allowed_origins", "insecure_http_origins"},
+    "sources": {"allowed_origins", "insecure_http_origins"},
 }
 PLUGIN_IDS = frozenset({"model.local", "model.openai", "model.anthropic", "model.harness",
                         "connection.default", "source.default", "tool.default"})
@@ -49,6 +50,7 @@ CONTROLLED_FIELDS = {
     "atlassian": {"atlassian_org_id", "atlassian_jira_resource_ari", "atlassian_admin_api_key"},
     "mailbox": {"mailbox_lab_enabled", "mailbox_lab_domain", "mailbox_smtp_port", "mailbox_imap_port"},
     "models": {"hub_model_key", "model_profiles"},
+    "sources": set(),  # Read by the knowledge crawler through source_policy(), never Settings.
 }
 
 
@@ -347,16 +349,31 @@ def settings_values() -> dict:
     return values
 
 
-def process_policy() -> dict:
-    """The outbound model origins this machine allows, as the transport's environment."""
-    links = load_links()
-    section = _section(links.declared, "models")
+def _origin_lists(section: dict) -> tuple[list[str], list[str]]:
+    """Allowed origins and the plain-HTTP exceptions, each of which must also be allowed."""
     allowed = _origins(section.get("allowed_origins", []))
     insecure = _origins(section.get("insecure_http_origins", []))
     if any(urlsplit(origin).scheme != "http" or origin not in allowed for origin in insecure):
         raise _invalid()  # Plain HTTP is an explicit exception for an origin already allowed.
+    return allowed, insecure
+
+
+def process_policy() -> dict:
+    """The outbound model origins this machine allows, as the transport's environment."""
+    links = load_links()
+    allowed, insecure = _origin_lists(_section(links.declared, "models"))
     policy = {}
     if "models" in links.declared:
         policy["EXTENSION_ALLOWED_ORIGINS"] = ",".join(allowed)
         policy["EXTENSION_INSECURE_HTTP_ORIGINS"] = ",".join(insecure)
     return policy
+
+
+def source_policy() -> dict:
+    """The web origins this machine allows the knowledge crawler to read.
+
+    Separate from the model origins: a crawlable documentation site never becomes
+    a model endpoint, and a model endpoint is never crawled. Undeclared means none.
+    """
+    allowed, insecure = _origin_lists(_section(load_links().declared, "sources"))
+    return {"allowed_origins": allowed, "insecure_http_origins": insecure}
