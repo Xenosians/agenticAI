@@ -57,7 +57,7 @@ and a malformed host, port, origin or name.
 | `atlassian` | `org_id`, `jira_resource`, `secret` | Atlassian organization administration |
 | `mailbox` | `enabled`, `domain`, `smtp_port`, `imap_port` | Lab mailbox provisioning |
 | `models` | `hub`, `profiles`, `allowed_origins`, `insecure_http_origins` | Hub model, local model profiles and the outbound model origins |
-| `sources` | `allowed_origins`, `insecure_http_origins`, `private_network_origins` | The web origins the knowledge crawler may read (see below) |
+| `sources` | `allowed_origins`, `insecure_http_origins`, `private_networks`, `user_sites` | What the knowledge crawler may read and where it may connect (see below) |
 
 A declared section replaces every setting it controls, including ones it leaves
 out, which take their defaults. A stale host or credential left in the
@@ -71,25 +71,40 @@ in both `allowed_origins` and `insecure_http_origins`.
 
 ## Knowledge sources
 
-`sources` lists the documentation sites this machine lets a user crawl into
-reference knowledge (Knowledge → **Crawl a site**), with the same exact-origin and
-plain-HTTP rules as `models`. The two lists are separate: a crawlable site never
-becomes a model endpoint, and a model endpoint is never crawled. A machine that
-declares no `sources` can crawl nothing.
+`sources` decides what the knowledge crawler may read on this machine (Data &
+automation → **Crawl a site**). It is separate from `models`: a crawlable site
+never becomes a model endpoint, and a model endpoint is never crawled. A machine
+that declares no `sources` can crawl nothing.
 
 ```lua
-sources = {allowed_origins = {"https://docs.example.org", "http://wiki.lan:8090"},
-           insecure_http_origins = {"http://wiki.lan:8090"},
-           private_network_origins = {"http://wiki.lan:8090"}},
+sources = {
+  allowed_origins = {"https://docs.example.org"},   -- offered to every user
+  user_sites = true,                                -- users may add their own sites
+  private_networks = {"10.20.0.0/16", "192.168.8.0/24"},  -- intranet ranges a crawl may reach
+},
 ```
 
-A site is read only on public internet addresses unless it is also listed in
-`private_network_origins` (an intranet wiki or lab service). The address is
-checked where each connection is made, on the address the name resolves to at
-that moment, and the connection uses exactly that checked address: a public name
-whose DNS points, or is rebound, at loopback, a private network, a link-local or
-cloud metadata address is refused (`crawl_site_unreachable`) and nothing is read.
-Every private site must also be an allowed origin.
+- `allowed_origins` lists sites every user may crawl, with the same exact-origin
+  and plain-HTTP rules as `models` (`insecure_http_origins`).
+- With `user_sites = true`, each user registers their own sites once, in the
+  browser (Data & automation → Crawl a site → **Add site**). A registered site is
+  kept for that user only and its address is encrypted at rest (Fernet, with the
+  extension store's key; a keyed digest names the entry). Up to 50 per user.
+- `private_networks` names, in CIDR form, the private address ranges a crawl may
+  connect to, such as an intranet wiki's subnet. Ranges are checked when the
+  profile loads: never a public range, `0.0.0.0/0`, link-local
+  (`169.254.0.0/16`, cloud metadata) or multicast. Without it, crawls reach the
+  public internet only.
+
+Where a crawl connects is checked on every connection, on the address the name
+resolves to at that moment, and the connection then uses exactly that checked
+address. Public internet addresses are reachable over HTTPS; any other address
+only inside `private_networks`. A name whose DNS points, or is rebound, at
+loopback, a private network the machine did not name, a link-local or cloud
+metadata address is refused (`crawl_site_unreachable`) and nothing is read. A
+user's plain `http://` site is accepted only when the machine names private
+networks, and it then reaches only those. Registering a site never widens where
+a crawl may connect, so one profile line per network replaces per-site editing.
 
 A crawl reads one site: it stays on the starting origin and beneath the starting
 path, honours the site's `robots.txt` (including `Crawl-delay`, capped at 10 s)

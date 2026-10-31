@@ -1,9 +1,10 @@
-"""Bounded knowledge crawler: one machine-declared site becomes reference text.
+"""Bounded knowledge crawler: one allowed site becomes reference text.
 
-What may be crawled is the machine's decision, not the user's: the Lua machine
-profile's ``sources`` section lists the allowed web origins, and nothing else is
-reachable. Every request goes through the project's Lua-wrapped HTTP client, so
-the connection boundary sees each fetch before it is made.
+Which sites may be crawled, and where each may connect, comes from ``CrawlAccess``:
+the machine's Lua profile (``sources``) plus the sites the requesting user registered
+(``services.knowledge.sites``). Every request goes through the project's Lua-wrapped
+HTTP client, so the connection boundary sees each fetch before it is made, and every
+connection is checked on the address it actually uses.
 
 A crawl stays on its starting origin and beneath the starting path, honours the
 site's robots.txt (including Crawl-delay) and robots meta tags, follows a redirect
@@ -27,9 +28,12 @@ from urllib.robotparser import RobotFileParser
 
 import httpx
 
-from services.knowledge.public_network import PublicAddressTransport, refused_private_address
+from services.knowledge.address_policy import CheckedAddressTransport, refused_address
+from services.knowledge.errors import CrawlError
+from services.knowledge.sites import CrawlAccess, origin_of
 from services.lua_adapters.http_clients import async_client
-from services.lua_adapters.profile import source_policy
+
+__all__ = ["CrawlError", "CrawlLimits", "CrawlResult", "CrawledPage", "crawl"]
 
 USER_AGENT = "JanusKnowledgeCrawler/1.0"
 PLAIN_TYPES = {"text/plain", "text/markdown", "text/x-markdown"}
@@ -40,18 +44,6 @@ MAX_REDIRECTS = 3
 SKIPPED_ELEMENTS = {"script", "style", "noscript", "template", "svg", "nav", "header", "footer", "aside", "form"}
 BLOCK_ELEMENTS = {"p", "div", "section", "article", "main", "li", "ul", "ol", "table", "tr", "br", "pre",
                   "blockquote", "h1", "h2", "h3", "h4", "h5", "h6", "dt", "dd", "hr"}
-
-
-class CrawlError(ValueError):
-    """A crawl refused before or during reading; the code is safe to show the user."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-        self.message = message
-
-    def public_detail(self) -> dict:
-        return {"code": self.code, "message": self.message}
 
 
 @dataclass(frozen=True)
@@ -157,26 +149,23 @@ class _Readable(HTMLParser):
         return "\n".join(line for line in lines if line)
 
 
-def _origin(parts) -> str:
-    return f"{parts.scheme}://{parts.netloc}".lower()
-
-
-def _start(url: str) -> tuple[str, str, str]:
+def _start(url: str, access: CrawlAccess) -> tuple[str, str, str]:
     """The canonical start URL, its origin and the path prefix the crawl stays beneath."""
+    invalid = CrawlError("crawl_url_invalid", "Use an http(s) address without credentials, query parameters "
+                                              "or fragments.")
     if not isinstance(url, str) or len(url) > 2000:
         raise CrawlError("crawl_url_invalid", "Enter the address of the page to start from.")
-    parts = urlsplit(url.strip())
-    if (parts.scheme not in {"http", "https"} or not parts.hostname or parts.username or parts.password
-            or parts.query or parts.fragment):
-        raise CrawlError("crawl_url_invalid",
-                         "Use an http(s) address without credentials, query parameters or fragments.")
-    origin = _origin(parts)
-    policy = source_policy()
-    if origin not in policy["allowed_origins"]:
-        raise CrawlError("crawl_origin_not_declared",
-                         "This machine's profile does not allow crawling that site.")
-    if parts.scheme == "http" and origin not in policy["insecure_http_origins"]:
-        raise CrawlError("crawl_origin_not_declared", "This machine's profile allows that site only over HTTPS.")
+    try:
+        parts = urlsplit(url.strip())
+    except ValueError:
+        raise invalid from None
+    origin = origin_of(parts)
+    if origin is None or parts.query or parts.fragment:
+        raise invalid
+    if origin not in access.origins:
+        raise CrawlError("crawl_origin_not_declared", "That site is not one of your crawl sites.")
+    if parts.scheme == "http" and origin not in access.plain_http:
+        raise CrawlError("crawl_origin_not_declared", "That site can be crawled only over HTTPS.")
     path = parts.path or "/"
     prefix = path if path.endswith("/") else posixpath.dirname(path).rstrip("/") + "/"
     return origin + path, origin, prefix
@@ -186,7 +175,7 @@ def _normalized(base: str, href: str, origin: str, prefix: str) -> str | None:
     """A same-site page beneath the starting path, or None."""
     url, _ = urldefrag(urljoin(base, href.strip()))
     parts = urlsplit(url)
-    if parts.scheme not in {"http", "https"} or _origin(parts) != origin or parts.query or parts.username:
+    if origin_of(parts) != origin or parts.query:
         return None
     path = posixpath.normpath(parts.path or "/") + ("/" if (parts.path or "/").endswith("/") else "")
     path = "/" if path == "//" else path
@@ -220,9 +209,9 @@ async def _robots(client, origin: str) -> RobotFileParser:
             else:
                 body = None
     except httpx.HTTPError as error:
-        if refused_private_address(error):
-            raise CrawlError("crawl_site_unreachable", "The site's address is on a private network, which this "
-                             "machine's profile does not allow for that site; nothing was read.") from None
+        if refused_address(error):
+            raise CrawlError("crawl_site_unreachable", "That site's address is on a network this machine does "
+                             "not allow crawls to reach; nothing was read.") from None
         body = None
     if body is None:
         raise CrawlError("crawl_robots_unavailable",
@@ -313,13 +302,15 @@ class _OutOfTime(Exception):
     """The next polite request would end after the crawl's time budget."""
 
 
-async def crawl(url: str, limits: CrawlLimits | None = None) -> CrawlResult:
+async def crawl(url: str, access: CrawlAccess, limits: CrawlLimits | None = None) -> CrawlResult:
+    """Read one allowed site beneath ``url`` into text with per-page provenance."""
     limits = limits or CrawlLimits()
-    start, origin, prefix = _start(url)
+    start, origin, prefix = _start(url, access)
     deadline = asyncio.get_running_loop().time() + limits.total_timeout
     result = CrawlResult(start)
+    transport = CheckedAddressTransport(access.address_policy(origin))
     try:
-        await asyncio.wait_for(_crawl(result, origin, prefix, limits, deadline), limits.total_timeout)
+        await asyncio.wait_for(_crawl(result, origin, prefix, limits, deadline, transport), limits.total_timeout)
     except (TimeoutError, _OutOfTime):
         # The time budget ends the crawl; pages already read are kept, the rest is not.
         result.truncated = True
@@ -331,16 +322,11 @@ async def crawl(url: str, limits: CrawlLimits | None = None) -> CrawlResult:
     return result
 
 
-def _transport(origin: str, policy: dict) -> httpx.AsyncHTTPTransport | None:
-    """A site the profile declares as private connects normally; any other site may reach
-    only public addresses, checked on the address each connection actually uses."""
-    return None if origin in policy["private_network_origins"] else PublicAddressTransport()
-
-
-async def _crawl(result: CrawlResult, origin: str, prefix: str, limits: CrawlLimits, deadline: float):
+async def _crawl(result: CrawlResult, origin: str, prefix: str, limits: CrawlLimits, deadline: float,
+                 transport: httpx.AsyncBaseTransport):
     queue, seen, digests, total = [(result.start_url, 0)], {result.start_url}, set(), 0
     async with async_client(timeout=limits.request_timeout, follow_redirects=False, trust_env=False,
-                            transport=_transport(origin, source_policy()),
+                            transport=transport,
                             headers={"User-Agent": USER_AGENT,
                                      "Accept": "text/html, text/markdown, text/plain;q=0.9"}) as client:
         fetcher = _Fetcher(client, await _robots(client, origin), origin, prefix, limits, deadline, result)

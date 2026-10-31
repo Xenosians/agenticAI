@@ -1,7 +1,9 @@
-"""Knowledge crawler: a machine-declared site becomes one owner-private retrieval dataset.
+"""Knowledge crawler: an allowed site becomes one owner-private retrieval dataset.
 
-The machine's Lua profile declares which web origins may be crawled; nothing else
-is reachable. The crawl stays inside the starting origin and path, honours
+The machine's Lua profile declares which web origins may be crawled and which
+private networks a crawl may reach; nothing else is reachable. (Sites a user
+registers are covered in test_crawl_sites.py.) The crawl stays inside the starting
+origin and path, honours
 robots.txt, follows only redirects that stay inside both, refuses non-text
 content, bounds pages, bytes and depth, and its
 text then passes the same admission (secret/PII scan, provenance, versions) as
@@ -20,6 +22,7 @@ pytest.importorskip("lupa.lua54")
 
 from services.extensions.service import command, extension_store  # noqa: E402
 from services.knowledge.crawler import MAX_REDIRECTS, CrawlError, CrawlLimits, crawl  # noqa: E402
+from services.knowledge.sites import CrawlSites  # noqa: E402
 from services.lua_adapters import profile  # noqa: E402
 
 SETTINGS = SimpleNamespace(model_profiles={}, require_internal_job_token=lambda: "crawler-test-token")
@@ -99,18 +102,17 @@ def site():
 def machine(tmp_path, monkeypatch):
     """Install a machine profile that declares the given crawlable origins.
 
-    The local test site runs on loopback, so by default every origin given is also
-    declared as a private site; pass ``private`` to choose exactly which are.
+    The local test site runs on loopback, so by default the profile names loopback
+    as a private network a crawl may reach; pass ``private`` to choose the ranges.
     """
-    def install(*origins, insecure=None, private=None):
+    def install(*origins, insecure=None, private=("127.0.0.0/8",)):
         # By default every plain-HTTP origin given is also a declared plain-HTTP exception.
         insecure = [origin for origin in origins if origin.startswith("http://")] if insecure is None else insecure
-        private = [origin for origin in origins if origin.startswith("http://127.")] if private is None else private
         quoted = lambda values: "{" + ",".join(f'"{value}"' for value in values) + "}"  # noqa: E731
         script = tmp_path / "machine.lua"
         script.write_text(f"return {{links = {{sources = {{allowed_origins = {quoted(origins)}, "
                           f"insecure_http_origins = {quoted(insecure)}, "
-                          f"private_network_origins = {quoted(private)}}}}}}}", encoding="utf-8")
+                          f"private_networks = {quoted(private)}}}}}}}", encoding="utf-8")
         monkeypatch.setenv("ITSM_LUA_ADAPTER_FILE", str(script))
         monkeypatch.setenv("ITSM_LUA_ADAPTER_SHA256", hashlib.sha256(script.read_bytes()).hexdigest())
         monkeypatch.delenv("ITSM_LINK_SECRETS_FILE", raising=False)
@@ -128,13 +130,15 @@ def store(tmp_path, monkeypatch):
 
 
 def run(url, **limits):
-    return asyncio.run(crawl(url, CrawlLimits(**limits)))
+    """Crawl as an owner with no registered sites: exactly what the machine allows."""
+    access = CrawlSites(SimpleNamespace(crawl_sites=lambda owner: [])).access("alice")
+    return asyncio.run(crawl(url, access, CrawlLimits(**limits)))
 
 
 def test_the_profile_declares_which_sources_may_be_crawled(machine, site):
     machine(site)
     assert profile.source_policy() == {"allowed_origins": [site], "insecure_http_origins": [site],
-                                       "private_network_origins": [site]}
+                                       "private_networks": ["127.0.0.0/8"], "user_sites": False}
 
 
 def test_plain_http_sources_must_also_be_allowed(machine, site):
@@ -177,25 +181,26 @@ def test_a_public_name_that_resolves_to_a_private_address_is_not_read(machine, s
 
     monkeypatch.setattr(socket, "getaddrinfo", resolve)
     origin = f"http://docs.example.test:{port}"
-    machine(origin)  # Declared by name only, not as a private site.
+    machine(origin, private=())  # Declared by name; the machine names no private network.
     with pytest.raises(CrawlError) as caught:
         run(origin + "/docs/")
     assert caught.value.code == "crawl_site_unreachable"
     assert Site.requested == []
 
 
-def test_a_site_declared_as_private_may_be_read_on_its_private_address(machine, site):
-    # The local test site is on loopback, so the profile must say it is a private site.
-    machine(site, private=[site])
+def test_a_site_on_a_named_private_network_may_be_read(machine, site):
+    # The local test site is on loopback, so the profile must name that network.
+    machine(site, private=["127.0.0.0/8"])
     result = run(site + "/docs/")
     assert [page.url for page in result.pages] == [site + "/docs/", site + "/docs/reset.html"]
 
 
-def test_a_private_site_must_also_be_an_allowed_origin(machine, site):
-    machine("https://docs.example.org", private=[site])
-    with pytest.raises(Exception) as caught:
-        profile.source_policy()
-    assert getattr(caught.value, "code", "") == "lua_adapter_configuration_invalid"
+def test_a_declared_site_outside_every_named_network_is_not_read(machine, site):
+    machine(site, private=["10.20.0.0/16"])
+    with pytest.raises(CrawlError) as caught:
+        run(site + "/docs/")
+    assert caught.value.code == "crawl_site_unreachable"
+    assert Site.requested == []
 
 
 def test_the_crawl_reads_text_pages_of_the_declared_site_only(machine, site):
@@ -453,7 +458,9 @@ def test_the_catalog_lists_the_sites_this_machine_lets_users_crawl(machine, site
     machine(site, "https://docs.example.org")
     catalog = asyncio.run(command("alice", "list", {}, SimpleNamespace(
         model_profiles={}, require_internal_job_token=lambda: "crawler-test-token")))
-    assert catalog["crawl_sources"] == [site, "https://docs.example.org"]
+    assert catalog["crawl_sites"] == [{"origin": site, "managed": True},
+                                      {"origin": "https://docs.example.org", "managed": True}]
+    assert catalog["crawl_site_registration"] is False
 
 
 def test_a_catalog_without_declared_sources_offers_no_crawling(monkeypatch, store):
@@ -461,7 +468,7 @@ def test_a_catalog_without_declared_sources_offers_no_crawling(monkeypatch, stor
     monkeypatch.delenv("ITSM_LUA_ADAPTER_SHA256", raising=False)
     catalog = asyncio.run(command("alice", "list", {}, SimpleNamespace(
         model_profiles={}, require_internal_job_token=lambda: "crawler-test-token")))
-    assert catalog["crawl_sources"] == []
+    assert catalog["crawl_sites"] == []
 
 
 def test_the_public_boundary_carries_only_the_crawl_code_and_message(machine, site, store, monkeypatch):
@@ -482,4 +489,4 @@ def test_the_public_boundary_carries_only_the_crawl_code_and_message(machine, si
 
     assert reply.status_code == 422
     assert reply.json()["detail"] == {"code": "crawl_origin_not_declared",
-                                      "message": "This machine's profile does not allow crawling that site."}
+                                      "message": "That site is not one of your crawl sites."}

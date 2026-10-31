@@ -265,7 +265,8 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
             provider_presets,
         )
         from services.extensions.transform import transforms_available
-        from services.lua_adapters.profile import source_policy
+        from services.knowledge.sites import CrawlSites
+        sites = CrawlSites(store)
         return {"schema": "extension-catalog.v1", "resources": [public_resource(r) for r in store.list(owner)],
                 "selected": store.selected(owner),
                 "role_assignments": store.role_assignments(owner),
@@ -278,8 +279,9 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
                 "capabilities": workflow_capabilities(settings),
                 "harnesses": [{"id": kind, "available": _installed(kind)} for kind in ["opencode", "pi"]],
                 "transforms": [{"id": "lua-row-transform", "available": transforms_available()}],
-                # Sites this machine's profile lets a user crawl into reference knowledge.
-                "crawl_sources": source_policy()["allowed_origins"],
+                # Sites this owner may crawl into reference knowledge: the machine's, then their own.
+                "crawl_sites": [site.public() for site in sites.list(owner)],
+                "crawl_site_registration": sites.registration_open,
                 "connections": [{"id": "rag", "state": "ready", "contract": "owner-retrieval.v1"},
                                 {"id": "n8n", "state": "prepared", "contract": "governed-workflow.v1"}]}
     if action == "model":
@@ -615,16 +617,22 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
         return public_resource(store.dataset(owner, name=payload.get("name", ""), text=data["text"],
             source=payload["url"], license=payload.get("license", ""), purpose=payload.get("purpose", "rag"), reviewed=payload.get("reviewed"),
             replaces=replaces))
+    if action == "crawl_site_add":
+        from services.knowledge.sites import CrawlSites
+        return CrawlSites(store).add(owner, payload.get("origin")).public()
+    if action == "crawl_site_remove":
+        from services.knowledge.sites import CrawlSites
+        return {"removed": CrawlSites(store).remove(owner, payload.get("origin"))}
     if action == "dataset_crawl":
-        # Reads one site this machine's profile allows into reference knowledge. Crawled
-        # pages are third-party text, so they are admitted for retrieval only, never training.
-        from services.knowledge.crawler import crawl
+        # Reads one of this owner's crawl sites into reference knowledge. Crawled pages
+        # are third-party text, so they are admitted for retrieval only, never training.
+        from services.knowledge.crawler import CrawlError, crawl
+        from services.knowledge.sites import CrawlSites
         if payload.get("purpose", "rag") != "rag":
             raise ValueError("Crawled sites are admitted as reference knowledge only")
         from services.extensions.store import sensitive_content
-        from services.knowledge.crawler import CrawlError
         replaces = replaced_dataset(payload)
-        crawled = await crawl(payload.get("url", ""))
+        crawled = await crawl(payload.get("url", ""), CrawlSites(store).access(owner))
         # A page that admission would refuse (a credential or personal identifier) is
         # withheld and counted, so one page cannot block the rest of a site.
         crawled.withhold(lambda page: sensitive_content(page) is None)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -82,6 +83,8 @@ class ExtensionStore:
             with os.fdopen(fd, "wb") as stream:
                 stream.write(Fernet.generate_key())
         self.cipher = Fernet(key_path.read_bytes())
+        # Keys the digests that name registered crawl sites; derived from the store key.
+        self.site_key_secret = hashlib.sha256(b"crawl-site-key\n" + key_path.read_bytes()).digest()
         self.path = self.root / "extensions.sqlite3"
         with self.connect() as db:
             db.executescript("""
@@ -93,6 +96,11 @@ class ExtensionStore:
                 CREATE TABLE IF NOT EXISTS role_assignment (
                     owner TEXT NOT NULL, role TEXT NOT NULL, model_id TEXT NOT NULL,
                     PRIMARY KEY(owner, role));
+                -- Sites an owner registered for crawling: the address is encrypted, and a
+                -- keyed digest names the entry without revealing it.
+                CREATE TABLE IF NOT EXISTS crawl_site (
+                    owner TEXT NOT NULL, site_key TEXT NOT NULL, origin BLOB NOT NULL,
+                    PRIMARY KEY(owner, site_key));
                 -- A dataset version has at most one newer version, so history stays linear.
                 CREATE UNIQUE INDEX IF NOT EXISTS dataset_successor
                     ON resource(owner, json_extract(data, '$.previous_id'))
@@ -215,6 +223,34 @@ class ExtensionStore:
             db.execute("UPDATE preference SET model_id=NULL WHERE owner=? AND model_id=?", (owner, identity))
             db.execute("UPDATE preference SET dataset_id=NULL WHERE owner=? AND dataset_id=?", (owner, identity))
             db.execute("DELETE FROM resource WHERE owner=? AND id=?", (owner, identity))
+
+    def _site_key(self, owner: str, origin: str) -> str:
+        """A keyed digest naming one owner's site, so the address itself is never a lookup key."""
+        return hmac.new(self.site_key_secret, f"{owner}\n{origin}".encode(), hashlib.sha256).hexdigest()
+
+    def crawl_sites(self, owner: str) -> list[str]:
+        """The sites this owner registered for crawling, decrypted, oldest first."""
+        with self.connect() as db:
+            rows = db.execute("SELECT origin FROM crawl_site WHERE owner=? ORDER BY rowid", (owner,)).fetchall()
+        return [self.cipher.decrypt(row["origin"]).decode() for row in rows]
+
+    def add_crawl_site(self, owner: str, origin: str, *, limit: int) -> bool:
+        """Remember one site for this owner; False when the owner already keeps ``limit`` others."""
+        key = self._site_key(owner, origin)
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")  # Count and insert together, so concurrent adds keep the limit.
+            if db.execute("SELECT 1 FROM crawl_site WHERE owner=? AND site_key=?", (owner, key)).fetchone():
+                return True
+            if db.execute("SELECT count(*) FROM crawl_site WHERE owner=?", (owner,)).fetchone()[0] >= limit:
+                return False
+            db.execute("INSERT INTO crawl_site VALUES (?,?,?)", (owner, key, self.cipher.encrypt(origin.encode())))
+        return True
+
+    def remove_crawl_site(self, owner: str, origin: str) -> bool:
+        with self.connect() as db:
+            removed = db.execute("DELETE FROM crawl_site WHERE owner=? AND site_key=?",
+                                 (owner, self._site_key(owner, origin))).rowcount
+        return removed > 0
 
     def dataset(self, owner: str, *, name: str, text: str, source: str, license: str,
                 purpose: str, reviewed: bool, replaces: str | None = None,

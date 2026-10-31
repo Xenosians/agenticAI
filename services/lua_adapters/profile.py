@@ -37,7 +37,7 @@ SECTIONS = {
     "atlassian": {"org_id", "jira_resource", "secret"},
     "mailbox": {"enabled", "domain", "smtp_port", "imap_port"},
     "models": {"hub", "profiles", "allowed_origins", "insecure_http_origins"},
-    "sources": {"allowed_origins", "insecure_http_origins", "private_network_origins"},
+    "sources": {"allowed_origins", "insecure_http_origins", "private_networks", "user_sites"},
 }
 PLUGIN_IDS = frozenset({"model.local", "model.openai", "model.anthropic", "model.harness",
                         "connection.default", "source.default", "tool.default"})
@@ -369,18 +369,35 @@ def process_policy() -> dict:
     return policy
 
 
-def source_policy() -> dict:
-    """The web origins this machine allows the knowledge crawler to read.
+def _private_network(value):
+    """A private address range in CIDR form: never public, unspecified, link-local or multicast."""
+    try:
+        network = ipaddress.ip_network(_text(value), strict=True)
+    except ValueError:
+        raise _invalid() from None
+    if (network.is_global or network.is_multicast or network.is_link_local
+            or network.network_address.is_unspecified):
+        raise _invalid()
+    return str(network)
 
-    Separate from the model origins: a crawlable documentation site never becomes
-    a model endpoint, and a model endpoint is never crawled. Undeclared means none.
-    A site on a private, loopback or link-local address (an intranet wiki, a lab
-    service) must also be listed in ``private_network_origins``; any other site is
-    refused when its name resolves to such an address.
+
+def source_policy() -> dict:
+    """What the knowledge crawler may read on this machine, and where it may connect.
+
+    ``allowed_origins`` are sites every user may crawl; with ``user_sites = true`` each
+    user may also register their own sites from the browser. A crawl connects only to
+    public internet addresses and to the ``private_networks`` named here (an intranet's
+    or lab's address ranges), checked on the address each connection actually uses.
+    Separate from the model origins: a crawlable site never becomes a model endpoint,
+    and a model endpoint is never crawled. Undeclared means nothing can be crawled.
     """
     section = _section(load_links().declared, "sources")
     allowed, insecure = _origin_lists(section)
-    private = _origins(section.get("private_network_origins", []))
-    if any(origin not in allowed for origin in private):
-        raise _invalid()  # A private site is an explicit exception for an origin already allowed.
-    return {"allowed_origins": allowed, "insecure_http_origins": insecure, "private_network_origins": private}
+    networks = section.get("private_networks", [])
+    if networks == {}:
+        networks = []  # A plain empty Lua table is unambiguous at this list field.
+    if type(networks) is not list or len(networks) > MAX_ENTRIES:
+        raise _invalid()
+    return {"allowed_origins": allowed, "insecure_http_origins": insecure,
+            "private_networks": [_private_network(item) for item in networks],
+            "user_sites": _flag(section.get("user_sites", False))}

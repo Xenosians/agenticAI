@@ -130,7 +130,7 @@ Plain-text references include common Python, Lua, Elixir, Nim,
 JavaScript/TypeScript, SQL, shell, HTML/CSS, YAML, TOML, INI/CFG and log files.
 Alternatively, provide an allowed dataset API URL that returns
 `{"text":"..."}` and an optional bearer API key, or crawl a documentation site
-the machine's profile allows (below). Supply source and usage permission
+(below). Supply source and usage permission
 metadata and confirm review. The shared sanitizer and additional conservative
 secret/identifier checks apply to contents and metadata; manual review remains
 necessary.
@@ -138,15 +138,29 @@ necessary.
 ### Crawling a site
 
 `dataset_crawl` reads one site into a reference dataset: payload `url` (the page
-to start from), `name`, `license`, `reviewed` and optional `replaces`. Only
-origins the machine profile lists under `sources` can be crawled, so what is
-reachable is the operator's decision, per machine ([Lua machine
-profiles](lua-machine-profiles.md#knowledge-sources)). The crawl stays on that
+to start from), `name`, `license`, `reviewed` and optional `replaces`. A user may
+crawl the sites the machine profile lists under `sources`, plus the sites they
+registered themselves when the profile allows it (`user_sites`); where any crawl
+may connect stays the operator's decision, per machine ([Lua machine
+profiles](lua-machine-profiles.md#knowledge-sources)). The catalog lists the
+owner's sites as `crawl_sites` (`origin`, and `managed` for the machine's own) and
+whether registration is open as `crawl_site_registration`.
+
+`crawl_site_add` (payload `origin`, such as `https://docs.example.org`) remembers
+a site for the requesting owner; `crawl_site_remove` forgets it. The address is
+encrypted at rest and never shown to another owner. Refusals carry a stable code:
+`crawl_site_invalid` (not an exact `scheme://host[:port]`),
+`crawl_site_needs_https`, `crawl_site_limit` (50 sites) and
+`crawl_site_registration_disabled`.
+
+The crawl stays on that
 origin beneath the starting path, honours `robots.txt` (with `Crawl-delay`) and
 robots meta tags, follows a redirect only when its target passes the same checks
 as a link (at most three hops), reads only HTML, Markdown and plain text, and
 stops at 25 pages, depth 3, 1.5 MB of text or 110 seconds, keeping the pages read
-so far. Each request crosses the Lua connection boundary.
+so far. Each request crosses the Lua connection boundary, and each connection is
+checked on the address it actually uses (`crawl_site_unreachable` when that
+address is outside what the machine allows).
 
 Pages are reduced to visible text: scripts, styles, navigation, headers, footers
 and forms are dropped. The admitted text is one reference dataset in which each
@@ -290,7 +304,8 @@ require CSRF. Phoenix derives the owner from the session and calls the AI's
 execution endpoints also require that token. Keep both services' tokens aligned.
 
 Commands: `list`, `model`, `select`, `delete`, `probe`, `dataset`, `dataset_url`,
-`dataset_crawl`, `dataset_transform`, `search`, `resolve`, `export_dataset`, `workflow_validate`, `upload_begin`,
+`dataset_crawl`, `crawl_site_add`, `crawl_site_remove`, `dataset_transform`, `search`, `resolve`,
+`export_dataset`, `workflow_validate`, `upload_begin`,
 `upload_chunk`, `upload_finish`. Each command has `action` and `payload`; only the trusted internal
 envelope contains `owner`.
 
