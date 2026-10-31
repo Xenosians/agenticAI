@@ -15,7 +15,6 @@ import socket
 
 import httpcore
 import httpx
-from httpcore._backends.auto import AutoBackend
 
 from services.transport_tls import configured_context
 
@@ -44,7 +43,7 @@ class PublicAddressBackend(httpcore.AsyncNetworkBackend):
     """Opens TCP connections only to public addresses, resolved once and then used."""
 
     def __init__(self):
-        self._backend = AutoBackend()
+        self._backend = httpcore.AnyIOBackend()
 
     async def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
         loop = asyncio.get_running_loop()

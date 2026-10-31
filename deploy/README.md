@@ -40,11 +40,15 @@ Jira and mail providers; a private container network is not an egress policy.
 
 The project network's subnet is pinned (`SERVICE_SUBNET`, default
 `172.29.0.0/24`; choose a free private range if it overlaps another network).
-The backend trusts `X-Forwarded-For` only from that subnet, where nginx is, so
-per-client sign-in limits see the real client address and a client cannot pick
-its own. Sign-in allows 5 failures per account and 20 per client address within
-15 minutes, and 5 password-reset requests per client; the backend's
-`AUTH_SIGN_IN_*` and `AUTH_PASSWORD_RESET_REQUESTS` settings change these. The
+The backend trusts `X-Forwarded-For` only from that subnet, where nginx is, and
+nginx replaces whatever a client sent with the address the connection came
+from, so per-client sign-in limits see the real client address and a client
+cannot pick its own. If another proxy or load balancer sits in front of the
+frontend, every client would share its address for that limit; configure
+nginx's `set_real_ip_from`/`real_ip_header` for that proxy first. Sign-in
+allows 5 failures per account and 20 per client address within 15 minutes,
+and 5 password-reset requests per client; the backend's `AUTH_SIGN_IN_*` and
+`AUTH_PASSWORD_RESET_REQUESTS` settings change these. The
 frontend serves its files under a strict Content Security Policy (own scripts,
 styles and connections only; no framing, plugins or form posts) with HSTS,
 `nosniff` and a closed Permissions-Policy; the API never allows caching.
