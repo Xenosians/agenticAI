@@ -37,7 +37,7 @@ SECTIONS = {
     "atlassian": {"org_id", "jira_resource", "secret"},
     "mailbox": {"enabled", "domain", "smtp_port", "imap_port"},
     "models": {"hub", "profiles", "allowed_origins", "insecure_http_origins"},
-    "sources": {"allowed_origins", "insecure_http_origins"},
+    "sources": {"allowed_origins", "insecure_http_origins", "private_network_origins"},
 }
 PLUGIN_IDS = frozenset({"model.local", "model.openai", "model.anthropic", "model.harness",
                         "connection.default", "source.default", "tool.default"})
@@ -374,6 +374,13 @@ def source_policy() -> dict:
 
     Separate from the model origins: a crawlable documentation site never becomes
     a model endpoint, and a model endpoint is never crawled. Undeclared means none.
+    A site on a private, loopback or link-local address (an intranet wiki, a lab
+    service) must also be listed in ``private_network_origins``; any other site is
+    refused when its name resolves to such an address.
     """
-    allowed, insecure = _origin_lists(_section(load_links().declared, "sources"))
-    return {"allowed_origins": allowed, "insecure_http_origins": insecure}
+    section = _section(load_links().declared, "sources")
+    allowed, insecure = _origin_lists(section)
+    private = _origins(section.get("private_network_origins", []))
+    if any(origin not in allowed for origin in private):
+        raise _invalid()  # A private site is an explicit exception for an origin already allowed.
+    return {"allowed_origins": allowed, "insecure_http_origins": insecure, "private_network_origins": private}

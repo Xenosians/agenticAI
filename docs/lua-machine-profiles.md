@@ -57,7 +57,7 @@ and a malformed host, port, origin or name.
 | `atlassian` | `org_id`, `jira_resource`, `secret` | Atlassian organization administration |
 | `mailbox` | `enabled`, `domain`, `smtp_port`, `imap_port` | Lab mailbox provisioning |
 | `models` | `hub`, `profiles`, `allowed_origins`, `insecure_http_origins` | Hub model, local model profiles and the outbound model origins |
-| `sources` | `allowed_origins`, `insecure_http_origins` | The web origins the knowledge crawler may read (see below) |
+| `sources` | `allowed_origins`, `insecure_http_origins`, `private_network_origins` | The web origins the knowledge crawler may read (see below) |
 
 A declared section replaces every setting it controls, including ones it leaves
 out, which take their defaults. A stale host or credential left in the
@@ -79,8 +79,17 @@ declares no `sources` can crawl nothing.
 
 ```lua
 sources = {allowed_origins = {"https://docs.example.org", "http://wiki.lan:8090"},
-           insecure_http_origins = {"http://wiki.lan:8090"}},
+           insecure_http_origins = {"http://wiki.lan:8090"},
+           private_network_origins = {"http://wiki.lan:8090"}},
 ```
+
+A site is read only on public internet addresses unless it is also listed in
+`private_network_origins` (an intranet wiki or lab service). The address is
+checked where each connection is made, on the address the name resolves to at
+that moment, and the connection uses exactly that checked address: a public name
+whose DNS points, or is rebound, at loopback, a private network, a link-local or
+cloud metadata address is refused (`crawl_site_unreachable`) and nothing is read.
+Every private site must also be an allowed origin.
 
 A crawl reads one site: it stays on the starting origin and beneath the starting
 path, honours the site's `robots.txt` (including `Crawl-delay`, capped at 10 s)

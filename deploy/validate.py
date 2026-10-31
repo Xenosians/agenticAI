@@ -76,6 +76,15 @@ def validate_model(model: dict) -> dict:
     require(all(env.get(key) == origin for key in ("PHX_PUBLIC_URL", "APP_FRONTEND_URL", "CORS_ALLOWED_ORIGINS")), "public_origin_binding_mismatch")
     require(env.get("AI_SERVICE_URL") == "http://ai:8000" and env.get("SURREALDB_URL") == "http://database:8000", "internal_service_urls_mismatch")
     require("ai" not in backend.get("depends_on", {}), "startup_dependency_cycle")
+    # Phoenix may take the client address from X-Forwarded-For only for the private
+    # service network, where nginx is; anything broader lets a client choose its address.
+    subnets = [entry.get("subnet") for entry in
+               (model.get("networks", {}).get("service") or {}).get("ipam", {}).get("config", [])]
+    require(len(subnets) == 1 and env.get("TRUSTED_PROXIES") == subnets[0], "trusted_proxy_binding_mismatch")
+    try:
+        require(ipaddress.ip_network(subnets[0]).is_private, "trusted_proxy_binding_mismatch")
+    except ValueError:
+        raise DeploymentError("trusted_proxy_binding_mismatch") from None
 
     ai = services["ai"]
     ai_env = ai.get("environment", {})

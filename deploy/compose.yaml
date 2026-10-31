@@ -18,6 +18,9 @@ x-backend-env: &backend-env
   APP_FRONTEND_URL: ${PUBLIC_ORIGIN:?Set the external HTTPS origin}
   CORS_ALLOWED_ORIGINS: ${PUBLIC_ORIGIN:?Set the external HTTPS origin}
   AUTH_COOKIE_SECURE: "true"
+  # Only nginx, on the private service network, may name the client for
+  # per-client sign-in limits; it must equal the network's subnet below.
+  TRUSTED_PROXIES: ${SERVICE_SUBNET:-172.29.0.0/24}
   AI_SERVICE_URL: http://ai:8000
   SURREALDB_URL: http://database:8000
 
@@ -177,4 +180,8 @@ services:
 networks:
   # Egress is needed for explicitly configured model/Jira/mail providers.
   # Only the frontend HTTPS port is published; no Docker socket is mounted.
-  service: {}
+  # The subnet is pinned so the backend can trust exactly this network's proxy.
+  service:
+    ipam:
+      config:
+        - subnet: ${SERVICE_SUBNET:-172.29.0.0/24}

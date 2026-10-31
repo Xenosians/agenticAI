@@ -27,6 +27,7 @@ from urllib.robotparser import RobotFileParser
 
 import httpx
 
+from services.knowledge.public_network import PublicAddressTransport, refused_private_address
 from services.lua_adapters.http_clients import async_client
 from services.lua_adapters.profile import source_policy
 
@@ -218,7 +219,10 @@ async def _robots(client, origin: str) -> RobotFileParser:
                 body = b""
             else:
                 body = None
-    except httpx.HTTPError:
+    except httpx.HTTPError as error:
+        if refused_private_address(error):
+            raise CrawlError("crawl_site_unreachable", "The site's address is on a private network, which this "
+                             "machine's profile does not allow for that site; nothing was read.") from None
         body = None
     if body is None:
         raise CrawlError("crawl_robots_unavailable",
@@ -327,9 +331,16 @@ async def crawl(url: str, limits: CrawlLimits | None = None) -> CrawlResult:
     return result
 
 
+def _transport(origin: str, policy: dict) -> httpx.AsyncHTTPTransport | None:
+    """A site the profile declares as private connects normally; any other site may reach
+    only public addresses, checked on the address each connection actually uses."""
+    return None if origin in policy["private_network_origins"] else PublicAddressTransport()
+
+
 async def _crawl(result: CrawlResult, origin: str, prefix: str, limits: CrawlLimits, deadline: float):
     queue, seen, digests, total = [(result.start_url, 0)], {result.start_url}, set(), 0
     async with async_client(timeout=limits.request_timeout, follow_redirects=False, trust_env=False,
+                            transport=_transport(origin, source_policy()),
                             headers={"User-Agent": USER_AGENT,
                                      "Accept": "text/html, text/markdown, text/plain;q=0.9"}) as client:
         fetcher = _Fetcher(client, await _robots(client, origin), origin, prefix, limits, deadline, result)

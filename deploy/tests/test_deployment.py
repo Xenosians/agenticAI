@@ -184,6 +184,14 @@ class ComposeContractTests(unittest.TestCase):
         self.reject(lambda s: s["ai"]["environment"].update(PHOENIX_BASE_URL="http://backend:4000"), "private_tls_callback_required")
         self.reject(lambda s: s["frontend"]["ports"][0].update(published="443"), "public_origin_port_mismatch")
 
+    def test_only_the_service_network_is_a_trusted_proxy(self):
+        """Per-client sign-in limits need the real client address. Phoenix trusts
+        X-Forwarded-For only from the private service network, where nginx is."""
+        subnet = self.model["networks"]["service"]["ipam"]["config"][0]["subnet"]
+        self.assertEqual(self.model["services"]["backend"]["environment"]["TRUSTED_PROXIES"], subnet)
+        self.reject(lambda s: s["backend"]["environment"].update(TRUSTED_PROXIES="0.0.0.0/0"), "trusted_proxy_binding_mismatch")
+        self.reject(lambda s: s["backend"]["environment"].pop("TRUSTED_PROXIES"), "trusted_proxy_binding_mismatch")
+
     def test_state_singleton_and_offline_weights_are_required(self):
         self.reject(lambda s: s["ai"]["environment"].update(APPROVAL_STORE_PATH="/tmp/approvals.sqlite3"), "durable_ai_state_not_persisted")
         self.reject(lambda s: s["ai"]["environment"].update(APPROVAL_STORE_PATH="/state/../tmp/approvals.sqlite3"), "durable_ai_state_not_persisted")

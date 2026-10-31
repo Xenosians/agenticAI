@@ -97,14 +97,20 @@ def site():
 
 @pytest.fixture
 def machine(tmp_path, monkeypatch):
-    """Install a machine profile that declares the given crawlable origins."""
-    def install(*origins, insecure=None):
+    """Install a machine profile that declares the given crawlable origins.
+
+    The local test site runs on loopback, so by default every origin given is also
+    declared as a private site; pass ``private`` to choose exactly which are.
+    """
+    def install(*origins, insecure=None, private=None):
         # By default every plain-HTTP origin given is also a declared plain-HTTP exception.
         insecure = [origin for origin in origins if origin.startswith("http://")] if insecure is None else insecure
+        private = [origin for origin in origins if origin.startswith("http://127.")] if private is None else private
         quoted = lambda values: "{" + ",".join(f'"{value}"' for value in values) + "}"  # noqa: E731
         script = tmp_path / "machine.lua"
         script.write_text(f"return {{links = {{sources = {{allowed_origins = {quoted(origins)}, "
-                          f"insecure_http_origins = {quoted(insecure)}}}}}}}", encoding="utf-8")
+                          f"insecure_http_origins = {quoted(insecure)}, "
+                          f"private_network_origins = {quoted(private)}}}}}}}", encoding="utf-8")
         monkeypatch.setenv("ITSM_LUA_ADAPTER_FILE", str(script))
         monkeypatch.setenv("ITSM_LUA_ADAPTER_SHA256", hashlib.sha256(script.read_bytes()).hexdigest())
         monkeypatch.delenv("ITSM_LINK_SECRETS_FILE", raising=False)
@@ -127,7 +133,8 @@ def run(url, **limits):
 
 def test_the_profile_declares_which_sources_may_be_crawled(machine, site):
     machine(site)
-    assert profile.source_policy() == {"allowed_origins": [site], "insecure_http_origins": [site]}
+    assert profile.source_policy() == {"allowed_origins": [site], "insecure_http_origins": [site],
+                                       "private_network_origins": [site]}
 
 
 def test_plain_http_sources_must_also_be_allowed(machine, site):
@@ -152,6 +159,43 @@ def test_an_origin_the_profile_does_not_declare_is_refused_before_any_request(ma
         run(site + "/docs/")
     assert caught.value.code == "crawl_origin_not_declared"
     assert Site.requested == []
+
+
+def test_a_public_name_that_resolves_to_a_private_address_is_not_read(machine, site, monkeypatch):
+    """A declared host name is checked where the connection is made, on the address it
+    resolves to at that moment: DNS that points (or is rebound) at loopback, a private
+    network or a cloud metadata address cannot turn the crawler into an internal reader."""
+    import socket
+
+    port = int(site.rsplit(":", 1)[1])
+    real = socket.getaddrinfo
+
+    def resolve(host, *args, **kwargs):
+        name = host.decode() if isinstance(host, bytes) else host
+        target = "127.0.0.1" if name == "docs.example.test" else host
+        return real(target, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+    origin = f"http://docs.example.test:{port}"
+    machine(origin)  # Declared by name only, not as a private site.
+    with pytest.raises(CrawlError) as caught:
+        run(origin + "/docs/")
+    assert caught.value.code == "crawl_site_unreachable"
+    assert Site.requested == []
+
+
+def test_a_site_declared_as_private_may_be_read_on_its_private_address(machine, site):
+    # The local test site is on loopback, so the profile must say it is a private site.
+    machine(site, private=[site])
+    result = run(site + "/docs/")
+    assert [page.url for page in result.pages] == [site + "/docs/", site + "/docs/reset.html"]
+
+
+def test_a_private_site_must_also_be_an_allowed_origin(machine, site):
+    machine("https://docs.example.org", private=[site])
+    with pytest.raises(Exception) as caught:
+        profile.source_policy()
+    assert getattr(caught.value, "code", "") == "lua_adapter_configuration_invalid"
 
 
 def test_the_crawl_reads_text_pages_of_the_declared_site_only(machine, site):
