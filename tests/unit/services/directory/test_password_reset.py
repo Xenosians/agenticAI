@@ -79,6 +79,9 @@ def _target(**overrides) -> ResetTarget:
     {"ad_write_bind_user": "ITSM\\svc-itsm"},
     {"ad_bind_user": "svc-itsm@itsm.local"},
     {"ad_write_bind_dn": "cn=SVC-ITSM,cn=users,dc=itsm,dc=local"},
+    # A machine profile declares each bind identity as `user`, which may be a DN.
+    {"ad_bind_user": "CN=svc-itsm,CN=Users,DC=itsm,DC=local"},
+    {"ad_write_bind_user": "cn=SVC-ITSM,cn=users,dc=itsm,dc=local"},
 ])
 def test_application_service_accounts_are_never_reset(settings):
     assert is_service_account(_target(), Settings(directory_backend="mock", **settings))

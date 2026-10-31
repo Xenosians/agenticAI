@@ -102,7 +102,9 @@ def _account_name(value: str | None) -> str:
 
 def is_service_account(target: ResetTarget, settings: Settings) -> bool:
     """The directory identities this application binds with must never be reset here."""
-    dns = {(settings.ad_bind_dn or "").casefold(), (settings.ad_write_bind_dn or "").casefold()} - {""}
+    # Either bind field may hold a DN; a machine profile declares each identity as `user`.
+    identities = (settings.ad_bind_user, settings.ad_bind_dn, settings.ad_write_bind_user, settings.ad_write_bind_dn)
+    dns = {(value or "").casefold() for value in identities} - {""}
     names = {_account_name(settings.ad_bind_user), _account_name(settings.ad_write_bind_user)} - {""}
     return target.dn.casefold() in dns or target.user_id.casefold() in names
 
