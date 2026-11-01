@@ -59,6 +59,7 @@ def build_cases(run: str, project: str) -> list[tuple[str, str, str, object]]:
         ("git-status", "workspace_git_status", "What's the current Git status of mvp?", None),
         ("git-branches", "workspace_git_branches", "Which local Git branches exist in mvp?", None),
         ("git-log", "workspace_git_log", "Show me recent mvp Git commits.", None),
+        ("git-commit-info", "workspace_git_commit_info", "What did commit ad203b7 change in the mvp repository?", None),
         ("git-changed", "workspace_git_changed_files", "Just list the changed files in mvp.", None),
         ("git-diff", "workspace_git_diff", "Show mvp's unstaged Git patch.", None),
         ("git-staged-diff", "workspace_git_staged_diff", "What's currently staged in mvp? Show the Git patch.", None),

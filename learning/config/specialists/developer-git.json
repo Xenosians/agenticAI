@@ -44,6 +44,44 @@
       ]
     },
     {
+      "tool_name": "workspace_git_commit_info",
+      "user_request": "What did commit 69de1ff change in the AI repository?",
+      "arguments": {
+        "repository": "ai",
+        "commit": "69de1ff"
+      },
+      "tags": [
+        "git",
+        "read",
+        "commit"
+      ]
+    },
+    {
+      "tool_name": "workspace_git_commit_info",
+      "user_request": "Show me commit a077b126ec4d in backend",
+      "arguments": {
+        "repository": "backend",
+        "commit": "a077b126ec4d"
+      },
+      "tags": [
+        "git",
+        "read",
+        "commit"
+      ]
+    },
+    {
+      "tool_name": "workspace_git_commit_info",
+      "user_request": "Who wrote commit f3dfbb9 and which files did it touch?",
+      "arguments": {
+        "commit": "f3dfbb9"
+      },
+      "tags": [
+        "git",
+        "read",
+        "commit"
+      ]
+    },
+    {
       "tool_name": "workspace_git_diff",
       "user_request": "Show the unstaged diff in backend",
       "arguments": {
@@ -410,6 +448,26 @@
       "expected_tool": "workspace_git_log",
       "expected_arguments": {
         "repository": "frontend"
+      }
+    },
+    {
+      "name": "one commit not history",
+      "user": "Explain what commit 1ac6901 did in backend",
+      "allowed_tools": [
+        "workspace_git_commit_info"
+      ],
+      "allowed_arguments": {
+        "repository": [
+          "backend"
+        ],
+        "commit": [
+          "1ac6901"
+        ]
+      },
+      "expected_tool": "workspace_git_commit_info",
+      "expected_arguments": {
+        "repository": "backend",
+        "commit": "1ac6901"
       }
     },
     {

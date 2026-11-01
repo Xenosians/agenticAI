@@ -35,12 +35,14 @@ from tools.git.presentation import (
     build_git_changed_files_card,
     build_git_diff_card,
     build_git_log_card,
+    build_git_commit_info_card,
     build_git_staged_diff_card,
     build_git_status_card,
     format_git_branches_result,
     format_git_changed_files_result,
     format_git_diff_result,
     format_git_log_result,
+    format_git_commit_info_result,
     format_git_staged_diff_result,
     format_git_status_result,
 )
@@ -338,6 +340,57 @@ GIT_TOOLS = {
 
         "presentation_builder":
             build_git_log_card,
+    },
+
+    "workspace_git_commit_info": {
+        "description": (
+            "Show ONE COMMIT in one configured logical repository: its "
+            "author, date, full message and the files it changed with "
+            "added and removed line counts. Use this when the user names a "
+            "specific commit id (hash) and asks what it did or changed. "
+            "Read only. Do NOT substitute the recent history list, the "
+            "working-tree status or an uncommitted diff."
+        ),
+
+        "risk":
+            "read",
+
+        "requires_approval":
+            False,
+
+        "grounded_arguments": [
+            "repository",
+            "commit",
+        ],
+
+        "required_arguments": [
+            "commit",
+        ],
+
+        "parameters": {
+            "repository":
+                REPOSITORY_PARAMETER,
+
+            "commit": {
+                "type":
+                    "str",
+
+                "description": (
+                    "Exact commit id (7 to 40 hexadecimal characters) "
+                    "supplied by the user. Do not invent or shorten it, "
+                    "and do not pass a branch, tag or range."
+                ),
+            },
+        },
+
+        "argument_values_resolver":
+            resolve_git_argument_values,
+
+        "result_formatter":
+            format_git_commit_info_result,
+
+        "presentation_builder":
+            build_git_commit_info_card,
     },
 
     "workspace_git_diff": {

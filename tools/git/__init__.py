@@ -1211,6 +1211,75 @@ def workspace_git_log(
 
 
 # ============================================================
+# ONE COMMIT
+# ============================================================
+
+# A commit is named only by its hexadecimal id (7 to 40 characters), never by a
+# branch, tag, range or option, so the request cannot widen into another command.
+COMMIT_ID_PATTERN = re.compile(r"[0-9a-fA-F]{7,40}")
+COMMIT_DETAIL_FORMAT = "--format=%H%x00%P%x00%an%x00%aI%x00%s%x00%b%x00"
+COMMIT_DETAIL_FIELDS = 6
+MAX_COMMIT_FILES = 200
+
+
+def _numstat(line: str) -> dict[str, Any] | None:
+    added, deleted, path = (line.split("\t", 2) + ["", ""])[:3]
+    if not path:
+        return None
+    if added == deleted == "-":
+        return {"path": path, "added": None, "deleted": None, "binary": True}
+    if not (added.isdigit() and deleted.isdigit()):
+        return None
+    return {"path": path, "added": int(added), "deleted": int(deleted), "binary": False}
+
+
+def workspace_git_commit_info(
+    commit: Any,
+    repository: str | None = None,
+    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    """One commit's author, date, message and per-file line counts (no patch)."""
+    if not isinstance(commit, str) or not COMMIT_ID_PATTERN.fullmatch(commit.strip()):
+        return {"ok": False, "status": "denied", "repository": repository,
+                "error": "commit must be a commit id of 7 to 40 hexadecimal characters."}
+    commit = commit.strip().lower()
+    target, target_error = _resolve_target(repository)
+    if target is None:
+        return target_error or {"ok": False, "status": "denied", "error": "Repository resolution failed."}
+    result = _run_git(
+        target=target,
+        args=["show", "--no-color", "--no-ext-diff", "--no-textconv", "--no-notes", "--diff-merges=first-parent",
+              "--numstat", COMMIT_DETAIL_FORMAT, "--end-of-options", f"{commit}^{{commit}}", "--"],
+        timeout_seconds=timeout_seconds,
+    )
+    if not result.get("ok", False):
+        if "bad revision" in str(result.get("stderr", "")) or "unknown revision" in str(result.get("stderr", "")):
+            return {"ok": False, "status": "not_found", "repository": target.name,
+                    "error": f"No commit {commit} in {target.name}."}
+        return _process_failure(repository=target.name, result=result)
+    output = _stdout(result)
+    fields = output.split("\0", COMMIT_DETAIL_FIELDS)
+    if len(fields) != COMMIT_DETAIL_FIELDS + 1 or not re.fullmatch(r"[0-9a-f]{40}", fields[0]):
+        return {"ok": False, "status": "error", "repository": target.name,
+                "error": "Git returned commit details in an unexpected format."}
+    full_hash, parents, author, date, subject, body, stats = fields
+    files = [item for item in (_numstat(line) for line in stats.splitlines()
+                               if line.strip() and line.strip() != OUTPUT_TRUNCATION_MARKER) if item]
+    return {
+        "ok": True,
+        "status": "success",
+        "repository": target.name,
+        "commit": {"hash": full_hash, "parents": parents.split(), "author": author, "date": date,
+                   "subject": subject, "body": body.strip()},
+        "files": files[:MAX_COMMIT_FILES],
+        "file_count": len(files),
+        "added": sum(item["added"] or 0 for item in files),
+        "deleted": sum(item["deleted"] or 0 for item in files),
+        "truncated": len(files) > MAX_COMMIT_FILES or _is_truncated(output),
+    }
+
+
+# ============================================================
 # DIFF
 # ============================================================
 

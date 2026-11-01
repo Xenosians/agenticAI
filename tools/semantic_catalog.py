@@ -61,6 +61,7 @@ CAPABILITY_SEMANTICS: dict[str, dict[str, str]] = {
     "workspace_git_create_branch": {"resource_type": "workspace.git", "operation_kind": "create", "effect": "mutation", "permission": "workspace.git.branch.create"},
     "workspace_git_diff": {"resource_type": "workspace.git", "operation_kind": "read", "effect": "read", "permission": "workspace.git.read"},
     "workspace_git_log": {"resource_type": "workspace.git", "operation_kind": "search", "effect": "read", "permission": "workspace.git.read"},
+    "workspace_git_commit_info": {"resource_type": "workspace.git", "operation_kind": "read", "effect": "read", "permission": "workspace.git.read"},
     "workspace_git_push": {"resource_type": "workspace.git", "operation_kind": "action", "effect": "mutation", "permission": "workspace.git.push"},
     "workspace_git_stage_all": {"resource_type": "workspace.git", "operation_kind": "action", "effect": "mutation", "permission": "workspace.git.stage"},
     "workspace_git_stage_files": {"resource_type": "workspace.git", "operation_kind": "action", "effect": "mutation", "permission": "workspace.git.stage"},

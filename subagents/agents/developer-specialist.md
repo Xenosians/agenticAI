@@ -3,10 +3,11 @@ name: developer-specialist
 description: >-
   Handles governed developer workspace and Git operations across configured
   repositories. For Git requests, preserve the exact requested operation:
-  overall status, branch listing, commit history, unstaged diff, staged diff,
-  changed-file listing, staging, unstaging, branch creation, branch switching,
-  commit, and push are distinct operations and must not be substituted for one
-  another. Repository identity is scope, not an operation or filesystem path.
+  overall status, branch listing, commit history, one commit's details,
+  unstaged diff, staged diff, changed-file listing, staging, unstaging,
+  branch creation, branch switching, commit, and push are distinct
+  operations and must not be substituted for one another. Repository
+  identity is scope, not an operation or filesystem path.
 tools:
   - process_exec
   - workspace_mkdir
@@ -23,6 +24,7 @@ tools:
   - workspace_git_status
   - workspace_git_branches
   - workspace_git_log
+  - workspace_git_commit_info
   - workspace_git_diff
   - workspace_git_staged_diff
   - workspace_git_changed_files

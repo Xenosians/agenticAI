@@ -26,6 +26,9 @@ from tools.git import (
     workspace_git_log
     as run_git_log,
 
+    workspace_git_commit_info
+    as run_git_commit_info,
+
     workspace_git_push
     as run_git_push,
 
@@ -213,6 +216,35 @@ class GitLogMCPResult(
     error: (
         str | None
     ) = None
+
+
+class GitCommitDetail(BaseModel):
+    hash: str
+    parents: list[str] = Field(default_factory=list)
+    author: str
+    date: str
+    subject: str
+    body: str = ""
+
+
+class GitFileChange(BaseModel):
+    path: str
+    added: int | None = None
+    deleted: int | None = None
+    binary: bool = False
+
+
+class GitCommitInfoMCPResult(BaseModel):
+    ok: bool
+    status: str
+    repository: str | None = None
+    commit: GitCommitDetail | None = None
+    files: list[GitFileChange] = Field(default_factory=list)
+    file_count: int = 0
+    added: int = 0
+    deleted: int = 0
+    truncated: bool = False
+    error: str | None = None
 
 
 class GitDiffMCPResult(
@@ -636,6 +668,13 @@ def register_git_tools(
                 )
             )
         )
+
+    @server.tool()
+    def workspace_git_commit_info(
+        commit: str,
+        repository: str | None = None,
+    ) -> GitCommitInfoMCPResult:
+        return GitCommitInfoMCPResult(**run_git_commit_info(commit=commit, repository=repository))
 
     @server.tool()
     def workspace_git_diff(

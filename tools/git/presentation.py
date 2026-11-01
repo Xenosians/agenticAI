@@ -738,6 +738,55 @@ def build_git_log_card(
 
 
 # ============================================================
+# ONE COMMIT
+# ============================================================
+
+
+def _file_change(item: dict[str, Any]) -> str:
+    if item.get("binary"):
+        return f"{item.get('path')} (binary)"
+    return f"{item.get('path')} (+{item.get('added')} -{item.get('deleted')})"
+
+
+def format_git_commit_info_result(result: dict[str, Any]) -> str:
+    repository = _repository_name(result)
+    commit = result.get("commit")
+    if not result.get("ok") or not isinstance(commit, dict):
+        return str(result.get("error") or f"No commit details were returned for {repository}.")
+    count = result.get("file_count", 0)
+    lines = [f"Commit {str(commit.get('hash'))[:12]} in {repository} by {commit.get('author')} "
+             f"on {commit.get('date')}: {commit.get('subject')}"]
+    if commit.get("body"):
+        lines.append(str(commit["body"]))
+    lines.append(f"{count} file{'' if count == 1 else 's'} changed, {result.get('added', 0)} lines added, "
+                 f"{result.get('deleted', 0)} removed" + (" (list cut short)" if result.get("truncated") else "")
+                 + (":" if result.get("files") else "."))
+    lines += [f"- {_file_change(item)}" for item in result.get("files", []) if isinstance(item, dict)]
+    return "\n".join(lines)
+
+
+def build_git_commit_info_card(result: dict[str, Any]) -> dict[str, Any]:
+    repository = _repository_name(result)
+    found = result.get("commit")
+    commit: dict[str, Any] = found if isinstance(found, dict) else {}
+    files = [_file_change(item) for item in result.get("files", []) if isinstance(item, dict)]
+    return build_result_card(
+        kind="git-commit",
+        title=f"{repository} commit {str(commit.get('hash', ''))[:12]}".strip(),
+        status=str(result.get("status", "unknown")),
+        fields=[
+            result_field("Subject", commit.get("subject")),
+            result_field("Author", commit.get("author")),
+            result_field("Date", commit.get("date")),
+            result_field("Files changed", result.get("file_count")),
+            result_field("Lines added", result.get("added")),
+            result_field("Lines removed", result.get("deleted")),
+        ],
+        sections=[list_section(title="Files", items=files)] if files else [],
+    )
+
+
+# ============================================================
 # DIFF HELPERS
 # ============================================================
 
