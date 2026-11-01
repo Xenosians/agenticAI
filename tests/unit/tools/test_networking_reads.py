@@ -6,7 +6,7 @@ import pytest
 from services.integration_readiness import provider_for_capability
 from tools.registry import TOOLS
 
-NEW_READS = ("network_router_health", "network_interfaces", "network_known_hosts")
+NEW_READS = ("network_router_health", "network_interfaces", "network_known_hosts", "network_dns_config")
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -38,3 +38,14 @@ def test_results_read_as_plain_sentences_for_the_user():
         "hosts": [{"mac": "aa:bb:cc:dd:ee:ff", "name": "laptop", "ipv4": ["192.168.1.20"], "ipv6": []}]}})
     assert "laptop (aa:bb:cc:dd:ee:ff) 192.168.1.20" in hosts
     assert TOOLS["network_router_health"]["result_formatter"]({"ok": False}) == "Network provider read did not succeed."
+
+
+def test_dns_settings_read_in_words():
+    text = TOOLS["network_dns_config"]["result_formatter"]({"ok": True, "data": {"count": 1, "resolvers": [{
+        "domain": "lan", "uses_wan_resolvers": True, "upstream_servers": ["1.1.1.1"], "rebind_protection": True,
+        "dnssec": None, "drops_unqualified_names": True, "drops_private_reverse_lookups": True,
+        "answers_local_networks_only": True, "cache_size": 1000}]}})
+    assert text == ("DNS resolver (domain lan): upstream: the internet connection's resolvers, 1.1.1.1; "
+                    "rebind protection on; DNSSEC not set; cache 1000 names.")
+    empty = TOOLS["network_dns_config"]["result_formatter"]({"ok": True, "data": {"count": 0, "resolvers": []}})
+    assert empty == "The router has no DNS resolver configured."

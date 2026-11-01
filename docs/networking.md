@@ -12,6 +12,7 @@ router. Credentials never appear in tool arguments or results.
 | `network_interfaces` | `network.interface dump` | Every logical interface: state, protocol, device, addresses, routes and DNS servers. |
 | `network_interface_status` | `network.interface.<name> status` | The user must name the logical interface. |
 | `network_firewall_config` | `uci get firewall` | Saved policy only; it does not prove packets are filtered. |
+| `network_dns_config` | `uci get dhcp` (type `dnsmasq`) | Saved resolver settings: upstream servers, whether the internet connection's resolvers are also used, rebind protection, DNSSEC. It does not perform lookups. |
 | `network_dhcp_leases` | `luci-rpc getDHCPLeases` | IPv4 and IPv6 leases from the router's own DHCP server (at most 200 listed, with the total count). Static hosts are not listed. |
 | `network_known_hosts` | `luci-rpc getHostHints` | Hosts the router knows by MAC (neighbour table, leases, static entries) with names and addresses (at most 200). It does not scan the network. |
 | `network_wireless_clients` | `iwinfo devices`, `iwinfo assoclist` | Associated stations per wireless interface: MAC, signal, noise, rates and idle time (at most 200 per interface). |

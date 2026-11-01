@@ -151,6 +151,7 @@ def build_cases(run: str, project: str) -> list[tuple[str, str, str, object]]:
         ("network-router-health", "network_router_health", "How long has the OpenWrt router been up, and how busy is it?", None),
         ("network-interfaces", "network_interfaces", "List every interface on the OpenWrt router with its addresses.", None),
         ("network-known-hosts", "network_known_hosts", "Which hosts does the OpenWrt router know about?", None),
+        ("network-dns-config", "network_dns_config", "Which DNS servers does the OpenWrt router use, and is rebind protection on?", None),
     ]
 
 

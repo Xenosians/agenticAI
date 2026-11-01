@@ -618,6 +618,42 @@
         "authored-networking",
         "clients"
       ]
+    },
+    {
+      "tool_name": "network_dns_config",
+      "user_request": "Which DNS servers does the OpenWrt router forward lookups to?",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "dns"
+      ]
+    },
+    {
+      "tool_name": "network_dns_config",
+      "user_request": "Is DNS rebind protection enabled on the router?",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "dns"
+      ]
+    },
+    {
+      "tool_name": "network_dns_config",
+      "user_request": "Show the router's DNS resolver settings.",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "dns"
+      ]
+    },
+    {
+      "tool_name": "network_dns_config",
+      "user_request": "Does the router use the ISP's DNS or its own upstream servers?",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "dns"
+      ]
     }
   ],
   "eval_cases": [
@@ -823,6 +859,26 @@
       ],
       "allowed_arguments": {},
       "expected_tool": "network_known_hosts",
+      "expected_arguments": {}
+    },
+    {
+      "name": "dns-upstream",
+      "user": "Where does our OpenWrt box send DNS queries? Read only.",
+      "allowed_tools": [
+        "network_dns_config"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "network_dns_config",
+      "expected_arguments": {}
+    },
+    {
+      "name": "dns-dnssec",
+      "user": "Check whether DNSSEC validation is turned on in the router's resolver.",
+      "allowed_tools": [
+        "network_dns_config"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "network_dns_config",
       "expected_arguments": {}
     }
   ]

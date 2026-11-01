@@ -84,3 +84,31 @@ def test_malformed_router_answers_are_refused_not_reported(method):
                       ("luci-rpc", "getHostHints"): ["not", "a", "map"]})
     with pytest.raises(RuntimeError):
         getattr(svc, method)()
+
+
+def test_dns_config_reports_resolver_protections_and_upstream_servers():
+    svc, calls = service({("uci", "get"): {"values": {"cfg01411c": {
+        ".type": "dnsmasq", ".name": "cfg01411c", "domain": "lan", "rebind_protection": "1", "domainneeded": "1",
+        "boguspriv": "1", "localservice": "1", "cachesize": "1000", "noresolv": "1",
+        "server": ["127.0.0.1#5053", "/corp.example/10.0.0.53"], "dnssec": "1"}}}})
+    result = svc.dns_config()
+    assert calls[-1][1:] == ["uci", "get", {"config": "dhcp", "type": "dnsmasq"}]
+    assert result["data"] == {"count": 1, "resolvers": [{
+        "domain": "lan", "uses_wan_resolvers": False, "upstream_servers": ["127.0.0.1#5053", "/corp.example/10.0.0.53"],
+        "rebind_protection": True, "dnssec": True, "drops_unqualified_names": True,
+        "drops_private_reverse_lookups": True, "answers_local_networks_only": True, "cache_size": 1000}]}
+    assert result["scope"] == "configured_dns_settings; not live resolution"
+
+
+def test_dns_config_leaves_unset_settings_unknown_and_defaults_to_wan_resolvers():
+    svc, _ = service({("uci", "get"): {"values": {"a": {".type": "dnsmasq", "cachesize": "lots", "server": "9.9.9.9"}}}})
+    resolver = svc.dns_config()["data"]["resolvers"][0]
+    assert resolver["uses_wan_resolvers"] is True
+    assert resolver["upstream_servers"] == ["9.9.9.9"]
+    assert resolver["rebind_protection"] is None and resolver["dnssec"] is None and resolver["cache_size"] is None
+
+
+def test_dns_config_without_values_is_refused():
+    svc, _ = service({("uci", "get"): {"config": "dhcp"}})
+    with pytest.raises(RuntimeError):
+        svc.dns_config()

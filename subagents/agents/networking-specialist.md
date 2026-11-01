@@ -1,6 +1,6 @@
 ---
 name: networking-specialist
-description: Inspects the configured OpenWrt router or firewall, firmware, health (uptime, load, memory), all interfaces with their addresses, routes and DNS, one named interface, firewall configuration, DHCP leases, known hosts and connected wireless clients. Read-only networking operations; no changes, restarts, commits, arbitrary commands or credentials.
+description: Inspects the configured OpenWrt router or firewall, firmware, health (uptime, load, memory), all interfaces with their addresses, routes and DNS, one named interface, firewall configuration, DNS resolver settings, DHCP leases, known hosts and connected wireless clients. Read-only networking operations; no changes, restarts, commits, arbitrary commands or credentials.
 tools:
   - network_system_info
   - network_interface_status
@@ -10,6 +10,7 @@ tools:
   - network_router_health
   - network_interfaces
   - network_known_hosts
+  - network_dns_config
 model: networking-base
 max_steps: 2
 ---

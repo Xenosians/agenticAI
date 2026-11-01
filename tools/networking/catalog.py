@@ -56,6 +56,29 @@ def format_known_hosts(result: dict) -> str:
     return "\n".join(lines)
 
 
+def _setting(value: bool | None, on: str, off: str) -> str:
+    return "not set" if value is None else on if value else off
+
+
+def format_dns_config(result: dict) -> str:
+    if not result.get("ok"):
+        return "Network provider read did not succeed."
+    resolvers = result["data"]["resolvers"]
+    if not resolvers:
+        return "The router has no DNS resolver configured."
+    lines = []
+    for item in resolvers:
+        upstream = (["the internet connection's resolvers"] if item["uses_wan_resolvers"] else []) + item["upstream_servers"]
+        text = (f"DNS resolver{' (domain ' + item['domain'] + ')' if item['domain'] else ''}: upstream: "
+                + (", ".join(upstream) or "none") + "; rebind protection "
+                + _setting(item["rebind_protection"], "on", "off") + "; DNSSEC "
+                + _setting(item["dnssec"], "on", "off"))
+        if item["cache_size"] is not None:
+            text += f"; cache {item['cache_size']} names"
+        lines.append(text + ".")
+    return "\n".join(lines)
+
+
 def _read(description: str, resource_type: str, permission: str, formatter) -> dict:
     return {
         "description": description, "resource_type": resource_type, "operation_kind": "read", "effect": "read",
@@ -112,4 +135,9 @@ NETWORKING_TOOLS = {
         "List the hosts the OpenWrt router knows by MAC address, with their names and IPv4/IPv6 addresses "
         "(from its neighbour table, leases and static entries). Read only; does not scan the network.",
         "network.host", "network.host.read", format_known_hosts),
+    "network_dns_config": _read(
+        "Read the OpenWrt router's saved DNS resolver settings: which upstream servers it asks, and whether "
+        "rebind protection and DNSSEC are on. Use this to check how the network resolves names. Read only; "
+        "it does not perform lookups or change settings.",
+        "network.dns", "network.dns.read", format_dns_config),
 }

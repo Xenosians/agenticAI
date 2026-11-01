@@ -186,6 +186,17 @@ class OpenWrtService:
         result["scope"] = "router_neighbour_table_and_leases"
         return result
 
+    def dns_config(self) -> dict:
+        result = self._read("uci", "get", {"config": "dhcp", "type": "dnsmasq"})
+        sections = result["data"].get("values")
+        if not isinstance(sections, dict):
+            raise RuntimeError("OpenWrt DNS response has no configuration values.")
+        resolvers = [_resolver(item) for item in sections.values() if isinstance(item, dict)]
+        result["data"] = {"resolvers": resolvers, "count": len(resolvers)}
+        # Saved settings only: this does not show which answers a lookup returns.
+        result["scope"] = "configured_dns_settings; not live resolution"
+        return result
+
 
 def _ints(mapping: dict, *keys: str) -> bool:
     return all(isinstance(mapping.get(key), int) and mapping[key] >= 0 for key in keys)
@@ -236,6 +247,36 @@ def _interface(item: dict) -> dict:
 def _host(mac: str, item: dict) -> dict:
     return {"mac": mac.lower(), "name": item.get("name") if isinstance(item.get("name"), str) else None,
             "ipv4": _strings(item.get("ipaddrs")), "ipv6": _strings(item.get("ip6addrs"))}
+
+
+UCI_TRUE = {"1", "true", "yes", "on", "enabled"}
+UCI_FALSE = {"0", "false", "no", "off", "disabled"}
+
+
+def _uci_flag(item: dict, option: str) -> bool | None:
+    """A UCI boolean option; None when it is not set (the router's default applies)."""
+    value = item.get(option)
+    if not isinstance(value, str):
+        return None
+    value = value.strip().lower()
+    return True if value in UCI_TRUE else False if value in UCI_FALSE else None
+
+
+def _resolver(item: dict) -> dict:
+    servers = item.get("server")
+    cache = item.get("cachesize")
+    return {
+        "domain": item.get("domain") if isinstance(item.get("domain"), str) else None,
+        # Without noresolv, dnsmasq also asks the resolvers the internet connection supplies.
+        "uses_wan_resolvers": _uci_flag(item, "noresolv") is not True,
+        "upstream_servers": [servers] if isinstance(servers, str) else _strings(servers),
+        "rebind_protection": _uci_flag(item, "rebind_protection"),
+        "dnssec": _uci_flag(item, "dnssec"),
+        "drops_unqualified_names": _uci_flag(item, "domainneeded"),
+        "drops_private_reverse_lookups": _uci_flag(item, "boguspriv"),
+        "answers_local_networks_only": _uci_flag(item, "localservice"),
+        "cache_size": int(cache) if isinstance(cache, str) and cache.isdigit() else None,
+    }
 
 
 def _lease(item: dict, family: str) -> dict:

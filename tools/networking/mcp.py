@@ -50,3 +50,7 @@ def register_networking_tools(server, service: OpenWrtService | None):
     @server.tool()
     def network_known_hosts() -> NetworkReadResult:
         return NetworkReadResult(**require_service().known_hosts())
+
+    @server.tool()
+    def network_dns_config() -> NetworkReadResult:
+        return NetworkReadResult(**require_service().dns_config())
