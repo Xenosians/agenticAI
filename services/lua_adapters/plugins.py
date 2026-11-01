@@ -117,10 +117,6 @@ def run_plugin(plugin_id: str, payload: Any, *, binding: dict, phase: str = "req
     return AdapterResult(result.payload, receipt)
 
 
-async def run_plugin_async(plugin_id: str, payload: Any, **kwargs) -> AdapterResult:
-    return await asyncio.to_thread(run_plugin, plugin_id, payload, **kwargs)
-
-
 def _openai_input(profile, budget, effort, response_format):
     if type(profile) is not dict or type(profile.get("model")) is not str or not profile["model"].strip():
         raise LuaAdapterError("lua_adapter_invalid_input")
@@ -334,7 +330,3 @@ async def openai_response_async(data, **kwargs):
 def anthropic_response(data, *, binding=None):
     """Decode visible blocks after host stop-reason checks; never reveal thinking."""
     return _response("model.anthropic", _visible_anthropic(data), binding)
-
-
-async def anthropic_response_async(data, **kwargs):
-    return await asyncio.to_thread(anthropic_response, data, **kwargs)

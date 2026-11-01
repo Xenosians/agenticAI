@@ -15,7 +15,6 @@ from __future__ import annotations
 import hashlib
 from typing import (
     Literal,
-    Protocol,
 )
 
 from pydantic import (
@@ -28,42 +27,6 @@ from pydantic import (
 
 DEFAULT_MAX_EVIDENCE_HITS = 3
 DEFAULT_MAX_EVIDENCE_CONTENT_CHARS = 5000
-
-
-class RetrievalQuery(
-    BaseModel
-):
-    model_config = ConfigDict(
-        extra="forbid",
-        frozen=True,
-    )
-
-    schema_name: Literal[
-        "owner-retrieval-query.v1"
-    ] = Field(
-        default=(
-            "owner-retrieval-query.v1"
-        ),
-        alias="schema",
-    )
-
-    dataset_id: str = Field(
-        pattern=(
-            r"^[a-f0-9]{32}$"
-        )
-    )
-
-    query: str = Field(
-        min_length=1,
-        max_length=2000,
-    )
-
-    limit: int = Field(
-        default=3,
-        ge=1,
-        le=10,
-        strict=True,
-    )
 
 
 class RetrievalHit(
@@ -178,33 +141,6 @@ class RetrievalHit(
             )
 
         return self
-
-
-class OwnerRetrievalAdapter(
-    Protocol
-):
-    """Trusted interface.
-
-    Browser-supplied owner identifiers are never accepted.
-    """
-
-    def search(
-        self,
-        owner: str,
-        identity: str,
-        query: str,
-        limit: int = 5,
-    ) -> list[dict]:
-        ...
-
-    def resolve(
-        self,
-        owner: str,
-        identity: str,
-        chunk: int,
-        sha256: str,
-    ) -> dict:
-        ...
 
 
 def citation_locator(

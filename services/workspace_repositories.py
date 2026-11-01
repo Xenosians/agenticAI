@@ -6,33 +6,6 @@ from services.git_repositories import (
 )
 
 
-def available_workspace_repositories(
-) -> list[str]:
-    """
-    Return configured logical repository identifiers available to
-    workspace capabilities.
-
-    Workspace discovery intentionally shares the canonical logical
-    repository registry with governed Git.
-
-    This prevents separate aliases such as:
-
-        backend
-        backend-repo
-        backend-workspace
-
-    from drifting into different meanings.
-    """
-
-    registry = (
-        build_git_repository_registry()
-    )
-
-    return (
-        registry.available()
-    )
-
-
 def workspace_repository_aliases(
 ) -> dict[
     str,

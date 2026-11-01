@@ -201,19 +201,6 @@ def jira_admin_client():
                         timeout=30, trust_env=False, headers={"Accept": "application/json"})
 
 
-def remove_jira_fixture(project_key: str) -> str:
-    """Restore an archived matrix project and move it to Jira's trash (undoable for 60 days)."""
-    with jira_admin_client() as client:
-        found = client.get(f"/rest/api/3/project/{project_key}")
-        archived = found.status_code == 200 and found.json().get("archived") is True
-        if found.status_code == 404 or archived:
-            restored = client.post(f"/rest/api/3/project/{project_key}/restore")
-            if restored.status_code not in (200, 204):
-                return f"restore HTTP {restored.status_code}"
-        deleted = client.delete(f"/rest/api/3/project/{project_key}", params={"enableUndo": "true"})
-        return "removed" if deleted.status_code in (200, 202, 204) else f"delete HTTP {deleted.status_code}"
-
-
 def atlassian_admin_configured() -> bool:
     from config import get_settings
 

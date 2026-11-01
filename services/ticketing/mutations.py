@@ -424,44 +424,6 @@ def utc_timestamp(
     )
 
 
-def unknown_mutation_result(
-    *,
-    provider: str,
-    operation: str,
-    ticket_key: str | None = None,
-    error: str,
-) -> TicketMutationResult:
-    """
-    Represent an uncertain remote mutation.
-
-    After a state-changing HTTP request has been sent, transport or
-    server failure does not prove that the mutation did not happen.
-
-    Returning "unknown" prevents callers from interpreting failure
-    as safely retryable.
-    """
-
-    return (
-        TicketMutationResult(
-            ok=False,
-            status="unknown",
-            provider=(
-                provider
-            ),
-            ticket_key=(
-                ticket_key
-            ),
-            operation=(
-                operation
-            ),
-            changed=False,
-            error=(
-                error
-            ),
-        )
-    )
-
-
 class MockTicketMutationService(
     TicketMutationService
 ):
