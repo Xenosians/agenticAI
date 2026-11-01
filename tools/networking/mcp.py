@@ -1,6 +1,7 @@
 from typing import Any
 from pydantic import BaseModel
 from services.openwrt import OpenWrtService
+from services.tailnet import TailnetService
 
 
 class NetworkReadResult(BaseModel):
@@ -13,11 +14,16 @@ class NetworkReadResult(BaseModel):
     note: str | None = None
 
 
-def register_networking_tools(server, service: OpenWrtService | None):
+def register_networking_tools(server, service: OpenWrtService | None, tailnet: TailnetService | None = None):
     def require_service():
         if service is None:
             raise RuntimeError("OpenWrt integration is not configured.")
         return service
+
+    def require_tailnet():
+        if tailnet is None:
+            raise RuntimeError("Tailscale integration is not configured.")
+        return tailnet
 
     @server.tool()
     def network_system_info() -> NetworkReadResult:
@@ -54,3 +60,11 @@ def register_networking_tools(server, service: OpenWrtService | None):
     @server.tool()
     def network_dns_config() -> NetworkReadResult:
         return NetworkReadResult(**require_service().dns_config())
+
+    @server.tool()
+    def network_tailnet_devices() -> NetworkReadResult:
+        return NetworkReadResult(**require_tailnet().devices())
+
+    @server.tool()
+    def network_tailnet_dns() -> NetworkReadResult:
+        return NetworkReadResult(**require_tailnet().dns_settings())

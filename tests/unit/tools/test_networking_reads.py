@@ -1,4 +1,4 @@
-"""The new OpenWrt reads are registered tools: read-only, on the OpenWrt provider, used by the networking specialist."""
+"""The new OpenWrt and tailnet reads are registered tools: read-only, on their provider, used by the networking specialist."""
 from pathlib import Path
 
 import pytest
@@ -7,20 +7,21 @@ from services.integration_readiness import provider_for_capability
 from tools.registry import TOOLS
 
 NEW_READS = ("network_router_health", "network_interfaces", "network_known_hosts", "network_dns_config")
+TAILNET_READS = ("network_tailnet_devices", "network_tailnet_dns")
 ROOT = Path(__file__).resolve().parents[3]
 
 
-@pytest.mark.parametrize("name", NEW_READS)
+@pytest.mark.parametrize("name", NEW_READS + TAILNET_READS)
 def test_each_new_read_is_a_registered_read_without_approval(name):
     tool = TOOLS[name]
     assert tool["effect"] == "read" and tool["risk"] == "read" and tool["requires_approval"] is False
     assert tool["parameters"] == {} and tool["grounded_arguments"] == []
-    assert provider_for_capability(name) == "openwrt"
+    assert provider_for_capability(name) == ("tailscale" if name in TAILNET_READS else "openwrt")
 
 
 def test_the_networking_specialist_can_use_them():
     definition = (ROOT / "subagents/agents/networking-specialist.md").read_text(encoding="utf-8")
-    for name in NEW_READS:
+    for name in NEW_READS + TAILNET_READS:
         assert f"  - {name}\n" in definition
 
 
@@ -49,3 +50,33 @@ def test_dns_settings_read_in_words():
                     "rebind protection on; DNSSEC not set; cache 1000 names.")
     empty = TOOLS["network_dns_config"]["result_formatter"]({"ok": True, "data": {"count": 0, "resolvers": []}})
     assert empty == "The router has no DNS resolver configured."
+
+
+def test_tailnet_devices_read_in_words():
+    text = TOOLS["network_tailnet_devices"]["result_formatter"]({"ok": True, "data": {
+        "count": 2, "truncated": False, "devices": [
+            {"name": "janus-router-lab", "dns_name": "janus-router-lab.tail1234.ts.net", "os": "linux",
+             "client_version": "1.104.4", "update_available": False, "online": True, "last_seen": None,
+             "key_expires": None, "key_expiry_disabled": True, "key_expires_in_days": None, "authorized": True,
+             "shared_from_another_tailnet": False, "tags": ["tag:janus-lab"]},
+            {"name": "laptop", "dns_name": "laptop.tail1234.ts.net", "os": "windows", "client_version": "1.90.1",
+             "update_available": True, "online": False, "last_seen": "2026-10-28T09:00:00Z",
+             "key_expires": "2026-11-05T00:00:00Z", "key_expiry_disabled": False, "key_expires_in_days": 3,
+             "authorized": True, "shared_from_another_tailnet": False, "tags": []}]}})
+    assert text.splitlines() == [
+        "2 device(s) on the tailnet:",
+        "janus-router-lab (linux, Tailscale 1.104.4): online; key never expires; tags tag:janus-lab",
+        "laptop (windows, Tailscale 1.90.1): offline since 2026-10-28; key expires in 3 days; update available",
+    ]
+
+
+def test_tailnet_dns_reads_in_words():
+    text = TOOLS["network_tailnet_dns"]["result_formatter"]({"ok": True, "data": {
+        "magic_dns": True, "override_local_dns": True,
+        "nameservers": [{"address": "1.1.1.1", "encrypted": True}, {"address": "10.0.0.53", "encrypted": False}],
+        "split_dns": [{"domain": "corp.example", "nameservers": ["10.0.0.53"]}], "search_domains": []}})
+    assert text == ("Tailnet DNS: MagicDNS on; devices use the tailnet's resolvers instead of the local network's: "
+                    "1.1.1.1 (encrypted, DNS-over-HTTPS), 10.0.0.53 (plain DNS); corp.example via 10.0.0.53.")
+    local = TOOLS["network_tailnet_dns"]["result_formatter"]({"ok": True, "data": {
+        "magic_dns": False, "override_local_dns": False, "nameservers": [], "split_dns": [], "search_domains": []}})
+    assert local == "Tailnet DNS: MagicDNS off; devices use the local network's resolvers."

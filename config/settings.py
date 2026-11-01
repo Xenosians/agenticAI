@@ -672,6 +672,12 @@ class Settings(
     openwrt_allow_loopback_http: bool = False
     openwrt_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
 
+    # Tailscale network (tailnet) reads: an OAuth client that should hold only the
+    # devices:core:read and dns:read scopes. Unset disables the tailnet tools.
+    tailscale_client_id: str | None = None
+    tailscale_client_secret: str | None = None
+    tailscale_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+
     # ============================================================
     # PLATFORM OPERATIONS (runtime containers, service health)
     # ============================================================

@@ -30,7 +30,8 @@ MAX_NODES, MAX_EDGES, MAX_PROPERTIES = 300, 1200, 40
 MAX_LABEL, MAX_TEXT = 120, 200
 SAFE_INTEGER = 2 ** 53
 # Each observation source covers the node kinds whose identity prefix it reads.
-SOURCE_OF_PREFIX = {"container": "containers", "endpoint": "endpoints", "router": "router", "interface": "router"}
+SOURCE_OF_PREFIX = {"container": "containers", "endpoint": "endpoints", "router": "router", "interface": "router",
+                    "tailnet": "tailnet"}
 
 
 class TopologyError(ValueError):

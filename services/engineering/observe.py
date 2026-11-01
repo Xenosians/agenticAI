@@ -148,14 +148,37 @@ def _router(service, topology, defaults, nodes: list, edges: list, unread: list)
     return row
 
 
+def _tailnet(service, nodes: list) -> dict:
+    """Devices on the Tailscale network; their addresses and keys never enter the observation."""
+    if service is None:
+        return {"id": "tailnet", "state": "not_configured", "error_code": "not_configured"}
+    data, row = _read("tailnet", service.devices)
+    for item in (data or {}).get("devices", []):
+        if not isinstance(item, dict) or not isinstance(item.get("name"), str):
+            continue
+        identity = "tailnet:" + item["name"]
+        if not NODE_ID.fullmatch(identity):
+            continue
+        tags = item.get("tags")
+        nodes.append({"id": identity, "kind": "tailnet_device", "label": _text(item["name"]), "properties": {
+            "online": _scalar(item.get("online")), "os": _scalar(item.get("os")),
+            "client_version": _scalar(item.get("client_version")),
+            "key_expires_in_days": _scalar(item.get("key_expires_in_days")),
+            "update_available": _scalar(item.get("update_available")),
+            "authorized": _scalar(item.get("authorized")),
+            "tagged": bool(tags) if isinstance(tags, list) else None}})
+    return row
+
+
 def observe(*, containers, endpoints, router, topology: dict | None, default_interfaces: list[str],
-            now: datetime | None = None) -> dict:
+            tailnet=None, now: datetime | None = None) -> dict:
     """Read every source once; unreadable sources are labelled, never guessed."""
     nodes, edges, absent, unread = [], [], [], []
     sources = [
         _containers(containers, nodes, absent),
         _endpoints(endpoints, nodes),
         _router(router, topology, default_interfaces, nodes, edges, unread),
+        _tailnet(tailnet, nodes),
     ]
     body = {"sources": sources, "nodes": nodes, "edges": edges, "absent": sorted(absent), "unread": sorted(unread)}
     digest = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()

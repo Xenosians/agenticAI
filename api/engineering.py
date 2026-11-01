@@ -16,6 +16,7 @@ from services.engineering.observe import observe
 from services.engineering.topology import TopologyError, compare, parse_topology
 from services.openwrt import build_openwrt_service
 from services.operations import OperationsService
+from services.tailnet import build_tailnet_service
 
 router = APIRouter()
 
@@ -37,6 +38,7 @@ def observation_sources() -> dict:
     settings = get_settings()
     operations = OperationsService(settings)
     return {"containers": operations, "endpoints": operations, "router": build_openwrt_service(settings),
+            "tailnet": build_tailnet_service(settings),
             "default_interfaces": list(settings.engineering_router_interfaces)}
 
 
@@ -51,14 +53,14 @@ def _observe_and_compare(topology: dict, topology_id: str, version: int) -> dict
     """Blocking reads; runs in a worker thread so this service can still answer
     its own health probe, which is one of the observed endpoints."""
     sources = observation_sources()
-    router_service = sources["router"]
+    readers = [sources[name] for name in ("router", "tailnet") if sources.get(name) is not None]
     try:
         observation = observe(containers=sources["containers"], endpoints=sources["endpoints"],
-                              router=router_service, topology=topology,
+                              router=sources["router"], tailnet=sources.get("tailnet"), topology=topology,
                               default_interfaces=sources["default_interfaces"])
     finally:
-        if router_service is not None:
-            router_service.close()
+        for reader in readers:
+            reader.close()
     return compare(topology, observation, topology_id=topology_id, version=version)
 
 

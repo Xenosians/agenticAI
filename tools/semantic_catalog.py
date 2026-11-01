@@ -110,6 +110,8 @@ CAPABILITY_SEMANTICS: dict[str, dict[str, str]] = {
     "network_interfaces": {"resource_type": "network.interface", "operation_kind": "read", "effect": "read", "permission": "network.interface.list"},
     "network_known_hosts": {"resource_type": "network.host", "operation_kind": "read", "effect": "read", "permission": "network.host.read"},
     "network_dns_config": {"resource_type": "network.dns", "operation_kind": "read", "effect": "read", "permission": "network.dns.read"},
+    "network_tailnet_devices": {"resource_type": "network.tailnet.device", "operation_kind": "read", "effect": "read", "permission": "network.tailnet.device.read"},
+    "network_tailnet_dns": {"resource_type": "network.tailnet.dns", "operation_kind": "read", "effect": "read", "permission": "network.tailnet.dns.read"},
 }
 
 

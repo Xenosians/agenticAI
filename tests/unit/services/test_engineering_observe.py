@@ -86,7 +86,8 @@ def test_reads_every_source_into_labelled_observed_state():
     assert result["schema"] == "infrastructure-observation.v1" and result["state_kind"] == "observed"
     assert result["observed_at"] == "2026-10-29T01:00:00+00:00"
     assert [(row["id"], row["state"], row["error_code"]) for row in result["sources"]] == [
-        ("containers", "observed", None), ("endpoints", "observed", None), ("router", "observed", None)]
+        ("containers", "observed", None), ("endpoints", "observed", None), ("router", "observed", None),
+        ("tailnet", "not_configured", "not_configured")]
     nodes = by_id(result)
     assert nodes["container:itsm-surrealdb"]["properties"] == {
         "state": "running", "health": "healthy", "restart_count": 2, "image": "surrealdb/surrealdb:v2"}
@@ -152,7 +153,8 @@ def test_unconfigured_sources_are_reported_as_not_configured():
     result = run(containers=Containers(not_configured), router=None,
                  endpoints=Endpoints({**not_configured, "provider": "http"}))
     assert [(row["id"], row["state"]) for row in result["sources"]] == [
-        ("containers", "not_configured"), ("endpoints", "not_configured"), ("router", "not_configured")]
+        ("containers", "not_configured"), ("endpoints", "not_configured"), ("router", "not_configured"),
+        ("tailnet", "not_configured")]
     assert result["nodes"] == [] and result["absent"] == []
 
 
@@ -194,3 +196,45 @@ def test_the_observation_hash_covers_its_content():
     assert first["observation_sha256"] != second["observation_sha256"]
     assert run()["observation_sha256"] == first["observation_sha256"]
     assert len(first["observation_sha256"]) == 64
+
+
+class Tailnet:
+    def __init__(self, devices=None, fail=None):
+        self.devices_result, self.fail = devices, fail
+
+    def devices(self):
+        if self.fail:
+            raise self.fail
+        return {"ok": True, "status": "observed", "provider": "tailscale", "observed_at": "x",
+                "data": {"count": len(self.devices_result), "truncated": False, "devices": self.devices_result}}
+
+
+def tailnet_device(name, *, online=True, days=170, tags=("tag:janus-lab",)):
+    return {"name": name, "dns_name": f"{name}.tail1234.ts.net", "os": "linux", "client_version": "1.104.4",
+            "update_available": False, "online": online, "last_seen": None, "key_expires": None,
+            "key_expiry_disabled": False, "key_expires_in_days": days, "authorized": True,
+            "shared_from_another_tailnet": False, "tags": list(tags)}
+
+
+def test_tailnet_devices_are_observed_as_their_own_source_without_addresses():
+    tailnet = Tailnet([tailnet_device("janus-router-lab"), tailnet_device("old-phone", online=False, tags=())])
+
+    result = run(tailnet=tailnet)
+
+    assert [row["id"] for row in result["sources"]] == ["containers", "endpoints", "router", "tailnet"]
+    assert result["sources"][3] == {"id": "tailnet", "state": "observed", "error_code": None}
+    nodes = by_id(result)
+    assert nodes["tailnet:janus-router-lab"] == {"id": "tailnet:janus-router-lab", "kind": "tailnet_device",
+                                                  "label": "janus-router-lab", "properties": {
+        "online": True, "os": "linux", "client_version": "1.104.4", "key_expires_in_days": 170,
+        "update_available": False, "authorized": True, "tagged": True}}
+    assert nodes["tailnet:old-phone"]["properties"]["online"] is False
+    assert nodes["tailnet:old-phone"]["properties"]["tagged"] is False
+
+
+def test_an_unconfigured_or_failing_tailnet_marks_only_its_source():
+    assert run()["sources"][3] == {"id": "tailnet", "state": "not_configured", "error_code": "not_configured"}
+    failed = run(tailnet=Tailnet(fail=RuntimeError("Tailscale refused the read (HTTP 401).")))
+    assert failed["sources"][3] == {"id": "tailnet", "state": "unavailable", "error_code": "provider_unavailable"}
+    assert not any(node["id"].startswith("tailnet:") for node in failed["nodes"])
+    assert failed["sources"][0]["state"] == "observed"

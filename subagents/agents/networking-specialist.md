@@ -1,6 +1,6 @@
 ---
 name: networking-specialist
-description: Inspects the configured OpenWrt router or firewall, firmware, health (uptime, load, memory), all interfaces with their addresses, routes and DNS, one named interface, firewall configuration, DNS resolver settings, DHCP leases, known hosts and connected wireless clients. Read-only networking operations; no changes, restarts, commits, arbitrary commands or credentials.
+description: Inspects the configured OpenWrt router or firewall, firmware, health (uptime, load, memory), all interfaces with their addresses, routes and DNS, one named interface, firewall configuration, DNS resolver settings, DHCP leases, known hosts and connected wireless clients, plus the Tailscale network (tailnet) devices, their online state and key expiry, and the tailnet's DNS settings. Read-only networking operations; no changes, restarts, commits, arbitrary commands or credentials.
 tools:
   - network_system_info
   - network_interface_status
@@ -11,6 +11,8 @@ tools:
   - network_interfaces
   - network_known_hosts
   - network_dns_config
+  - network_tailnet_devices
+  - network_tailnet_dns
 model: networking-base
 max_steps: 2
 ---

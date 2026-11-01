@@ -27,7 +27,7 @@ from tools.git.catalog import GIT_TOOLS
 from tools.jira.catalog import JIRA_TOOLS
 from tools.knowledge.catalog import KNOWLEDGE_TOOLS
 from tools.mailbox.catalog import MAILBOX_TOOLS
-from tools.networking.catalog import NETWORKING_TOOLS
+from tools.networking.catalog import OPENWRT_TOOLS, TAILNET_TOOLS
 from tools.operations.catalog import OPERATIONS_TOOLS
 from tools.registry import TOOLS
 from tools.servicedesk.catalog import SERVICE_DESK_TOOLS
@@ -107,6 +107,11 @@ def _openwrt(settings):
     return ("not_configured" if missing else "configured"), missing
 
 
+def _tailscale(settings):
+    missing = _missing(settings, "tailscale_client_id", "tailscale_client_secret")
+    return ("not_configured" if missing else "configured"), missing
+
+
 def _mailbox_lab(settings):
     missing = [] if getattr(settings, "mailbox_lab_enabled", False) is True else ["MAILBOX_LAB_ENABLED"]
     return ("not_configured" if missing else "configured"), missing
@@ -154,7 +159,8 @@ PROVIDER_FAMILIES: tuple[ProviderFamily, ...] = (
                    frozenset(ATLASSIAN_TOOLS)),
     ProviderFamily("assets", "Asset inventory", "provider", _assets, frozenset(ASSET_TOOLS)),
     ProviderFamily("knowledge", "Knowledge and runbooks", "provider", _knowledge, frozenset(KNOWLEDGE_TOOLS)),
-    ProviderFamily("openwrt", "OpenWrt", "provider", _openwrt, frozenset(NETWORKING_TOOLS)),
+    ProviderFamily("openwrt", "OpenWrt", "provider", _openwrt, frozenset(OPENWRT_TOOLS)),
+    ProviderFamily("tailscale", "Tailscale network", "provider", _tailscale, frozenset(TAILNET_TOOLS)),
     ProviderFamily("operations", "Platform operations", "provider", _operations, frozenset(OPERATIONS_TOOLS)),
     ProviderFamily("workspace", "Workspace and Git", "local", _workspace, frozenset(
         set(DEVELOPER_TOOLS) | set(GIT_TOOLS) | _WORKSPACE_INLINE)),

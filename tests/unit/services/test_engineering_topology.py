@@ -160,6 +160,18 @@ def test_unconfigured_sources_and_out_of_scope_nodes_are_unknown_with_their_reas
     assert found["interface:guest"]["reason"] == "source_not_configured"
 
 
+def test_a_designed_tailnet_device_is_compared_against_the_tailnet_source():
+    document = {"nodes": [{"id": "tailnet:janus-router-lab", "kind": "tailnet_device", "label": "router on the tailnet",
+                           "properties": {"online": True, "tagged": True}}], "edges": []}
+    seen = observation()
+    seen["sources"] = seen["sources"] + [{"id": "tailnet", "state": "observed", "error_code": None}]
+    seen["nodes"] = seen["nodes"] + [{"id": "tailnet:janus-router-lab", "kind": "tailnet_device", "label": "x",
+                                      "properties": {"online": False, "tagged": True}}]
+    row = rows(compare(parse_topology(document), seen, topology_id="t" * 32, version=1))["tailnet:janus-router-lab"]
+    assert row["status"] == "drifted"
+    assert row["differences"] == [{"property": "online", "expected": True, "observed": False, "observed_present": True}]
+
+
 def test_a_named_interface_the_router_would_not_read_is_unknown():
     document = design()
     document["nodes"].append({"id": "interface:guest", "kind": "interface", "label": "", "properties": {}})

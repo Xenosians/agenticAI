@@ -654,6 +654,51 @@
         "authored-networking",
         "dns"
       ]
+    },
+    {
+      "tool_name": "network_tailnet_devices",
+      "user_request": "Which devices are on our Tailscale network?",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "tailnet"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_devices",
+      "user_request": "Is the router online on the tailnet, and when does its key expire?",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "tailnet"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_devices",
+      "user_request": "List the VPN devices that need a Tailscale update.",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "tailnet"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_dns",
+      "user_request": "Do our Tailscale devices resolve names over encrypted DNS?",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "tailnet"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_dns",
+      "user_request": "Show the tailnet's DNS settings and split DNS domains.",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "tailnet"
+      ]
     }
   ],
   "eval_cases": [
@@ -879,6 +924,26 @@
       ],
       "allowed_arguments": {},
       "expected_tool": "network_dns_config",
+      "expected_arguments": {}
+    },
+    {
+      "name": "tailnet-devices-terse",
+      "user": "Remote access devices online right now?",
+      "allowed_tools": [
+        "network_tailnet_devices"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "network_tailnet_devices",
+      "expected_arguments": {}
+    },
+    {
+      "name": "tailnet-dns-tampering",
+      "user": "Are tailnet devices protected if the ISP tampers with DNS?",
+      "allowed_tools": [
+        "network_tailnet_dns"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "network_tailnet_dns",
       "expected_arguments": {}
     }
   ]

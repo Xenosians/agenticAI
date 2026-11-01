@@ -79,6 +79,60 @@ def format_dns_config(result: dict) -> str:
     return "\n".join(lines)
 
 
+def _tailscale(value: bool | None, on: str, off: str) -> str:
+    return on if value else off
+
+
+def format_tailnet_devices(result: dict) -> str:
+    if not result.get("ok"):
+        return "Tailscale read did not succeed."
+    data = result["data"]
+    lines = [f"{data['count']} device(s) on the tailnet" + (" (list cut to the first 200)" if data["truncated"] else "") + ":"]
+    for device in data["devices"]:
+        about = ", ".join(part for part in (device["os"], device["client_version"] and f"Tailscale {device['client_version']}") if part)
+        state = ("online" if device["online"] else
+                 "offline since " + device["last_seen"][:10] if device["last_seen"] else "offline")
+        if device["key_expiry_disabled"]:
+            key = "key never expires"
+        elif device["key_expires_in_days"] is None:
+            key = "key expiry unknown"
+        elif device["key_expires_in_days"] < 0:
+            key = f"key expired {-device['key_expires_in_days']} days ago"
+        else:
+            key = f"key expires in {device['key_expires_in_days']} days"
+        parts = [state, key]
+        if device["update_available"]:
+            parts.append("update available")
+        if device["authorized"] is False:
+            parts.append("waiting for approval")
+        if device["shared_from_another_tailnet"]:
+            parts.append("shared from another tailnet")
+        if device["tags"]:
+            parts.append("tags " + ", ".join(device["tags"]))
+        lines.append(f"{device['name']}" + (f" ({about})" if about else "") + ": " + "; ".join(parts))
+    return "\n".join(lines)
+
+
+def format_tailnet_dns(result: dict) -> str:
+    if not result.get("ok"):
+        return "Tailscale read did not succeed."
+    data = result["data"]
+    text = f"Tailnet DNS: MagicDNS {_tailscale(data['magic_dns'], 'on', 'off')}; "
+    resolvers = ", ".join(f"{row['address']} ({'encrypted, DNS-over-HTTPS' if row['encrypted'] else 'plain DNS'})"
+                          for row in data["nameservers"])
+    if data["override_local_dns"] and resolvers:
+        text += "devices use the tailnet's resolvers instead of the local network's: " + resolvers
+    elif resolvers:
+        text += "devices use the local network's resolvers, with these as fallback: " + resolvers
+    else:
+        text += "devices use the local network's resolvers"
+    for row in data["split_dns"]:
+        text += f"; {row['domain']} via " + (", ".join(row["nameservers"]) or "no resolver")
+    if data["search_domains"]:
+        text += "; search domains " + ", ".join(data["search_domains"])
+    return text + "."
+
+
 def _read(description: str, resource_type: str, permission: str, formatter) -> dict:
     return {
         "description": description, "resource_type": resource_type, "operation_kind": "read", "effect": "read",
@@ -141,3 +195,20 @@ NETWORKING_TOOLS = {
         "it does not perform lookups or change settings.",
         "network.dns", "network.dns.read", format_dns_config),
 }
+
+# Tailscale network (tailnet) reads, through the deployment's read-only Tailscale credential.
+TAILNET_TOOLS = {
+    "network_tailnet_devices": _read(
+        "List the devices on the Tailscale network (tailnet) with their operating system, Tailscale version, "
+        "whether each is online, when its key expires, pending updates and tags. Use this for remote-access "
+        "devices and VPN reachability. Read only; it does not approve, expire or remove devices.",
+        "network.tailnet.device", "network.tailnet.device.read", format_tailnet_devices),
+    "network_tailnet_dns": _read(
+        "Read the Tailscale network's DNS settings: MagicDNS, which resolvers devices use and whether they "
+        "are encrypted (DNS-over-HTTPS), split DNS domains and search domains. Use this to check whether "
+        "remote devices are protected from DNS tampering. Read only.",
+        "network.tailnet.dns", "network.tailnet.dns.read", format_tailnet_dns),
+}
+# The networking specialist's reads; readiness keeps OpenWrt and Tailscale as separate providers.
+OPENWRT_TOOLS = dict(NETWORKING_TOOLS)
+NETWORKING_TOOLS.update(TAILNET_TOOLS)

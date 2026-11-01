@@ -140,10 +140,11 @@ def test_observation_sources_are_built_from_the_fixed_read_adapters(monkeypatch)
     built = []
     monkeypatch.setattr(engineering, "OperationsService", lambda value: built.append(value) or "operations")
     monkeypatch.setattr(engineering, "build_openwrt_service", lambda value: built.append(value) or None)
+    monkeypatch.setattr(engineering, "build_tailnet_service", lambda value: built.append(value) or None)
     sources = engineering.observation_sources()
-    assert sources == {"containers": "operations", "endpoints": "operations", "router": None,
+    assert sources == {"containers": "operations", "endpoints": "operations", "router": None, "tailnet": None,
                        "default_interfaces": ["lan", "wan"]}
-    assert built == [settings, settings]
+    assert built == [settings, settings, settings]
 
 
 @pytest.mark.parametrize("value,expected", [("lan, wan,lan", ["lan", "wan"]), ("", [])])

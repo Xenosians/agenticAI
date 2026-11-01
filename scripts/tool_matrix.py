@@ -153,6 +153,8 @@ def build_cases(run: str, project: str) -> list[tuple[str, str, str, object]]:
         ("network-interfaces", "network_interfaces", "List every interface on the OpenWrt router with its addresses.", None),
         ("network-known-hosts", "network_known_hosts", "Which hosts does the OpenWrt router know about?", None),
         ("network-dns-config", "network_dns_config", "Which DNS servers does the OpenWrt router use, and is rebind protection on?", None),
+        ("network-tailnet-devices", "network_tailnet_devices", "Which devices are on our Tailscale network, and are they online?", None),
+        ("network-tailnet-dns", "network_tailnet_dns", "Do our Tailscale devices resolve names over encrypted DNS?", None),
     ]
 
 

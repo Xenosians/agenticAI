@@ -24,3 +24,22 @@ handed out no leases (or is disabled). Neither is an error.
 The rpcd ACL must allow exactly these reads. The lab ACL is defined in
 `projectOps/openwrt-lab/provision.py`. The local lab disables its DHCP server
 and has no radios, so both client reads are empty there.
+
+## Tailscale network (tailnet)
+
+Two more reads use the Tailscale API with the deployment's own OAuth client
+(`TAILSCALE_CLIENT_ID`, `TAILSCALE_CLIENT_SECRET`). Give that client only the
+`devices:core:read` and `dns:read` scopes; it cannot approve, expire or remove
+devices, or change DNS. Its one-hour token is reused until five minutes before
+it expires, so most reads make one API request.
+
+| Tool | Reads | Notes |
+|---|---|---|
+| `network_tailnet_devices` | `GET /tailnet/-/devices` | Each device's name, OS, Tailscale version, online state, last seen, key expiry (days left, or never), pending update, approval and tags (at most 200). Tailscale addresses, node and machine keys and user details are not returned. |
+| `network_tailnet_dns` | `GET /tailnet/-/dns/configuration` | MagicDNS, whether devices use the tailnet's resolvers instead of the local network's, each resolver and whether Tailscale reaches it over DNS-over-HTTPS, split DNS and search domains. |
+
+A resolver counts as encrypted when it is one of the public resolvers Tailscale
+upgrades to DNS-over-HTTPS automatically (Cloudflare, Google, Quad9). That is
+what keeps a network that rewrites plain DNS answers from redirecting tailnet
+devices. Reaching the lab router over the tailnet is described in
+`projectOps/openwrt-lab/README.md`.
