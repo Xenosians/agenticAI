@@ -316,6 +316,24 @@ class EntrypointTests(unittest.TestCase):
             self.assertIn("proxy_set_header X-Forwarded-Proto https;", health.group(1))
             self.assertNotRegex(private, r"location\s+(?:\^~\s+)?/api/\s*\{")
             self.assertIn("location / { return 404; }", private)
+            # Scripts and styles are requested with a content digest (?v=...), so a
+            # browser may keep them; each release changes the address. The page itself
+            # and its runtime configuration are always revalidated or never stored.
+            assets = re.search(r"location ~\* \\\.\(\?:js\|css\|svg\)\$\s*\{([^}]+)\}", public)
+            self.assertIsNotNone(assets, "content-stamped files need their own cache rule")
+            self.assertIn("gzip_static on;", assets.group(1))
+            self.assertIn("include /opt/janus/security-headers.conf;", assets.group(1))
+            self.assertRegex(assets.group(1), r"add_header Cache-Control 'public, max-age=\d+, immutable' always;")
+            page = re.search(r"location / \{([^}]+)\}", public)
+            assert page is not None, "the page's own location must exist"
+            self.assertIn("add_header Cache-Control 'no-cache' always;", page.group(1))
+            self.assertIn("include /opt/janus/security-headers.conf;", page.group(1))
+
+    def test_frontend_image_ships_compressed_copies_of_its_scripts_and_styles(self):
+        dockerfile = (FRONTEND / "Dockerfile").read_text()
+        # Compressed once at build time; nginx serves the .gz file to browsers that accept it.
+        self.assertRegex(dockerfile, r"gzip -9 -k -n")
+        self.assertIn("-name '*.js' -o -name '*.css' -o -name '*.svg'", dockerfile)
 
     def test_frontend_rejects_an_unsafe_runtime_directory(self):
         for runtime in ("relative/runtime", "/tmp/runtime;}", "/tmp/run time", "/tmp/runtime\nmalicious"):
