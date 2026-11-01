@@ -211,9 +211,10 @@ Model output should be treated as untrusted application input.
 
 Use encrypted LDAP transport.
 
-The local Samba development environment exposes LDAPS.
-
-Development self-signed certificates may require special handling, but production certificate validation must not be disabled.
+The directory client always verifies the LDAPS certificate (its chain and its
+name) before binding, and no setting turns that off. The local Samba lab signs
+its certificate with its own CA: set `AD_TLS_CA_FILE` to that CA certificate and
+`AD_TLS_SERVER_NAME` to the name on the certificate.
 
 ## Docker
 

@@ -51,7 +51,7 @@ and a malformed host, port, origin or name.
 
 | Section | Keys | Settings it controls |
 | --- | --- | --- |
-| `directory` | `host`, `port`, `tls`, `base_dn`, `account_container`, `email_domain`, `groups`, `read`, `write` | LDAP directory backend and its read and write bind accounts |
+| `directory` | `host`, `port`, `tls`, `ca_file`, `server_name`, `base_dn`, `account_container`, `email_domain`, `groups`, `read`, `write` | LDAP directory backend, its certificate check and its read and write bind accounts |
 | `router` | `url`, `user`, `secret`, `verify_tls`, `allow_loopback_http` | OpenWrt base URL and account |
 | `jira` | `url`, `email`, `secret` | Jira ticketing backend |
 | `atlassian` | `org_id`, `jira_resource`, `secret` | Atlassian organization administration |
@@ -65,7 +65,9 @@ environment or `.env` therefore never reaches a connection. Sections the profile
 does not declare keep their existing configuration. Explicit constructor
 arguments still win.
 
-Relative model paths resolve beside the profile. `allowed_origins` lists exact
+Relative model paths, and the directory's `ca_file` (the CA that signed its
+certificate), resolve beside the profile. `server_name` is the name on the
+directory's certificate when `host` is an address. `allowed_origins` lists exact
 `scheme://host[:port]` origins; plain HTTP is allowed only for an origin listed
 in both `allowed_origins` and `insecure_http_origins`.
 

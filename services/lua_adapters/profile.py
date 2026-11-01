@@ -30,8 +30,8 @@ HOST = re.compile(rf"(?=.{{1,253}}\Z){LABEL}(?:\.{LABEL})*")
 KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 TEXT = re.compile(r"[^\x00-\x1f\x7f]{1,512}")
 SECTIONS = {
-    "directory": {"host", "port", "tls", "base_dn", "account_container", "email_domain", "groups",
-                  "read", "write"},
+    "directory": {"host", "port", "tls", "ca_file", "server_name", "base_dn", "account_container", "email_domain",
+                  "groups", "read", "write"},
     "router": {"url", "user", "secret", "verify_tls", "allow_loopback_http"},
     "jira": {"url", "email", "secret"},
     "atlassian": {"org_id", "jira_resource", "secret"},
@@ -42,8 +42,8 @@ SECTIONS = {
 PLUGIN_IDS = frozenset({"model.local", "model.openai", "model.anthropic", "model.harness",
                         "connection.default", "source.default", "tool.default"})
 CONTROLLED_FIELDS = {
-    "directory": {"directory_backend", "ad_host", "ad_port", "ad_use_ssl", "ad_base_dn",
-                  "ad_account_container_dn", "account_email_domain", "ad_access_groups", "ad_bind_user",
+    "directory": {"directory_backend", "ad_host", "ad_port", "ad_use_ssl", "ad_tls_ca_file", "ad_tls_server_name",
+                  "ad_base_dn", "ad_account_container_dn", "account_email_domain", "ad_access_groups", "ad_bind_user",
                   "ad_bind_dn", "ad_bind_password", "ad_write_bind_user", "ad_write_bind_dn", "ad_write_bind_password"},
     "router": {"openwrt_base_url", "openwrt_username", "openwrt_password", "openwrt_verify_tls", "openwrt_allow_loopback_http"},
     "jira": {"ticketing_backend", "jira_base_url", "jira_email", "jira_api_token"},
@@ -255,13 +255,19 @@ def _secret(section: dict, secrets: dict | None, field: str, values: dict):
     values[field] = secrets[name]
 
 
-def _directory(section, secrets, values):
+def _directory(section, secrets, values, base: Path | None):
     if not section:
         return
     values["directory_backend"] = "ldap"
     _copy(section, values, (("host", _host, "ad_host"), ("port", _port, "ad_port"), ("tls", _flag, "ad_use_ssl"),
+                            ("server_name", _host, "ad_tls_server_name"),
                             ("base_dn", _text, "ad_base_dn"), ("account_container", _text, "ad_account_container_dn"),
                             ("email_domain", _host, "account_email_domain")))
+    if "ca_file" in section:
+        from config.path_portability import resolve_portable_path
+
+        # The CA that signs the directory's certificate; a relative path resolves beside the profile.
+        values["ad_tls_ca_file"] = str(resolve_portable_path(Path(_text(section["ca_file"])), base=base))
     if "groups" in section:
         groups = section["groups"]
         if type(groups) is not dict or len(groups) > MAX_ENTRIES:
@@ -340,12 +346,13 @@ def settings_values() -> dict:
     from config.settings import Settings
     controlled = set().union(*(CONTROLLED_FIELDS[name] for name in declared)) if declared else set()
     values: dict = {name: Settings.model_fields[name].get_default(call_default_factory=True) for name in controlled}
-    _directory(_section(declared, "directory"), secrets, values)
+    base = links.profile_path.parent if links.profile_path else None
+    _directory(_section(declared, "directory"), secrets, values, base)
     _router(_section(declared, "router"), secrets, values)
     _jira(_section(declared, "jira"), secrets, values)
     _atlassian(_section(declared, "atlassian"), secrets, values)
     _mailbox(_section(declared, "mailbox"), values)
-    _models(_section(declared, "models"), values, links.profile_path.parent if links.profile_path else None)
+    _models(_section(declared, "models"), values, base)
     return values
 
 

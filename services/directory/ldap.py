@@ -1,4 +1,5 @@
 from typing import Any
+import ssl
 
 from ldap3 import (
     ALL,
@@ -7,6 +8,7 @@ from ldap3 import (
     SUBTREE,
     Connection,
     Server,
+    Tls,
 )
 from ldap3.protocol.formatters.formatters import (
     format_sid,
@@ -19,6 +21,7 @@ from config import (
     Settings,
     get_settings,
 )
+from services.transport_tls import configured_bundle
 
 from .base import (
     MAX_ACCOUNT_SEARCH_RESULTS,
@@ -548,10 +551,28 @@ class LdapDirectoryService(
             self.host,
             port=self.port,
             use_ssl=self.use_ssl,
+            tls=self._tls() if self.use_ssl else None,
             get_info=ALL,
             connect_timeout=(
                 CONNECT_TIMEOUT_SECONDS
             ),
+        )
+
+    def _tls(self) -> Tls:
+        """Verify the directory's certificate before the bind sends a password.
+
+        ldap3 accepts any certificate unless told otherwise, so a redirected
+        connection (tampered DNS or routing) could collect the bind password.
+        The certificate must chain to AD_TLS_CA_FILE, else the deployment's CA
+        bundle, else the system trust store, and carry AD_TLS_SERVER_NAME or AD_HOST.
+        """
+        name = self.settings.ad_tls_server_name or self.host
+        ca_file = self.settings.ad_tls_ca_file or configured_bundle()
+        return Tls(
+            validate=ssl.CERT_REQUIRED,
+            ca_certs_file=str(ca_file) if ca_file else None,
+            valid_names=[name] if name != self.host else None,
+            sni=name,
         )
 
     def _connect(

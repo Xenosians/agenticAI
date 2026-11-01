@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+import re
 from typing import Annotated
 from urllib.parse import urlsplit
 
@@ -28,6 +29,12 @@ PROJECT_ROOT = (
     Path(__file__)
     .resolve()
     .parents[1]
+)
+
+# One exact DNS name, as a certificate carries it; no wildcard.
+CERTIFICATE_NAME = re.compile(
+    r"(?=.{1,253}\Z)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*"
 )
 
 
@@ -963,6 +970,18 @@ class Settings(
         True
     )
 
+    # LDAPS certificate checks: the certificate is always verified, against this
+    # CA file when the directory uses a private CA (else the deployment bundle or
+    # the system trust store). AD_TLS_SERVER_NAME is the name the certificate must
+    # carry when AD_HOST is an address or a different name.
+    ad_tls_ca_file: (
+        Path | None
+    ) = None
+
+    ad_tls_server_name: (
+        str | None
+    ) = None
+
     ad_base_dn: (
         str | None
     ) = None
@@ -1182,6 +1201,24 @@ class Settings(
         if str(value).strip() == ":memory:":
             raise ValueError("ASSET_SQLITE_PATH must identify a persistent database file.")
         return resolve_portable_path(value, base=PROJECT_ROOT)
+
+    @field_validator("ad_tls_ca_file", mode="before")
+    @classmethod
+    def validate_ad_tls_ca_file(cls, value):
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        return resolve_portable_path(value, base=PROJECT_ROOT)
+
+    @field_validator("ad_tls_server_name", mode="before")
+    @classmethod
+    def validate_ad_tls_server_name(cls, value):
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        name = str(value).strip()
+        if not CERTIFICATE_NAME.fullmatch(name):
+            # A wildcard would accept any certificate the trust store vouches for.
+            raise ValueError("AD_TLS_SERVER_NAME must be the exact DNS name on the directory's certificate.")
+        return name
 
     @model_validator(mode="after")
     def validate_asset_storage(self):

@@ -88,6 +88,28 @@ def test_every_profile_value_is_a_real_settings_field(install):
     assert set(profile.settings_values()) <= set(Settings.model_fields)
 
 
+def test_the_directory_certificate_check_comes_from_the_profile(install, tmp_path):
+    install(source=PROFILE.replace('tls = true,', 'tls = true, ca_file = "trust/dc-ca.pem", server_name = "dc01.example.test",'))
+    values = profile.settings_values()
+    assert values["ad_tls_ca_file"] == str((tmp_path / "trust" / "dc-ca.pem").resolve())
+    assert values["ad_tls_server_name"] == "dc01.example.test"
+
+
+def test_a_wildcard_certificate_name_is_refused(install):
+    install(source=PROFILE.replace('tls = true,', 'tls = true, server_name = "*",'))
+    refused(profile.settings_values)
+
+
+def test_settings_refuse_a_certificate_name_that_would_match_anything():
+    from pydantic import ValidationError
+
+    from config.settings import Settings
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, ad_tls_server_name="*.example.test")
+    assert Settings(_env_file=None, ad_tls_server_name=" dc01.example.test ").ad_tls_server_name == "dc01.example.test"
+
+
 def test_settings_take_their_links_from_the_profile_over_the_environment(install, monkeypatch):
     from config.settings import Settings
 

@@ -61,3 +61,9 @@ a missing account.
 `{"vpn": "VPN-Users", "admin": "ITSM-Admins"}`; values are group CNs or DNs) and
 `DIRECTORY_BACKEND` (`ldap` or `mock`). The mock backend derives its groups from
 its in-memory access state.
+
+LDAPS always checks the directory's certificate before the bind sends a
+password, so a redirected connection fails instead of collecting it. The
+certificate must chain to `AD_TLS_CA_FILE` (the CA of a private directory),
+else the deployment's `ITSM_HTTP_CA_BUNDLE`, else the system trust store, and
+carry `AD_TLS_SERVER_NAME` (set it when `AD_HOST` is an address) or `AD_HOST`.
