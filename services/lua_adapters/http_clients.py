@@ -5,12 +5,23 @@ event describes the exact link, and cannot redirect an already admitted target.
 """
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
 import hashlib
+import os
+import weakref
 
 import httpx
 
 from services.lua_adapters.host_boundaries import inspect_data, inspect_data_async
 from services.transport_tls import configured_context
+
+# Shared clients keep connections open between calls, so a call does not pay a
+# new TCP and TLS handshake first (33-52 ms to the model providers from the
+# development host). An idle connection is closed after this many seconds.
+KEEPALIVE_SECONDS = 30.0
+
+_shared_clients: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
 def _event(request):
@@ -53,3 +64,28 @@ def client(*args, **kwargs):
 
 def async_client(*args, **kwargs):
     return httpx.AsyncClient(*args, **_options(kwargs, _async_request))
+
+
+@asynccontextmanager
+async def shared_async_client(*, timeout, follow_redirects=False, trust_env=False):
+    """Borrow this event loop's reusable client; leaving the block does not close it.
+
+    Each request through it still crosses the Lua connection adapter. Clients are
+    kept per event loop (a connection belongs to the loop that opened it) and per
+    option set, including the configured CA bundle, so a trust change takes effect
+    on the next call. close_shared_clients() closes them when the service stops.
+    """
+    clients = _shared_clients.setdefault(asyncio.get_running_loop(), {})
+    key = (timeout, follow_redirects, trust_env, os.environ.get("ITSM_HTTP_CA_BUNDLE"))
+    client = clients.get(key)
+    if client is None or client.is_closed:
+        limits = httpx.Limits(max_connections=100, max_keepalive_connections=20, keepalive_expiry=KEEPALIVE_SECONDS)
+        client = async_client(timeout=timeout, follow_redirects=follow_redirects, trust_env=trust_env, limits=limits)
+        clients[key] = client
+    yield client
+
+
+async def close_shared_clients():
+    """Close this event loop's shared clients (service shutdown, end of a script or test)."""
+    for client in _shared_clients.pop(asyncio.get_running_loop(), {}).values():
+        await client.aclose()

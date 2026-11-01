@@ -1,5 +1,5 @@
 
-from services.lua_adapters.http_clients import async_client as lua_async_http_client
+from services.lua_adapters.http_clients import async_client as lua_async_http_client, close_shared_clients
 from contextlib import (
     asynccontextmanager,
 )
@@ -1625,6 +1625,8 @@ async def lifespan(
             )
 
         await phoenix_client.aclose()
+
+        await close_shared_clients()
 
         await mcp.stop()
 

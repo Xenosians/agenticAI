@@ -10,7 +10,7 @@ boundary.
 
 from __future__ import annotations
 
-from services.lua_adapters.http_clients import async_client as lua_async_http_client
+from services.lua_adapters.http_clients import shared_async_client
 
 import json
 import os
@@ -244,7 +244,7 @@ async def request_json(
 
     try:
         async with (
-            lua_async_http_client(
+            shared_async_client(
                 timeout=90,
                 follow_redirects=False,
                 trust_env=False,

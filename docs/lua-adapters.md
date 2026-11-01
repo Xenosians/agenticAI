@@ -48,6 +48,14 @@ exactly as before, and a worker that has ended while waiting is never used.
 A chat job pays one hop on each model request and response, each tool request
 and response, and each outbound call.
 
+Model-provider calls (chat completions, the Anthropic Messages and Models APIs)
+keep their HTTPS connections open between calls
+(`http_clients.shared_async_client`), so a call does not pay a new TCP and TLS
+handshake first (33-52 ms to the providers from the development host). Every
+request on a kept connection still crosses the Lua connection adapter. Clients
+are kept per event loop and per option set, including the CA bundle, and are
+closed when the service stops.
+
 `services.lua_adapters` runs one short Lua script in a separate worker process.
 The packaged default script executes Lua and preserves the event payload. A
 connection-specific script can reshape a model request, normalize a provider's
