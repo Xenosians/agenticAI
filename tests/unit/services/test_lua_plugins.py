@@ -188,12 +188,12 @@ def test_anthropic_guard_rejects_mapped_identity_context_and_permission_changes(
 
 def test_response_codecs_select_actual_visible_text_and_never_expose_hidden_thinking(monkeypatch):
     from services.lua_adapters import runtime
-    original = runtime.subprocess.run
+    original = runtime.WORKERS.exchange
     seen = []
-    def capture(*args, **kwargs):
-        seen.append(kwargs["input"])
-        return original(*args, **kwargs)
-    monkeypatch.setattr(runtime.subprocess, "run", capture)
+    def capture(request, timeout):
+        seen.append(request)
+        return original(request, timeout)
+    monkeypatch.setattr(runtime.WORKERS, "exchange", capture)
     assert plugins.openai_response({"choices": [{"message": {"content": "actual answer", "reasoning_content": "HIDDEN_OPENAI"}}]}) == "actual answer"
     assert plugins.anthropic_response({"content": [{"type": "thinking", "thinking": "HIDDEN_ANTHROPIC"},
                                                    {"type": "redacted_thinking", "data": "HIDDEN_REDACTED"},

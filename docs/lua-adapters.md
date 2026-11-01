@@ -38,9 +38,15 @@ weights through the same script.
 
 ## Cost
 
-Each event starts one locked-down worker process. On the development host a
-round trip takes about 70 ms (process start, imports, lockdown, script); a chat
-job pays it on each model request and response and on each outbound call.
+Each event runs in its own locked-down worker process, which serves that one
+event and exits. Two workers are started ahead of time and wait, with their
+imports done and no request data, so an event does not wait for a process to
+start. On the development host a hop takes about 11 ms (70 ms when a worker
+has to be started on demand, for example during a burst); a waiting worker
+uses about 15 MB. A worker locks itself down only after it reads its request,
+exactly as before, and a worker that has ended while waiting is never used.
+A chat job pays one hop on each model request and response, each tool request
+and response, and each outbound call.
 
 `services.lua_adapters` runs one short Lua script in a separate worker process.
 The packaged default script executes Lua and preserves the event payload. A

@@ -82,8 +82,8 @@ def test_the_host_refuses_a_worker_answer_whose_binding_changed(monkeypatch, cha
              "payload": None, **change}
     answer = {"schema": "lua-adapter-worker.v1", "event": event, "elapsed_ms": 0,
               "isolation": sorted(adapter_runtime.REQUIRED_ISOLATION)}
-    monkeypatch.setattr(adapter_runtime.subprocess, "run",
-                        lambda *a, **k: subprocess.CompletedProcess(a[0], 0, json.dumps(answer).encode(), b""))
+    monkeypatch.setattr(adapter_runtime.WORKERS, "exchange",
+                        lambda *a, **k: subprocess.CompletedProcess([], 0, json.dumps(answer).encode(), b""))
     refused("lua_adapter_binding_changed")
 
 
@@ -110,7 +110,7 @@ def test_script_has_only_pure_lua_functions_and_no_host_credentials(monkeypatch)
 def test_credentials_are_refused_before_starting_a_worker(monkeypatch, secret):
     def dispatch(*_, **__):
         pytest.fail("Credential-bearing input reached a worker")
-    monkeypatch.setattr(adapter_runtime.subprocess, "run", dispatch)
+    monkeypatch.setattr(adapter_runtime.WORKERS, "exchange", dispatch)
     refused("lua_adapter_secret_input", payload={"nested": [{secret: "fixture-secret"}]})
 
 
@@ -184,7 +184,7 @@ def test_nesting_limit_counts_payload_independently_of_the_event_envelope():
 
 
 def test_unavailable_worker_never_returns_a_synthetic_receipt(monkeypatch):
-    monkeypatch.setattr(adapter_runtime.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a[0], 1, b"", b"private-stack"))
+    monkeypatch.setattr(adapter_runtime.WORKERS, "exchange", lambda *a, **k: subprocess.CompletedProcess([], 1, b"", b"private-stack"))
     refused("lua_adapter_unavailable")
 
 
@@ -197,7 +197,7 @@ def test_incomplete_or_malformed_worker_receipts_are_refused(monkeypatch):
         ({"error": {"injected": "private"}}, "lua_adapter_unavailable"),
         ({"status": "ok"}, "lua_adapter_unavailable"),
     ]:
-        monkeypatch.setattr(adapter_runtime.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a[0], 0, json.dumps(answer).encode(), b""))
+        monkeypatch.setattr(adapter_runtime.WORKERS, "exchange", lambda *a, **k: subprocess.CompletedProcess([], 0, json.dumps(answer).encode(), b""))
         refused(code)
 
 
@@ -207,6 +207,71 @@ def test_async_entrypoint_executes_the_same_real_lua_contract():
             source="return function(event) event.payload.query=event.payload.query:upper(); return event end")
     result = asyncio.run(exercise())
     assert result.payload == {"query": "VPN"} and result.receipt["kind"] == "source"
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux process isolation")
+def test_every_event_gets_its_own_worker_and_spares_wait_before_any_request():
+    """Started-ahead workers save start-up time only: one event per process, and
+    a waiting worker is already running before it is given a request."""
+    pool = adapter_runtime.WorkerPool(spares=2)
+    seen = []
+    original = pool._launch
+
+    def launch():
+        worker = original()
+        seen.append(worker)
+        return worker
+
+    pool._launch = launch
+    try:
+        source = "return function(event) event.payload.count = (event.payload.count or 0) + 1; return event end"
+        request = adapter_runtime._canonical({
+            "source": source, "limits": adapter_runtime.asdict(AdapterLimits()),
+            "event": {"schema": adapter_runtime.EVENT_SCHEMA, "kind": "model", "phase": "request",
+                      "binding": BOUND, "payload": {"count": 0}}})
+        answers = [json.loads(pool.exchange(request, timeout=5).stdout) for _ in range(3)]
+        # A worker never carries state from one event to the next.
+        assert [answer["event"]["payload"] for answer in answers] == [{"count": 1}] * 3
+        served = [worker for worker in seen if worker.returncode is not None]
+        assert len(served) == 3 and len({worker.pid for worker in served}) == 3
+        # Replacements are already running and waiting for a request.
+        waiting = [worker for worker in seen if worker.returncode is None]
+        assert len(waiting) == 2 and all(worker.poll() is None for worker in waiting)
+    finally:
+        pool.close()
+    assert all(worker.poll() is not None for worker in seen)
+
+
+def stop(worker):
+    worker.kill()
+    worker.communicate()  # reap it and close its pipes
+
+
+def test_a_worker_that_ended_while_waiting_is_never_given_a_request():
+    pool = adapter_runtime.WorkerPool(spares=1)
+    try:
+        stop(pool._take())  # take one; this starts a spare
+        spare = pool._waiting[0]
+        spare.kill()
+        spare.wait()
+        worker = pool._take()
+        try:
+            assert worker is not spare and worker.poll() is None
+        finally:
+            stop(worker)
+    finally:
+        pool.close()
+
+
+def test_a_timed_out_worker_is_stopped_and_reported_as_a_time_limit():
+    pool = adapter_runtime.WorkerPool(spares=0)
+    try:
+        with pytest.raises(subprocess.TimeoutExpired):
+            pool.exchange(b"", timeout=0.000001)  # no worker can answer within a microsecond
+    finally:
+        pool.close()
+    refused("lua_adapter_time_limit", source="return function(event) return event end",
+            limits=AdapterLimits(wall_seconds=0.000001))
 
 
 def test_imports_do_not_start_workers_network_or_runtime_storage(tmp_path):

@@ -1,20 +1,26 @@
 """Execute a Lua protocol mapping without granting it transport or tool authority.
 
-Every call uses a separate isolated process. Failure never substitutes a Python
+Every call uses a separate isolated process that serves that one event only.
+Processes are started ahead of time, so an event does not wait for the Python
+interpreter and its imports. Failure never substitutes a Python
 mapping, another provider or an invented successful result. Callers retain exact
 target/owner, budget, approval and provider-receipt checks around this boundary.
 """
 from __future__ import annotations
 
 import asyncio
+import atexit
+from collections import deque
 from dataclasses import asdict, dataclass
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import subprocess
 import sys
 import signal
+import threading
 import time
 from typing import Any
 
@@ -29,6 +35,8 @@ PHASES = frozenset({"admission", "request", "response", "warm"})
 # A whole admitted dataset (2,000,000 bytes) plus its metadata and JSON escaping must fit.
 MAX_INPUT_BYTES = 4_000_000
 MAX_BINDING_BYTES = 16_000
+# Workers kept started and waiting; a burst beyond this starts workers on demand.
+SPARE_WORKERS = 2
 REQUIRED_ISOLATION = frozenset({"process", "no_new_privileges", "resource_limits", "no_new_descriptors"})
 SECRET_FIELDS = frozenset({"api_key", "apikey", "authorization", "proxy_authorization", "password",
                            "password_hash", "access_token", "refresh_token", "client_secret",
@@ -89,6 +97,83 @@ class AdapterLimits:
 class AdapterResult:
     payload: Any
     receipt: dict
+
+
+class WorkerPool:
+    """Lua worker processes started ahead of time; each serves exactly one event.
+
+    A waiting worker has finished its imports and is blocked reading its request.
+    It locks itself down after reading the request, exactly like a worker started
+    on demand, so while it waits it holds no request data and no authority.
+    Taking a worker starts its replacement; an empty pool starts one on demand.
+    """
+
+    def __init__(self, spares: int = SPARE_WORKERS):
+        self._size = spares
+        self._waiting: deque[subprocess.Popen] = deque()
+        self._lock = threading.Lock()
+        self._closed = False
+
+    @staticmethod
+    def _launch() -> subprocess.Popen:
+        return subprocess.Popen([sys.executable, "-I", "-B", str(WORKER)], stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=worker_environment(),
+                                cwd="/", close_fds=True, start_new_session=True)
+
+    def _take(self) -> subprocess.Popen:
+        with self._lock:
+            worker = None
+            while self._waiting and worker is None:
+                candidate = self._waiting.popleft()
+                if candidate.poll() is None:
+                    worker = candidate
+                else:
+                    candidate.communicate()  # ended while waiting; reap it and use another
+            if worker is None:
+                worker = self._launch()
+            try:
+                while not self._closed and len(self._waiting) < self._size:
+                    self._waiting.append(self._launch())
+            except OSError:
+                pass  # Waiting workers only save time; this event already has its own.
+            return worker
+
+    def exchange(self, request: bytes, timeout: float) -> subprocess.CompletedProcess:
+        """Send one request to its own worker and collect the answer, like ``subprocess.run``."""
+        with self._take() as worker:
+            try:
+                stdout, stderr = worker.communicate(request, timeout=timeout)
+            except BaseException:
+                worker.kill()  # A timed-out or interrupted worker never answers later.
+                raise
+            return subprocess.CompletedProcess(worker.args, worker.returncode, stdout, stderr)
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            waiting, self._waiting = list(self._waiting), deque()
+        for worker in waiting:
+            worker.kill()
+            worker.communicate()
+
+    def _forget_after_fork(self) -> None:
+        # A forked child must not use, stop or hold open its parent's workers: an
+        # inherited request pipe would keep a worker from ever seeing its request end.
+        for worker in self._waiting:
+            for stream in (worker.stdin, worker.stdout, worker.stderr):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
+        self._waiting, self._lock = deque(), threading.Lock()
+
+
+WORKERS = WorkerPool()
+atexit.register(WORKERS.close)
+register_at_fork = getattr(os, "register_at_fork", None)  # absent on Windows
+if register_at_fork is not None:
+    register_at_fork(after_in_child=WORKERS._forget_after_fork)
 
 
 def is_secret_field(name: str) -> bool:
@@ -181,10 +266,7 @@ def run_adapter(*, kind: str, phase: str, payload: Any, binding: dict,
     if require_mapping:
         request["require_mapping"] = True
     try:
-        completed = subprocess.run([sys.executable, "-I", "-B", str(WORKER)], input=_canonical(request),
-                                   capture_output=True, env=worker_environment(), cwd="/",
-                                   timeout=limits.wall_seconds, close_fds=True, start_new_session=True,
-                                   check=False)
+        completed = WORKERS.exchange(_canonical(request), timeout=limits.wall_seconds)
     except subprocess.TimeoutExpired:
         raise LuaAdapterError("lua_adapter_time_limit") from None
     except OSError:
