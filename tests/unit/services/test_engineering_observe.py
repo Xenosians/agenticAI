@@ -205,7 +205,7 @@ class Tailnet:
     def devices(self):
         if self.fail:
             raise self.fail
-        return {"ok": True, "status": "observed", "provider": "tailscale", "observed_at": "x",
+        return {"ok": True, "status": "success", "provider": "tailscale", "observed_at": "x",
                 "data": {"count": len(self.devices_result), "truncated": False, "devices": self.devices_result}}
 
 

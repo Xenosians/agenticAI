@@ -59,7 +59,7 @@ def test_devices_report_identity_reachability_and_key_state_without_addresses_or
 
     result = tailnet.devices()
 
-    assert result["ok"] is True and result["status"] == "observed" and result["provider"] == "tailscale"
+    assert result["ok"] is True and result["status"] == "success" and result["provider"] == "tailscale"
     assert result["data"] == {"count": 1, "truncated": False, "devices": [{
         "name": "janus-router-lab", "dns_name": "janus-router-lab.tail1234.ts.net", "os": "linux",
         "client_version": "1.104.4", "update_available": False, "online": True,

@@ -129,7 +129,7 @@ class TailnetService:
         return body
 
     def _result(self, data: dict) -> dict:
-        return {"ok": True, "status": "observed", "provider": "tailscale",
+        return {"ok": True, "status": "success", "provider": "tailscale",
                 "observed_at": self.clock().isoformat(), "data": data}
 
     def _device(self, item) -> dict:
