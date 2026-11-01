@@ -21,7 +21,10 @@ from services.extensions.document_ingestion import (
 )
 from services.extensions.transport import request_json, validate_url
 from services.extensions.harness import harness_binary, harness_generate
-from services.extensions.options import MODEL_OPTION_FIELDS, inference_option_support, networking_inference_options, validate_model_options
+from services.extensions.options import (
+    CLEARED_BY_EMPTY_TEXT, MODEL_OPTION_FIELDS, inference_option_support, networking_inference_options,
+    validate_model_options,
+)
 
 _upload_lock = threading.Lock()
 
@@ -355,7 +358,8 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
 
         profile.update({key: payload[key] for key in MODEL_OPTION_FIELDS
                         if key in payload and (payload[key] is not None or key == "networking_inference")
-                        and not (key == "reasoning_effort" and payload[key] == "")})
+                        and not (key in CLEARED_BY_EMPTY_TEXT and isinstance(payload[key], str)
+                                 and not payload[key].strip())})
 
         if backend == "http":
             profile[
@@ -379,7 +383,7 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
                     raise ValueError("provider_id must be 1-40 letters, digits, '-' or '_'")
                 profile["provider_id"] = provider_id
 
-        validate_model_options(profile)
+        profile.update(validate_model_options(profile))
 
         if backend == "local":
             if (

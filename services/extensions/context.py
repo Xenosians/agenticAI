@@ -288,6 +288,13 @@ def selected_profile(
     return profile
 
 
+def answer_token_limit(stage: InferenceStage, default: int) -> int:
+    """The selected connection's answer length for a step that writes the answer, or the default."""
+    profile = selected_profile(stage=stage)
+    limit = profile.get("answer_max_tokens") if profile else None
+    return default if limit is None else int(limit)
+
+
 def networking_inference_stage() -> InferenceStage:
     """Resolve only the admitted per-owner connection, never task/model text."""
     from services.extensions.options import networking_inference_mode

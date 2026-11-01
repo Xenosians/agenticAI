@@ -155,7 +155,7 @@ class ExtensionStore:
 
     def update_model_options(self, owner: str, identity: str, changes: dict) -> dict:
         """Patch only inference options without replacing identity or credentials."""
-        from services.extensions.options import MODEL_OPTION_FIELDS, validate_model_options
+        from services.extensions.options import CLEARED_BY_EMPTY_TEXT, MODEL_OPTION_FIELDS, validate_model_options
         if set(changes) - MODEL_OPTION_FIELDS:
             raise ValueError("Unsupported model inference option")
         with self.connect() as db:
@@ -165,11 +165,12 @@ class ExtensionStore:
                 raise ValueError("Model connection not found")
             data = json.loads(row["data"])
             for name, value in changes.items():
-                if value is None or (name in {"reasoning_effort", "thinking_mode"} and value == ""):
+                if value is None or (name in CLEARED_BY_EMPTY_TEXT and isinstance(value, str) and not value.strip()):
                     data.pop(name, None)
                 else:
                     data[name] = value
-            validate_model_options(data)
+            # Saved values are the validated ones: instructions are stored trimmed.
+            data.update(validate_model_options(data))
             db.execute("UPDATE resource SET data=? WHERE owner=? AND id=?", (json.dumps(data), owner, identity))
         return self.get(owner, identity)
 

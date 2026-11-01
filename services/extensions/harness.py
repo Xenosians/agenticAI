@@ -21,7 +21,7 @@ import signal
 import tempfile
 
 from services.extensions.admission import admit_external_request, record_external_usage
-from services.extensions.options import reasoning_effort
+from services.extensions.options import reasoning_effort, request_timeout_seconds
 
 from services.extensions.budget import (
     ExternalInferenceBudgetError,
@@ -840,7 +840,7 @@ async def harness_generate(
                 output, stderr = (
                     await asyncio.wait_for(
                         exchange(),
-                        HARNESS_TIMEOUT_SECONDS,
+                        request_timeout_seconds(profile, HARNESS_TIMEOUT_SECONDS),
                     )
                 )
 

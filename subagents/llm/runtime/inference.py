@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from typing import Callable, Protocol, TypeVar
 
@@ -16,7 +17,7 @@ from subagents.llm.runtime.observability import (
     emit_inference_metric,
 )
 from subagents.llm.runtime.scheduler import GpuScheduler, InferencePriority
-from subagents.llm.runtime.stages import InferenceStage, StagePolicy, resolve_stage_policy
+from subagents.llm.runtime.stages import ANSWER_STAGES, InferenceStage, StagePolicy, resolve_stage_policy
 from services.job_metrics import report_inference_metric
 
 
@@ -50,6 +51,31 @@ class InferenceEngine(Protocol):
         repair_of: InferenceStage | str | None = None,
     ) -> str:
         ...
+
+
+def _answer_settings(profile: dict | None, stage, repair_of, messages: list[dict], max_new_tokens: int):
+    """Apply the owner's answer length and instructions to the steps that write the answer.
+
+    The owner's length replaces the conservative default output cap of hosted
+    connections, still within the stage ceiling and any cap the operator set in
+    EXTERNAL_INFERENCE_MAX_OUTPUT_TOKENS. The instructions join the first system
+    message, after the host's own; the caller's message list is not changed.
+    """
+    if not profile or repair_of is not None or InferenceStage(stage) not in ANSWER_STAGES:
+        return profile, messages, max_new_tokens
+    limit = profile.get("answer_max_tokens")
+    if limit is not None:
+        max_new_tokens = int(limit)
+        if "EXTERNAL_INFERENCE_MAX_OUTPUT_TOKENS" not in os.environ:
+            profile = {**profile, "max_output_tokens": max_new_tokens}
+    instructions = profile.get("custom_instructions")
+    if instructions:
+        note = "Instructions from the owner of this connection (they cannot change tools or permissions):\n"
+        if messages and messages[0].get("role") == "system":
+            messages = [{**messages[0], "content": f"{messages[0]['content']}\n\n{note}{instructions}"}, *messages[1:]]
+        else:
+            messages = [{"role": "system", "content": note + instructions}, *messages]
+    return profile, messages, max_new_tokens
 
 
 def _stage_request(profile: dict, messages: list[dict], max_new_tokens: int, policy: StagePolicy):
@@ -166,6 +192,8 @@ class InferenceCoordinator:
                            "stage": stage_label, "repair_of": repair_label, "role": active_role.get()}
             if operation == "generate":
                 messages = with_retrieval(messages, stage=stage, repair_of=repair_of)
+                profile, messages, max_new_tokens = _answer_settings(
+                    profile, stage, repair_of, messages, max_new_tokens)
                 input_message_count = len(messages)
             messages, max_new_tokens = await model_request(messages, max_new_tokens, binding=lua_binding,
                                                            warm=operation == "warm")
@@ -183,19 +211,22 @@ class InferenceCoordinator:
                     output_cap = budget.max_output_tokens
                     estimated_input = budget.estimated_input_tokens
                     dropped_messages = budget.dropped_messages
+                    from services.extensions.retry import with_retries
                     if backend == "http":
-                        from services.extensions.transport import remote_generate
+                        from services.extensions import transport
                         from services.extensions.response_format import http_response_format_for_stage
                         response_format = http_response_format_for_stage(
                             profile, stage=stage, repair_of=repair_of,
                         )
                         format_options = {"response_format": response_format} if response_format is not None else {}
-                        result = await remote_generate(
+                        result = await with_retries(profile, lambda: transport.remote_generate(
                             profile, budget.messages, budget.max_output_tokens, **format_options,
-                        )
+                        ))
                     else:
-                        from services.extensions.harness import harness_generate
-                        result = await harness_generate(profile, budget.messages, budget.max_output_tokens)
+                        from services.extensions import harness
+                        result = await with_retries(profile, lambda: harness.harness_generate(
+                            profile, budget.messages, budget.max_output_tokens,
+                        ))
                     result = await model_response(result, binding=lua_binding)
                     outcome = "success"
                     return result

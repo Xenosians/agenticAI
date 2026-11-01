@@ -94,7 +94,20 @@ truncation remain explicit errors; partial output is not an executable proposal.
 
 The owner-scoped `model_options` command accepts `id`,
 `provider_tokens_per_minute`, `provider_requests_per_minute`,
-`admission_max_wait_seconds`, `reasoning_effort`, and `networking_inference`.
+`admission_max_wait_seconds`, `reasoning_effort`, `thinking_mode`,
+`answer_max_tokens`, `custom_instructions`, `request_timeout_seconds`,
+`retry_attempts`, `retry_wait_seconds` and `networking_inference`.
+
+Answer and request settings:
+
+| Setting | Range | Applies to |
+|---|---|---|
+| `custom_instructions` | text, at most 2000 characters, no credentials or personal identifiers | The two steps that write the answer the user reads (direct answer and synthesis), on every kind of connection. Added after Janus's own instructions; it cannot change tools, approvals or permissions. Routing, specialist planning and repair never see it. |
+| `answer_max_tokens` | 32–1024 | The same two steps, on every kind of connection. The prompt's word limit follows it. It replaces the default output cap of hosted connections but stays within the stage ceiling and `EXTERNAL_INFERENCE_MAX_OUTPUT_TOKENS`. |
+| `request_timeout_seconds` | 5–600 | External connections: one provider request (HTTP, Anthropic Messages, Pi, OpenCode). Defaults: 90 s HTTP, `ANTHROPIC_TIMEOUT_SECONDS` (120 s), 120 s harness. |
+| `retry_attempts` | 0–3 | External connections. Only a request the provider turned away is sent again: rate limited, overloaded, server error, or the connection could not be made. A timeout is not retried, because the provider may still be working on it. |
+| `retry_wait_seconds` | 0–10 (default 1) | The wait before the first retry; each later retry waits twice as long. |
+
 The last field accepts only `dedicated_local` or `selected_model`; absence defaults
 to `dedicated_local`. Null clears an option, including resetting networking to
 its dedicated default. Networking mode can be changed for local/uploaded

@@ -253,6 +253,103 @@ def test_lower_environment_limits_are_preserved(runtime, monkeypatch):
     assert external[0][2] == 96
 
 
+def selected(**options):
+    execution_profile.set({"backend": "http", "url": "https://api.groq.com/openai/v1", "model": "selected", **options})
+
+
+@pytest.mark.parametrize("stage, requested, limit, expected", [
+    (InferenceStage.PRIMARY_RESPONSE, 384, 1024, 1024),
+    (InferenceStage.SYNTHESIS, 768, 100, 100),
+    (InferenceStage.SEMANTIC_ROUTING, 500, 100, 500),
+    (InferenceStage.SPECIALIST_REASONING, 600, 64, 600),
+])
+def test_the_answer_limit_sets_only_the_length_of_the_answer_the_user_reads(runtime, stage, requested, limit, expected):
+    coordinator, _, _, external = runtime
+    selected(answer_max_tokens=limit)
+    generate(coordinator, stage, max_new_tokens=requested)
+    assert external[-1][2] == expected
+
+
+def test_the_operators_output_cap_still_bounds_the_answer_limit(runtime, monkeypatch):
+    coordinator, _, _, external = runtime
+    monkeypatch.setenv("EXTERNAL_INFERENCE_MAX_OUTPUT_TOKENS", "96")
+    selected(answer_max_tokens=1024)
+    generate(coordinator, InferenceStage.PRIMARY_RESPONSE)
+    assert external[-1][2] == 96
+
+
+def test_the_answer_wording_follows_the_connection_limit(runtime):
+    from subagents.core.orchestration.primary_assistant import PrimaryAssistant
+
+    class Recorder:
+        def __init__(self):
+            self.calls = []
+
+        async def generate(self, **kwargs):
+            self.calls.append(kwargs)
+            return "ok"
+
+    inference = Recorder()
+    assistant = PrimaryAssistant(inference, "hub-main", response_max_new_tokens=384, synthesis_max_new_tokens=768)
+    selected(answer_max_tokens=200)
+    asyncio.run(assistant.respond("Is the VPN up?"))
+    asyncio.run(assistant.synthesize("Is the VPN up?", []))
+    respond, synthesis = inference.calls
+    assert respond["max_new_tokens"] == 200 and "at most 50 words" in respond["messages"][0]["content"]
+    assert synthesis["max_new_tokens"] == 200 and "at most 50 words" in synthesis["messages"][-1]["content"]
+    selected()
+    asyncio.run(assistant.respond("Is the VPN up?"))
+    assert inference.calls[-1]["max_new_tokens"] == 384
+
+
+def test_owner_instructions_reach_only_the_steps_that_write_the_answer(runtime):
+    coordinator, manager, _, external = runtime
+    selected(custom_instructions="Answer in Bahasa Indonesia.")
+    messages = [{"role": "system", "content": "You are Janus."}, {"role": "user", "content": "Read status"}]
+    generate(coordinator, InferenceStage.SYNTHESIS, messages=messages)
+    sent = external[-1][1]
+    assert [message["role"] for message in sent].count("system") == 1
+    assert sent[0]["content"].startswith("You are Janus.") and sent[0]["content"].endswith("Answer in Bahasa Indonesia.")
+    assert messages[0]["content"] == "You are Janus."
+    for stage, extra in ((InferenceStage.SEMANTIC_ROUTING, {}),
+                         (InferenceStage.REPAIR, {"repair_of": InferenceStage.SYNTHESIS})):
+        generate(coordinator, stage, messages=messages, **extra)
+        assert not any("Bahasa" in message["content"] for message in external[-1][1])
+    execution_profile.set({"backend": "local", "model": "renamed-model", "custom_instructions": "Be brief.",
+                           "answer_max_tokens": 200})
+    generate(coordinator, InferenceStage.PRIMARY_RESPONSE)
+    assert manager.calls[-1]["messages"][0]["role"] == "system"
+    assert manager.calls[-1]["messages"][0]["content"].endswith("Be brief.")
+    assert manager.calls[-1]["max_new_tokens"] == 200
+
+
+def test_a_turned_away_request_is_retried_when_the_connection_allows_it(runtime, monkeypatch):
+    from services.extensions import retry
+    from services.extensions.diagnostics import ExternalProviderError
+    coordinator, _, metrics, _ = runtime
+    calls = []
+
+    async def busy_once(profile, messages, max_new_tokens, **options):
+        calls.append(profile)
+        if len(calls) == 1:
+            raise ExternalProviderError("provider_rate_limited", status_code=429)
+        return "remote result"
+
+    async def no_wait(seconds):
+        return None
+
+    monkeypatch.setattr("services.extensions.transport.remote_generate", busy_once)
+    monkeypatch.setattr(retry, "_sleep", no_wait)
+    selected(retry_attempts=1)
+    assert generate(coordinator, InferenceStage.PRIMARY_RESPONSE) == "remote result"
+    assert len(calls) == 2 and metrics[-1].outcome == "success"
+    selected()
+    calls.clear()
+    with pytest.raises(ExternalProviderError):
+        generate(coordinator, InferenceStage.PRIMARY_RESPONSE)
+    assert len(calls) == 1
+
+
 def test_oversized_mandatory_prompt_fails_before_external_dispatch(runtime):
     coordinator, manager, metrics, external = runtime
     with pytest.raises(ExternalInferenceBudgetError):

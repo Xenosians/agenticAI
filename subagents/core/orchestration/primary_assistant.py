@@ -6,6 +6,8 @@ from config import (
 
 from subagents.llm.runtime.stages import InferenceStage
 
+from services.extensions.context import answer_token_limit
+
 from subagents.core.orchestration.conversation_context import (
     conversation_messages,
 )
@@ -158,7 +160,8 @@ class PrimaryAssistant:
     ) -> str:
         # A provider that reaches the output cap fails the job as truncated,
         # so the model is told the limit, as in synthesis.
-        word_limit = answer_word_limit(self.response_max_new_tokens)
+        max_new_tokens = answer_token_limit(InferenceStage.PRIMARY_RESPONSE, self.response_max_new_tokens)
+        word_limit = answer_word_limit(max_new_tokens)
 
         messages = [
             {
@@ -191,9 +194,7 @@ class PrimaryAssistant:
                     self.model_key
                 ),
                 messages=messages,
-                max_new_tokens=(
-                    self.response_max_new_tokens
-                ),
+                max_new_tokens=max_new_tokens,
                 priority=(
                     InferencePriority
                     .PRIMARY_RESPONSE
@@ -228,7 +229,8 @@ class PrimaryAssistant:
             for result in results
         ]
 
-        word_limit = answer_word_limit(self.synthesis_max_new_tokens)
+        max_new_tokens = answer_token_limit(InferenceStage.SYNTHESIS, self.synthesis_max_new_tokens)
+        word_limit = answer_word_limit(max_new_tokens)
 
         messages = [
             {
@@ -280,9 +282,7 @@ class PrimaryAssistant:
                 messages=(
                     messages
                 ),
-                max_new_tokens=(
-                    self.synthesis_max_new_tokens
-                ),
+                max_new_tokens=max_new_tokens,
                 priority=(
                     InferencePriority
                     .PRIMARY_RESPONSE

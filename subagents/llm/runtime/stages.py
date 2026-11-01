@@ -71,6 +71,12 @@ _STAGE_POLICIES = {
 }
 
 
+# The steps whose text the user reads. The owner's answer length and
+# instructions apply to these only, never to routing, specialist planning or
+# repair, whose output is parsed by the host.
+ANSWER_STAGES = frozenset({InferenceStage.PRIMARY_RESPONSE, InferenceStage.SYNTHESIS})
+
+
 def resolve_stage_policy(
     stage: InferenceStage | str,
     repair_of: InferenceStage | str | None = None,

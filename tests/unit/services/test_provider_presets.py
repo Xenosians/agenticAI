@@ -129,11 +129,13 @@ def test_remote_generate_is_inference_only(
         payload=None,
         api_key="",
         max_bytes=2_000_000,
+        timeout=None,
     ):
         captured["url"] = url
         captured["payload"] = payload
         captured["api_key"] = api_key
         captured["max_bytes"] = max_bytes
+        captured["timeout"] = timeout
 
         return {
             "choices": [
@@ -185,6 +187,8 @@ def test_remote_generate_is_inference_only(
         captured["api_key"]
         == "private-test-key"
     )
+
+    assert captured["timeout"] == 90.0
 
     assert captured["payload"] == {
         "model": "openai/gpt-oss-120b",

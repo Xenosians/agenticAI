@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from services.extensions.admission import admit_external_request, record_external_usage
-from services.extensions.options import reasoning_effort
+from services.extensions.options import reasoning_effort, request_timeout_seconds
 from services.extensions.response_format import HttpResponseFormat, supported_http_response_formats
 
 from services.extensions.budget import (
@@ -219,12 +219,16 @@ async def read_bounded(
     )
 
 
+DEFAULT_TIMEOUT_SECONDS = 90.0
+
+
 async def request_json(
     url: str,
     *,
     payload=None,
     api_key: str = "",
     max_bytes: int = 2_000_000,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
 ):
     url = validate_url(
         url
@@ -245,7 +249,7 @@ async def request_json(
     try:
         async with (
             shared_async_client(
-                timeout=90,
+                timeout=timeout,
                 follow_redirects=False,
                 trust_env=False,
             )
@@ -322,6 +326,13 @@ async def request_json(
 
     except ExternalProviderError:
         raise
+
+    except httpx.TimeoutException:
+        # The provider may still be working on it: reported apart from a
+        # connection that could not be made, which is safe to send again.
+        raise ExternalProviderError(
+            "provider_timeout"
+        ) from None
 
     except httpx.HTTPError as exc:
         diagnostic = (
@@ -447,6 +458,7 @@ async def remote_generate(
             + "/chat/completions"
         ),
         payload=body,
+        timeout=request_timeout_seconds(profile, DEFAULT_TIMEOUT_SECONDS),
         api_key=(
             profile.get(
                 "api_key",
@@ -521,6 +533,7 @@ async def _messages_generate(profile: dict, budget, effort: str | None) -> str:
     )
     data = await anthropic.post_messages(
         profile["url"], body, profile.get("api_key", ""),
+        timeout=request_timeout_seconds(profile, anthropic.request_timeout()),
     )
     total = anthropic.total_usage_tokens(data)
     if total is not None:

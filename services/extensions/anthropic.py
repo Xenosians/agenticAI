@@ -107,7 +107,8 @@ def endpoint(url: str, path: str) -> str:
     return f"{root}/v1/{path.lstrip('/')}"
 
 
-def _timeout() -> float:
+def request_timeout() -> float:
+    """The deployment's default timeout; a connection's own setting replaces it."""
     value = os.environ.get("ANTHROPIC_TIMEOUT_SECONDS")
     if value is None:
         return DEFAULT_TIMEOUT_SECONDS
@@ -313,14 +314,14 @@ def build_request(
                              max_tokens_limit=max_tokens_limit)
 
 
-async def post_messages(url: str, payload: dict, api_key: str) -> dict:
+async def post_messages(url: str, payload: dict, api_key: str, *, timeout: float | None = None) -> dict:
     """POST /v1/messages with bounded, secret-safe failure handling."""
     from services.extensions.transport import read_bounded
 
     target = endpoint(url, "messages")
     try:
         async with shared_async_client(
-            timeout=_timeout(), follow_redirects=False, trust_env=False,
+            timeout=request_timeout() if timeout is None else timeout, follow_redirects=False, trust_env=False,
         ) as client:
             async with client.stream(
                 "POST", target, json=payload, headers=headers(api_key),
@@ -436,7 +437,7 @@ async def _get_json(url: str, path: str, api_key: str, params: dict | None = Non
     target = endpoint(url, path)
     try:
         async with shared_async_client(
-            timeout=_timeout(), follow_redirects=False, trust_env=False,
+            timeout=request_timeout(), follow_redirects=False, trust_env=False,
         ) as client:
             async with client.stream(
                 "GET", target, params=params, headers=headers(api_key),
