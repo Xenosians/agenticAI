@@ -372,6 +372,125 @@ class EntrypointTests(unittest.TestCase):
         self.assertNotIn("Application.ensure_all_started(:itsm_backend)", script)
 
 
+class RemoteAccessTests(unittest.TestCase):
+    """Reaching the stack from other machines without trusting the network in between.
+
+    The application does not depend on how it is reached (Tailscale or Headscale on
+    the host, company port forwarding, a cloud load balancer). It needs a bind
+    address, an origin, a certificate and, behind a proxy, the proxy ranges that
+    may name the real client for the per-client sign-in limits.
+    """
+
+    def render(self, trusted):
+        with tempfile.TemporaryDirectory(dir=OUT) as directory:
+            root = Path(directory)
+            cert, key = root / "tls.crt", root / "tls.key"
+            cert.write_text("synthetic-readable-certificate-not-a-live-cert")
+            key.write_text("synthetic-readable-key-not-a-live-key")
+            env = dict(os.environ, PUBLIC_HOST="itsm.example.test", PUBLIC_ORIGIN="https://itsm.example.test:8443",
+                       FRONTEND_RUNTIME_DIR=str(root / "runtime"), TLS_CERT_PATH=str(cert), TLS_KEY_PATH=str(key),
+                       NGINX_CONFIG_TEMPLATE=str(FRONTEND / "docker/nginx.conf.template"),
+                       NGINX_CONFIG_OUTPUT=str(root / "nginx.conf"), EDGE_TRUSTED_PROXIES=trusted)
+            result = subprocess.run(["sh", str(FRONTEND / "docker/entrypoint.sh"), "true"], env=env,
+                                    capture_output=True, text=True)
+            if result.returncode:
+                return result.returncode, None, None
+            rendered = (root / "nginx.conf").read_text()
+            included = (root / "runtime" / "real-ip.conf").read_text()
+            return result.returncode, rendered, included
+
+    @unittest.skipUnless(shutil.which("envsubst"), "envsubst is unavailable; frontend rendering was not checked")
+    def test_a_trusted_edge_proxy_names_the_real_client(self):
+        code, rendered, included = self.render("10.0.0.0/16, 2001:db8::/32,192.0.2.10")
+        self.assertEqual(code, 0)
+        assert rendered is not None and included is not None
+        public = rendered.split("listen 9443 ssl;", 1)[0]
+        self.assertRegex(public, r"include \S+/real-ip\.conf;")
+        self.assertEqual(included.splitlines(), [
+            "set_real_ip_from 10.0.0.0/16;", "set_real_ip_from 2001:db8::/32;", "set_real_ip_from 192.0.2.10;",
+            "real_ip_header X-Forwarded-For;", "real_ip_recursive on;"])
+        # The backend still receives exactly one address: the client nginx settled on.
+        self.assertIn("proxy_set_header X-Forwarded-For $remote_addr;", public)
+
+    @unittest.skipUnless(shutil.which("envsubst"), "envsubst is unavailable; frontend rendering was not checked")
+    def test_without_a_trusted_proxy_the_connecting_address_is_the_client(self):
+        code, _, included = self.render("")
+        self.assertEqual((code, included), (0, ""))
+
+    def test_unsafe_trusted_proxy_lists_are_refused(self):
+        for value in ("0.0.0.0/0", "::/0", "10.0.0.0/00", "10.0.0.0/8; return 200", "10.0.0.0/8\nmalicious",
+                      "edge.example.test", "*", "10.0.0.0/8/1", "10.0.0.0/x"):
+            code, _, _ = self.render(value)
+            self.assertEqual(code, 64, value)
+
+
+class StackCommandTests(unittest.TestCase):
+    """One command starts, stops and checks the whole stack in dependency order."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.janus = module(DEPLOY / "janus.py", "janus_stack_command")
+
+    def plan(self, action, **options):
+        return [" ".join(step) for step in self.janus.plan(action, Path("/fixture/deployment.env"), **options)]
+
+    def test_up_validates_then_starts_every_service_in_order_and_waits(self):
+        steps = self.plan("up")
+        self.assertIn("deploy/validate.py --env-file /fixture/deployment.env", steps[0])
+        compose = steps[1:]
+        self.assertTrue(all(step.startswith("docker compose --env-file /fixture/deployment.env -f ") for step in compose))
+        self.assertTrue(compose[0].endswith("--wait --wait-timeout 120 database"))
+        self.assertIn("--profile bootstrap run --rm", compose[1])
+        self.assertTrue(compose[1].endswith(" schema"))
+        self.assertTrue(compose[2].endswith("--wait --wait-timeout 180 backend frontend"))
+        self.assertTrue(compose[3].endswith("--wait --wait-timeout 600 ai"))
+        for step in compose:
+            self.assertIn("--pull never", step)
+        for step in (compose[0], compose[2], compose[3]):
+            self.assertIn(" up -d --no-build ", step)
+
+    def test_overlays_are_added_to_every_step(self):
+        for step in self.plan("up", gpu=True, machine_profile=True, private_ca=True):
+            if step.startswith("docker compose"):
+                for overlay in ("compose.gpu.yaml", "compose.profile.yaml", "compose.trust.yaml"):
+                    self.assertIn(overlay, step)
+            else:
+                self.assertTrue(step.endswith("--gpu --machine-profile --private-ca"))
+
+    def test_stop_keeps_data_and_status_only_reads(self):
+        stop, = self.plan("stop")
+        self.assertTrue(stop.endswith(" stop --timeout 60"))
+        self.assertNotIn(" down", stop)
+        status, = self.plan("status")
+        self.assertTrue(status.endswith(" ps --all --format json"))
+
+    def test_build_validates_then_builds_the_three_application_images(self):
+        validate, build = self.plan("build")
+        self.assertIn("deploy/validate.py", validate)
+        self.assertTrue(build.endswith(" build backend frontend ai"))
+
+    def test_unknown_action_and_missing_env_file_are_refused(self):
+        with self.assertRaises(ValueError):
+            self.janus.plan("destroy", Path("/fixture/deployment.env"))
+        result = subprocess.run([sys.executable, str(DEPLOY / "janus.py"), "up", "--env-file", "/does/not/exist.env",
+                                 "--dry-run"], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("env file not found", result.stderr)
+
+    def test_dry_run_prints_the_steps_without_running_them(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".env", dir=OUT, delete=False) as handle:
+            handle.write("COMPOSE_PROJECT_NAME=janus-dry-run-fixture\n")
+        try:
+            result = subprocess.run([sys.executable, str(DEPLOY / "janus.py"), "up", "--env-file", handle.name,
+                                     "--dry-run"], capture_output=True, text=True, timeout=30)
+        finally:
+            os.unlink(handle.name)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = result.stdout.strip().splitlines()
+        self.assertEqual(len(lines), 5)
+        self.assertTrue(lines[-1].endswith("ai"))
+
+
 class DockerContextTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("docker"), "Docker is unavailable; context exclusion was not verified")
     def test_docker_itself_excludes_nested_dummy_secrets_from_build_context(self):

@@ -37,8 +37,15 @@ def record(identity, split, *, content="List Jira projects"):
 
 @pytest.fixture
 def isolated(monkeypatch, tmp_path):
+    import sys
+
     import transformers
 
+    # transformers 5 replaces its lazy module in sys.modules the first time
+    # TrainingArguments is resolved. Resolve it now and patch the module that
+    # the preflight's own `from transformers import ...` will read.
+    transformers.TrainingArguments
+    transformers = sys.modules["transformers"]
     base = tmp_path / "base"
     base.mkdir()
     fixture = SimpleNamespace(

@@ -38,3 +38,15 @@ def register_networking_tools(server, service: OpenWrtService | None):
     @server.tool()
     def network_wireless_clients() -> NetworkReadResult:
         return NetworkReadResult(**require_service().wireless_clients())
+
+    @server.tool()
+    def network_router_health() -> NetworkReadResult:
+        return NetworkReadResult(**require_service().router_health())
+
+    @server.tool()
+    def network_interfaces() -> NetworkReadResult:
+        return NetworkReadResult(**require_service().interfaces())
+
+    @server.tool()
+    def network_known_hosts() -> NetworkReadResult:
+        return NetworkReadResult(**require_service().known_hosts())

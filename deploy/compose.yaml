@@ -75,6 +75,8 @@ services:
     environment:
       PUBLIC_HOST: ${PUBLIC_HOST:?Set the certificate hostname}
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?Set the external HTTPS origin}
+      # Proxies allowed to name the real client (port forward, load balancer); empty trusts none.
+      EDGE_TRUSTED_PROXIES: ${EDGE_TRUSTED_PROXIES:-}
     depends_on:
       backend: {condition: service_started}
     ports:

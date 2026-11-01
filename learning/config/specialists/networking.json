@@ -510,6 +510,114 @@
         "authored-networking",
         "clients"
       ]
+    },
+    {
+      "tool_name": "network_router_health",
+      "user_request": "How long has the OpenWrt router been up?",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "health"
+      ]
+    },
+    {
+      "tool_name": "network_router_health",
+      "user_request": "Check the router's CPU load and memory use.",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "health"
+      ]
+    },
+    {
+      "tool_name": "network_router_health",
+      "user_request": "Is the router running low on memory or storage?",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "health"
+      ]
+    },
+    {
+      "tool_name": "network_router_health",
+      "user_request": "Show the OpenWrt router's health.",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "health"
+      ]
+    },
+    {
+      "tool_name": "network_interfaces",
+      "user_request": "List all interfaces on the OpenWrt router.",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "interfaces"
+      ]
+    },
+    {
+      "tool_name": "network_interfaces",
+      "user_request": "Which router interfaces are up and what addresses do they have?",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "interfaces"
+      ]
+    },
+    {
+      "tool_name": "network_interfaces",
+      "user_request": "Show the routes and DNS servers on every router interface.",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "interfaces"
+      ]
+    },
+    {
+      "tool_name": "network_interfaces",
+      "user_request": "Give me an overview of the router's network interfaces.",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "interfaces"
+      ]
+    },
+    {
+      "tool_name": "network_known_hosts",
+      "user_request": "Which hosts does the OpenWrt router know about?",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "clients"
+      ]
+    },
+    {
+      "tool_name": "network_known_hosts",
+      "user_request": "List the devices the router has seen with their MAC addresses.",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "clients"
+      ]
+    },
+    {
+      "tool_name": "network_known_hosts",
+      "user_request": "What IP address does the router have for each known device?",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "clients"
+      ]
+    },
+    {
+      "tool_name": "network_known_hosts",
+      "user_request": "Show the router's host table with names and addresses.",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "clients"
+      ]
     }
   ],
   "eval_cases": [
@@ -655,6 +763,66 @@
       ],
       "allowed_arguments": {},
       "expected_tool": "network_wireless_clients",
+      "expected_arguments": {}
+    },
+    {
+      "name": "router-health-uptime",
+      "user": "What are the uptime and load of our OpenWrt box? Read only.",
+      "allowed_tools": [
+        "network_router_health"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "network_router_health",
+      "expected_arguments": {}
+    },
+    {
+      "name": "router-health-memory",
+      "user": "How much memory is the router using right now?",
+      "allowed_tools": [
+        "network_router_health"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "network_router_health",
+      "expected_arguments": {}
+    },
+    {
+      "name": "interfaces-overview",
+      "user": "Show every logical interface on the router with its addresses.",
+      "allowed_tools": [
+        "network_interfaces"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "network_interfaces",
+      "expected_arguments": {}
+    },
+    {
+      "name": "interfaces-dns",
+      "user": "Which DNS servers and routes does each router interface use?",
+      "allowed_tools": [
+        "network_interfaces"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "network_interfaces",
+      "expected_arguments": {}
+    },
+    {
+      "name": "known-hosts-names",
+      "user": "Which device names and MAC addresses has the router seen?",
+      "allowed_tools": [
+        "network_known_hosts"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "network_known_hosts",
+      "expected_arguments": {}
+    },
+    {
+      "name": "known-hosts-addresses",
+      "user": "List the IPv4 and IPv6 addresses the router knows for each host.",
+      "allowed_tools": [
+        "network_known_hosts"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "network_known_hosts",
       "expected_arguments": {}
     }
   ]

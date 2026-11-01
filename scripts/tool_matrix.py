@@ -148,6 +148,9 @@ def build_cases(run: str, project: str) -> list[tuple[str, str, str, object]]:
         # --- network clients ---
         ("network-dhcp-leases", "network_dhcp_leases", "Show the current DHCP leases on the OpenWrt router.", None),
         ("network-wireless-clients", "network_wireless_clients", "Which wireless clients are connected to the OpenWrt router?", None),
+        ("network-router-health", "network_router_health", "How long has the OpenWrt router been up, and how busy is it?", None),
+        ("network-interfaces", "network_interfaces", "List every interface on the OpenWrt router with its addresses.", None),
+        ("network-known-hosts", "network_known_hosts", "Which hosts does the OpenWrt router know about?", None),
     ]
 
 

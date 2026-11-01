@@ -16,7 +16,10 @@ import httpx
 # Bounds for client listings; a router can know about thousands of hosts.
 MAX_DHCP_LEASES = 200
 MAX_WIRELESS_CLIENTS = 200
+MAX_KNOWN_HOSTS = 200
 WIRELESS_DEVICE_PATTERN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,31}")
+MAC_PATTERN = re.compile(r"[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}")
+MIB = 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -141,6 +144,98 @@ class OpenWrtService:
         if not interfaces:
             result["note"] = "The router reports no wireless interfaces."
         return result
+
+    def router_health(self) -> dict:
+        result = self._read("system", "info", {})
+        raw = result["data"]
+        memory, root = raw.get("memory"), raw.get("root")
+        if (not isinstance(raw.get("uptime"), int) or not _int_list(raw.get("load"), 3)
+                or not isinstance(memory, dict) or not _ints(memory, "total", "available")):
+            raise RuntimeError("OpenWrt system info is missing uptime, load or memory.")
+        data = {
+            "uptime_seconds": raw["uptime"],
+            # ubus reports load averages scaled by 65536.
+            "load_average": [round(value / 65536, 2) for value in raw["load"]],
+            "memory_total_mib": round(memory["total"] / MIB, 1),
+            "memory_available_mib": round(memory["available"] / MIB, 1),
+            "memory_used_percent": _percent(memory["total"] - memory["available"], memory["total"]),
+        }
+        if isinstance(root, dict) and _ints(root, "total", "used"):
+            data["root_filesystem_used_percent"] = _percent(root["used"], root["total"])
+        result["data"] = data
+        return result
+
+    def interfaces(self) -> dict:
+        result = self._read("network.interface", "dump", {})
+        rows = result["data"].get("interface")
+        if not isinstance(rows, list):
+            raise RuntimeError("OpenWrt interface dump has no interface list.")
+        interfaces = [_interface(item) for item in rows if isinstance(item, dict) and isinstance(item.get("interface"), str)]
+        result["data"] = {"interfaces": interfaces, "count": len(interfaces)}
+        return result
+
+    def known_hosts(self) -> dict:
+        result = self._read("luci-rpc", "getHostHints", {})
+        hints = result["data"]
+        if not isinstance(hints, dict):
+            raise RuntimeError("OpenWrt host hints are not a host map.")
+        hosts = [_host(mac, item) for mac, item in hints.items() if MAC_PATTERN.fullmatch(mac) and isinstance(item, dict)]
+        result["data"] = {"hosts": hosts[:MAX_KNOWN_HOSTS], "count": len(hosts), "truncated": len(hosts) > MAX_KNOWN_HOSTS}
+        # Names and addresses the router has seen (neighbour table, leases, static
+        # entries); a host that has not talked to the router is not listed.
+        result["scope"] = "router_neighbour_table_and_leases"
+        return result
+
+
+def _ints(mapping: dict, *keys: str) -> bool:
+    return all(isinstance(mapping.get(key), int) and mapping[key] >= 0 for key in keys)
+
+
+def _int_list(value, length: int) -> bool:
+    return isinstance(value, list) and len(value) == length and all(isinstance(item, int) for item in value)
+
+
+def _percent(part: int, whole: int) -> float | None:
+    return round(100 * part / whole, 1) if whole else None
+
+
+def _strings(value) -> list[str]:
+    return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
+
+
+def _addresses(value) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [f"{item['address']}/{item['mask']}" for item in value
+            if isinstance(item, dict) and isinstance(item.get("address"), str) and isinstance(item.get("mask"), int)]
+
+
+def _route(item: dict) -> str | None:
+    if not isinstance(item.get("target"), str) or not isinstance(item.get("mask"), int):
+        return None
+    target = f"{item['target']}/{item['mask']}"
+    return f"{target} via {item['nexthop']}" if isinstance(item.get("nexthop"), str) else target
+
+
+def _interface(item: dict) -> dict:
+    routes = item.get("route") if isinstance(item.get("route"), list) else []
+    return {
+        "name": item["interface"],
+        "up": item.get("up") is True,
+        "protocol": item.get("proto") if isinstance(item.get("proto"), str) else None,
+        "device": item.get("l3_device") if isinstance(item.get("l3_device"), str) else None,
+        "uptime_seconds": item.get("uptime") if isinstance(item.get("uptime"), int) else None,
+        "ipv4": _addresses(item.get("ipv4-address")),
+        "ipv6": _addresses(item.get("ipv6-address")),
+        "routes": [text for text in (_route(route) for route in routes if isinstance(route, dict)) if text],
+        "dns_servers": _strings(item.get("dns-server")),
+        "dns_search": _strings(item.get("dns-search")),
+    }
+
+
+def _host(mac: str, item: dict) -> dict:
+    return {"mac": mac.lower(), "name": item.get("name") if isinstance(item.get("name"), str) else None,
+            "ipv4": _strings(item.get("ipaddrs")), "ipv6": _strings(item.get("ip6addrs"))}
 
 
 def _lease(item: dict, family: str) -> dict:

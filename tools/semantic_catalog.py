@@ -105,6 +105,9 @@ CAPABILITY_SEMANTICS: dict[str, dict[str, str]] = {
     # --- network clients ---
     "network_dhcp_leases": {"resource_type": "network.dhcp_lease", "operation_kind": "read", "effect": "read", "permission": "network.dhcp_lease.read"},
     "network_wireless_clients": {"resource_type": "network.wireless_client", "operation_kind": "read", "effect": "read", "permission": "network.wireless_client.read"},
+    "network_router_health": {"resource_type": "network.device.health", "operation_kind": "read", "effect": "read", "permission": "network.device.health.read"},
+    "network_interfaces": {"resource_type": "network.interface", "operation_kind": "read", "effect": "read", "permission": "network.interface.list"},
+    "network_known_hosts": {"resource_type": "network.host", "operation_kind": "read", "effect": "read", "permission": "network.host.read"},
 }
 
 

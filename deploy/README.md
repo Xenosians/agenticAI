@@ -20,6 +20,7 @@ agenticaiPersonal/itsm-agent/
     compose.trust.yaml          optional deployment-scoped private CA trust bundle
     *.env.example              deployment and separate private runtime inputs
     validate.py                configuration-only check; never calls compose up
+    janus.py                   one command: build, up (in order, waiting for health), status, stop
     tests/test_deployment.py    rejection, context and rendering checks
     kubernetes/README.md        conditional adoption criteria
 agenticBackend/itsm_backend/
@@ -195,6 +196,52 @@ overlays too. A successful result says
 `configuration_validated`, `images_built: false`, `runtime_started: false` and
 `e2e_verified: false`. It does not establish certificate validity, provider
 connectivity, usable weights or a passing deployment.
+
+### One command
+
+`deploy/janus.py` runs the whole sequence below for you, in order, and stops at
+the first step that fails:
+
+```sh
+python deploy/janus.py build  --env-file /absolute/path/deployment.private.env
+python deploy/janus.py up     --env-file /absolute/path/deployment.private.env [--gpu] [--machine-profile] [--private-ca]
+python deploy/janus.py status --env-file /absolute/path/deployment.private.env
+python deploy/janus.py stop   --env-file /absolute/path/deployment.private.env
+```
+
+`up` validates the configuration, starts the database, runs the schema task
+(every statement is `IF NOT EXISTS`, so running it on every start is safe),
+starts backend and frontend, then the AI, and waits for each health check
+before the next step. It never builds or pulls images. `stop` keeps every data
+directory. Add `--dry-run` to print the steps without running them.
+
+### Reaching it from other machines
+
+The stack does not depend on how users reach it. Choose one; nothing in the
+application changes:
+
+| Situation | What to set | Notes |
+| --- | --- | --- |
+| Only this machine | `PUBLIC_BIND_IP=127.0.0.1` (the default) | Nothing is reachable from the network. |
+| Private mesh VPN (Tailscale, Headscale, WireGuard) | `PUBLIC_BIND_IP` = the host's VPN address, `PUBLIC_HOST` = its VPN DNS name | Install the VPN client on the host, not in a container. Tailscale's free Personal plan needs only an account; there is no API key to configure. `tailscale cert <name>` issues a publicly trusted certificate for the name (renew it within 90 days). Only VPN members can connect. |
+| Company port forward | `PUBLIC_BIND_IP` = the LAN address the router forwards to; `EDGE_TRUSTED_PROXIES` = the router's address if it rewrites the source | Use a DNS name and certificate you control. |
+| Cloud server or load balancer (AWS and similar) | `PUBLIC_BIND_IP=0.0.0.0` or the private address; `EDGE_TRUSTED_PROXIES` = the load balancer's subnet | Restrict the security group to the load balancer, and keep the certificate on nginx (TLS end to end). |
+
+`EDGE_TRUSTED_PROXIES` is a comma-separated list of addresses or ranges that may
+name the real client in `X-Forwarded-For`. Leave it empty when users connect
+directly: then the connecting address is the client, and no request can choose
+its own address for the per-client sign-in limits. A range that trusts every
+address (`/0`) is refused.
+
+**When the network itself cannot be trusted** (for example ISPs that redirect
+DNS or rewrite addresses): every browser and service connection is HTTPS and
+checks the certificate's name, so a redirected DNS answer reaches a server that
+cannot present the right certificate, and the connection fails instead of
+leaking anything. Outbound provider calls do the same; the AI never disables
+verification. A mesh VPN additionally hides which names you look up, because
+its own DNS answers come over the encrypted tunnel. What this cannot fix is an
+ISP blocking a destination outright; that needs a different route (a VPN exit
+or a server outside that network).
 
 When the operator's reviewed inputs are ready, the deliberate deployment sequence
 is below. These commands are documentation, not actions already performed:
