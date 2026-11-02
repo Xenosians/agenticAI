@@ -194,6 +194,7 @@ def test_harness_semantic_stage_does_not_receive_http_object_protocol(runtime, m
     (InferenceStage.NETWORKING, "local"),
     (InferenceStage.SEMANTIC_ROUTING, "http"),
     (InferenceStage.SPECIALIST_REASONING, "http"),
+    (InferenceStage.PRIMARY_RESPONSE, "http"),
 ])
 def test_repair_inherits_explicit_origin_disclosure_policy(runtime, origin, expected_adapter):
     coordinator, manager, metrics, external = runtime
@@ -202,8 +203,9 @@ def test_repair_inherits_explicit_origin_disclosure_policy(runtime, origin, expe
     assert metrics[0].repair_of == origin
     assert metrics[0].adapter == expected_adapter
     messages = external[0][1] if external else manager.calls[0]["messages"]
+    # Only the steps that write the answer receive reference passages.
     assert any("UNTRUSTED REFERENCE" in message["content"] for message in messages) is (
-        origin == InferenceStage.SPECIALIST_REASONING
+        origin == InferenceStage.PRIMARY_RESPONSE
     )
 
 
@@ -498,7 +500,7 @@ def test_warm_uses_same_explicit_stage_policy_and_reports_skipped_remote(runtime
 def test_selected_local_models_use_registered_path_with_stage_retrieval(runtime, backend, expected):
     coordinator, manager, metrics, external = runtime
     execution_profile.set({"backend": backend, "model": "networking-user-model"})
-    assert generate(coordinator, InferenceStage.SPECIALIST_REASONING) == "local result"
+    assert generate(coordinator, InferenceStage.SYNTHESIS) == "local result"
     assert not external
     assert manager.calls[0]["model_key"] == expected
     assert len(manager.calls[0]["messages"]) == 2

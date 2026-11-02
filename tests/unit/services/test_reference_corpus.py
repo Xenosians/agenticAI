@@ -102,6 +102,16 @@ def test_non_ascii_text_is_quoted_as_written(store):
     assert "Café ☕" in content
 
 
+def test_the_step_that_chooses_a_tool_never_sees_reference_passages(store):
+    # Given the answer, a specialist writes it as prose instead of its tool
+    # call, and untrusted text must never steer which tool runs or its arguments.
+    add(store, FREEZE)
+    messages = [{"role": "system", "content": "policy"}, {"role": "user", "content": QUESTION}]
+    with owner_execution("alice", QUESTION):
+        assert with_retrieval(messages, stage=InferenceStage.SPECIALIST_REASONING) is messages
+        assert answer_references() == []
+
+
 def test_the_answer_step_is_told_not_to_fill_gaps_the_passages_leave(store):
     # A passage can share the question's words without stating the fact asked
     # for; the answer must then say the documents do not cover it.

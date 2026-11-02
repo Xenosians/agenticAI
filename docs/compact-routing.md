@@ -79,7 +79,7 @@ Trusted callers supply a stage; a model name does not determine policy.
 | `CONTROL_ROUTING` | Configured local Hub | No | Not applicable |
 | `CANDIDATE_NARROWING` | Local; current selector is deterministic | No | Not applicable |
 | `SEMANTIC_ROUTING` | Selected connection, or local default | No | 5,000 / 768 |
-| `SPECIALIST_REASONING` | Selected connection, or local default | Yes, if selected | 6,000 / 1,024 |
+| `SPECIALIST_REASONING` | Selected connection, or local default | No | 6,000 / 1,024 |
 | `PRIMARY_RESPONSE` | Selected connection, or local default | Yes, if selected | 6,000 / 1,024 |
 | `SYNTHESIS` | Selected connection, or local default | Yes, if selected | 6,000 / 1,024 |
 | `NETWORKING` | Dedicated local profile | No | Not applicable |

@@ -46,16 +46,26 @@ def test_explicit_selected_networking_stage_excludes_retrieval_and_bounds_remote
 @pytest.mark.parametrize(
     "stage",
     [
-        InferenceStage.SPECIALIST_REASONING,
         InferenceStage.PRIMARY_RESPONSE,
         InferenceStage.SYNTHESIS,
     ],
 )
-def test_reasoning_stages_use_selected_adapter_and_bounded_retrieval(stage):
+def test_answer_stages_use_selected_adapter_and_bounded_retrieval(stage):
     policy = resolve_stage_policy(stage)
 
     assert policy.allow_selected is True
     assert policy.allow_retrieval is True
+    assert policy.request_token_ceiling == 6000
+    assert policy.output_token_ceiling == 1024
+
+
+def test_specialist_planning_uses_selected_adapter_but_never_reference_passages():
+    # The step that chooses a tool and its arguments gets no untrusted
+    # reference text; the steps that write the answer do.
+    policy = resolve_stage_policy(InferenceStage.SPECIALIST_REASONING)
+
+    assert policy.allow_selected is True
+    assert policy.allow_retrieval is False
     assert policy.request_token_ceiling == 6000
     assert policy.output_token_ceiling == 1024
 

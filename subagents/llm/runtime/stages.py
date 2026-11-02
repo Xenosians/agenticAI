@@ -39,6 +39,16 @@ _SELECTED_REASONING_POLICY = StagePolicy(
     output_token_ceiling=1024,
 )
 
+# The specialist step chooses a tool and its arguments. Untrusted reference
+# passages stay out of it: they cannot steer the choice, and a model given the
+# answer writes prose instead of its tool call. The answer steps quote them.
+_SPECIALIST_PLANNING_POLICY = StagePolicy(
+    allow_selected=True,
+    allow_retrieval=False,
+    request_token_ceiling=6000,
+    output_token_ceiling=1024,
+)
+
 _STAGE_POLICIES = {
     InferenceStage.CONTROL_ROUTING: _LOCAL_POLICY,
     InferenceStage.CANDIDATE_NARROWING: _LOCAL_POLICY,
@@ -58,7 +68,7 @@ _STAGE_POLICIES = {
         request_token_ceiling=24000,
         output_token_ceiling=768,
     ),
-    InferenceStage.SPECIALIST_REASONING: _SELECTED_REASONING_POLICY,
+    InferenceStage.SPECIALIST_REASONING: _SPECIALIST_PLANNING_POLICY,
     InferenceStage.PRIMARY_RESPONSE: _SELECTED_REASONING_POLICY,
     InferenceStage.SYNTHESIS: _SELECTED_REASONING_POLICY,
     InferenceStage.NETWORKING: _LOCAL_POLICY,

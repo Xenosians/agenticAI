@@ -56,8 +56,9 @@ with HTTP, Pi, OpenCode, installed local profiles, and admitted uploaded models.
 An outbound connection receives the networking request and disclosed capability
 context; private reference datasets remain excluded. Selecting another local
 model does not modify or retrain the dedicated networking model.
-Private reference evidence is available only to specialist reasoning, direct
-answers and synthesis; it is not injected into routing or networking. A repair
+Private reference evidence is available only to direct answers and synthesis;
+it is not injected into routing, networking or the specialist step that chooses
+a tool and its arguments, so untrusted text cannot steer that choice. A repair
 inherits the original stage's connection, retrieval and budget policy.
 
 See [compact routing and verification](compact-routing.md) for the trust
