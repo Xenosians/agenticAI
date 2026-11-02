@@ -27,7 +27,7 @@ def validate_model(model: dict) -> dict:
     require(type(model) is dict, "invalid_compose_model")
     services = model.get("services", {})
     require(type(services) is dict and all(type(service) is dict for service in services.values()), "invalid_compose_model")
-    require(set(services) == {"database", "backend", "frontend", "ai", "schema"}, "service_layout_mismatch")
+    require(set(services) == {"database", "backend", "frontend", "agentic", "schema"}, "service_layout_mismatch")
     for name, service in services.items():
         require(not service.get("privileged") and service.get("network_mode") != "host", "privileged_container_forbidden")
         require(not service.get("cap_add"), "extra_container_capabilities_forbidden")
@@ -74,8 +74,8 @@ def validate_model(model: dict) -> dict:
     require(env.get("AUTH_COOKIE_SECURE") == "true" and env.get("PHX_BIND_IP") == "0.0.0.0", "production_endpoint_policy_mismatch")
     require(env.get("RELEASE_DISTRIBUTION") == "none" and env.get("RELEASE_TMP") == "/tmp/janus-release", "single_host_release_policy_mismatch")
     require(all(env.get(key) == origin for key in ("PHX_PUBLIC_URL", "APP_FRONTEND_URL", "CORS_ALLOWED_ORIGINS")), "public_origin_binding_mismatch")
-    require(env.get("AI_SERVICE_URL") == "http://ai:8000" and env.get("SURREALDB_URL") == "http://database:8000", "internal_service_urls_mismatch")
-    require("ai" not in backend.get("depends_on", {}), "startup_dependency_cycle")
+    require(env.get("AI_SERVICE_URL") == "http://agentic:8000" and env.get("SURREALDB_URL") == "http://database:8000", "internal_service_urls_mismatch")
+    require("agentic" not in backend.get("depends_on", {}), "startup_dependency_cycle")
     # Phoenix may take the client address from X-Forwarded-For only for the private
     # service network, where nginx is; anything broader lets a client choose its address.
     subnets = [entry.get("subnet") for entry in
@@ -86,7 +86,7 @@ def validate_model(model: dict) -> dict:
     except ValueError:
         raise DeploymentError("trusted_proxy_binding_mismatch") from None
 
-    ai = services["ai"]
+    ai = services["agentic"]
     ai_env = ai.get("environment", {})
     require(ai_env.get("PHOENIX_BASE_URL") == f"https://{host}:9443", "private_tls_callback_required")
     volumes = {volume.get("target"): volume for volume in ai.get("volumes", [])}

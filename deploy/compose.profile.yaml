@@ -1,7 +1,7 @@
 # Explicit portable machine selection. Contains no selected provider or secret.
 # The mounted directory carries machine.lua and its reviewed plugins/ subtree.
 services:
-  ai:
+  agentic:
     environment:
       ITSM_LUA_ADAPTER_FILE: /run/janus/profiles/machine.lua
       ITSM_LUA_ADAPTER_SHA256: ${LUA_PROFILE_SHA256:?Set the reviewed machine.lua SHA256}

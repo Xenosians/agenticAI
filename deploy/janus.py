@@ -42,10 +42,10 @@ def plan(action: str, env_file: Path, *, gpu: bool = False, machine_profile: boo
             up + ["120", "database"],
             compose + ["--profile", "bootstrap", "run", "--rm", "--no-deps", "--pull", "never", "schema"],
             up + ["180", "backend", "frontend"],
-            up + ["600", "ai"],
+            up + ["600", "agentic"],
         ]
     if action == "build":
-        return [validate, compose + ["build", "backend", "frontend", "ai"]]
+        return [validate, compose + ["build", "backend", "frontend", "agentic"]]
     if action == "stop":
         return [compose + ["stop", "--timeout", "60"]]
     return [compose + ["ps", "--all", "--format", "json"]]

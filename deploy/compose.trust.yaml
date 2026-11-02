@@ -10,7 +10,7 @@ services:
         target: /run/janus/trust/ca-bundle.pem
         read_only: true
         bind: {create_host_path: false}
-  ai:
+  agentic:
     environment:
       ITSM_HTTP_CA_BUNDLE: /run/janus/trust/ca-bundle.pem
     volumes:

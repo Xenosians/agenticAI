@@ -48,22 +48,22 @@ class ComposeContractTests(unittest.TestCase):
         cls.root = Path(cls.temp.name)
         values = {
             "COMPOSE_PROJECT_NAME": "janus-foundation-fixture",
-            "AI_CONTEXT": str(AI), "BACKEND_CONTEXT": str(BACKEND), "FRONTEND_CONTEXT": str(FRONTEND),
+            "AGENTIC_CONTEXT": str(AI), "BACKEND_CONTEXT": str(BACKEND), "FRONTEND_CONTEXT": str(FRONTEND),
             "PYTHON_RUNTIME_IMAGE": "python:fixture@sha256:" + "1" * 64,
             "ELIXIR_BUILD_IMAGE": "elixir:fixture@sha256:" + "2" * 64,
             "DEBIAN_RUNTIME_IMAGE": "debian:fixture@sha256:" + "3" * 64,
             "NIM_BUILD_IMAGE": "nim:fixture@sha256:" + "4" * 64,
             "NGINX_RUNTIME_IMAGE": "nginx:fixture@sha256:" + "5" * 64,
             "SURREALDB_IMAGE": "surrealdb:fixture@sha256:" + "6" * 64,
-            "AI_IMAGE": "janus-ai:fixture", "BACKEND_IMAGE": "janus-backend:fixture", "FRONTEND_IMAGE": "janus-frontend:fixture",
+            "AGENTIC_IMAGE": "agentic:fixture", "BACKEND_IMAGE": "backend:fixture", "FRONTEND_IMAGE": "frontend:fixture",
             "PUBLIC_HOST": "itsm.example.test", "PUBLIC_ORIGIN": "https://itsm.example.test:8443",
             "PUBLIC_TLS_PORT": "8443", "PUBLIC_BIND_IP": "127.0.0.1",
         }
-        for key in ("AI_ENV_FILE", "BACKEND_ENV_FILE", "DATABASE_ENV_FILE", "TLS_CERT_FILE", "TLS_KEY_FILE"):
+        for key in ("AGENTIC_ENV_FILE", "BACKEND_ENV_FILE", "DATABASE_ENV_FILE", "TLS_CERT_FILE", "TLS_KEY_FILE"):
             path = cls.root / key.lower()
             path.write_text("FOUNDATION_PRIVATE_MARKER=not-a-real-credential\n")
             values[key] = str(path)
-        for key in ("MODELS_ROOT", "AI_STATE_ROOT", "DATABASE_DATA_ROOT", "WORKSPACE_ROOT"):
+        for key in ("MODELS_ROOT", "AGENTIC_STATE_ROOT", "DATABASE_DATA_ROOT", "WORKSPACE_ROOT"):
             path = cls.root / key.lower()
             path.mkdir()
             values[key] = str(path)
@@ -101,13 +101,24 @@ class ComposeContractTests(unittest.TestCase):
 
     def test_render_does_not_resolve_private_runtime_env_files(self):
         self.assertNotIn("FOUNDATION_PRIVATE_MARKER", json.dumps(self.model))
-        self.assertIn("env_file", self.model["services"]["ai"])
+        self.assertIn("env_file", self.model["services"]["agentic"])
+
+    def test_each_application_image_is_named_after_its_service(self):
+        images = {name: service["image"] for name, service in self.model["services"].items() if name != "database"}
+        self.assertEqual(images, {"agentic": "agentic:fixture", "backend": "backend:fixture",
+                                  "frontend": "frontend:fixture", "schema": "backend:fixture"})
+
+    def test_a_deployment_file_with_the_old_ai_names_is_refused(self):
+        old = self.root / "old-names.env"
+        old.write_text(self.env.read_text().replace("AGENTIC_", "AI_"))
+        with self.assertRaisesRegex(validation.DeploymentError, "compose_configuration_rejected"):
+            validation.render_compose(old)
 
     def test_gpu_is_an_explicit_overlay_and_reserves_one_device(self):
-        self.assertNotIn("deploy", self.model["services"]["ai"])
+        self.assertNotIn("deploy", self.model["services"]["agentic"])
         model = validation.render_compose(self.env, gpu=True)
         validation.validate_model(model)
-        devices = model["services"]["ai"]["deploy"]["resources"]["reservations"]["devices"]
+        devices = model["services"]["agentic"]["deploy"]["resources"]["reservations"]["devices"]
         self.assertEqual(devices, [{"driver": "nvidia", "count": 1, "capabilities": ["gpu"]}])
 
     def test_missing_build_image_fails_instead_of_selecting_latest(self):
@@ -119,7 +130,7 @@ class ComposeContractTests(unittest.TestCase):
     def test_machine_profile_overlay_mounts_reviewed_files_separately_from_credentials(self):
         model = validation.render_compose(self.env, machine_profile=True, gpu=True)
         validation.validate_model(model)
-        ai = model["services"]["ai"]
+        ai = model["services"]["agentic"]
         mounts = {item["target"]: item for item in ai["volumes"]}
         self.assertTrue(mounts["/run/janus/profiles"]["read_only"])
         self.assertTrue(mounts["/run/secrets/itsm-links.json"]["read_only"])
@@ -130,26 +141,26 @@ class ComposeContractTests(unittest.TestCase):
         original = validation.render_compose(self.env, machine_profile=True)
         for target in ("/run/janus/profiles", "/run/secrets/itsm-links.json"):
             model = copy.deepcopy(original)
-            next(item for item in model["services"]["ai"]["volumes"] if item["target"] == target)["read_only"] = False
+            next(item for item in model["services"]["agentic"]["volumes"] if item["target"] == target)["read_only"] = False
             with self.assertRaisesRegex(validation.DeploymentError, "lua_profile_mounts_must_be_read_only"):
                 validation.validate_model(model)
         for value in ("", "placeholder", "a" * 63, "A" * 64):
             model = copy.deepcopy(original)
-            model["services"]["ai"]["environment"]["ITSM_LUA_ADAPTER_SHA256"] = value
+            model["services"]["agentic"]["environment"]["ITSM_LUA_ADAPTER_SHA256"] = value
             with self.assertRaisesRegex(validation.DeploymentError, "lua_profile_binding_invalid"):
                 validation.validate_model(model)
         model = copy.deepcopy(original)
-        model["services"]["ai"]["volumes"] = [item for item in model["services"]["ai"]["volumes"] if item["target"] != "/run/secrets/itsm-links.json"]
+        model["services"]["agentic"]["volumes"] = [item for item in model["services"]["agentic"]["volumes"] if item["target"] != "/run/secrets/itsm-links.json"]
         with self.assertRaisesRegex(validation.DeploymentError, "ai_mount_layout_mismatch"):
             validation.validate_model(model)
 
     def test_machine_profile_requires_its_explicit_mounts(self):
-        self.reject(lambda s: s["ai"]["environment"].update(ITSM_LUA_ADAPTER_FILE="/workspace/unreviewed.lua"), "lua_profile_mounts_missing")
+        self.reject(lambda s: s["agentic"]["environment"].update(ITSM_LUA_ADAPTER_FILE="/workspace/unreviewed.lua"), "lua_profile_mounts_missing")
 
     def test_private_ca_overlay_scopes_trust_without_disabling_verification(self):
         model = validation.render_compose(self.env, machine_profile=True, private_ca=True)
         validation.validate_model(model)
-        for name, variable in (("ai", "ITSM_HTTP_CA_BUNDLE"), ("frontend", "CURL_CA_BUNDLE")):
+        for name, variable in (("agentic", "ITSM_HTTP_CA_BUNDLE"), ("frontend", "CURL_CA_BUNDLE")):
             service = model["services"][name]
             target = service["environment"][variable]
             self.assertEqual(target, "/run/janus/trust/ca-bundle.pem")
@@ -157,32 +168,37 @@ class ComposeContractTests(unittest.TestCase):
 
     def test_private_ca_overlay_requires_matching_readonly_trust_mounts(self):
         original = validation.render_compose(self.env, private_ca=True)
-        for name in ("ai", "frontend"):
+        for name in ("agentic", "frontend"):
             model = copy.deepcopy(original)
             next(item for item in model["services"][name]["volumes"] if item["target"] == "/run/janus/trust/ca-bundle.pem")["read_only"] = False
             with self.assertRaisesRegex(validation.DeploymentError, "tls_trust_binding_invalid"):
                 validation.validate_model(model)
         model = copy.deepcopy(original)
-        model["services"]["ai"]["environment"]["ITSM_HTTP_CA_BUNDLE"] = "/other/file.pem"
+        model["services"]["agentic"]["environment"]["ITSM_HTTP_CA_BUNDLE"] = "/other/file.pem"
         with self.assertRaisesRegex(validation.DeploymentError, "tls_trust_binding_invalid"):
             validation.validate_model(model)
-        self.reject(lambda s: s["ai"]["environment"].update(ITSM_HTTP_CA_BUNDLE="/unmounted-ca.pem"), "tls_trust_mounts_missing")
+        self.reject(lambda s: s["agentic"]["environment"].update(ITSM_HTTP_CA_BUNDLE="/unmounted-ca.pem"), "tls_trust_mounts_missing")
 
     def test_internal_ports_privilege_and_docker_socket_are_refused(self):
-        self.reject(lambda s: s["ai"].update(ports=[{"target": 8000, "published": "8000"}]), "internal_port_published")
+        self.reject(lambda s: s["agentic"].update(ports=[{"target": 8000, "published": "8000"}]), "internal_port_published")
         self.reject(lambda s: s["backend"].update(privileged=True), "privileged_container_forbidden")
-        self.reject(lambda s: s["ai"]["volumes"].append({"source": "/var/run/docker.sock", "target": "/var/run/docker.sock"}), "docker_socket_forbidden")
+        self.reject(lambda s: s["agentic"]["volumes"].append({"source": "/var/run/docker.sock", "target": "/var/run/docker.sock"}), "docker_socket_forbidden")
 
     def test_application_containers_cannot_write_their_image(self):
-        for name in ("backend", "frontend", "ai", "schema"):
+        for name in ("backend", "frontend", "agentic", "schema"):
             self.assertTrue(self.model["services"][name]["read_only"], name)
             self.reject(lambda s, name=name: s[name].pop("read_only"), "application_root_filesystem_must_be_read_only")
 
     def test_secure_origin_and_callback_bindings_cannot_drift(self):
         self.reject(lambda s: s["backend"]["environment"].update(AUTH_COOKIE_SECURE="false"), "production_endpoint_policy_mismatch")
         self.reject(lambda s: s["backend"]["environment"].update(CORS_ALLOWED_ORIGINS="https://other.example.test"), "public_origin_binding_mismatch")
-        self.reject(lambda s: s["ai"]["environment"].update(PHOENIX_BASE_URL="http://backend:4000"), "private_tls_callback_required")
+        self.reject(lambda s: s["agentic"]["environment"].update(PHOENIX_BASE_URL="http://backend:4000"), "private_tls_callback_required")
         self.reject(lambda s: s["frontend"]["ports"][0].update(published="443"), "public_origin_port_mismatch")
+
+    def test_backend_reaches_the_agentic_service_by_name_without_waiting_for_it(self):
+        self.assertEqual(self.model["services"]["backend"]["environment"]["AI_SERVICE_URL"], "http://agentic:8000")
+        self.reject(lambda s: s["backend"]["environment"].update(AI_SERVICE_URL="http://ai:8000"), "internal_service_urls_mismatch")
+        self.reject(lambda s: s["backend"]["depends_on"].update(agentic={"condition": "service_started"}), "startup_dependency_cycle")
 
     def test_only_the_service_network_is_a_trusted_proxy(self):
         """Per-client sign-in limits need the real client address. Phoenix trusts
@@ -193,14 +209,14 @@ class ComposeContractTests(unittest.TestCase):
         self.reject(lambda s: s["backend"]["environment"].pop("TRUSTED_PROXIES"), "trusted_proxy_binding_mismatch")
 
     def test_state_singleton_and_offline_weights_are_required(self):
-        self.reject(lambda s: s["ai"]["environment"].update(APPROVAL_STORE_PATH="/tmp/approvals.sqlite3"), "durable_ai_state_not_persisted")
-        self.reject(lambda s: s["ai"]["environment"].update(APPROVAL_STORE_PATH="/state/../tmp/approvals.sqlite3"), "durable_ai_state_not_persisted")
-        self.reject(lambda s: s["ai"].update(deploy={"replicas": 2}), "single_ai_process_storage_required")
-        self.reject(lambda s: s["ai"]["environment"].update(HF_HUB_OFFLINE="0"), "unrequested_model_downloads_forbidden")
+        self.reject(lambda s: s["agentic"]["environment"].update(APPROVAL_STORE_PATH="/tmp/approvals.sqlite3"), "durable_ai_state_not_persisted")
+        self.reject(lambda s: s["agentic"]["environment"].update(APPROVAL_STORE_PATH="/state/../tmp/approvals.sqlite3"), "durable_ai_state_not_persisted")
+        self.reject(lambda s: s["agentic"].update(deploy={"replicas": 2}), "single_ai_process_storage_required")
+        self.reject(lambda s: s["agentic"]["environment"].update(HF_HUB_OFFLINE="0"), "unrequested_model_downloads_forbidden")
 
     def test_continual_state_uses_the_persistent_mount_without_starting_learning(self):
-        env = self.model["services"]["ai"]["environment"]
-        self.reject(lambda s: s["ai"]["environment"].pop("CONTINUAL_STATE_DB"), "durable_ai_state_not_persisted")
+        env = self.model["services"]["agentic"]["environment"]
+        self.reject(lambda s: s["agentic"]["environment"].pop("CONTINUAL_STATE_DB"), "durable_ai_state_not_persisted")
         dockerfile = (AI / "Dockerfile").read_text()
         for key in ("CONTINUAL_STATE_DB", "LEARNING_TRAJECTORY_PATH", "LEARNING_CORRECTION_PATH", "LEARNING_CONTEXT_PATH", "LEARNING_RUN_ROOT", "MAILBOX_PROVISIONING_LOCK_PATH"):
             self.assertIn(f"{key}={env[key]}", dockerfile)
@@ -237,6 +253,32 @@ assert {'events', 'cycles', 'kv'} <= tables
     def test_schema_bootstrap_is_not_an_automatic_service_dependency(self):
         self.reject(lambda s: s["schema"].update(profiles=[]), "schema_bootstrap_must_be_explicit")
         self.reject(lambda s: s["backend"]["depends_on"].update(schema={"condition": "service_completed_successfully"}), "automatic_schema_bootstrap_forbidden")
+
+
+class DeploymentExampleTests(unittest.TestCase):
+    """The operator's template and the Compose files name the same settings."""
+
+    def settings(self):
+        lines = (DEPLOY / ".env.example").read_text().splitlines()
+        return dict(line.split("=", 1) for line in lines if line and not line.startswith("#"))
+
+    def test_example_names_each_application_image_after_its_service(self):
+        images = {key: value for key, value in self.settings().items() if key.endswith("_IMAGE") and value}
+        self.assertEqual(images, {"AGENTIC_IMAGE": "agentic:local", "BACKEND_IMAGE": "backend:local",
+                                  "FRONTEND_IMAGE": "frontend:local"})
+
+    def test_example_and_compose_files_name_the_same_settings(self):
+        compose = "".join(path.read_text() for path in sorted(DEPLOY.glob("compose*.yaml")))
+        example = set(self.settings())
+        self.assertLessEqual(example, set(re.findall(r"\$\{([A-Z][A-Z0-9_]*)", compose)))
+        self.assertLessEqual(set(re.findall(r"\$\{([A-Z][A-Z0-9_]*):\?", compose)), example)
+
+    def test_each_private_env_file_has_a_companion_example(self):
+        files = {key: value for key, value in self.settings().items() if key.endswith("_ENV_FILE")}
+        self.assertEqual(set(files), {"AGENTIC_ENV_FILE", "BACKEND_ENV_FILE", "DATABASE_ENV_FILE"})
+        for key, value in files.items():
+            with self.subTest(key=key):
+                self.assertTrue((DEPLOY / (Path(value).name + ".example")).is_file(), value)
 
 
 class EntrypointTests(unittest.TestCase):
@@ -443,7 +485,7 @@ class StackCommandTests(unittest.TestCase):
         self.assertIn("--profile bootstrap run --rm", compose[1])
         self.assertTrue(compose[1].endswith(" schema"))
         self.assertTrue(compose[2].endswith("--wait --wait-timeout 180 backend frontend"))
-        self.assertTrue(compose[3].endswith("--wait --wait-timeout 600 ai"))
+        self.assertTrue(compose[3].endswith("--wait --wait-timeout 600 agentic"))
         for step in compose:
             self.assertIn("--pull never", step)
         for step in (compose[0], compose[2], compose[3]):
@@ -467,7 +509,7 @@ class StackCommandTests(unittest.TestCase):
     def test_build_validates_then_builds_the_three_application_images(self):
         validate, build = self.plan("build")
         self.assertIn("deploy/validate.py", validate)
-        self.assertTrue(build.endswith(" build backend frontend ai"))
+        self.assertTrue(build.endswith(" build backend frontend agentic"))
 
     def test_unknown_action_and_missing_env_file_are_refused(self):
         with self.assertRaises(ValueError):
@@ -488,7 +530,7 @@ class StackCommandTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         lines = result.stdout.strip().splitlines()
         self.assertEqual(len(lines), 5)
-        self.assertTrue(lines[-1].endswith("ai"))
+        self.assertTrue(lines[-1].endswith(" agentic"))
 
 
 class DockerContextTests(unittest.TestCase):

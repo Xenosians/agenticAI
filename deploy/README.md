@@ -14,7 +14,7 @@ agenticaiPersonal/itsm-agent/
   docker/healthcheck.py          validates the actual /ready response
   requirements-container.txt    API additions to existing dependencies
   deploy/
-    compose.yaml                database, backend, frontend, AI and explicit schema task
+    compose.yaml                database, backend, frontend, agentic (AI) and explicit schema task
     compose.gpu.yaml            optional existing-GPU-runtime reservation
     compose.profile.yaml        read-only machine profile and host secret references
     compose.trust.yaml          optional deployment-scoped private CA trust bundle
@@ -57,7 +57,7 @@ styles and connections only; no framing, plugins or form posts) with HSTS,
 ## Inputs to prepare
 
 1. Place the sibling checkouts at their documented workspace paths, or override
-   `AI_CONTEXT`, `BACKEND_CONTEXT` and `FRONTEND_CONTEXT` explicitly.
+   `AGENTIC_CONTEXT`, `BACKEND_CONTEXT` and `FRONTEND_CONTEXT` explicitly.
 2. Copy `.env.example` to an ignored private deployment file. Fill the image
    references with reviewed versions/digests for the target architecture. No
    floating registry default is selected by these files. The image contracts are:
@@ -69,7 +69,11 @@ styles and connections only; no framing, plugins or form posts) with HSTS,
    Application/transitive dependency locking and actual image-build acceptance
    remain required before a release. API dependency pins match the inspected
    runtime; `requirements-container.txt` is not a complete lock.
-3. Populate separate private `ai.env`, `backend.env` and `database.env` files from
+   Each application image is named after its Compose service: `agentic` (this
+   AI repository), `backend` and `frontend`, set by `AGENTIC_IMAGE`,
+   `BACKEND_IMAGE` and `FRONTEND_IMAGE` (the example tags them `:local`).
+   `SURREALDB_IMAGE` stays an upstream SurrealDB image.
+3. Populate separate private `agentic.env`, `backend.env` and `database.env` files from
    their examples. Never copy a host `.env` blindly. Container provider hosts,
    paths, timeouts, logical model keys, endpoint allowlists and tool policies must
    be reviewed for that deployment. Internal service tokens must agree. Database
@@ -211,7 +215,7 @@ python deploy/janus.py stop   --env-file /absolute/path/deployment.private.env
 
 `up` validates the configuration, starts the database, runs the schema task
 (every statement is `IF NOT EXISTS`, so running it on every start is safe),
-starts backend and frontend, then the AI, and waits for each health check
+starts backend and frontend, then the AI (`agentic`), and waits for each health check
 before the next step. It never builds or pulls images. `stop` keeps every data
 directory. Add `--dry-run` to print the steps without running them.
 
@@ -250,7 +254,7 @@ is below. These commands are documentation, not actions already performed:
 docker compose --env-file /absolute/path/deployment.private.env -f deploy/compose.yaml build
 docker compose --env-file /absolute/path/deployment.private.env -f deploy/compose.yaml up -d database
 docker compose --env-file /absolute/path/deployment.private.env -f deploy/compose.yaml --profile bootstrap run --rm schema
-docker compose --env-file /absolute/path/deployment.private.env -f deploy/compose.yaml up -d backend frontend ai
+docker compose --env-file /absolute/path/deployment.private.env -f deploy/compose.yaml up -d backend frontend agentic
 ```
 
 For a reviewed GPU deployment, add `-f deploy/compose.gpu.yaml` to each relevant

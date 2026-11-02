@@ -21,7 +21,7 @@ x-backend-env: &backend-env
   # Only nginx, on the private service network, may name the client for
   # per-client sign-in limits; it must equal the network's subnet below.
   TRUSTED_PROXIES: ${SERVICE_SUBNET:-172.29.0.0/24}
-  AI_SERVICE_URL: http://ai:8000
+  AI_SERVICE_URL: http://agentic:8000
   SURREALDB_URL: http://database:8000
 
 services:
@@ -105,14 +105,14 @@ services:
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
 
-  ai:
-    image: ${AI_IMAGE:?Set the application AI image tag}
+  agentic:
+    image: ${AGENTIC_IMAGE:?Set the application agentic image tag}
     build:
-      context: ${AI_CONTEXT:-..}
+      context: ${AGENTIC_CONTEXT:-..}
       args:
         PYTHON_RUNTIME_IMAGE: ${PYTHON_RUNTIME_IMAGE:?Set the reviewed Python runtime image}
     env_file:
-      - path: ${AI_ENV_FILE:?Set a private AI runtime env file}
+      - path: ${AGENTIC_ENV_FILE:?Set a private agentic runtime env file}
         required: true
     environment:
       # HTTPS is retained on internal Phoenix requests; this port is not public.
@@ -145,7 +145,7 @@ services:
         read_only: true
         bind: {create_host_path: false}
       - type: bind
-        source: ${AI_STATE_ROOT:?Set a dedicated writable AI state directory}
+        source: ${AGENTIC_STATE_ROOT:?Set a dedicated writable agentic state directory}
         target: /state
         bind: {create_host_path: false}
       - type: bind
