@@ -37,6 +37,9 @@ MAX_INPUT_BYTES = 4_000_000
 MAX_BINDING_BYTES = 16_000
 # Workers kept started and waiting; a burst beyond this starts workers on demand.
 SPARE_WORKERS = 2
+# Workers serving events at once. A burst beyond this waits, within each event's
+# own wall-time limit, for a worker to finish; it never starts more processes.
+ACTIVE_WORKERS = 8
 REQUIRED_ISOLATION = frozenset({"process", "no_new_privileges", "resource_limits", "no_new_descriptors"})
 SECRET_FIELDS = frozenset({"api_key", "apikey", "authorization", "proxy_authorization", "password",
                            "password_hash", "access_token", "refresh_token", "client_secret",
@@ -49,6 +52,7 @@ ERROR_MESSAGES = {
     "lua_adapter_invalid_source": "The Lua adapter script must be bounded plain text.",
     "lua_adapter_configuration_invalid": "The Lua adapter configuration is invalid or its script identity changed.",
     "lua_adapter_unavailable": "The Lua adapter is unavailable on this host.",
+    "lua_adapter_busy": "Every Lua adapter worker stayed busy for this event's whole time limit.",
     "lua_adapter_worker_terminated": "The Lua adapter worker terminated without a receipt.",
     "lua_adapter_time_limit": "The Lua adapter exceeded its time limit.",
     "lua_adapter_memory_limit": "The Lua adapter exceeded its memory limit.",
@@ -99,6 +103,10 @@ class AdapterResult:
     receipt: dict
 
 
+class WorkersBusy(Exception):
+    """No worker became free within the event's wall-time limit."""
+
+
 class WorkerPool:
     """Lua worker processes started ahead of time; each serves exactly one event.
 
@@ -106,10 +114,15 @@ class WorkerPool:
     It locks itself down after reading the request, exactly like a worker started
     on demand, so while it waits it holds no request data and no authority.
     Taking a worker starts its replacement; an empty pool starts one on demand.
+    At most ``active`` workers serve events at once.
     """
 
-    def __init__(self, spares: int = SPARE_WORKERS):
+    def __init__(self, spares: int = SPARE_WORKERS, active: int = ACTIVE_WORKERS):
+        if type(active) is not int or active < 1:
+            raise ValueError("The Lua worker pool needs at least one active worker")
         self._size = spares
+        self._active_limit = active
+        self._active = threading.BoundedSemaphore(active)
         self._waiting: deque[subprocess.Popen] = deque()
         self._lock = threading.Lock()
         self._closed = False
@@ -139,14 +152,23 @@ class WorkerPool:
             return worker
 
     def exchange(self, request: bytes, timeout: float) -> subprocess.CompletedProcess:
-        """Send one request to its own worker and collect the answer, like ``subprocess.run``."""
-        with self._take() as worker:
-            try:
-                stdout, stderr = worker.communicate(request, timeout=timeout)
-            except BaseException:
-                worker.kill()  # A timed-out or interrupted worker never answers later.
-                raise
-            return subprocess.CompletedProcess(worker.args, worker.returncode, stdout, stderr)
+        """Send one request to its own worker and collect the answer, like ``subprocess.run``.
+
+        Waiting for a free worker counts against the same ``timeout``.
+        """
+        deadline = time.monotonic() + timeout
+        if not self._active.acquire(timeout=timeout):
+            raise WorkersBusy()
+        try:
+            with self._take() as worker:
+                try:
+                    stdout, stderr = worker.communicate(request, timeout=max(0.0, deadline - time.monotonic()))
+                except BaseException:
+                    worker.kill()  # A timed-out or interrupted worker never answers later.
+                    raise
+                return subprocess.CompletedProcess(worker.args, worker.returncode, stdout, stderr)
+        finally:
+            self._active.release()
 
     def close(self) -> None:
         with self._lock:
@@ -167,6 +189,8 @@ class WorkerPool:
                     except OSError:
                         pass
         self._waiting, self._lock = deque(), threading.Lock()
+        # Slots held by the parent's threads are never returned in the child.
+        self._active = threading.BoundedSemaphore(self._active_limit)
 
 
 WORKERS = WorkerPool()
@@ -267,6 +291,8 @@ def run_adapter(*, kind: str, phase: str, payload: Any, binding: dict,
         request["require_mapping"] = True
     try:
         completed = WORKERS.exchange(_canonical(request), timeout=limits.wall_seconds)
+    except WorkersBusy:
+        raise LuaAdapterError("lua_adapter_busy") from None
     except subprocess.TimeoutExpired:
         raise LuaAdapterError("lua_adapter_time_limit") from None
     except OSError:

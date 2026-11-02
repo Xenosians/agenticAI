@@ -274,6 +274,94 @@ def test_a_timed_out_worker_is_stopped_and_reported_as_a_time_limit():
             limits=AdapterLimits(wall_seconds=0.000001))
 
 
+class HeldWorker:
+    """Stands in for a worker process whose answer waits until the test releases it."""
+
+    def __init__(self, active, peak, release):
+        self.active, self.peak, self.release = active, peak, release
+        self.args, self.returncode = ["lua-worker"], 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def communicate(self, request, timeout=None):
+        with self.active["lock"]:
+            self.active["now"] += 1
+            self.peak.append(self.active["now"])
+        self.release.wait(5)
+        with self.active["lock"]:
+            self.active["now"] -= 1
+        return b"{}", b""
+
+    def kill(self):
+        pass
+
+
+def test_a_burst_never_runs_more_workers_at_once_than_the_pool_allows():
+    import threading
+
+    pool = adapter_runtime.WorkerPool(spares=0, active=2)
+    active, peak, release = {"now": 0, "lock": threading.Lock()}, [], threading.Event()
+    pool._take = lambda: HeldWorker(active, peak, release)
+    threads = [threading.Thread(target=pool.exchange, args=(b"{}", 5)) for _ in range(5)]
+    for thread in threads:
+        thread.start()
+    for _ in range(100):
+        if len(peak) >= 2:
+            break
+        threading.Event().wait(0.01)
+    threading.Event().wait(0.1)  # time for a third worker to start if the cap failed
+    assert max(peak) == 2
+    release.set()
+    for thread in threads:
+        thread.join(5)
+    # Every event of the burst was still served once a worker was free.
+    assert len(peak) == 5 and max(peak) == 2
+
+
+def test_an_event_that_finds_no_free_worker_in_its_time_is_busy_without_starting_one():
+    import threading
+
+    pool = adapter_runtime.WorkerPool(spares=0, active=1)
+    active, peak, release = {"now": 0, "lock": threading.Lock()}, [], threading.Event()
+    started = []
+    pool._take = lambda: started.append(1) or HeldWorker(active, peak, release)
+    holder = threading.Thread(target=pool.exchange, args=(b"{}", 5))
+    holder.start()
+    for _ in range(100):
+        if peak:
+            break
+        threading.Event().wait(0.01)
+    try:
+        with pytest.raises(adapter_runtime.WorkersBusy):
+            pool.exchange(b"{}", timeout=0.05)
+        assert len(started) == 1
+    finally:
+        release.set()
+        holder.join(5)
+
+
+def test_a_busy_pool_is_reported_as_its_own_adapter_code(monkeypatch):
+    def busy(*args, **kwargs):
+        raise adapter_runtime.WorkersBusy()
+
+    monkeypatch.setattr(adapter_runtime.WORKERS, "exchange", busy)
+    refused("lua_adapter_busy")
+
+
+def test_a_forked_child_starts_with_every_worker_slot_free():
+    # Threads that held slots in the parent do not exist in the child, so their
+    # slots would never be returned there.
+    pool = adapter_runtime.WorkerPool(spares=0, active=2)
+    assert pool._active.acquire(timeout=0) and pool._active.acquire(timeout=0)
+    pool._forget_after_fork()
+    assert pool._active.acquire(timeout=0) and pool._active.acquire(timeout=0)
+    assert not pool._active.acquire(timeout=0)
+
+
 def test_imports_do_not_start_workers_network_or_runtime_storage(tmp_path):
     root = str(adapter_runtime.WORKER.parents[2])
     code = """import asyncio, ssl, socket, subprocess, sys

@@ -132,7 +132,9 @@ Default limits are 2 million Lua instructions, 32 MiB of Lua heap, 2 CPU seconds
 2,000,000-byte dataset with its metadata fits). Bindings are
 limited to 16 KB, scripts to 20 KB and JSON nesting to 16 levels. The host may
 choose stricter limits; the runtime rejects limits above the established hard
-ceilings.
+ceilings. At most 8 workers serve events at once (`ACTIVE_WORKERS`): a burst
+waits for a free worker within each event's own wall-time limit and is refused
+with `lua_adapter_busy` if none frees in time; it never starts more processes.
 
 ## Authority, secrets and uncertain effects
 

@@ -227,8 +227,21 @@ def validate_model_bundle(root: Path):
                         raise ValueError("Configuration file references must stay inside the bundle")
 
 
+# Every action _command handles. An unknown one is refused before a Lua worker
+# or the store sees its payload.
+ACTIONS = frozenset({
+    "list", "model", "model_options", "models", "select", "assign_role", "delete", "probe",
+    "dataset", "dataset_transform", "dataset_url", "dataset_crawl", "export_dataset",
+    "crawl_site_add", "crawl_site_remove", "search", "resolve", "workflow_validate",
+    "upload_begin", "upload_chunk", "upload_finish",
+    "skill_list", "skill_save", "skill_restore", "skill_enable", "skill_delete",
+})
+
+
 async def command(owner: str, action: str, payload: dict, settings) -> dict:
     from services.lua_adapters.host_boundaries import inspect_data_async
+    if action not in ACTIONS:
+        raise ValueError("Unknown extension action")
     # Reject an oversized binary envelope before Lua inspects it; accepted
     # document bytes still cross the configured Lua admission boundary before parsing.
     if action == "dataset" and "base64" in payload:
