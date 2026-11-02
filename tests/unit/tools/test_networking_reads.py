@@ -11,6 +11,58 @@ TAILNET_READS = ("network_tailnet_devices", "network_tailnet_dns")
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def test_the_dns_integrity_check_is_a_read_on_its_own_provider():
+    tool = TOOLS["network_dns_integrity_check"]
+    assert tool["effect"] == "read" and tool["risk"] == "read" and tool["requires_approval"] is False
+    assert set(tool["parameters"]) == {"names"} and tool["grounded_arguments"] == ["names"]
+    assert provider_for_capability("network_dns_integrity_check") == "dns_check"
+    definition = (ROOT / "subagents/agents/networking-specialist.md").read_text(encoding="utf-8")
+    assert "  - network_dns_integrity_check\n" in definition
+
+
+def test_dns_integrity_reads_in_words():
+    text = TOOLS["network_dns_integrity_check"]["result_formatter"]({"ok": True, "data": {
+        "resolver": "1.1.1.1", "names_checked": 4, "rewritten": ["vimeo.com"], "system_follows_rewrite": [],
+        "system_resolver_protected": True, "names": [
+            {"name": "example.com", "plain": ["104.20.23.154"], "system": ["104.20.23.154"],
+             "encrypted": ["104.20.23.154"], "verdict": "consistent", "system_resolver": "matches_encrypted",
+             "errors": []},
+            {"name": "github.com", "plain": ["20.205.243.166"], "system": ["140.82.121.3"],
+             "encrypted": ["20.205.243.166"], "verdict": "consistent", "system_resolver": "different_answer",
+             "errors": []},
+            {"name": "vimeo.com", "plain": ["36.86.63.185"], "system": ["162.159.128.61"],
+             "encrypted": ["162.159.128.61"], "verdict": "plain_dns_rewritten", "system_resolver": "matches_encrypted",
+             "errors": []},
+            {"name": "example.org", "plain": None, "system": ["96.7.128.198"], "encrypted": ["96.7.128.198"],
+             "verdict": "unknown", "system_resolver": "matches_encrypted", "errors": ["plain DNS: no answer in time"]}]}})
+    assert text.splitlines() == [
+        "DNS check of 4 name(s) through 1.1.1.1: plain DNS answers were rewritten for 1 (vimeo.com). "
+        "This host's own resolver gave the true answers, so the services here are not affected.",
+        "example.com: consistent (104.20.23.154)",
+        "github.com: consistent (20.205.243.166); this host's resolver gives 140.82.121.3 "
+        "(another resolver's view, as for geo-routed names)",
+        "vimeo.com: plain DNS rewritten to 36.86.63.185; DNS-over-HTTPS gives 162.159.128.61; "
+        "this host's resolver gives 162.159.128.61",
+        "example.org: could not be checked (plain DNS: no answer in time)",
+    ]
+    clean = TOOLS["network_dns_integrity_check"]["result_formatter"]({"ok": True, "data": {
+        "resolver": "1.1.1.1", "names_checked": 1, "rewritten": [], "system_follows_rewrite": [],
+        "system_resolver_protected": None, "names": [
+            {"name": "example.com", "plain": ["104.20.23.154"], "system": ["104.20.23.154"],
+             "encrypted": ["104.20.23.154"], "verdict": "consistent", "system_resolver": "matches_encrypted",
+             "errors": []}]}})
+    assert clean.splitlines()[0] == "DNS check of 1 name(s) through 1.1.1.1: no rewritten answers."
+    exposed = TOOLS["network_dns_integrity_check"]["result_formatter"]({"ok": True, "data": {
+        "resolver": "1.1.1.1", "names_checked": 1, "rewritten": ["vimeo.com"], "system_follows_rewrite": ["vimeo.com"],
+        "system_resolver_protected": False, "names": [
+            {"name": "vimeo.com", "plain": [], "system": [], "encrypted": ["162.159.128.61"],
+             "verdict": "plain_dns_rewritten", "system_resolver": "follows_rewrite", "errors": []}]}})
+    lines = exposed.splitlines()
+    assert "This host's own resolver also returned rewritten answers" in lines[0]
+    assert lines[1] == ("vimeo.com: plain DNS rewritten to no address (name not found); DNS-over-HTTPS gives "
+                        "162.159.128.61; this host's resolver gives no address (name not found)")
+
+
 @pytest.mark.parametrize("name", NEW_READS + TAILNET_READS)
 def test_each_new_read_is_a_registered_read_without_approval(name):
     tool = TOOLS[name]

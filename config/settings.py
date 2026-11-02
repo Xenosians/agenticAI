@@ -678,6 +678,43 @@ class Settings(
     tailscale_client_secret: str | None = None
     tailscale_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
 
+    # DNS integrity check: a public resolver asked by plain DNS, the same
+    # provider's DNS-over-HTTPS address, and the names checked when the user
+    # names none.
+    dns_check_resolver: str = "1.1.1.1"
+    dns_check_doh_url: str = "https://cloudflare-dns.com/dns-query"
+    dns_check_names: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["example.com", "wikipedia.org", "github.com"])
+    dns_check_timeout_seconds: float = Field(default=3.0, gt=0, le=15)
+
+    @field_validator("dns_check_resolver")
+    @classmethod
+    def parse_dns_check_resolver(cls, value: str) -> str:
+        import ipaddress
+        try:
+            return str(ipaddress.ip_address(value.strip()))
+        except ValueError:
+            raise ValueError("DNS_CHECK_RESOLVER must be an IP address, e.g. 1.1.1.1.") from None
+
+    @field_validator("dns_check_doh_url")
+    @classmethod
+    def parse_dns_check_doh_url(cls, value: str) -> str:
+        from urllib.parse import urlsplit
+        parts = urlsplit(value.strip())
+        if parts.scheme != "https" or not parts.hostname or parts.username or parts.password:
+            raise ValueError("DNS_CHECK_DOH_URL must be an https:// address without credentials.")
+        return value.strip()
+
+    @field_validator("dns_check_names", mode="before")
+    @classmethod
+    def parse_dns_check_names(cls, value) -> list[str]:
+        from services.dns_integrity import MAX_NAMES, normalized_name
+        items = value.split(",") if isinstance(value, str) else list(value or [])
+        names = list(dict.fromkeys(normalized_name(item) for item in items if str(item).strip()))
+        if not names or len(names) > MAX_NAMES:
+            raise ValueError(f"DNS_CHECK_NAMES must list 1 to {MAX_NAMES} host names separated by commas.")
+        return names
+
     # ============================================================
     # PLATFORM OPERATIONS (runtime containers, service health)
     # ============================================================

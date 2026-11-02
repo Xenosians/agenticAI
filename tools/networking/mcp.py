@@ -1,5 +1,6 @@
 from typing import Any
 from pydantic import BaseModel
+from services.dns_integrity import DnsIntegrityService
 from services.openwrt import OpenWrtService
 from services.tailnet import TailnetService
 
@@ -14,7 +15,8 @@ class NetworkReadResult(BaseModel):
     note: str | None = None
 
 
-def register_networking_tools(server, service: OpenWrtService | None, tailnet: TailnetService | None = None):
+def register_networking_tools(server, service: OpenWrtService | None, tailnet: TailnetService | None = None,
+                              dns_check: DnsIntegrityService | None = None):
     def require_service():
         if service is None:
             raise RuntimeError("OpenWrt integration is not configured.")
@@ -68,3 +70,9 @@ def register_networking_tools(server, service: OpenWrtService | None, tailnet: T
     @server.tool()
     def network_tailnet_dns() -> NetworkReadResult:
         return NetworkReadResult(**require_tailnet().dns_settings())
+
+    @server.tool()
+    def network_dns_integrity_check(names: list[str] | None = None) -> NetworkReadResult:
+        if dns_check is None:
+            raise RuntimeError("The DNS integrity check is not configured.")
+        return NetworkReadResult(**dns_check.check(names))

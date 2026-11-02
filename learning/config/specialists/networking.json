@@ -699,6 +699,42 @@
         "authored-networking",
         "tailnet"
       ]
+    },
+    {
+      "tool_name": "network_dns_integrity_check",
+      "user_request": "Is our ISP tampering with DNS?",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "dns-integrity"
+      ]
+    },
+    {
+      "tool_name": "network_dns_integrity_check",
+      "user_request": "vimeo.com opens a block page here. Check whether its DNS answer is being rewritten.",
+      "arguments": {
+        "names": [
+          "vimeo.com"
+        ]
+      },
+      "tags": [
+        "authored-networking",
+        "dns-integrity"
+      ]
+    },
+    {
+      "tool_name": "network_dns_integrity_check",
+      "user_request": "Compare plain DNS and DNS-over-HTTPS answers for reddit.com and wikipedia.org.",
+      "arguments": {
+        "names": [
+          "reddit.com",
+          "wikipedia.org"
+        ]
+      },
+      "tags": [
+        "authored-networking",
+        "dns-integrity"
+      ]
     }
   ],
   "eval_cases": [
@@ -945,6 +981,24 @@
       "allowed_arguments": {},
       "expected_tool": "network_tailnet_dns",
       "expected_arguments": {}
+    },
+    {
+      "name": "dns-hijack-named-site",
+      "user": "Is github.com resolving to the wrong address because of DNS hijacking?",
+      "allowed_tools": [
+        "network_dns_integrity_check"
+      ],
+      "allowed_arguments": {
+        "names": [
+          "github.com"
+        ]
+      },
+      "expected_tool": "network_dns_integrity_check",
+      "expected_arguments": {
+        "names": [
+          "github.com"
+        ]
+      }
     }
   ]
 }

@@ -43,3 +43,24 @@ upgrades to DNS-over-HTTPS automatically (Cloudflare, Google, Quad9). That is
 what keeps a network that rewrites plain DNS answers from redirecting tailnet
 devices. Reaching the lab router over the tailnet is described in
 `projectOps/openwrt-lab/README.md`.
+
+## DNS integrity check
+
+`network_dns_integrity_check` checks, from the AI host, whether DNS answers are
+being rewritten on the way: some networks intercept plain DNS on port 53 and
+answer with their own addresses (block pages, redirection). For each name it
+asks three ways and compares the IPv4 answers:
+
+| Path | Can a network rewrite it? |
+|---|---|
+| Plain DNS over UDP to `DNS_CHECK_RESOLVER` (default `1.1.1.1`) | Yes |
+| The host's own resolver (what the services here use) | Depends on its setup |
+| DNS-over-HTTPS to `DNS_CHECK_DOH_URL` (default Cloudflare) | No, without breaking the certificate |
+
+A plain answer that shares no address with the encrypted one is reported as
+rewritten; overlapping answers are consistent, because CDNs rotate addresses.
+The result also says whether the host's own resolver is protected (it gave the
+true answers while plain DNS was rewritten). A path that fails is reported as
+not checked, never as tampering. With no names given it checks
+`DNS_CHECK_NAMES` (default `example.com,wikipedia.org,github.com`); at most 10
+names per check. Each path crosses the Lua connection adapter first.

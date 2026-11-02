@@ -209,6 +209,60 @@ TAILNET_TOOLS = {
         "remote devices are protected from DNS tampering. Read only.",
         "network.tailnet.dns", "network.tailnet.dns.read", format_tailnet_dns),
 }
-# The networking specialist's reads; readiness keeps OpenWrt and Tailscale as separate providers.
+
+
+def _addresses(values: list[str] | None) -> str:
+    return ", ".join(values) if values else "no address (name not found)"
+
+
+def format_dns_integrity(result: dict) -> str:
+    if not result.get("ok"):
+        return "DNS check did not succeed."
+    data = result["data"]
+    rewritten = data["rewritten"]
+    head = f"DNS check of {data['names_checked']} name(s) through {data['resolver']}: "
+    if not rewritten:
+        head += "no rewritten answers."
+    else:
+        head += f"plain DNS answers were rewritten for {len(rewritten)} ({', '.join(rewritten)})."
+        if data["system_resolver_protected"]:
+            head += " This host's own resolver gave the true answers, so the services here are not affected."
+        elif data["system_follows_rewrite"]:
+            head += (" This host's own resolver also returned rewritten answers; switch it to encrypted DNS "
+                     "(DNS-over-HTTPS) or a tailnet resolver.")
+    lines = [head]
+    for row in data["names"]:
+        verdict = row["verdict"]
+        if verdict == "consistent":
+            line = f"{row['name']}: consistent ({_addresses(row['encrypted'])})"
+            if row["system_resolver"] == "different_answer":
+                line += (f"; this host's resolver gives {_addresses(row['system'])} "
+                         "(another resolver's view, as for geo-routed names)")
+            lines.append(line)
+        elif verdict == "unknown":
+            lines.append(f"{row['name']}: could not be checked ({'; '.join(row['errors']) or 'no answer'})")
+        else:
+            lines.append(f"{row['name']}: plain DNS rewritten to {_addresses(row['plain'])}; DNS-over-HTTPS gives "
+                         f"{_addresses(row['encrypted'])}; this host's resolver gives {_addresses(row['system'])}")
+    return "\n".join(lines)
+
+
+# Checks how names resolve from the AI host itself; independent of the router and the tailnet.
+DNS_CHECK_TOOLS = {
+    "network_dns_integrity_check": {
+        **_read(
+            "Check whether DNS answers are being rewritten (ISP DNS hijacking or interception): ask each name by "
+            "plain DNS, by this host's own resolver and by encrypted DNS-over-HTTPS, and compare the addresses. "
+            "Use this when sites resolve to the wrong place or a provider may be tampering with DNS. Read only.",
+            "network.dns.integrity", "network.dns.integrity.read", format_dns_integrity),
+        "grounded_arguments": ["names"],
+        "parameters": {"names": {
+            "type": "list[str]",
+            "description": "Optional host names the user named, e.g. vimeo.com; at most 10. "
+                           "Omit them to check the configured reference names."}},
+    },
+}
+# The networking specialist's reads; readiness keeps OpenWrt, Tailscale and the DNS check as separate providers.
 OPENWRT_TOOLS = dict(NETWORKING_TOOLS)
 NETWORKING_TOOLS.update(TAILNET_TOOLS)
+NETWORKING_TOOLS.update(DNS_CHECK_TOOLS)

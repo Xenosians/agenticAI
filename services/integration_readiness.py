@@ -27,7 +27,7 @@ from tools.git.catalog import GIT_TOOLS
 from tools.jira.catalog import JIRA_TOOLS
 from tools.knowledge.catalog import KNOWLEDGE_TOOLS
 from tools.mailbox.catalog import MAILBOX_TOOLS
-from tools.networking.catalog import OPENWRT_TOOLS, TAILNET_TOOLS
+from tools.networking.catalog import DNS_CHECK_TOOLS, OPENWRT_TOOLS, TAILNET_TOOLS
 from tools.operations.catalog import OPERATIONS_TOOLS
 from tools.registry import TOOLS
 from tools.servicedesk.catalog import SERVICE_DESK_TOOLS
@@ -112,6 +112,12 @@ def _tailscale(settings):
     return ("not_configured" if missing else "configured"), missing
 
 
+def _dns_check(settings):
+    # A public resolver and its DNS-over-HTTPS address; both have working defaults.
+    missing = _missing(settings, "dns_check_resolver", "dns_check_doh_url")
+    return ("not_configured" if missing else "configured"), missing
+
+
 def _mailbox_lab(settings):
     missing = [] if getattr(settings, "mailbox_lab_enabled", False) is True else ["MAILBOX_LAB_ENABLED"]
     return ("not_configured" if missing else "configured"), missing
@@ -161,6 +167,7 @@ PROVIDER_FAMILIES: tuple[ProviderFamily, ...] = (
     ProviderFamily("knowledge", "Knowledge and runbooks", "provider", _knowledge, frozenset(KNOWLEDGE_TOOLS)),
     ProviderFamily("openwrt", "OpenWrt", "provider", _openwrt, frozenset(OPENWRT_TOOLS)),
     ProviderFamily("tailscale", "Tailscale network", "provider", _tailscale, frozenset(TAILNET_TOOLS)),
+    ProviderFamily("dns_check", "DNS integrity check", "local", _dns_check, frozenset(DNS_CHECK_TOOLS)),
     ProviderFamily("operations", "Platform operations", "provider", _operations, frozenset(OPERATIONS_TOOLS)),
     ProviderFamily("workspace", "Workspace and Git", "local", _workspace, frozenset(
         set(DEVELOPER_TOOLS) | set(GIT_TOOLS) | _WORKSPACE_INLINE)),

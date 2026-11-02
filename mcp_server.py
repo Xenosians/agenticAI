@@ -62,6 +62,7 @@ from services.process_runner import (
 
 from services.openwrt import build_openwrt_service
 from services.tailnet import build_tailnet_service
+from services.dns_integrity import build_dns_integrity_service
 from services.mailbox import MaddyMailboxService
 from tools.networking.mcp import register_networking_tools
 from tools.directory.mcp import register_directory_tools
@@ -720,7 +721,8 @@ def create_mcp_server(
     # ============================================================
 
     register_networking_tools(server, build_openwrt_service(runtime_settings),
-                              build_tailnet_service(runtime_settings))
+                              build_tailnet_service(runtime_settings),
+                              build_dns_integrity_service(runtime_settings))
 
     # ============================================================
     # DIRECTORY READS
