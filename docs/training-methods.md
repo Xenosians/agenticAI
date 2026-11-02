@@ -298,6 +298,30 @@ false); evaluating and promoting a candidate remain separate steps.
 `LEARNING_RUN_ROOT` defaults to `.runtime/learning/runs`. The container sets
 `/state/learning/runs`, because the image's file system is read-only.
 
+### Accepted corrections as training data
+
+A correction an owner writes on a task answer ("Give feedback" → correct
+result) becomes training data only after a reviewer accepts it, and only when
+the owner saves it. The Learning page's "Accepted corrections" section shows
+how many can be saved:
+
+| Route | Purpose |
+|---|---|
+| `GET /api/v1/learning/corrections` (Phoenix) → `POST /internal/v1/learning/corrections` (`apply: false`) | Preview: `ready`, `too_few` or `unchanged`, the usable and withheld counts, and the latest saved version |
+| `POST /api/v1/learning/corrections` (CSRF) → the same route with `apply: true` | Saves the next version of the owner's "Accepted corrections" training dataset (`saved`) |
+
+Phoenix sends only the owner's corrections that a reviewer accepted, each with
+the request it corrects and when it was accepted. Pending, dismissed and
+critique-only feedback never crosses. Each request becomes one example: the
+owner's request, then the correction as the assistant target. When a request
+was corrected more than once, the latest accepted correction is its target.
+A correction the privacy scan flags is withheld and counted. Saving goes
+through the ordinary training admission, so it needs at least 10 distinct
+requests, keeps every input in the split an earlier version gave it, and
+records which feedback the rows came from (`corrections.feedback_ids`).
+Uploaded training datasets are never replaced. Saving never starts a run; choose
+the new version above it, then check readiness as for any dataset.
+
 ## Public retrieval snapshot
 
 Set `KNOWLEDGE_SNAPSHOT_PATH` and `KNOWLEDGE_SNAPSHOT_SHA256` alongside the local

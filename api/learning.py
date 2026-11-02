@@ -1,4 +1,4 @@
-"""Authenticated Phoenix-to-AI Learning: catalog, readiness and candidate runs."""
+"""Authenticated Phoenix-to-AI Learning: catalog, readiness, candidate runs and accepted corrections."""
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from pydantic import Field
@@ -6,6 +6,7 @@ from pydantic import Field
 from api.extensions import require_internal
 from services.extensions.service import extension_store
 from services.learning_control.contracts import Contract
+from services.learning_control.corrections import MAX_CORRECTIONS, AcceptedCorrection, accepted_corrections
 from services.learning_control.application import (
     LearningSelectionError, ResourceId, SelectionRequest, learning_catalog, selection_preflight,
 )
@@ -94,3 +95,22 @@ async def cancel_run(body: OwnedRunIdentity, request: Request):
         return await run_in_threadpool(run_registry().cancel, body.owner, body.run_id)
     except LearningSelectionError as exc:
         raise run_error(exc, missing_status=404) from None
+
+
+class OwnedCorrections(OwnedCatalog):
+    apply: bool
+    corrections: list[AcceptedCorrection] = Field(max_length=MAX_CORRECTIONS)
+
+
+@router.post("/internal/v1/learning/corrections")
+async def corrections(body: OwnedCorrections, request: Request):
+    """Preview, or with apply save, the owner's accepted corrections as training data.
+
+    Phoenix sends only corrections a reviewer accepted on this owner's answers.
+    """
+    require_internal(request)
+    try:
+        return await run_in_threadpool(accepted_corrections, body.owner, body.corrections, extension_store(),
+                                       apply=body.apply)
+    except LearningSelectionError as exc:
+        raise HTTPException(422, str(exc)) from None

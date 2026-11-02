@@ -199,3 +199,37 @@ def test_a_damaged_registry_is_unavailable_rather_than_empty(client):
     response = client.post(CATALOG, json={"owner": "alice"}, headers=HEADERS)
 
     assert response.status_code == 503 and response.json() == {"detail": "learning_service_unavailable"}
+
+
+CORRECTIONS = "/internal/v1/learning/corrections"
+
+
+def accepted(index, **changes):
+    return {"feedback_id": f"{index:032x}", "request": f"Which queue handles VPN ticket {index}?",
+            "correction": f"VPN ticket {index} belongs to Network Operations.",
+            "reviewed_at": f"2026-11-01T10:{index:02d}:00Z", **changes}
+
+
+def test_accepted_corrections_are_previewed_then_saved_only_for_the_named_owner(client):
+    body = {"owner": "alice", "apply": False, "corrections": [accepted(index) for index in range(12)]}
+    assert client.post(CORRECTIONS, json=body).status_code == 401
+    preview = client.post(CORRECTIONS, json=body, headers=HEADERS)
+    assert preview.status_code == 200 and preview.json()["status"] == "ready"
+    assert extension_store().list("alice") == []
+    saved = client.post(CORRECTIONS, json={**body, "apply": True}, headers=HEADERS).json()
+    assert saved["schema"] == "learning-corrections.v1" and saved["status"] == "saved"
+    assert [row["id"] for row in extension_store().list("alice")] == [saved["dataset"]["id"]]
+    assert extension_store().list("bob") == []
+    again = client.post(CORRECTIONS, json={**body, "apply": True}, headers=HEADERS)
+    assert again.status_code == 422 and again.json() == {"detail": "learning_corrections_unchanged"}
+
+
+@pytest.mark.parametrize("change", [
+    {"feedback_id": "not-an-id"}, {"request": ""}, {"correction": "x" * 2001}, {"reviewed_at": 3},
+    {"reviewed_at": "2026-11-01T10:92:00Z"}, {"chosen_by": "model"},
+])
+def test_a_malformed_correction_never_reaches_admission(client, change):
+    body = {"owner": "alice", "apply": True, "corrections": [accepted(0, **change)] + [accepted(index)
+                                                                                      for index in range(1, 12)]}
+    assert client.post(CORRECTIONS, json=body, headers=HEADERS).status_code == 422
+    assert extension_store().list("alice") == []

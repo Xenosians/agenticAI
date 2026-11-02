@@ -15,6 +15,8 @@ from cryptography.fernet import Fernet
 LOCAL_ROLE_MODEL = "local"
 ROLE_PATTERN = re.compile(r"[a-z][a-z0-9-]{0,63}")
 NEWER_VERSION_EXISTS = "This dataset already has a newer version; replace the latest version"
+# A training dataset needs this many distinct inputs, so validation can hold some back.
+TRAINING_MINIMUM_INPUTS = 10
 # Admission is conservative: these spans make a dataset possibly identifying or secret-bearing.
 _SENSITIVE_PATTERNS = tuple(re.compile(pattern) for pattern in (
     r"-----BEGIN .*PRIVATE KEY-----", r"(?i)(api[_-]?key|password|secret|token)\s*[:=]\s*[^\s]{6,}",
@@ -265,12 +267,13 @@ class ExtensionStore:
     def dataset(self, owner: str, *, name: str, text: str, source: str, license: str,
                 purpose: str, reviewed: bool, replaces: str | None = None,
                 provenance: dict | None = None, crawl: dict | None = None,
-                document: dict | None = None) -> dict:
+                document: dict | None = None, corrections: dict | None = None) -> dict:
         """Admit a dataset, or a new version of the latest version named by ``replaces``.
 
         ``provenance`` records how server-side code derived ``text`` (for example a
-        Lua transform's script and input digests), and ``crawl`` which pages a site
-        crawl read and their digests; neither ever bypasses admission.
+        Lua transform's script and input digests), ``crawl`` which pages a site
+        crawl read and their digests, and ``corrections`` which accepted task
+        corrections the rows came from; none ever bypasses admission.
         """
         if not name.strip() or not source.strip() or not license.strip():
             raise ValueError("Name, source and permitted-use/license metadata are required")
@@ -291,8 +294,8 @@ class ExtensionStore:
         retired = {}
         if purpose == "training":
             records = [json.loads(line) for line in text.splitlines() if line.strip()]
-            if len(records) < 10:
-                raise ValueError("Training admission requires at least 10 unique JSONL examples")
+            if len(records) < TRAINING_MINIMUM_INPUTS:
+                raise ValueError(f"Training admission requires at least {TRAINING_MINIMUM_INPUTS} unique JSONL examples")
             unique = {}
             for row in records:
                 if not isinstance(row, dict) or set(row) != {"messages"}:
@@ -307,8 +310,8 @@ class ExtensionStore:
                 if key in unique and unique[key] != row:
                     raise ValueError("Conflicting targets for the same training input")
                 unique[key] = row
-            if len(unique) < 10:
-                raise ValueError("Training admission requires 10 distinct inputs")
+            if len(unique) < TRAINING_MINIMUM_INPUTS:
+                raise ValueError(f"Training admission requires {TRAINING_MINIMUM_INPUTS} distinct inputs")
             content, retired = _training_splits(unique, _split_history(previous))
             if not content["train"]:
                 raise ValueError("A new version needs at least one training example")
@@ -333,6 +336,8 @@ class ExtensionStore:
             record["crawl"] = crawl
         if document:
             record["document"] = document
+        if corrections:
+            record["corrections"] = corrections
         try:
             saved = self.put(owner, "dataset", record, identity=identity)
         except sqlite3.IntegrityError:
@@ -342,6 +347,15 @@ class ExtensionStore:
             # Indexed once at admission; searches then read the index only.
             self._ensure_indexed(owner, {identity: saved})
         return saved
+
+    def corrections_dataset(self, owner: str) -> dict | None:
+        """The latest version of the owner's training dataset of accepted corrections, if any."""
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT id FROM resource WHERE owner=? AND kind='dataset' "
+                "AND json_extract(data, '$.corrections') IS NOT NULL "
+                "ORDER BY json_extract(data, '$.version') DESC, rowid DESC LIMIT 1", (owner,)).fetchone()
+        return self.get(owner, row["id"]) if row else None
 
     def _replaced_version(self, owner: str, identity: str, purpose: str) -> dict:
         previous = self.get(owner, identity)
