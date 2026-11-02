@@ -194,6 +194,34 @@ history, never the semantic authority or permission inputs. Networking inference
 does not receive this additional dataset. Retrieval currently uses local FTS;
 embedding/vector-provider connectors remain future work.
 
+### Which reference data a request uses
+
+Without a chosen source (`select` with no `dataset_id`), a request searches the
+latest version of every ready reference dataset its owner has; choosing one
+dataset limits requests to it. Training datasets and other owners' data are
+never searched. The `knowledge_search` tool adds the same owner's matching
+passages to its result on the host, quoted as reference text.
+
+Each owner's passages are indexed once, when a dataset is admitted, in that
+owner's own SQLite FTS5 table (named by a keyed digest, never the owner's id), so
+a search reads the index instead of the dataset text and another owner's data
+never changes what is found or how it ranks. Deleting a dataset removes its
+passages; a store created before the index gains it on first use.
+
+A passage is returned only when its own text holds enough of the question's
+words: every word of a one- or two-word question, otherwise at least two and a
+third of them, and no fewer than any other passage holds. Words match their other
+forms ("freezes" finds "freeze"), grammatical words are ignored, and a page title
+helps find a passage but cannot qualify it alone. A question the documents do not
+answer therefore gets no passage rather than unrelated text, and the model is
+told to say when the passages it was given do not state what was asked.
+
+New reference versions are cut into passages at paragraph, heading and sentence
+boundaries (`passage-1200.v1`, about 1,200 characters); versions admitted before
+keep their 2,000-character windows (`window-2000.v1`), so their citations still
+reopen the same text. A request that found or was given any of its owner's
+reference passages is private and never captured for training.
+
 ### Cited answers
 
 A completed answer records `result.references`: one citation for each reference
@@ -214,8 +242,9 @@ ending with an assistant target. At least 10 distinct inputs are required.
 Conflicting targets are rejected and inputs are split deterministically into
 training and validation groups. **Download reviewed training dataset** exports
 records with provenance and split metadata for the existing adaptation recipes.
-Import does not start training or promote a model. Jobs using a private model or
-dataset are excluded from automatic shared trajectory training capture.
+Import does not start training or promote a model. Jobs using a private model,
+skills or any of the owner's reference passages are excluded from automatic
+shared trajectory training capture.
 
 ### Dataset versions
 

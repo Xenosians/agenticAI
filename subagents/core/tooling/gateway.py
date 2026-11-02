@@ -1177,6 +1177,20 @@ class ToolGateway:
                 ),
             )
 
+        # A trusted host step may add data that only the host can read for this
+        # request (for example the owner's own reference passages). It runs
+        # after the provider succeeded and never changes the provider's fields.
+        enricher = tool.get("result_enricher")
+        if enricher is not None and isinstance(result, dict):
+            try:
+                enriched = enricher(result, dict(execution_arguments))
+            except Exception as exc:
+                print(f"[GATEWAY] Result enrichment failed tool='{tool_name}' error={exc!r}")
+            else:
+                if isinstance(enriched, dict) and all(enriched.get(key) == value for key, value in result.items()
+                                                      if key != "count"):
+                    result = enriched
+
         return gateway_result(
             ok=True,
             status="success",

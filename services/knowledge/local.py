@@ -10,7 +10,7 @@ from pathlib import Path
 from .base import KnowledgeService
 from .types import KnowledgeDocument, KnowledgeLookupResult, KnowledgeSearchHit, KnowledgeSearchQuery, KnowledgeSearchResult
 from learning.evidence.sanitizer import sanitize_text
-from services.retrieval.fts import FtsRecord, search_fts
+from services.retrieval.fts import FtsRecord, search_passages
 
 
 class LocalKnowledgeService(KnowledgeService):
@@ -50,7 +50,7 @@ class LocalKnowledgeService(KnowledgeService):
     def search(self, query: KnowledgeSearchQuery) -> KnowledgeSearchResult:
         # Only documents that passed this service's public snapshot admission
         # enter the shared search mechanics. Search itself grants no access.
-        matches = search_fts(
+        matches = search_passages(
             (FtsRecord(d.document_id, d.content, kind=d.kind, title=d.title,
                        summary=d.summary, tags=tuple(d.tags))
              for d in self.documents.values()),

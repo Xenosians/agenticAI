@@ -58,9 +58,13 @@ def test_stages_that_never_see_reference_data_record_nothing(store):
         assert answer_references() == []
 
 
-def test_without_a_selected_dataset_an_answer_cites_nothing(store):
-    reference_dataset(store)
+def test_without_a_chosen_source_an_answer_cites_the_owners_matching_passages(store):
+    row = reference_dataset(store)
     with owner_execution("alice", "router diagnosis"):
+        ask()
+        assert [item["locator"] for item in answer_references()] == [
+            f"dataset:{row['id']}#chunk:1@{row['sha256']}"]
+    with owner_execution("alice", "print spooler queue"):
         ask()
         assert answer_references() == []
 

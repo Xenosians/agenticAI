@@ -13,6 +13,7 @@ A retrieval hit is evidence, never:
 from __future__ import annotations
 
 import hashlib
+import re
 from typing import (
     Literal,
 )
@@ -155,21 +156,127 @@ def citation_locator(
     )
 
 
+# How a dataset's text is cut into citable chunks. A dataset records the
+# chunking it was admitted with, so its citations always reopen the same text.
+WINDOW_CHUNKING = "window-2000.v1"
+PASSAGE_CHUNKING = "passage-1200.v1"
+PASSAGE_CHARS = 1200
+# A heading is a short line that does not end a sentence: a title, a question
+# or a lead-in ending in a colon. It starts a passage and stays with the text
+# after it. List items continue the passage they are in.
+HEADING_CHARS = 80
+BODY_LINE_ENDINGS = (".", "!", ";", ",")
+_LIST_ITEM = re.compile(r"(?:[-*+\u2022]|\d{1,3}[.)]|[a-z][.)])\s")
+_SENTENCE_BREAK = re.compile(r"[.!?](?=\s)")
+
+
 def dataset_chunks(
     text: str,
+    chunking: str = WINDOW_CHUNKING,
 ) -> list[str]:
-    return [
-        text[
-            index:
-            index + 2000
+    if chunking == WINDOW_CHUNKING:
+        return [
+            text[
+                index:
+                index + 2000
+            ]
+            for index
+            in range(
+                0,
+                len(text),
+                1800,
+            )
         ]
-        for index
-        in range(
-            0,
-            len(text),
-            1800,
-        )
-    ]
+    if chunking == PASSAGE_CHUNKING:
+        return _passages(text)
+    raise ValueError("Unknown dataset chunking")
+
+
+def _passages(text: str) -> list[str]:
+    """Passages that follow the text's own structure, each an exact span of it.
+
+    Blank lines end a passage. A heading line (short, without a closing full
+    stop: a title, a question or a lead-in ending in a colon) starts a new
+    passage and stays with the text after it. Lines are packed up to
+    PASSAGE_CHARS; a longer line is split at sentence ends, and a sentence
+    longer than a passage at the limit, so no text is lost.
+    """
+    passages: list[str] = []
+    start = end = None
+    has_body = False
+
+    def close():
+        nonlocal start, end, has_body
+        if start is not None:
+            passages.append(text[start:end])
+        start = end = None
+        has_body = False
+
+    position = 0
+    for line in text.split("\n"):
+        line_start, line_end = position, position + len(line)
+        position = line_end + 1
+        stripped = line.strip()
+        if not stripped:
+            if has_body:
+                close()
+            continue
+        line_start += len(line) - len(line.lstrip())
+        line_end -= len(line) - len(line.rstrip())
+        heading = stripped.startswith("#") or (
+            len(stripped) <= HEADING_CHARS and not stripped.endswith(BODY_LINE_ENDINGS)
+            and not _LIST_ITEM.match(stripped))
+        if heading and has_body:
+            close()
+        if start is not None and line_end - start > PASSAGE_CHARS:
+            close()
+        if line_end - line_start > PASSAGE_CHARS:
+            close()
+            for piece_start, piece_end in _bounded_spans(text, line_start, line_end):
+                passages.append(text[piece_start:piece_end])
+            continue
+        if start is None:
+            start = line_start
+        end = line_end
+        has_body = has_body or not heading
+    close()
+    return passages
+
+
+_PAGE_TITLE = re.compile(r"\A#{1,6}[ 	]+(.+)")
+
+
+def passage_titles(chunks: list[str]) -> list[str]:
+    """The title of the page each passage belongs to: the nearest "# Title" line at or before it.
+
+    Crawled pages and Markdown files open with such a line; a passage cut
+    from the middle of a page then still carries the page's subject.
+    """
+    titles, current = [], ""
+    for chunk in chunks:
+        match = _PAGE_TITLE.match(chunk)
+        if match:
+            current = match.group(1).strip()
+        titles.append(current)
+    return titles
+
+
+def _bounded_spans(text: str, start: int, end: int):
+    """Cut one long line into spans of at most PASSAGE_CHARS, at sentence ends where possible."""
+    while start < end:
+        limit = min(start + PASSAGE_CHARS, end)
+        cut = limit
+        if limit < end:
+            ends = [m.end() for m in _SENTENCE_BREAK.finditer(text, start, limit)]
+            if ends:
+                cut = ends[-1]
+        piece_end = cut
+        while piece_end > start and text[piece_end - 1].isspace():
+            piece_end -= 1
+        yield start, piece_end
+        start = cut
+        while start < end and text[start].isspace():
+            start += 1
 
 
 def make_hit(

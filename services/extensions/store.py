@@ -101,6 +101,13 @@ class ExtensionStore:
                 CREATE TABLE IF NOT EXISTS crawl_site (
                     owner TEXT NOT NULL, site_key TEXT NOT NULL, origin BLOB NOT NULL,
                     PRIMARY KEY(owner, site_key));
+                -- Reference datasets whose passages are in their owner's passage index
+                -- (one FTS5 table per owner, named by passage_table). A dataset's
+                -- passages hold rowids first_row .. first_row + passages - 1.
+                CREATE TABLE IF NOT EXISTS passage_source (
+                    owner TEXT NOT NULL, dataset_id TEXT NOT NULL, indexed TEXT NOT NULL,
+                    first_row INTEGER NOT NULL, passages INTEGER NOT NULL,
+                    PRIMARY KEY(owner, dataset_id));
                 -- A dataset version has at most one newer version, so history stays linear.
                 CREATE UNIQUE INDEX IF NOT EXISTS dataset_successor
                     ON resource(owner, json_extract(data, '$.previous_id'))
@@ -220,6 +227,8 @@ class ExtensionStore:
     def delete(self, owner: str, identity: str):
         self.get(owner, identity)
         with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self._unindex(db, owner, identity)
             db.execute("DELETE FROM role_assignment WHERE owner=? AND model_id=?", (owner, identity))
             db.execute("UPDATE preference SET model_id=NULL WHERE owner=? AND model_id=?", (owner, identity))
             db.execute("UPDATE preference SET dataset_id=NULL WHERE owner=? AND dataset_id=?", (owner, identity))
@@ -306,6 +315,11 @@ class ExtensionStore:
         else:
             content = {"text": text}
         identity = uuid.uuid4().hex
+        if purpose == "rag":
+            # New reference text is cut at paragraph and sentence boundaries; the
+            # recorded chunking keeps every citation of this version stable.
+            from services.extensions.retrieval import PASSAGE_CHUNKING
+            metadata["chunking"] = PASSAGE_CHUNKING
         record = {**metadata, "purpose": purpose, "sha256": digest, "state": "ready", "content": content,
                   "version": previous["version"] + 1 if previous else 1,
                   "lineage_id": previous["lineage_id"] if previous else identity}
@@ -320,10 +334,14 @@ class ExtensionStore:
         if document:
             record["document"] = document
         try:
-            return self.put(owner, "dataset", record, identity=identity)
+            saved = self.put(owner, "dataset", record, identity=identity)
         except sqlite3.IntegrityError:
             # Another upload replaced the same version first.
             raise ValueError(NEWER_VERSION_EXISTS) from None
+        if purpose == "rag":
+            # Indexed once at admission; searches then read the index only.
+            self._ensure_indexed(owner, {identity: saved})
+        return saved
 
     def _replaced_version(self, owner: str, identity: str, purpose: str) -> dict:
         previous = self.get(owner, identity)
@@ -343,16 +361,127 @@ class ExtensionStore:
         return previous
 
     def search(self, owner: str, identity: str, query: str, limit=5) -> list[dict]:
-        from services.retrieval.fts import FtsRecord, search_fts
-        from services.extensions.retrieval import dataset_chunks, make_hit
+        """Passages of one of the owner's reference datasets (any version) that answer ``query``."""
         resource = self._retrieval_resource(owner, identity)
-        chunks = dataset_chunks(resource["content"]["text"])
-        # Authorization above selects the corpus; the shared FTS engine never
-        # receives another owner's records or makes permission decisions.
-        matches = search_fts([FtsRecord(identifier=str(i), content=text)
-            for i, text in enumerate(chunks, 1)], query,
-            limit=min(max(int(limit), 1), 10), max_query_tokens=32)
-        return [make_hit(resource, int(index), chunks[int(index)-1]) for index in matches.identifiers]
+        return self._search_index(owner, query, limit, {resource["id"]: resource})
+
+    def search_reference(self, owner: str, query: str, limit=3) -> list[dict]:
+        """The owner's reference passages that answer ``query``, across every source.
+
+        Searches the latest version of each ready reference dataset the owner has;
+        training datasets and other owners' data are never included.
+        """
+        latest: dict[str, dict] = {}
+        for row in self._reference_rows(owner):
+            current = latest.get(row["lineage_id"])
+            if current is None or row["version"] > current["version"]:
+                latest[row["lineage_id"]] = row
+        if not latest:
+            return []
+        return self._search_index(owner, query, limit, {row["id"]: row for row in latest.values()})
+
+    def passage_table(self, owner: str) -> str:
+        """The name of one owner's passage index: a keyed digest, never the owner's text."""
+        digest = hmac.new(self.site_key_secret, b"passages\n" + owner.encode(), hashlib.sha256).hexdigest()
+        return "passages_" + digest[:32]
+
+    def _reference_rows(self, owner: str) -> list[dict]:
+        """This owner's ready reference datasets, without their text."""
+        with self.connect() as db:
+            # SQLite drops the text, so a request never parses whole datasets.
+            rows = db.execute(
+                "SELECT json_remove(data, '$.content') AS data FROM resource WHERE owner=? AND kind='dataset' "
+                "AND json_extract(data, '$.purpose')='rag' AND json_extract(data, '$.state')='ready'",
+                (owner,)).fetchall()
+        result = []
+        for row in rows:
+            data = json.loads(row["data"])
+            data.setdefault("version", 1)
+            data.setdefault("lineage_id", data["id"])
+            result.append(data)
+        return result
+
+    def _search_index(self, owner: str, query: str, limit, resources: dict[str, dict]) -> list[dict]:
+        """Passages of these datasets that answer ``query``, from the owner's own index."""
+        from services.retrieval.fts import match_passages
+        from services.extensions.retrieval import make_hit
+        table, ranges = self._ensure_indexed(owner, resources)
+        # Each dataset's passages are one block of rowids, so the scope is a few
+        # range checks. The table holds only this owner's passages, so matching
+        # and ranking never see another owner's data.
+        scope = " OR ".join("rowid BETWEEN ? AND ?" for _ in ranges) or "0"
+        parameters = tuple(bound for first, count in ranges.values() for bound in (first, first + count - 1))
+        with self.connect() as db:
+            matches = match_passages(db, table, "rowid", query, limit=min(max(int(limit), 1), 10),
+                                     scope=scope, parameters=parameters, max_query_tokens=32)
+            hits = []
+            for rowid in matches.identifiers:
+                dataset_id, chunk, content = db.execute(
+                    f'SELECT dataset_id, chunk, content FROM "{table}" WHERE rowid = ?', (rowid,)).fetchone()
+                hits.append(make_hit(resources[dataset_id], int(chunk), content))
+        return hits
+
+    def _ensure_indexed(self, owner: str, resources: dict[str, dict]) -> tuple[str, dict[str, tuple[int, int]]]:
+        """The owner's index table and each dataset's rowid range, indexing any that are missing.
+
+        An entry names the dataset's digest and chunking, so a record whose text
+        or chunking differs from what was indexed is indexed again.
+        """
+        table = self.passage_table(owner)
+
+        def current(db) -> tuple[dict[str, tuple[int, int]], list[str]]:
+            entries = {identity: (indexed, first, count) for identity, indexed, first, count in db.execute(
+                "SELECT dataset_id, indexed, first_row, passages FROM passage_source WHERE owner=?", (owner,))}
+            ranges, stale = {}, []
+            for identity, resource in resources.items():
+                entry = entries.get(identity)
+                if entry is not None and entry[0] == _index_identity(resource):
+                    ranges[identity] = entry[1:]
+                else:
+                    stale.append(identity)
+            return ranges, stale
+
+        with self.connect() as db:
+            ranges, stale = current(db)
+        if not stale:
+            return table, ranges  # The usual case: a read, with no write lock.
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            ranges, stale = current(db)  # Checked again under the lock.
+            for identity in stale:
+                self._unindex(db, owner, identity)
+                ranges[identity] = self._index_dataset(db, owner, table, self.get(owner, identity))
+        return table, ranges
+
+    def _index_dataset(self, db, owner: str, table: str, resource: dict) -> tuple[int, int]:
+        """Add one reference dataset's passages to the owner's index, in the caller's transaction.
+
+        Returns the dataset's rowid range: its passages take the next free block.
+        """
+        from services.retrieval.fts import PASSAGE_COLUMNS, FtsRecord, passage_row, passage_table_sql
+        from services.extensions.retrieval import passage_titles
+        db.execute(passage_table_sql(table, "dataset_id UNINDEXED", "chunk UNINDEXED"))
+        first = db.execute(f'SELECT COALESCE(MAX(rowid), 0) + 1 FROM "{table}"').fetchone()[0]
+        chunks = _chunks(resource)
+        # A passage is also found by the title of the page or section it came from.
+        for index, (text, title) in enumerate(zip(chunks, passage_titles(chunks)), 1):
+            db.execute(f'INSERT INTO "{table}"(rowid, dataset_id, chunk, {PASSAGE_COLUMNS}) '
+                       "VALUES (?,?,?,?,?,?,?,?)",
+                       (first + index - 1, resource["id"], index,
+                        *passage_row(FtsRecord(str(index), text, title=title))))
+        db.execute("INSERT INTO passage_source VALUES (?,?,?,?,?)",
+                   (owner, resource["id"], _index_identity(resource), first, len(chunks)))
+        return first, len(chunks)
+
+    def _unindex(self, db, owner: str, identity: str) -> None:
+        """Remove one dataset's passages from the owner's index, in the caller's transaction."""
+        entry = db.execute("SELECT first_row, passages FROM passage_source WHERE owner=? AND dataset_id=?",
+                           (owner, identity)).fetchone()
+        if entry is None:
+            return
+        db.execute(f'DELETE FROM "{self.passage_table(owner)}" WHERE rowid BETWEEN ? AND ?',
+                   (entry[0], entry[0] + entry[1] - 1))
+        db.execute("DELETE FROM passage_source WHERE owner=? AND dataset_id=?", (owner, identity))
 
     def _retrieval_resource(self, owner: str, identity: str) -> dict:
         resource = self.get(owner, identity)
@@ -361,11 +490,27 @@ class ExtensionStore:
         return resource
 
     def resolve(self, owner: str, identity: str, chunk: int, sha256: str) -> dict:
-        from services.extensions.retrieval import dataset_chunks, make_hit
+        from services.extensions.retrieval import make_hit
         resource = self._retrieval_resource(owner, identity)
         if sha256 != resource["sha256"]:
             raise ValueError("Retrieved reference belongs to a different dataset version")
-        chunks = dataset_chunks(resource["content"]["text"])
+        chunks = _chunks(resource)
         if type(chunk) is not int or not 1 <= chunk <= len(chunks):
             raise ValueError("Retrieved chunk does not exist")
         return make_hit(resource, chunk, chunks[chunk-1])
+
+
+def _chunks(resource: dict) -> list[str]:
+    """A reference dataset's chunks, cut the way that version was admitted.
+
+    Versions admitted before passage chunking keep their fixed windows, so an
+    existing citation reopens exactly the text it named.
+    """
+    from services.extensions.retrieval import WINDOW_CHUNKING, dataset_chunks
+    return dataset_chunks(resource["content"]["text"], resource.get("chunking", WINDOW_CHUNKING))
+
+
+def _index_identity(resource: dict) -> str:
+    """What a dataset's passages were indexed from: its text digest and chunking."""
+    from services.extensions.retrieval import WINDOW_CHUNKING
+    return f"{resource['sha256']}:{resource.get('chunking', WINDOW_CHUNKING)}"

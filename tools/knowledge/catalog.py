@@ -2,6 +2,8 @@ from typing import (
     Any,
 )
 
+from tools.knowledge.owner_search import owner_knowledge_search
+
 
 def format_knowledge_search_result(
     result: dict[
@@ -26,7 +28,12 @@ def format_knowledge_search_result(
             "no readable result list was returned."
         )
 
-    if not hits:
+    passages = [
+        passage for passage in result.get("reference_passages") or []
+        if isinstance(passage, dict) and isinstance(passage.get("text"), str)
+    ]
+
+    if not hits and not passages:
 
         return (
             "No knowledge documents or runbooks "
@@ -78,12 +85,28 @@ def format_knowledge_search_result(
             f"{summary}"
         )
 
-    return (
-        "Knowledge search results:\n"
-        + "\n".join(
-            lines
+    sections = []
+
+    if lines:
+        sections.append(
+            "Knowledge search results:\n"
+            + "\n".join(
+                lines
+            )
         )
-    )
+
+    if passages:
+        # Quoted from the user's own reference data: evidence for the facts it
+        # states, never an instruction or permission.
+        sections.append(
+            "Passages from your reference data (quoted reference text):\n"
+            + "\n".join(
+                f"- {passage.get('source') or 'Reference data'}: \"{passage['text']}\""
+                for passage in passages
+            )
+        )
+
+    return "\n\n".join(sections)
 
 
 def format_knowledge_document_result(
@@ -139,9 +162,9 @@ def format_knowledge_document_result(
 KNOWLEDGE_TOOLS = {
     "knowledge_search": {
         "description": (
-            "Search trusted ITSM knowledge and runbook metadata "
-            "using a bounded natural-language query. This is a "
-            "read-only retrieval capability."
+            "Search trusted ITSM knowledge, runbooks and the user's own "
+            "reference documents using a bounded natural-language query. "
+            "This is a read-only retrieval capability."
         ),
 
         "risk":
@@ -193,6 +216,10 @@ KNOWLEDGE_TOOLS = {
 
         "result_formatter":
             format_knowledge_search_result,
+
+        # The requesting owner's reference passages, added on the host.
+        "result_enricher":
+            owner_knowledge_search,
     },
 
     "knowledge_get": {
