@@ -10,6 +10,7 @@ from services.extensions.diagnostics import HarnessFailure
 from services.extensions.document_ingestion import DocumentIngestionError
 from services.extensions.transform import TransformError
 from services.knowledge.crawler import CrawlError
+from services.extensions.skills import SkillError
 from services.lua_adapters.runtime import LuaAdapterError
 
 
@@ -49,6 +50,10 @@ async def extensions(body: ExtensionCommand, request: Request):
 
     except CrawlError as exc:
         # A crawl refusal: a stable crawl_* code and a fixed message, never page content.
+        raise HTTPException(422, exc.public_detail()) from None
+
+    except SkillError as exc:
+        # A skill refusal: a stable skill_* code and a fixed message, never the skill's text.
         raise HTTPException(422, exc.public_detail()) from None
 
     except DocumentIngestionError as exc:

@@ -262,6 +262,24 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
     if "offset" in payload and (type(payload["offset"]) is not int or payload["offset"] < 0):
         raise ValueError("Invalid upload offset")
     store = extension_store()
+    if action.startswith("skill_") or action == "list":
+        from services.extensions.skills import SkillError, SkillLibrary
+        skills = SkillLibrary(store)
+    if action == "skill_list":
+        return {"skills": skills.list(owner)}
+    if action == "skill_save":
+        return skills.save(owner, payload.get("text"))
+    if action == "skill_restore":
+        return skills.restore(owner, payload.get("id"))
+    if action == "skill_enable":
+        if not isinstance(payload.get("name"), str):
+            raise SkillError("skill_not_found", "Skill not found.")
+        return skills.set_enabled(owner, payload["name"], payload.get("enabled"))
+    if action == "skill_delete":
+        if not isinstance(payload.get("name"), str):
+            raise SkillError("skill_not_found", "Skill not found.")
+        skills.delete(owner, payload["name"])
+        return {"deleted": payload["name"]}
     if action == "list":
         from services.extensions.providers import (
             connection_presets,
@@ -271,6 +289,7 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
         from services.knowledge.sites import CrawlSites
         sites = CrawlSites(store)
         return {"schema": "extension-catalog.v1", "resources": [public_resource(r) for r in store.list(owner)],
+                "skills": skills.list(owner),
                 "selected": store.selected(owner),
                 "role_assignments": store.role_assignments(owner),
                 "specialist_roles": specialist_roles(settings),

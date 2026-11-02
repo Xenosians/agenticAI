@@ -1,0 +1,65 @@
+"""Skill actions through the internal extensions API: owner-scoped, validated, never a credential path."""
+from types import SimpleNamespace
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from api import extensions
+from services.extensions.service import extension_store
+
+SKILL = ("---\nname: password-reset\ndescription: How to answer password reset requests.\n"
+         "triggers: [password reset]\n---\nConfirm the user's identity first.\n")
+
+
+def client_for(tmp_path, monkeypatch):
+    monkeypatch.setenv("EXTENSION_STORAGE_ROOT", str(tmp_path))
+    settings = SimpleNamespace(require_internal_job_token=lambda: "test-internal-secret", model_profiles={})
+    monkeypatch.setattr(extensions, "get_settings", lambda: settings)
+    extension_store.cache_clear()
+    app = FastAPI()
+    app.include_router(extensions.router)
+    client = TestClient(app)
+    headers = {"x-internal-token": "test-internal-secret"}
+
+    def call(owner, action, payload):
+        return client.post("/internal/v1/extensions", json={"owner": owner, "action": action, "payload": payload},
+                           headers=headers)
+    return call
+
+
+def test_skills_are_saved_versioned_listed_toggled_restored_and_deleted_per_owner(tmp_path, monkeypatch):
+    call = client_for(tmp_path, monkeypatch)
+    try:
+        first = call("alice", "skill_save", {"text": SKILL}).json()
+        assert first["name"] == "password-reset" and first["version"] == 1 and first["enabled"] is True
+        second = call("alice", "skill_save", {"text": SKILL.replace("first.", "first, then reset.")}).json()
+        assert second["version"] == 2
+        listed = call("alice", "skill_list", {}).json()["skills"]
+        assert [row["name"] for row in listed] == ["password-reset"] and listed[0]["version"] == 2
+        assert call("bob", "skill_list", {}).json()["skills"] == []
+        assert call("alice", "skill_enable", {"name": "password-reset", "enabled": False}).json()["enabled"] is False
+        restored = call("alice", "skill_restore", {"id": first["id"]}).json()
+        assert restored["version"] == 3 and restored["body"] == "Confirm the user's identity first."
+        assert call("bob", "skill_restore", {"id": first["id"]}).status_code == 422
+        assert call("bob", "skill_delete", {"name": "password-reset"}).status_code == 422
+        assert call("alice", "skill_delete", {"name": "password-reset"}).json() == {"deleted": "password-reset"}
+        assert call("alice", "skill_list", {}).json()["skills"] == []
+        # The catalog lists the owner's skills too, so the browser needs one read.
+        call("alice", "skill_save", {"text": SKILL})
+        assert [row["name"] for row in call("alice", "list", {}).json()["skills"]] == ["password-reset"]
+    finally:
+        extension_store.cache_clear()
+
+
+def test_malformed_skill_requests_are_refused_with_the_reason(tmp_path, monkeypatch):
+    call = client_for(tmp_path, monkeypatch)
+    try:
+        for payload, action in (({"text": 42}, "skill_save"), ({"text": "no front matter"}, "skill_save"),
+                                ({"name": "password-reset", "enabled": "no"}, "skill_enable"),
+                                ({"name": 7}, "skill_delete"), ({"id": None}, "skill_restore")):
+            response = call("alice", action, payload)
+            assert response.status_code == 422, (action, payload)
+        detail = call("alice", "skill_save", {"text": SKILL.replace("first.", "password=supersecret1")}).json()
+        assert "credentials" in str(detail)
+    finally:
+        extension_store.cache_clear()

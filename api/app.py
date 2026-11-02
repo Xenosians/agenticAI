@@ -1149,7 +1149,9 @@ async def execute_job(
             )
         )
 
-        from services.extensions.context import answer_references, owner_execution
+        from services.extensions.context import (
+            answer_references, answer_skills, owner_execution, private_request,
+        )
         from services.job_progress import job_progress
         async with job_progress(runtime.settings, job_id, payload.attempt):
             with owner_execution(payload.user_id, payload.message) as (profile, has_dataset):
@@ -1160,8 +1162,11 @@ async def execute_job(
                 result = await runtime.hub.run(
                     payload.message, context=conversation_context, **workflow_options,
                 )
-                # Citations of the reference passages a model was actually given.
+                # Citations of the reference passages a model was actually given,
+                # and the owner's skills that guided the answer.
                 references = answer_references()
+                skills = answer_skills()
+                private = private_request(profile, has_dataset)
                 from api.workflows import persist_workflow_continuation
                 workflow = persist_workflow_continuation(runtime, payload, result)
 
@@ -1176,6 +1181,9 @@ async def execute_job(
 
         if references:
             result_dict["references"] = references
+
+        if skills:
+            result_dict["skills"] = skills
 
         print(
             "[JOB] AI finished "
@@ -1195,9 +1203,8 @@ async def execute_job(
         # ========================================================
 
         try:
-            # Jobs on the owner's own model connection or dataset are private
-            # and are never captured for training (docs/user-extensions.md).
-            private = profile is not None or has_dataset
+            # Jobs on the owner's own model connection, dataset or skills are
+            # private and are never captured for training (docs/user-extensions.md).
             trajectory = None if private else (
                 runtime
                 .trajectory_recorder

@@ -4,7 +4,7 @@ from contextvars import ContextVar
 from contextlib import contextmanager
 import json
 
-from subagents.llm.runtime.stages import InferenceStage, resolve_stage_policy
+from subagents.llm.runtime.stages import ANSWER_STAGES, InferenceStage, resolve_stage_policy
 
 
 # Immutable snapshot per request.
@@ -40,6 +40,13 @@ execution_roles: ContextVar[dict] = ContextVar("execution_roles", default={})
 
 # The specialist whose task is executing in this context.
 active_role: ContextVar[str | None] = ContextVar("active_role", default=None)
+
+# The owner's skills chosen for this request (see services/extensions/skills),
+# and the ones actually given to a step that writes the answer, in that order.
+# Only identities are reported; a skill's text never leaves this request.
+request_skills: ContextVar[list[dict]] = ContextVar("request_skills", default=[])
+applied_skills: ContextVar[list | None] = ContextVar("applied_skills", default=None)
+SKILL_IDENTITY_FIELDS = ("name", "version", "id", "sha256")
 
 NETWORKING_ROLE = "networking-specialist"
 
@@ -122,6 +129,9 @@ def owner_execution(
     selection_token = execution_selection.set({**selection, "roles": dict(role_ids)})
     roles_token = execution_roles.set(roles)
     references_token = disclosed_references.set([])
+    from services.extensions.skills import SkillLibrary
+    skills_token = request_skills.set(SkillLibrary(store).applicable(owner, message))
+    applied_token = applied_skills.set([])
 
     try:
         yield (
@@ -134,6 +144,8 @@ def owner_execution(
         )
 
     finally:
+        applied_skills.reset(applied_token)
+        request_skills.reset(skills_token)
         disclosed_references.reset(references_token)
         execution_roles.reset(roles_token)
         execution_selection.reset(selection_token)
@@ -236,6 +248,34 @@ def _record_disclosure(bounded: list[dict]) -> None:
 def answer_references() -> list[dict]:
     """Citations disclosed so far in this request, as an independent copy."""
     return [dict(item) for item in (disclosed_references.get() or [])]
+
+
+def skill_guidance(stage, repair_of=None) -> str:
+    """The text of this request's skills for a step that writes the answer, recording each as applied.
+
+    Routing, specialist and repair steps get nothing, so a skill cannot change
+    which tool runs, its arguments or any approval.
+    """
+    skills = request_skills.get()
+    if not skills or repair_of is not None or InferenceStage(stage) not in ANSWER_STAGES:
+        return ""
+    sink = applied_skills.get()
+    if sink is not None:
+        seen = {item["id"] for item in sink}
+        sink.extend({field: skill[field] for field in SKILL_IDENTITY_FIELDS}
+                    for skill in skills if skill["id"] not in seen)
+    return "\n\n".join(f"Skill {skill['name']} (version {skill['version']}):\n{skill['body']}" for skill in skills)
+
+
+def answer_skills() -> list[dict]:
+    """The skills given to an answer step so far in this request: identities only, as an independent copy."""
+    return [dict(item) for item in (applied_skills.get() or [])]
+
+
+def private_request(profile: dict | None, has_dataset: bool) -> bool:
+    """Whether this request used anything private to its owner, so it is never captured for training:
+    the owner's own model connection, their retrieval dataset, or skills that guided the answer."""
+    return profile is not None or has_dataset or bool(applied_skills.get())
 
 
 @contextmanager

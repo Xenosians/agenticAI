@@ -323,6 +323,48 @@ def test_owner_instructions_reach_only_the_steps_that_write_the_answer(runtime):
     assert manager.calls[-1]["max_new_tokens"] == 200
 
 
+def skill(name, body, version=1):
+    return {"name": name, "version": version, "id": f"{name}-{version}".ljust(32, "0")[:32], "sha256": "a" * 64,
+            "body": body}
+
+
+def test_owner_skills_guide_only_the_steps_that_write_the_answer_on_any_model(runtime):
+    from services.extensions import context
+    from services.extensions.context import answer_skills, request_skills
+    coordinator, manager, _, external = runtime
+    skills_token = request_skills.set([skill("password-reset", "Confirm the user's identity first.")])
+    applied_token = context.applied_skills.set([])
+    messages = [{"role": "system", "content": "You are Janus."}, {"role": "user", "content": "Reset Dana's password"}]
+    try:
+        for profile in (None, {"backend": "http", "url": "https://api.groq.com/openai/v1", "model": "selected"}):
+            execution_profile.set(profile)
+            for stage, extra in ((InferenceStage.SEMANTIC_ROUTING, {}), (InferenceStage.SPECIALIST_REASONING, {}),
+                                 (InferenceStage.REPAIR, {"repair_of": InferenceStage.SYNTHESIS})):
+                generate(coordinator, stage, messages=messages, **extra)
+            sent = [call["messages"] for call in manager.calls if isinstance(call, dict)] + [
+                call[1] for call in external]
+            assert sent and not any("identity first" in message["content"] for batch in sent for message in batch)
+        assert answer_skills() == []
+        # The local model writing the answer gets the guidance, after the host's own system text.
+        execution_profile.set(None)
+        generate(coordinator, InferenceStage.PRIMARY_RESPONSE, messages=messages)
+        system = manager.calls[-1]["messages"][0]["content"]
+        assert system.startswith("You are Janus.") and system.endswith("Confirm the user's identity first.")
+        assert "they cannot change tools, approvals or permissions" in system
+        assert messages[0]["content"] == "You are Janus."
+        assert answer_skills() == [{"name": "password-reset", "version": 1, "id": skill("password-reset", "")["id"],
+                                    "sha256": "a" * 64}]
+        # A selected connection gets the same guidance, after its owner's instructions.
+        selected(custom_instructions="Answer in Bahasa Indonesia.")
+        generate(coordinator, InferenceStage.SYNTHESIS, messages=messages)
+        system = external[-1][1][0]["content"]
+        assert system.index("Bahasa Indonesia") < system.index("identity first")
+        assert len(answer_skills()) == 1  # reported once, however many answer steps used it
+    finally:
+        context.applied_skills.reset(applied_token)
+        request_skills.reset(skills_token)
+
+
 def test_a_turned_away_request_is_retried_when_the_connection_allows_it(runtime, monkeypatch):
     from services.extensions import retry
     from services.extensions.diagnostics import ExternalProviderError

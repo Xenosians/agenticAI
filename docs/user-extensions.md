@@ -295,6 +295,48 @@ transforms are one use of Lua; every model, connection, link and tool also
 passes through the mandatory Lua adapter layer (see
 [Lua protocol adapters](lua-adapters.md)).
 
+## Skills
+
+A skill is reusable written guidance for the answers Janus writes, as a
+`SKILL.md` file: YAML front matter, then the guidance (the format other agents
+use, so a skill written for them can be uploaded as it is):
+
+```markdown
+---
+name: password-reset
+description: How to answer password reset requests.
+triggers: [password reset, locked out]
+always: false
+---
+Confirm the user's identity before anything else...
+```
+
+- **Where it applies.** Only the steps that write the answer the user reads
+  (direct answer and synthesis), on the local models and on selected
+  connections alike. Routing, tool choice, arguments, approvals and specialist
+  steps never see a skill, so a skill changes how an answer is written, never
+  which operation runs or what needs approval. It is guidance, not evidence.
+- **When.** A skill applies when the request mentions one of its `triggers` (or
+  its name) as whole words; `always: true` applies it to every request. One
+  answer carries at most two skills and 6,000 characters of their text; skills
+  the request names come first.
+- **Checks.** Names are lowercase letters, digits and dashes; the guidance is
+  at most 4,000 characters; credentials and personal identifiers are refused
+  with the same scanner as datasets. A refusal returns a `skill_*` code and a
+  fixed message, never the skill's text.
+- **Versions.** Saving a changed skill adds a version and uses it; saving the
+  same content adds none. The last 10 versions are kept and any can be
+  restored. A skill can be turned off without deleting it. Each owner keeps at
+  most 50 skills, private to them.
+- **Reported.** The job result lists the skill versions that guided the answer
+  (name, version, id and digest, never the text) and the chat shows them under
+  the answer. A job guided by the owner's skills is private, like one using
+  their connection or dataset, and is never captured for training.
+
+Extension actions: `skill_list`, `skill_save` (`text`), `skill_enable`
+(`name`, `enabled`), `skill_restore` (`id` of a version) and `skill_delete`
+(`name`); `list` includes the owner's `skills`.
+
 ## Future workflow connectors
 
 `workflow_validate` accepts a version-1 manifest with name and ordered nodes:
