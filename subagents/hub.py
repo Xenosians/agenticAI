@@ -199,6 +199,9 @@ def build_hub(
                 settings
                 .specialist_max_new_tokens
             ),
+            # A read the validated contract fixes runs without a specialist
+            # model step; every change still asks the model and an approval.
+            determined_reads=True,
         )
     )
 

@@ -120,7 +120,7 @@ class FakeToolGateway:
         return self.result
 
 
-def build_runtime():
+def build_runtime(**options):
     agent_registry = (
         AgentRegistry()
     )
@@ -153,6 +153,7 @@ def build_runtime():
         tool_gateway=(
             gateway
         ),
+        **options,
     )
 
     return (
@@ -210,6 +211,55 @@ def test_networking_stage_uses_only_the_owner_connection_mode(backend, mode):
     )
     assert inference.calls[0]["model_key"] == runtime.agent_registry.get("networking-specialist").model
     assert not gateway.calls
+
+
+def determined_intent(tool_name, arguments, *, effect="read"):
+    return SemanticIntent(summary="test", effect=effect, allowed_tools=[tool_name], forbidden_tools=[],
+                          allowed_arguments=arguments, forbidden_arguments={}, max_tool_calls=1,
+                          clarification_required=False)
+
+
+def test_a_read_the_contract_fixes_runs_without_a_specialist_model_step():
+    runtime, inference, gateway = build_runtime(determined_reads=True)
+    task = AgentTask(task_id="determined-read", agent_name="account-specialist", user_request="Is jdoe locked?",
+                     semantic_intent=determined_intent("account_status", {"user_id": ["jdoe"]}))
+
+    result = asyncio.run(runtime.run(task))
+
+    assert result.status == "success", result.error
+    assert inference.calls == []
+    assert result.proposed_tool == "account_status"
+    assert result.proposed_arguments == {"user_id": "jdoe"}
+    # No model wrote the call, so no model output or specialist provenance exists to learn from.
+    assert result.raw_model_output is None
+    assert task.execution_provenance is None
+    assert [(call["tool_name"], call["arguments"]) for call in gateway.calls] == [
+        ("account_status", {"user_id": "jdoe"})]
+
+
+def test_by_default_every_read_asks_the_specialist_model():
+    # Model evaluation and these runtime tests measure the model's proposal.
+    runtime, inference, gateway = build_runtime()
+    task = AgentTask(task_id="evaluated-read", agent_name="account-specialist", user_request="Is jdoe locked?",
+                     semantic_intent=determined_intent("account_status", {"user_id": ["jdoe"]}))
+
+    result = asyncio.run(runtime.run(task))
+
+    assert result.status == "success", result.error
+    assert len(inference.calls) == 1
+
+
+def test_a_change_keeps_the_specialist_model_step():
+    runtime, inference, gateway = build_runtime(determined_reads=True)
+    inference.response = '[{"name": "unlock_user", "arguments": {"user_id": "jdoe"}}]'
+    gateway.result = {"ok": False, "status": "approval_required", "decision": "approval_required",
+                      "error": "Approval required."}
+    task = AgentTask(task_id="determined-change", agent_name="account-specialist", user_request="Unlock jdoe",
+                     semantic_intent=determined_intent("unlock_user", {"user_id": ["jdoe"]}, effect="mutation"))
+
+    asyncio.run(runtime.run(task))
+
+    assert len(inference.calls) == 1
 
 
 def test_runtime_executes_account_specialist():

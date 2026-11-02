@@ -41,6 +41,7 @@ from subagents.core.orchestration.semantic_guard import (
 
 from subagents.core.orchestration.semantic_binding import (
     bind_authoritative_grounded_arguments,
+    determined_read_call,
 )
 
 from subagents.core.tooling.gateway import (
@@ -155,6 +156,7 @@ class AgentRuntime:
         max_new_tokens: (
             int | None
         ) = None,
+        determined_reads: bool = False,
     ) -> None:
 
         self.agent_registry = (
@@ -178,6 +180,9 @@ class AgentRuntime:
             if semantic_guard is not None
             else SemanticGuard()
         )
+        # The production hub turns this on; evaluation and tests that measure
+        # a model's proposal keep the specialist model step for every read.
+        self.determined_reads = determined_reads
 
         self.max_new_tokens = (
             max_new_tokens
@@ -213,6 +218,189 @@ class AgentRuntime:
         # specialist role (if any) instead of the main selection.
         with specialist_role(task.agent_name):
             return await self._run_task(task)
+
+    async def _propose(
+        self,
+        *,
+        task: AgentTask,
+        agent,
+        messages: list[dict],
+        inference_stage,
+        selected_connection,
+    ) -> list[dict] | AgentResult:
+        """The specialist model's proposal: exactly one parsed tool call, or the failure result."""
+
+        # ========================================================
+        # MODEL GENERATION
+        # ========================================================
+
+        if selected_connection is not None:
+            task.execution_provenance = None
+
+        try:
+
+            response = (
+                await
+                self.inference
+                .generate(
+                    stage=inference_stage,
+                    model_key=(
+                        agent.model
+                    ),
+
+                    messages=(
+                        messages
+                    ),
+
+                    max_new_tokens=(
+                        self.max_new_tokens
+                    ),
+
+                    priority=(
+                        InferencePriority
+                        .SPECIALIST
+                    ),
+                )
+            )
+
+        except Exception as exc:
+
+            print(
+                "[WORKER] Model generation failed "
+                f"agent='{agent.name}' "
+                f"error={exc!r}"
+            )
+
+            return (
+                AgentResult(
+                    task_id=(
+                        task.task_id
+                    ),
+
+                    agent_name=(
+                        task.agent_name
+                    ),
+
+                    status="error",
+
+                    outcome_code=(
+                        "model_generation_error"
+                    ),
+
+                    error=(
+                        "Worker model failed: "
+                        f"{exc}"
+                    ),
+                )
+            )
+
+        print(
+            "\n===== SPECIALIST WORKER ====="
+            f"\nAGENT: {agent.name}"
+            f"\nUSER: {task.user_request}"
+            f"\nROUTER_METADATA_AUDIT_ONLY: {task.instructions}"
+            f"\nRAW: {response}"
+            "\n============================="
+        )
+
+        # ========================================================
+        # TOOL-CALL PARSING
+        # ========================================================
+
+        try:
+
+            tool_calls = (
+                parse_tool_calls(
+                    response
+                )
+            )
+
+        except ValueError as exc:
+
+            print(
+                "[WORKER] Tool-call parse failed "
+                f"agent='{agent.name}' "
+                f"error={exc}"
+            )
+
+            return (
+                AgentResult(
+                    task_id=(
+                        task.task_id
+                    ),
+
+                    agent_name=(
+                        task.agent_name
+                    ),
+
+                    status="error",
+
+                    raw_model_output=(
+                        response
+                    ),
+
+                    outcome_code=(
+                        "tool_parse_error"
+                    ),
+
+                    error=(
+                        str(
+                            exc
+                        )
+                    ),
+                )
+            )
+
+        # ========================================================
+        # CURRENT RUNTIME CONTRACT
+        # ========================================================
+
+        if (
+            len(
+                tool_calls
+            )
+            != 1
+        ):
+
+            print(
+                "[WORKER] Invalid tool-call count "
+                f"agent='{agent.name}' "
+                f"count={len(tool_calls)}"
+            )
+
+            return (
+                AgentResult(
+                    task_id=(
+                        task.task_id
+                    ),
+
+                    agent_name=(
+                        task.agent_name
+                    ),
+
+                    status="error",
+
+                    raw_model_output=(
+                        response
+                    ),
+
+                    proposed_tool_calls=(
+                        tool_calls
+                    ),
+
+                    outcome_code=(
+                        "invalid_tool_call_count"
+                    ),
+
+                    error=(
+                        "Worker must return exactly "
+                        "one tool call for this "
+                        "runtime version."
+                    ),
+                )
+            )
+
+        return tool_calls
 
     async def _run_task(
         self,
@@ -653,174 +841,44 @@ class AgentRuntime:
                 )
 
         # ========================================================
-        # MODEL GENERATION
+        # DETERMINED READ
+        #
+        # A read whose tool and every argument the validated contract
+        # already fixes leaves the specialist model nothing to choose.
+        # Binding, SemanticGuard and ToolGateway below check it exactly
+        # as they check a model's proposal. Changes always ask the model.
         # ========================================================
 
-        if selected_connection is not None:
-            task.execution_provenance = None
-
-        try:
-
-            response = (
-                await
-                self.inference
-                .generate(
-                    stage=inference_stage,
-                    model_key=(
-                        agent.model
-                    ),
-
-                    messages=(
-                        messages
-                    ),
-
-                    max_new_tokens=(
-                        self.max_new_tokens
-                    ),
-
-                    priority=(
-                        InferencePriority
-                        .SPECIALIST
-                    ),
-                )
+        determined_call = (
+            determined_read_call(
+                intent=task.semantic_intent,
+                agent=agent,
             )
-
-        except Exception as exc:
-
-            print(
-                "[WORKER] Model generation failed "
-                f"agent='{agent.name}' "
-                f"error={exc!r}"
-            )
-
-            return (
-                AgentResult(
-                    task_id=(
-                        task.task_id
-                    ),
-
-                    agent_name=(
-                        task.agent_name
-                    ),
-
-                    status="error",
-
-                    outcome_code=(
-                        "model_generation_error"
-                    ),
-
-                    error=(
-                        "Worker model failed: "
-                        f"{exc}"
-                    ),
-                )
-            )
-
-        print(
-            "\n===== SPECIALIST WORKER ====="
-            f"\nAGENT: {agent.name}"
-            f"\nUSER: {task.user_request}"
-            f"\nROUTER_METADATA_AUDIT_ONLY: {task.instructions}"
-            f"\nRAW: {response}"
-            "\n============================="
+            if self.determined_reads
+            else None
         )
 
-        # ========================================================
-        # TOOL-CALL PARSING
-        # ========================================================
+        if determined_call is not None:
 
-        try:
+            # No model wrote this call: nothing exists to learn from.
+            task.execution_provenance = None
+            tool_calls = [determined_call]
 
-            tool_calls = (
-                parse_tool_calls(
-                    response
-                )
+        else:
+
+            proposal = await self._propose(
+                task=task,
+                agent=agent,
+                messages=messages,
+                inference_stage=inference_stage,
+                selected_connection=selected_connection,
             )
 
-        except ValueError as exc:
+            if isinstance(proposal, AgentResult):
+                return proposal
 
-            print(
-                "[WORKER] Tool-call parse failed "
-                f"agent='{agent.name}' "
-                f"error={exc}"
-            )
+            tool_calls = proposal
 
-            return (
-                AgentResult(
-                    task_id=(
-                        task.task_id
-                    ),
-
-                    agent_name=(
-                        task.agent_name
-                    ),
-
-                    status="error",
-
-                    raw_model_output=(
-                        response
-                    ),
-
-                    outcome_code=(
-                        "tool_parse_error"
-                    ),
-
-                    error=(
-                        str(
-                            exc
-                        )
-                    ),
-                )
-            )
-
-        # ========================================================
-        # CURRENT RUNTIME CONTRACT
-        # ========================================================
-
-        if (
-            len(
-                tool_calls
-            )
-            != 1
-        ):
-
-            print(
-                "[WORKER] Invalid tool-call count "
-                f"agent='{agent.name}' "
-                f"count={len(tool_calls)}"
-            )
-
-            return (
-                AgentResult(
-                    task_id=(
-                        task.task_id
-                    ),
-
-                    agent_name=(
-                        task.agent_name
-                    ),
-
-                    status="error",
-
-                    raw_model_output=(
-                        response
-                    ),
-
-                    proposed_tool_calls=(
-                        tool_calls
-                    ),
-
-                    outcome_code=(
-                        "invalid_tool_call_count"
-                    ),
-
-                    error=(
-                        "Worker must return exactly "
-                        "one tool call for this "
-                        "runtime version."
-                    ),
-                )
-            )
 
         tool_call = (
             tool_calls[

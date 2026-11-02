@@ -399,6 +399,8 @@ def test_build_hub_injects_generation_configuration(
         .max_new_tokens
         == 234
     )
+    # Production skips the specialist model for reads the contract fixes.
+    assert hub.runtime.determined_reads is True
 
     assert (
         hub.primary_assistant

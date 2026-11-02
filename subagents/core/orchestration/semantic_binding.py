@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from subagents.core.definitions.types import SemanticIntent
-from subagents.core.orchestration.intent_contract import trusted_grounded_arguments
+from subagents.core.definitions.types import AgentDefinition, SemanticIntent
+from subagents.core.orchestration.intent_contract import trusted_grounded_arguments, trusted_tool_effect
 from subagents.core.tooling.capabilities import normalize_argument_values
 from tools.registry import get_tool
 
@@ -70,6 +70,56 @@ def _bound_runtime_value(
     if expects_collection:
         return [trusted_value]
     return trusted_value
+
+
+def determined_read_call(
+    *,
+    intent: SemanticIntent | None,
+    agent: AgentDefinition,
+    tool_lookup: ToolLookup = get_tool,
+) -> dict[str, Any] | None:
+    """The one call a validated contract leaves nothing to choose about, or None.
+
+    A read with exactly one allowed tool that the agent owns, whose every
+    argument is grounded and bound by the contract (one value for a single
+    argument, the exact set for a list), has nothing left for a specialist
+    model to decide. Anything else, and every change, keeps the model step.
+    This grants nothing: binding, SemanticGuard and ToolGateway still check
+    the call exactly as they check a model's proposal.
+    """
+    if (intent is None or intent.clarification_required or intent.max_tool_calls != 1
+            or intent.effect != "read" or len(set(intent.allowed_tools)) != 1):
+        return None
+    tool_name = intent.allowed_tools[0]
+    tool = tool_lookup(tool_name)
+    owned = {name.strip() for name in agent.tools if isinstance(name, str)}
+    if (tool is None or tool_name not in owned or tool_name in intent.forbidden_tools
+            or tool.get("requires_approval") is not False):
+        return None
+    parameters = tool.get("parameters") or {}
+    try:
+        if (trusted_tool_effect(tool) != "read" or not isinstance(parameters, dict)
+                or set(parameters) - set(trusted_grounded_arguments(tool_name=tool_name, tool=tool))):
+            return None
+    except ValueError:
+        return None
+    bound = {name for name, values in intent.allowed_arguments.items() if values}
+    if bound - set(parameters):
+        return None
+    arguments: dict[str, Any] = {}
+    for name in parameters:
+        values = intent.allowed_arguments.get(name) or []
+        forbidden = intent.forbidden_arguments.get(name) or []
+        if (not values or len(set(values)) != len(values) or any(value in forbidden for value in values)
+                or not all(isinstance(value, str) and value and value == value.strip() for value in values)):
+            return None
+        if _parameter_expects_collection(tool=tool, argument_name=name):
+            arguments[name] = list(values)
+        elif len(values) == 1:
+            arguments[name] = values[0]
+        else:
+            return None
+    return {"name": tool_name, "arguments": arguments}
 
 
 def bind_authoritative_grounded_arguments(
