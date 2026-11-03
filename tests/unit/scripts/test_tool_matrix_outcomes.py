@@ -171,3 +171,133 @@ def test_source_identity_detects_uncommitted_source_changes_without_collecting_e
     after = matrix.source_identity()
     assert after["ai"]["head"] == before["ai"]["head"]
     assert after["ai"]["source_sha256"] != before["ai"]["source_sha256"]
+
+
+def metric(stage, adapter, *, role=None, outcome="success", repair_of=None, operation="generate"):
+    return {"operation": operation, "stage": stage, "repair_of": repair_of, "adapter": adapter,
+            "outcome": outcome, "role": role}
+
+
+LOCAL = {"adapter": "local", "networking": {"adapter": "local"}}
+OUTBOUND = {"adapter": "http", "networking": {"adapter": "local"}}
+
+
+def test_a_case_proves_a_profile_only_when_its_steps_ran_on_that_profile():
+    local_run = [metric("CONTROL_ROUTING", "local"), metric("SEMANTIC_ROUTING", "local"),
+                 metric("SPECIALIST_REASONING", "local", role="jira-specialist"), metric("SYNTHESIS", "local")]
+    assert matrix.inference_evidence(local_run, LOCAL) == {
+        "adapters": ["local"],
+        "stages": ["CONTROL_ROUTING", "SEMANTIC_ROUTING", "SPECIALIST_REASONING", "SYNTHESIS"]}
+    # A read the routing contract fully determines has no specialist step (decision 11).
+    determined = [metric("CONTROL_ROUTING", "local"), metric("SYNTHESIS", "local")]
+    assert matrix.inference_evidence(determined, LOCAL)["adapters"] == ["local"]
+    with pytest.raises(matrix.AcceptanceFailure, match="SPECIALIST_REASONING ran on http, not local"):
+        matrix.inference_evidence([metric("SPECIALIST_REASONING", "http", role="jira-specialist")], LOCAL)
+    with pytest.raises(matrix.AcceptanceFailure, match="SEMANTIC_ROUTING ran on local, not http"):
+        matrix.inference_evidence([metric("SEMANTIC_ROUTING", "local"),
+                                   metric("SPECIALIST_REASONING", "http")], OUTBOUND)
+    # The networking specialist follows its own assignment; a repair counts as the step it repairs.
+    # Host routing always runs on the local model, whatever the profile.
+    networking = [metric("CONTROL_ROUTING", "local"), metric("SEMANTIC_ROUTING", "http"),
+                  metric("REPAIR", "local", role="networking-specialist", repair_of="NETWORKING")]
+    assert matrix.inference_evidence(networking, OUTBOUND)["adapters"] == ["http", "local"]
+    # Failed steps, warm-ups and host routing prove nothing about the chosen profile.
+    with pytest.raises(matrix.AcceptanceFailure, match="no step ran on the chosen profile"):
+        matrix.inference_evidence([metric("SPECIALIST_REASONING", "http", outcome="error"),
+                                   metric("SYNTHESIS", "http", operation="warm"),
+                                   metric("CONTROL_ROUTING", "local")], OUTBOUND)
+
+
+@pytest.mark.parametrize("profile", [["--model-id", "connection"], ["--adapter", "local", "--model-id", "connection"],
+                                     ["--adapter", "http"], ["--networking", "local"]])
+def test_an_incomplete_profile_is_refused_before_source_or_credential_access(tmp_path, monkeypatch, profile):
+    def forbidden():
+        raise AssertionError("An invalid profile must fail before source/credential inspection")
+    monkeypatch.setattr(matrix, "source_identity", forbidden)
+    monkeypatch.setattr(matrix.sys, "argv", ["tool_matrix", "--report", str(tmp_path / "new.json"), *profile])
+    with pytest.raises(SystemExit) as result:
+        matrix.main()
+    assert result.value.code == 2
+    assert not (tmp_path / "new.json").exists()
+
+
+def test_every_case_runs_inside_the_chosen_profile_and_the_account_is_restored(tmp_path, monkeypatch):
+    events, restoration = [], {"status": "restored"}
+    fingerprint = {"schema": "acceptance-inference-profile.v1", "sha256": "fixture", "adapter": "local",
+                   "networking": {"adapter": "local"}}
+
+    class Scope:
+        def __init__(self, client, *, adapter, model_id, networking):
+            events.append(("scope", adapter, model_id, networking))
+            self.fingerprint = fingerprint
+            self.original = type("Snapshot", (), {"selected": {"model_id": "own", "dataset_id": None},
+                                                  "roles": {}})()
+
+        def __enter__(self):
+            events.append("selected")
+            return self
+
+        def assert_unchanged(self):
+            events.append("checked")
+            return self.fingerprint
+
+        def restore(self):
+            events.append("restored")
+            return restoration
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def preflight(self):
+            pass
+
+        def login(self, *args):
+            pass
+
+        def create_chat(self, name):
+            return "observed-chat"
+
+        def create_job(self, **kwargs):
+            events.append("job")
+            return {"job_id": "a" * 32}
+
+        def wait_for_terminal(self, job_id, poll_seconds):
+            return {"job_id": job_id, "status": "completed", "attempts": 1, "message": CASE[2],
+                    "result": {"results": [{"proposed_tool": "read_tool",
+                                            "tool_result": {"ok": True, "status": "success"}}]}}
+
+        def get_history(self, chat_id):
+            return {}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(matrix, "AcceptanceProfileScope", Scope)
+    monkeypatch.setattr(matrix, "BrowserPathClient", Client)
+    monkeypatch.setattr(matrix, "job_inference_metrics", lambda client, job_id, attempt: [
+        metric("CONTROL_ROUTING", "local"), metric("SPECIALIST_REASONING", "local", role="jira-specialist")])
+    monkeypatch.setattr(matrix, "_assert_history_roundtrip", lambda *args, **kwargs: None)
+    monkeypatch.setattr(matrix, "source_identity", lambda: {"ai": {"head": "test-source"}})
+    monkeypatch.setattr(matrix, "build_cases", lambda *args: [CASE])
+    monkeypatch.setattr(matrix, "dotenv_values", lambda *args: {
+        "ACCEPTANCE_EMAIL": "operator@example.invalid", "ACCEPTANCE_PASSWORD": "fixture-only"})
+    monkeypatch.setattr(matrix, "discover_fixtures", lambda *args: None)
+    monkeypatch.setattr(matrix, "atlassian_admin_configured", lambda: False)
+    path = tmp_path / "report.json"
+    monkeypatch.setattr(matrix.sys, "argv", ["tool_matrix", "--report", str(path), "--only", "read",
+                                             "--adapter", "local", "--networking", "local"])
+    assert matrix.main() == 0
+    assert events == [("scope", "local", None, "local"), "selected", "checked", "job", "restored"]
+    saved = json.loads(path.read_text())
+    assert saved["inference_profile"] == fingerprint
+    assert saved["original_selection"] == {"selected": {"model_id": "own", "dataset_id": None}, "roles": {}}
+    assert saved["inference_restoration"] == {"status": "restored"}
+    assert saved["results"]["read"]["verdict"] == "pass"
+    assert saved["results"]["read"]["inference"]["adapters"] == ["local"]
+
+    # An account left on the test selection must never look like a clean run.
+    restoration = {"status": "reconciliation_required"}
+    monkeypatch.setattr(matrix.sys, "argv", ["tool_matrix", "--report", str(tmp_path / "second.json"),
+                                             "--only", "read", "--adapter", "local", "--networking", "local"])
+    assert matrix.main() == 1

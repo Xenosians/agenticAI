@@ -11,6 +11,10 @@ run can resume; secrets are never printed or stored.
 
 Usage (AI repository root, AI service Python):
   python scripts/tool_matrix.py --report .runtime/acceptance/tool-matrix.json [--only id ...] [--resume]
+
+Add --adapter local, or --adapter http --model-id <connection>, to run every case
+on that inference profile (SRS 1.9 V19-02). The account's own selection is
+restored afterwards, and a case passes only if the job's recorded steps ran there.
 """
 from __future__ import annotations
 
@@ -30,6 +34,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from dotenv import dotenv_values  # noqa: E402
 
+from scripts.acceptance_profiles import ADAPTERS, AcceptanceProfileScope  # noqa: E402
 from scripts.cross_repo_acceptance import (  # noqa: E402
     AcceptanceFailure,
     BrowserPathClient,
@@ -295,6 +300,80 @@ def summarize(job: dict) -> dict:
     }
 
 
+# Steps the host always runs on its own local model, whatever the selected profile.
+HOST_STAGES = {"CONTROL_ROUTING", "CANDIDATE_NARROWING"}
+NETWORKING_STAGES = {"NETWORKING", "NETWORKING_SELECTED"}
+LOCAL_ADAPTERS = {"local", "hf-causal"}
+
+
+def _profile_step(metric) -> str | None:
+    """The stage of a successful step the chosen profile runs, or None for any other record."""
+    if not isinstance(metric, dict) or metric.get("operation") != "generate" or metric.get("outcome") != "success":
+        return None
+    stage = metric.get("repair_of") if metric.get("stage") == "REPAIR" else metric.get("stage")
+    return None if stage in HOST_STAGES else stage
+
+
+def inference_evidence(metrics, profile: dict) -> dict:
+    """Prove that every successful step of a job ran where the chosen profile says.
+
+    Host routing always runs locally; the networking specialist follows its own
+    assignment; a repair counts as the step it repairs. A read that routing fully
+    determines has no specialist step, so the answer step is evidence too. Failed
+    steps and warm-ups prove nothing.
+    """
+    adapters, stages = set(), set()
+    for metric in metrics if isinstance(metrics, list) else []:
+        if not isinstance(metric, dict) or metric.get("operation") != "generate" or metric.get("outcome") != "success":
+            continue
+        stage = metric.get("repair_of") if metric.get("stage") == "REPAIR" else metric.get("stage")
+        networking = stage in NETWORKING_STAGES or metric.get("role") == "networking-specialist"
+        expected = ("local" if stage in HOST_STAGES
+                    else profile["networking"]["adapter"] if networking else profile["adapter"])
+        adapter = metric.get("adapter")
+        if adapter not in (LOCAL_ADAPTERS if expected == "local" else {expected}):
+            raise AcceptanceFailure(f"{stage} ran on {adapter}, not {expected}")
+        stages.add(stage)
+        if stage not in HOST_STAGES:
+            adapters.add(adapter)
+    if not adapters:
+        raise AcceptanceFailure("no step ran on the chosen profile for this job")
+    return {"adapters": sorted(adapters), "stages": sorted(stages)}
+
+
+def job_inference_metrics(client, job_id: str, attempt, *, tries: int = 6, pause_seconds: float = 0.5) -> list:
+    """The job attempt's recorded inference steps; the AI reports them just after the job ends."""
+    metrics: list = []
+    for remaining in range(tries, 0, -1):
+        response = client.client.get("/api/v1/operations", params={"limit": 100})
+        response.raise_for_status()
+        row = next((item for item in response.json().get("jobs", [])
+                    if isinstance(item, dict) and item.get("job_id") == job_id), None)
+        if row is not None:
+            if row.get("attempt") != attempt:
+                raise AcceptanceFailure("the recorded inference steps belong to another attempt")
+            recorded = row.get("metrics")
+            metrics = recorded if isinstance(recorded, list) else []
+            if any(_profile_step(metric) for metric in metrics):
+                return metrics
+        if remaining > 1:
+            time.sleep(pause_seconds)
+    return metrics
+
+
+def profile_request(args) -> dict | None:
+    """The requested inference profile, refused before any source or credential access."""
+    if args.adapter is None:
+        if args.model_id is not None or args.networking is not None:
+            raise ValueError("inference profile: --model-id and --networking need --adapter")
+        return None
+    if args.adapter == "local" and args.model_id is not None:
+        raise ValueError("inference profile: the local profile takes no --model-id")
+    if args.adapter != "local" and not args.model_id:
+        raise ValueError(f"inference profile: --adapter {args.adapter} needs --model-id")
+    return {"adapter": args.adapter, "model_id": args.model_id, "networking": args.networking or "preserve"}
+
+
 # Verdicts. plan_limited: the request was routed, approved and executed, but the
 # provider account's plan (for example free Atlassian) does not include the API.
 VERDICTS = ("pass", "fail", "plan_limited", "blocked", "skipped")
@@ -424,19 +503,27 @@ def main() -> int:
     parser.add_argument("--backend-url", default="http://127.0.0.1:4000")
     parser.add_argument("--login-env", type=Path,
                         default=Path("/mnt/c/project/agenticBackend/itsm_backend/.runtime/acceptance/login.env"))
+    parser.add_argument("--adapter", choices=sorted(ADAPTERS),
+                        help="Run every case on this inference profile; the account's selection is restored")
+    parser.add_argument("--model-id", help="The owner's ready connection for an outbound --adapter")
+    parser.add_argument("--networking", choices=("preserve", "local", "follow"),
+                        help="Networking specialist: keep its assignment, use the local model, or follow --model-id")
     args = parser.parse_args()
 
     try:
         if args.only == []:
             raise ValueError("--only needs at least one case identity")
         select_matrix_cases(build_cases(RUN, PROJECT), args.only or [])
+        requested_profile = profile_request(args)
     except ValueError as exc:
         parser.error(str(exc))
 
     identity = source_identity()
+    execution_context = {"backend_url": args.backend_url.rstrip("/"), "login_env": str(args.login_env.resolve())}
+    if requested_profile is not None:
+        execution_context["inference_profile"] = requested_profile
     report = load_matrix_report(args.report, resume=args.resume, identity=identity, run=RUN, project=PROJECT,
-                                execution_context={"backend_url": args.backend_url.rstrip("/"),
-                                                   "login_env": str(args.login_env.resolve())})
+                                execution_context=execution_context)
     RUN = report["run"]
     selected = select_matrix_cases(build_cases(RUN, PROJECT), args.only or [])
     args.report.parent.mkdir(parents=True, exist_ok=True)
@@ -480,6 +567,23 @@ def main() -> int:
                 }
             save()
     admin_ready = atlassian_admin_configured()
+    scope = profile = None
+    if requested_profile is not None:
+        scope = AcceptanceProfileScope(client, **requested_profile)
+        try:
+            entered = scope.__enter__()
+        except Exception:
+            client.close()
+            raise
+        profile, original = entered.fingerprint, entered.original
+        if report.setdefault("inference_profile", profile) != profile:
+            scope.restore()
+            client.close()
+            raise ValueError("The inference profile differs from the one this report was started with; use a new report")
+        # Identifiers only, so an unconfirmed restoration can be reconciled by hand.
+        if original is not None:
+            report.setdefault("original_selection", {"selected": original.selected, "roles": original.roles})
+        save()
     try:
         for identity, tool, prompt, approve in selected:
             # Resume continues only unattempted cases. Never replay a recorded
@@ -503,6 +607,9 @@ def main() -> int:
             started = time.monotonic()
             row: dict = {"tool": tool, "prompt": message, "approve": approve}
             try:
+                if scope is not None:
+                    # Every case must run on the chosen profile; a changed selection stops the run.
+                    scope.assert_unchanged()
                 chat = client.create_chat(f"Tool matrix {RUN}: {identity}")
                 row["chat_id"] = chat
                 row["verdict"] = "blocked"
@@ -536,6 +643,9 @@ def main() -> int:
                 row["provider"] = detail
                 if actual_tool != tool:
                     raise AcceptanceFailure(f"used {actual_tool} instead of {tool}")
+                if profile is not None:
+                    row["inference"] = inference_evidence(
+                        job_inference_metrics(client, job["job_id"], terminal.get("attempts")), profile)
                 limited = plan_limited(worker)
                 if limited:
                     row["verdict"] = "plan_limited"
@@ -559,6 +669,9 @@ def main() -> int:
                   f"status={(row.get('after_decision') or first).get('status')} {row.get('reason', '')[:160]}",
                   flush=True)
     finally:
+        if scope is not None:
+            # Put the account's own selection back; a restore that cannot be confirmed fails the run.
+            report["inference_restoration"] = scope.restore()
         client.close()
         archived = report["results"].get("jira-project-archive", {})
         if archived.get("verdict") == "pass":
@@ -568,6 +681,9 @@ def main() -> int:
         report["summary"] = acceptance_summary(report["results"], selected,
                                                 registered_tools=TOOLS, full_scope=args.only is None,
                                                 source_unchanged=source_identity() == report["source_identity"])
+        if scope is not None and report["inference_restoration"].get("status") != "restored":
+            report["summary"].update(overall="FAIL", exit_code=1,
+                                     reason="The account's inference selection could not be restored; reconcile it")
         save()
         print("summary:", report["summary"])
     return report["summary"]["exit_code"]

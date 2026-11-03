@@ -10,6 +10,17 @@ Its v2 reports use exit 0 only when every selected case passed. Exit 1 means a f
 
 An existing report needs explicit `--resume`, matching source content/project and the original saved fixture identity. Resume continues unattempted cases; it never automatically repeats a recorded failure or uncertain operation. Reconcile those operations before planning another run. Legacy reports or reports from changed code cannot be reused as current passing evidence. New runs use new report paths.
 
+### Running on one inference profile
+
+SRS 1.9 V19-02 asks for the same tools to work on local and outbound inference. By default the checker uses the account's current selection. To prove one profile, choose it explicitly:
+
+```bash
+python scripts/tool_matrix.py --report .runtime/acceptance/matrix-local.json --adapter local --networking local
+python scripts/tool_matrix.py --report .runtime/acceptance/matrix-outbound.json --adapter http --model-id <connection id> --networking follow
+```
+
+The checker selects that profile on the signed-in account through the product API, confirms it before every case, and restores the account's own selection at the end (`inference_restoration` in the report). If the restore cannot be confirmed, the run fails and the report keeps the original selection identifiers for reconciliation. A case passes only when the job's recorded inference steps ran where the profile says: host routing always on the local model, the networking specialist on its own assignment, and every other step on the chosen adapter. `--networking` keeps the networking specialist's assignment (`preserve`, the default), pins it to the local model (`local`), or makes it follow the chosen connection (`follow`). A report started on one profile cannot be resumed on another.
+
 ## Inventory without inference
 
 Run from the AI repository using the project's Python environment:
