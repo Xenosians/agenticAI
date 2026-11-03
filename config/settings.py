@@ -898,6 +898,16 @@ class Settings(
         ge=1,
     )
 
+    # Independent read steps of one request that may run at the same time
+    # (1 or 2). Mutations, conditional and dependent steps always run alone,
+    # in order. Local models still take turns on the GPU, so this helps
+    # mostly with outbound models and slow providers.
+    max_parallel_specialists: int = Field(
+        default=1,
+        ge=1,
+        le=2,
+    )
+
     # ============================================================
     # DIRECTORY PROVIDER
     # ============================================================

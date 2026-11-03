@@ -14,6 +14,7 @@ from services.extensions.context import (
     selected_profile,
     specialist_inference_stage,
     specialist_role,
+    specialist_runs_outbound,
 )
 from services.extensions.store import LOCAL_ROLE_MODEL, ExtensionStore
 from subagents.llm.runtime.stages import InferenceStage
@@ -138,6 +139,23 @@ def test_concurrent_owners_and_tasks_do_not_cross(store):
                              check("bob", "jira-specialist", "bob-main"))
 
     asyncio.run(run())
+
+
+def test_a_step_runs_outbound_only_where_its_inference_would(store):
+    """Parallel read steps ask this before overlapping; it must match inference exactly."""
+    claude = _connection(store, "alice", "claude")
+    store.select("alice", claude, None)
+    store.assign_role("alice", "account-specialist", LOCAL_ROLE_MODEL)
+
+    with owner_execution("alice", "request"):
+        assert specialist_runs_outbound("jira-specialist") is True
+        assert specialist_runs_outbound("account-specialist") is False
+        # Networking stays local until the owner opts in.
+        assert specialist_runs_outbound("networking-specialist") is False
+
+    # Without a selected connection every specialist uses the local GPU.
+    with owner_execution("bob", "request"):
+        assert specialist_runs_outbound("jira-specialist") is False
 
 
 def test_assign_role_action_accepts_only_registered_specialists(store, tmp_path):

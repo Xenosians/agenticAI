@@ -378,3 +378,19 @@ def specialist_inference_stage(agent_name: str) -> InferenceStage:
     """The registered specialist identity owns its disclosure policy."""
     return (networking_inference_stage() if agent_name == NETWORKING_ROLE
             else InferenceStage.SPECIALIST_REASONING)
+
+
+# Backends that run outside this machine's GPU.
+OUTBOUND_BACKENDS = frozenset({"http", "opencode", "pi"})
+
+
+def specialist_runs_outbound(agent_name: str) -> bool:
+    """Whether this specialist's model runs outside the local GPU for this request.
+
+    Resolved exactly as its inference is (role assignment, main selection,
+    networking opt-in). Local and uploaded models share one GPU, so steps on
+    them take turns instead of swapping models in and out.
+    """
+    with specialist_role(agent_name):
+        profile = selected_profile(stage=specialist_inference_stage(agent_name))
+    return profile is not None and profile.get("backend") in OUTBOUND_BACKENDS

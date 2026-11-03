@@ -186,7 +186,7 @@ class InferenceCoordinator:
         self, *, operation, model_key, messages, max_new_tokens, priority, stage, repair_of,
     ):
         from services.extensions.budget import ExternalInferenceBudgetError
-        from services.extensions.context import active_role, selected_profile, with_retrieval
+        from services.extensions.context import OUTBOUND_BACKENDS, active_role, selected_profile, with_retrieval
         from services.lua_adapters.host_boundaries import model_request, model_response
 
         started = time.perf_counter()
@@ -228,7 +228,7 @@ class InferenceCoordinator:
                 if backend not in {"http", "opencode", "pi", "local", "uploaded"}:
                     raise ValueError("Unsupported selected model backend")
                 adapter = backend
-                if backend in {"http", "opencode", "pi"}:
+                if backend in OUTBOUND_BACKENDS:
                     if operation == "warm":
                         outcome = "skipped"  # No local weights for remote inference.
                         return None

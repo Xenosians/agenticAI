@@ -2,6 +2,9 @@ from config import (
     Settings,
 )
 
+from services.extensions.context import (
+    specialist_runs_outbound,
+)
 from services.integration_readiness import (
     integration_readiness,
 )
@@ -296,5 +299,9 @@ def build_hub(
             ),
 
             require_semantic_intent=True,
+
+            max_parallel_specialists=settings.max_parallel_specialists,
+
+            runs_outbound=specialist_runs_outbound,
         )
     )

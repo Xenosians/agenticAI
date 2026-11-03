@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import math
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 from dataclasses import (
@@ -84,6 +86,65 @@ async def _call_with_optional_context(
     return await callback(*args, **options)
 
 
+# Specialist steps of one request that may run at the same time.
+MAX_PARALLEL_SPECIALISTS = 2
+
+
+def _independent_read(delegation) -> bool:
+    """Whether a step can start before the steps listed ahead of it finish.
+
+    Only an unconditional, non-dependent read whose validated intent needs no
+    clarification qualifies. Its intent was checked against the trusted risk
+    of every tool it may call, so running it early cannot change what it reads
+    or what runs after it. Mutations, conditions and dependencies keep the
+    request's order, and none of them overlaps another step.
+    """
+    intent = delegation.semantic_intent
+    return (
+        intent is not None
+        and delegation.condition is None
+        and delegation.after_success_of is None
+        and intent.effect == "read"
+        and not intent.clarification_required
+    )
+
+
+class _ReadAhead:
+    """Starts independent reads early, at most ``limit`` at once.
+
+    Results are still taken in the request's order, so routes, results and
+    conditions read exactly as a serial run would. Reads are started only up
+    to the next step that is not an independent read, so nothing overlaps it.
+    """
+
+    def __init__(self, run, limit: int) -> None:
+        self._run = run
+        self._slots = asyncio.Semaphore(limit)
+        self._started: dict[int, asyncio.Task] = {}
+
+    def start(self, index: int, task) -> None:
+        async def bounded():
+            async with self._slots:
+                return task, await self._run(task)
+
+        self._started[index] = asyncio.create_task(bounded())
+
+    def started(self, index: int) -> bool:
+        return index in self._started
+
+    async def result(self, index: int):
+        """The started step's task and its result (the task carries its evidence)."""
+        return await self._started.pop(index)
+
+    async def cancel(self) -> None:
+        """Stops reads whose results are no longer needed (the request ended early)."""
+        for task in self._started.values():
+            task.cancel()
+        if self._started:
+            await asyncio.gather(*self._started.values(), return_exceptions=True)
+        self._started.clear()
+
+
 class Orchestrator:
     """
     Main -> Specialist -> Main orchestration.
@@ -119,7 +180,18 @@ class Orchestrator:
         runtime: AgentRuntime,
         primary_assistant: PrimaryAssistant,
         require_semantic_intent: bool = False,
+        max_parallel_specialists: int = 1,
+        runs_outbound: Callable[[str], bool] | None = None,
     ) -> None:
+
+        if (
+            type(max_parallel_specialists) is not int
+            or not 1 <= max_parallel_specialists <= MAX_PARALLEL_SPECIALISTS
+        ):
+            raise ValueError(
+                "max_parallel_specialists must be between 1 and "
+                f"{MAX_PARALLEL_SPECIALISTS}."
+            )
 
         self.router = (
             router
@@ -136,6 +208,12 @@ class Orchestrator:
         self.require_semantic_intent = (
             require_semantic_intent
         )
+
+        self.max_parallel_specialists = max_parallel_specialists
+
+        # Whether a specialist's model runs outside the local GPU. Unknown
+        # means local: such steps take turns rather than swap models.
+        self.runs_outbound = runs_outbound or (lambda agent_name: False)
 
     @staticmethod
     def _valid_condition_scalar(
@@ -523,14 +601,6 @@ class Orchestrator:
         if onboarding is not None:
             delegations = delegations[:1]
 
-        results: list[
-            AgentResult
-        ] = []
-
-        routes: list[
-            str
-        ] = []
-
         # Only unconditional executions may become trusted
         # conditional-workflow sources.
         source_results: dict[
@@ -547,13 +617,85 @@ class Orchestrator:
             dict,
         ] = {}
 
-        for delegation in delegations:
+        # Independent reads may start before earlier steps finish (bounded);
+        # their results are still taken in this loop's order.
+        read_ahead = _ReadAhead(self.runtime.run, self.max_parallel_specialists)
+        task_ids = [str(uuid.uuid4()) for _ in delegations]
 
-            task_id = (
-                str(
-                    uuid.uuid4()
-                )
+        def specialist_task(index: int) -> AgentTask:
+            delegation = delegations[index]
+            return AgentTask(
+                task_id=task_ids[index],
+                agent_name=delegation.agent_name,
+                user_request=user_request,
+                instructions=delegation.instructions,
+                semantic_intent=delegation.semantic_intent,
+                context={"conversation_context": conversation_context},
             )
+
+        def start_reads_from(index: int) -> None:
+            # Only a run of consecutive independent reads starts early: the
+            # first step that is not one is a barrier nothing may overlap.
+            # At most one started step uses the local GPU, so two local
+            # models are never loaded for one request at the same time.
+            if self.max_parallel_specialists < 2:
+                return
+            local_started = any(
+                not self.runs_outbound(delegations[ahead].agent_name)
+                for ahead in range(len(delegations)) if read_ahead.started(ahead)
+            )
+            for ahead in range(index, len(delegations)):
+                if not _independent_read(delegations[ahead]):
+                    break
+                if read_ahead.started(ahead):
+                    continue
+                local = not self.runs_outbound(delegations[ahead].agent_name)
+                if local and local_started:
+                    break
+                read_ahead.start(ahead, specialist_task(ahead))
+                local_started = local_started or local
+
+        try:
+            results, routes = await self._run_delegations(
+                delegations,
+                task_ids=task_ids,
+                specialist_task=specialist_task,
+                start_reads_from=start_reads_from,
+                read_ahead=read_ahead,
+                source_results=source_results,
+                runtime_decisions_by_task_id=runtime_decisions_by_task_id,
+            )
+        finally:
+            await read_ahead.cancel()
+
+        return await self._finish(
+            user_request,
+            results=results,
+            routes=routes,
+            runtime_decisions_by_task_id=runtime_decisions_by_task_id,
+            onboarding=onboarding,
+            conversation_context=conversation_context,
+        )
+
+    async def _run_delegations(
+        self,
+        delegations,
+        *,
+        task_ids: list[str],
+        specialist_task,
+        start_reads_from,
+        read_ahead: _ReadAhead,
+        source_results: dict[str, AgentResult],
+        runtime_decisions_by_task_id: dict[str, dict],
+    ) -> tuple[list[AgentResult], list[str]]:
+        """Runs (or collects) every step in the request's order."""
+
+        results: list[AgentResult] = []
+        routes: list[str] = []
+
+        for index, delegation in enumerate(delegations):
+
+            task_id = task_ids[index]
 
             # ====================================================
             # RESULT-AWARE PRECONDITION
@@ -748,40 +890,20 @@ class Orchestrator:
             # SPECIALIST EXECUTION
             # ====================================================
 
-            task = (
-                AgentTask(
-                    task_id=(
-                        task_id
-                    ),
+            # An independent read starts here together with the reads that
+            # directly follow it (bounded); any other step runs alone.
+            if _independent_read(delegation):
+                start_reads_from(index)
 
-                    agent_name=(
-                        delegation.agent_name
-                    ),
-
-                    user_request=(
-                        user_request
-                    ),
-
-                    instructions=(
-                        delegation.instructions
-                    ),
-
-                    semantic_intent=(
-                        delegation.semantic_intent
-                    ),
-
-                    context={
-                        "conversation_context":
-                            conversation_context,
-                    },
+            if read_ahead.started(index):
+                task, runtime_result = await read_ahead.result(index)
+            else:
+                task = specialist_task(index)
+                runtime_result = (
+                    await self.runtime.run(
+                        task
+                    )
                 )
-            )
-
-            runtime_result = (
-                await self.runtime.run(
-                    task
-                )
-            )
 
             # ----------------------------------------------------
             # LIVE DECISION EVIDENCE
@@ -841,6 +963,20 @@ class Orchestrator:
                 ] = (
                     result
                 )
+
+        return results, routes
+
+    async def _finish(
+        self,
+        user_request: str,
+        *,
+        results: list[AgentResult],
+        routes: list[str],
+        runtime_decisions_by_task_id: dict[str, dict],
+        onboarding,
+        conversation_context,
+    ) -> HubResult:
+        from agent.onboarding import can_suspend_onboarding, encode_plan
 
         # ========================================================
         # OVERALL RESULT
