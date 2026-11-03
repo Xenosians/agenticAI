@@ -2,6 +2,10 @@ from config import (
     Settings,
 )
 
+from services.integration_readiness import (
+    integration_readiness,
+)
+
 from subagents.core.definitions.loader import (
     load_agent_directory,
 )
@@ -271,6 +275,9 @@ def build_hub(
                 settings
                 .primary_synthesis_max_new_tokens
             ),
+
+            # The same setup rows /v1/integrations shows (configuration only).
+            capabilities=lambda: integration_readiness(settings),
         )
     )
 

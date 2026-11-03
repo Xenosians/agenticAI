@@ -114,6 +114,16 @@ def test_credentials_are_refused_before_starting_a_worker(monkeypatch, secret):
     refused("lua_adapter_secret_input", payload={"nested": [{secret: "fixture-secret"}]})
 
 
+@pytest.mark.parametrize("name", ["secret", "token", "next_page_token", "cookie", "has_password"])
+def test_credential_references_and_ordinary_fields_may_cross_into_lua(name):
+    # A machine profile names a protected credential with `secret = "<name>"`
+    # and provider pages carry fields such as next_page_token; only values that
+    # are credentials themselves are refused at this boundary. Redaction of
+    # results and logs uses the wider shared policy.
+    assert not adapter_runtime.is_secret_field(name)
+    assert invoke(payload={name: "reference"}).payload == {name: "reference"}
+
+
 def test_error_messages_never_echo_lua_or_payload_text():
     error = refused("lua_adapter_failed", payload={"text": "private-input"},
                     source='return function(event) error("private-script:" .. event.payload.text) end')

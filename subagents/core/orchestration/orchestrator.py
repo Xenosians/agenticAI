@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import math
 import uuid
+from typing import Any
 
 from dataclasses import (
     replace,
@@ -69,7 +70,7 @@ def _accepts_context_keyword(callback) -> bool:
 async def _call_with_optional_context(
     callback,
     *args,
-    context: list[dict[str, str]],
+    context: list[dict[str, Any]],
     workflow_contract: RequestedWorkflowContract | None = None,
 ):
     options = {"context": context} if _accepts_context_keyword(callback) else {}
@@ -373,7 +374,7 @@ class Orchestrator:
         self,
         user_request: str,
         *,
-        context: list[dict[str, str]] | None = None,
+        context: list[dict[str, Any]] | None = None,
         workflow_contract: RequestedWorkflowContract | None = None,
     ) -> HubResult:
 

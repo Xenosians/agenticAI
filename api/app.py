@@ -137,6 +137,17 @@ class ConversationTurn(
         min_length=1
     )
 
+    # Phoenix attaches this only to assistant turns, by projecting the
+    # structured results saved with an earlier job in this same conversation.
+    # It is evidence for the primary answer only, never tool authority.
+    result_evidence: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def result_evidence_is_assistant_only(self):
+        if self.role == "user" and "result_evidence" in self.model_fields_set:
+            raise ValueError("Prior result evidence is only valid on assistant context turns.")
+        return self
+
 
 class JobExecuteRequest(
     BaseModel

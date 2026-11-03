@@ -44,6 +44,21 @@ def test_whatever_follows_basic_in_an_authorization_header_is_redacted(token):
     assert sanitize_text(f"Proxy-Authorization: Basic {token}") == "Proxy-Authorization: Basic <redacted>"
 
 
+@pytest.mark.parametrize("text", [
+    "Authorization: zqxvfixturevalue",
+    "authorization=zqxvfixturevalue",
+    "headers={'authorization': 'zqxvfixturevalue'}",
+    'Authorization: Digest username="u", response="zqxvfixturevalue"',
+    "Proxy-Authorization: Token zqxvfixturevalue",
+])
+def test_every_authorization_value_is_redacted_but_its_scheme_is_kept(text):
+    sanitized = sanitize_text(text)
+    assert "zqxvfixturevalue" not in sanitized
+    for scheme in ("Digest", "Token"):
+        if scheme in text:
+            assert scheme in sanitized
+
+
 @pytest.mark.parametrize("text, secret", [
     ('Cleartext-Password := "hello world"', "hello"),
     ("Cleartext-Password := hunter2", "hunter2"),

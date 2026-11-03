@@ -1,4 +1,6 @@
 import json
+from collections.abc import Callable
+from typing import Any
 
 from config import (
     get_settings,
@@ -6,10 +8,12 @@ from config import (
 
 from subagents.llm.runtime.stages import InferenceStage
 
+from services.capability_context import capability_messages
 from services.extensions.context import answer_token_limit
 
 from subagents.core.orchestration.conversation_context import (
     conversation_messages,
+    prior_result_messages,
 )
 
 from subagents.core.definitions.types import (
@@ -84,6 +88,8 @@ class PrimaryAssistant:
         synthesis_max_new_tokens: (
             int | None
         ) = None,
+
+        capabilities: Callable[[], Any] | None = None,
     ) -> None:
 
         self.inference = (
@@ -93,6 +99,10 @@ class PrimaryAssistant:
         self.model_key = (
             model_key
         )
+
+        # Reads the current setup rows (as /v1/integrations returns them), so a
+        # direct answer about what Janus can do follows the live registry.
+        self.capabilities = capabilities
 
         settings = (
             get_settings()
@@ -156,7 +166,7 @@ class PrimaryAssistant:
         self,
         user_request: str,
         *,
-        context: list[dict[str, str]] | None = None,
+        context: list[dict[str, Any]] | None = None,
     ) -> str:
         # A provider that reaches the output cap fails the job as truncated,
         # so the model is told the limit, as in synthesis.
@@ -177,6 +187,13 @@ class PrimaryAssistant:
                 context,
                 max_turns=24,
             ),
+
+            *prior_result_messages(
+                context,
+                max_turns=24,
+            ),
+
+            *self._capability_messages(),
 
             {
                 "role":
@@ -204,6 +221,15 @@ class PrimaryAssistant:
 
         return response.strip()
 
+    def _capability_messages(self) -> list[dict[str, str]]:
+        """Current capabilities for a direct answer; nothing when setup cannot be read."""
+        if self.capabilities is None:
+            return []
+        try:
+            return capability_messages(self.capabilities())
+        except Exception:
+            return []
+
     async def synthesize(
         self,
         user_request: str,
@@ -211,7 +237,7 @@ class PrimaryAssistant:
             AgentResult
         ],
         *,
-        context: list[dict[str, str]] | None = None,
+        context: list[dict[str, Any]] | None = None,
     ) -> str:
         """
         Produce the final Main-LLM answer from successful
@@ -242,6 +268,11 @@ class PrimaryAssistant:
             },
 
             *conversation_messages(
+                context,
+                max_turns=24,
+            ),
+
+            *prior_result_messages(
                 context,
                 max_turns=24,
             ),

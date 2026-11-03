@@ -25,6 +25,7 @@ import time
 from typing import Any
 
 from services.extensions.transform import MAX_SOURCE_BYTES, SOURCE_PATTERN, worker_environment
+from services.sensitive_fields import CREDENTIAL_VALUE_FIELD_NAMES, is_credential_value_field
 
 WORKER = Path(__file__).with_name("worker.py")
 DEFAULT_SOURCE = Path(__file__).with_name("default.lua")
@@ -41,9 +42,7 @@ SPARE_WORKERS = 2
 # own wall-time limit, for a worker to finish; it never starts more processes.
 ACTIVE_WORKERS = 8
 REQUIRED_ISOLATION = frozenset({"process", "no_new_privileges", "resource_limits", "no_new_descriptors"})
-SECRET_FIELDS = frozenset({"api_key", "apikey", "authorization", "proxy_authorization", "password",
-                           "password_hash", "access_token", "refresh_token", "client_secret",
-                           "private_key", "credentials", "bearer_token"})
+SECRET_FIELDS = CREDENTIAL_VALUE_FIELD_NAMES
 ERROR_MESSAGES = {
     "lua_adapter_invalid_input": "The Lua adapter requires bounded JSON data.",
     "lua_adapter_input_too_large": "The Lua adapter input exceeds its size limit.",
@@ -201,8 +200,8 @@ if register_at_fork is not None:
 
 
 def is_secret_field(name: str) -> bool:
-    """Host redaction and the worker boundary share one credential-key policy."""
-    return type(name) is str and name.casefold().replace("-", "_") in SECRET_FIELDS
+    """A credential value never enters Lua; a credential's name may (shared policy)."""
+    return is_credential_value_field(name)
 
 
 def _validate_json(value, depth=0, *, secrets=True):

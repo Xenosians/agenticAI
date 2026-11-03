@@ -8,6 +8,11 @@ from typing import (
     Any,
 )
 
+from services.sensitive_fields import (
+    SENSITIVE_FIELD_NAMES as SENSITIVE_KEY_NAMES,
+    is_sensitive_field,
+)
+
 
 REDACTED = (
     "<redacted>"
@@ -16,29 +21,6 @@ REDACTED = (
 REDACTED_EMAIL = (
     "<redacted-email>"
 )
-
-
-SENSITIVE_KEY_NAMES = {
-    "password",
-    "passwd",
-    "secret",
-    "token",
-    "api_key",
-    "apikey",
-    "authorization",
-    "cookie",
-    "set_cookie",
-    "credentials",
-    "credential",
-    "private_key",
-    "client_secret",
-    "access_token",
-    "refresh_token",
-    "jira_api_token",
-    "ad_bind_password",
-    "ad_write_bind_password",
-    "itsm_internal_job_token",
-}
 
 
 BEARER_PATTERN = re.compile(
@@ -50,6 +32,26 @@ AUTHORIZATION_BASIC_PATTERN = re.compile(
     r"(?i)\b(Authorization\s*:\s*Basic)\s+[A-Za-z0-9+/=]+"
 )
 
+# Any (Proxy-)Authorization value, as a header, an assignment or a quoted
+# mapping entry, is a credential. A leading scheme word (Digest, Token, ...)
+# is kept so the redacted text still says what kind of credential it was.
+AUTHORIZATION_VALUE_PATTERN = re.compile(
+    r"(?i)\b((?:proxy[_-])?authorization['\"]?\s*(?::=|[:=])\s*)"
+    # A quoted value runs to its closing quote; a header value to the line end.
+    r"(?:(['\"])([^\r\n]*?)\2|([^\r\n]+))"
+)
+AUTHORIZATION_SCHEME_PATTERN = re.compile(r"([A-Za-z][\w.~+/-]*)[ \t]+\S")
+
+
+def _redact_authorization_value(match: re.Match) -> str:
+    name, quote, quoted, bare = match.groups()
+    value = quoted if quote else bare
+    if REDACTED in value:
+        return match.group(0)  # Already redacted by the Bearer/Basic patterns.
+    scheme = AUTHORIZATION_SCHEME_PATTERN.match(value)
+    kept = f"{scheme.group(1)} " if scheme else ""
+    return f"{name}{quote or ''}{kept}{REDACTED}{quote or ''}"
+
 # Elsewhere "Basic" is often an ordinary word ("Basic setup"); the token after
 # it is a credential only when _basic_credential decodes it to user:password.
 BASIC_PATTERN = re.compile(
@@ -60,8 +62,10 @@ SECRET_ASSIGNMENT_PATTERN = re.compile(
     (
         r"(?i)"
         r"\b("
-        r"password|passwd|secret|"
-        r"api[_-]?key|token|"
+        # Authorization headers are redacted by the header patterns above;
+        # matching them here again would redact the scheme, not the credential.
+        r"password|passwd|pwd|secret|credential|cookie|"
+        r"private[_-]?key|api[_-]?key|token|"
         r"client[_-]?secret"
         r")"
         r"\s*(?::=|[:=])\s*"
@@ -96,51 +100,10 @@ URL_USERINFO_PATTERN = re.compile(
 )
 
 
-def _normalized_key(
-    value: str,
-) -> str:
-
-    return (
-        re.sub(
-            r"[^a-z0-9]+",
-            "_",
-            value
-            .strip()
-            .lower(),
-        )
-        .strip("_")
-    )
-
-
-def _sensitive_key(
+def is_sensitive_key(
     value: str,
 ) -> bool:
-
-    normalized = (
-        _normalized_key(
-            value
-        )
-    )
-
-    if (
-        normalized
-        in SENSITIVE_KEY_NAMES
-    ):
-        return True
-
-    sensitive_suffixes = (
-        "_password",
-        "_secret",
-        "_token",
-        "_api_key",
-        "_private_key",
-    )
-
-    return (
-        normalized.endswith(
-            sensitive_suffixes
-        )
-    )
+    return is_sensitive_field(value)
 
 
 def _basic_credential(
@@ -219,6 +182,8 @@ def sanitize_text(
         )
     )
 
+    result = AUTHORIZATION_VALUE_PATTERN.sub(_redact_authorization_value, result)
+
     result = (
         SECRET_ASSIGNMENT_PATTERN.sub(
             lambda match: (
@@ -268,7 +233,7 @@ def sanitize_value(
 
     if (
         key is not None
-        and _sensitive_key(
+        and is_sensitive_key(
             key
         )
     ):

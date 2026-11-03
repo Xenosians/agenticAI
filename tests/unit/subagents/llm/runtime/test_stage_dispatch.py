@@ -304,6 +304,41 @@ def test_the_answer_wording_follows_the_connection_limit(runtime):
     assert inference.calls[-1]["max_new_tokens"] == 384
 
 
+def test_a_direct_answer_sees_the_live_capabilities_and_synthesis_does_not(runtime):
+    # "What can you do?" is answered from the registry and setup state the
+    # runtime supplies, not from the model's own description (3 November).
+    from services.integration_readiness import PROVIDER_FAMILIES
+    from subagents.core.orchestration.primary_assistant import PrimaryAssistant
+
+    class Recorder:
+        def __init__(self):
+            self.calls = []
+
+        async def generate(self, **kwargs):
+            self.calls.append(kwargs)
+            return "ok"
+
+    rows = [{"id": family.id, "state": "configured", "missing": []} for family in PROVIDER_FAMILIES]
+    inference = Recorder()
+    assistant = PrimaryAssistant(inference, "hub-main", response_max_new_tokens=384,
+                                 synthesis_max_new_tokens=768, capabilities=lambda: rows)
+    asyncio.run(assistant.respond("What networking tools do you have?"))
+    asyncio.run(assistant.synthesize("Is the VPN up?", []))
+    respond, synthesis = inference.calls
+    capability_turns = [m for m in respond["messages"] if m["content"].startswith("CURRENT CAPABILITIES")]
+    assert len(capability_turns) == 1 and '"id":"openwrt","name":"OpenWrt","state":"available"' in capability_turns[0]["content"]
+    assert respond["messages"][-1]["content"] == "What networking tools do you have?"
+    assert not any(m["content"].startswith("CURRENT CAPABILITIES") for m in synthesis["messages"])
+
+    def unreadable():
+        raise RuntimeError("settings unavailable")
+
+    failing = PrimaryAssistant(Recorder(), "hub-main", response_max_new_tokens=384,
+                               synthesis_max_new_tokens=768, capabilities=unreadable)
+    asyncio.run(failing.respond("What can you do?"))
+    assert not any(m["content"].startswith("CURRENT CAPABILITIES") for m in failing.inference.calls[0]["messages"])
+
+
 def test_owner_instructions_reach_only_the_steps_that_write_the_answer(runtime):
     coordinator, manager, _, external = runtime
     selected(custom_instructions="Answer in Bahasa Indonesia.")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Any
 from agent.requested_workflow import (
     RequestedWorkflowContract, admit_requested_workflow,
     requested_workflow_prompt, validate_requested_plan,
@@ -360,7 +361,7 @@ class LLMRouter:
         self,
         user_request: str,
         *,
-        context: list[dict[str, str]] | None = None,
+        context: list[dict[str, Any]] | None = None,
         workflow_contract: RequestedWorkflowContract | None = None,
     ) -> list[
         SpecialistRequest
@@ -450,7 +451,7 @@ class LLMRouter:
         self,
         user_request: str,
         *,
-        context: list[dict[str, str]] | None = None,
+        context: list[dict[str, Any]] | None = None,
         repair_mode: bool = False,
         include_workflow_protocol: bool = True,
         repair_error: (

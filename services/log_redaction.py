@@ -9,8 +9,8 @@ SENSITIVE_ASSIGNMENT_PATTERN = re.compile(
     (
         r"(?i)"
         r"\b("
-        r"password|passwd|pwd|secret|token|"
-        r"api[_-]?key|authorization"
+        r"password|passwd|pwd|secret|token|credential|cookie|"
+        r"private[_-]?key|api[_-]?key|authorization"
         r")"
         r"(\s*[:=]\s*)"
         r"((?:Bearer\s+)?[^\s,;]+)"
