@@ -7,7 +7,8 @@ callback/outbox, and the HTTP heartbeat stays the lease fallback.
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
+from collections.abc import Callable
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 import json
 import logging
@@ -19,6 +20,9 @@ STAGES = frozenset({"routing", "planning", "executing", "synthesizing", "waiting
 # How long a lease renewal waits for the socket before the HTTP heartbeat is used.
 LEASE_REPLY_TIMEOUT_SECONDS = 10.0
 _current: ContextVar["JobProgress | None"] = ContextVar("job_progress", default=None)
+# Where streamed answer text goes while an answer is written (FR-080); None
+# outside an answer-writing step or without a progress channel.
+_answer_listener: ContextVar["Callable[[str], None] | None"] = ContextVar("answer_listener", default=None)
 # Sockets by (job_id, attempt), so that attempt's heartbeat can renew over them.
 _channels: dict[tuple[str, int], "JobProgress"] = {}
 _wire_logger = logging.getLogger("itsm.progress.websocket")
@@ -57,7 +61,59 @@ def report_progress(stage: str) -> None:
             pass
 
 
+@contextmanager
+def answer_stream(listener: "Callable[[str], None] | None"):
+    """Route streamed answer text to ``listener`` while an answer is written."""
+    token = _answer_listener.set(listener)
+    try:
+        yield
+    finally:
+        _answer_listener.reset(token)
+
+
+def answer_listener() -> "Callable[[str], None] | None":
+    """The current answer-text listener, or None when nobody is watching."""
+    return _answer_listener.get()
+
+
+def stream_answer_text(text: str) -> None:
+    """Show part of an answer as it is written; a failure never changes the answer."""
+    listener = _answer_listener.get()
+    if listener is not None and isinstance(text, str) and text:
+        try:
+            listener(text)
+        except Exception:
+            pass
+
+
+def current_answer_publisher() -> "Callable[[str], None] | None":
+    """The open progress channel's answer-text sender, or None without a channel."""
+    publisher = _current.get()
+    return None if publisher is None else publisher.publish_answer
+
+
+def _utf8_parts(text: str, limit: int) -> list[str]:
+    """Split text into parts of at most ``limit`` UTF-8 bytes, never inside a character."""
+    parts, current, size = [], [], 0
+    for character in text:
+        width = len(character.encode("utf-8"))
+        if size + width > limit and current:
+            parts.append("".join(current))
+            current, size = [], 0
+        current.append(character)
+        size += width
+    if current:
+        parts.append("".join(current))
+    return parts
+
+
 class JobProgress:
+    # Answer text is sent in frames of at most this many UTF-8 bytes, and at
+    # most this many frames wait; older ones are dropped, since the durable
+    # answer replaces the preview anyway.
+    MAX_ANSWER_FRAME_BYTES = 2048
+    MAX_PENDING_ANSWER_FRAMES = 64
+
     def __init__(self, base_url: str, token: str, job_id: str, attempt: int, *, connect=None,
                  heartbeat_interval: float = 20.0):
         if not re.fullmatch(r"[0-9a-f]{32}", job_id) or type(attempt) is not int or attempt < 1:
@@ -69,6 +125,8 @@ class JobProgress:
         self.topic = "ai_jobs:" + job_id
         self.attempt = attempt
         self.queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
+        self.answers: asyncio.Queue[dict] = asyncio.Queue(maxsize=self.MAX_PENDING_ANSWER_FRAMES)
+        self.answer_sequence = 0
         self.lease_requests: asyncio.Queue[asyncio.Future] = asyncio.Queue()
         self.latest: str | None = None
         self.joined = False
@@ -83,6 +141,16 @@ class JobProgress:
         if self.queue.full():
             self.queue.get_nowait()
         self.queue.put_nowait(stage)
+
+    def publish_answer(self, text: str) -> None:
+        """Queue answer text for the job's viewers, split into bounded, numbered frames."""
+        if type(text) is not str:
+            raise ValueError("Answer text must be text")
+        for part in _utf8_parts(text, self.MAX_ANSWER_FRAME_BYTES):
+            self.answer_sequence += 1
+            if self.answers.full():
+                self.answers.get_nowait()
+            self.answers.put_nowait({"sequence": self.answer_sequence, "text": part})
 
     async def renew_lease(self) -> dict | None:
         """Renew this attempt's lease over the joined socket (request and reply).
@@ -116,10 +184,11 @@ class JobProgress:
                     return payload
 
     async def _next_items(self) -> list[tuple[str, object]]:
-        """Lease requests first, then the latest progress stage; empty when idle."""
+        """Lease requests first, then the latest progress stage, then answer text; empty when idle."""
         getters = {
             asyncio.ensure_future(self.lease_requests.get()): "lease",
             asyncio.ensure_future(self.queue.get()): "progress",
+            asyncio.ensure_future(self.answers.get()): "answer",
         }
         try:
             await asyncio.wait(getters, timeout=self.heartbeat_interval, return_when=asyncio.FIRST_COMPLETED)
@@ -130,7 +199,8 @@ class JobProgress:
         # A getter that finished before the cancellation keeps its item.
         ready = [(kind, getter.result()) for getter, kind in getters.items()
                  if getter.done() and not getter.cancelled()]
-        return sorted(ready, key=lambda item: item[0] != "lease")
+        order = {"lease": 0, "progress": 1, "answer": 2}
+        return sorted(ready, key=lambda item: order[item[0]])
 
     def _release_lease_requests(self) -> None:
         """Waiting heartbeats fall back to HTTP at once when the socket goes away."""
@@ -149,7 +219,7 @@ class JobProgress:
         return join_ref
 
     async def _serve(self, socket, join_ref: str) -> None:
-        """Send lease renewals, progress and idle heartbeats until the socket fails."""
+        """Send lease renewals, progress, answer text and idle heartbeats until the socket fails."""
         self.joined = True
         try:
             if self.latest is not None:
@@ -172,6 +242,10 @@ class JobProgress:
                     ref = str(sequence)
                     if kind == "progress":
                         await socket.send(json.dumps([join_ref, ref, self.topic, "progress", {"stage": value}]))
+                        await self._reply(socket, ref, join_ref)
+                    elif kind == "answer":
+                        # A preview only: Phoenix relays it to the job's viewers and keeps nothing.
+                        await socket.send(json.dumps([join_ref, ref, self.topic, "answer_text", value]))
                         await self._reply(socket, ref, join_ref)
                     elif not value.done():  # a caller that stopped waiting already used HTTP
                         self._lease_in_flight = value

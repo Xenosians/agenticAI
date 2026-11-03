@@ -128,7 +128,9 @@ def map_event(request, layers, runtime, load_text, env, new, null, kind_of):
             references = {} if plugins is None else from_lua(plugins, kind_of, depth=-1)
             if type(references) is not dict:
                 raise Failure("lua_adapter_output_invalid", "Profile plugins must be a table")
-            declared = {"links": declared, "plugins": references}
+            # Whether every boundary event passes through a mapping function the
+            # host cannot inspect (a bare function script or a profile's adapt).
+            declared = {"links": declared, "plugins": references, "adapts": mapper is not None}
         event = {**request["event"], "payload": declared}
         return {"schema": "lua-adapter-worker.v1", "event": event, "isolation": layers,
                 "elapsed_ms": round((time.perf_counter() - started) * 1000)}

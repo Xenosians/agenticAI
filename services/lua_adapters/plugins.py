@@ -185,9 +185,11 @@ async def harness_prompt_async(messages, **kwargs):
     return await asyncio.to_thread(harness_prompt, messages, **kwargs)
 
 
-def _anthropic_input(profile, messages, max_tokens, effort, thinking, max_tokens_limit):
+def _anthropic_input(profile, messages, max_tokens, effort, thinking, max_tokens_limit, stream=False):
     if (type(profile) is not dict or type(profile.get("model")) is not str or not profile["model"].strip()
             or type(messages) is not list or type(max_tokens) is not int or max_tokens < 1):
+        raise LuaAdapterError("lua_adapter_invalid_input")
+    if type(stream) is not bool:
         raise LuaAdapterError("lua_adapter_invalid_input")
     if max_tokens_limit is not None and (type(max_tokens_limit) is not int or max_tokens_limit < 1):
         raise LuaAdapterError("lua_adapter_invalid_input")
@@ -199,7 +201,7 @@ def _anthropic_input(profile, messages, max_tokens, effort, thinking, max_tokens
         if type(row) is not dict or type(row.get("role")) is not str or row["role"] not in {"system", "user", "assistant"} or type(row.get("content")) is not str:
             raise LuaAdapterError("lua_adapter_invalid_input")
     return {"model": profile["model"], "messages": messages, "max_tokens": max_tokens,
-            "max_tokens_limit": max_tokens_limit, "effort": effort, "thinking": thinking}
+            "max_tokens_limit": max_tokens_limit, "effort": effort, "thinking": thinking, "stream": stream}
 
 
 def _verify_turn_content(turns, originals):
@@ -245,7 +247,7 @@ def _anthropic_guard(body, original):
         raise LuaAdapterError("lua_adapter_output_invalid")
     cap = min(original["max_tokens"], original["max_tokens_limit"]) if original["max_tokens_limit"] is not None else original["max_tokens"]
     if (body["model"] != original["model"] or type(body["max_tokens"]) is not int
-            or not 1 <= body["max_tokens"] <= cap or body["stream"] is not False):
+            or not 1 <= body["max_tokens"] <= cap or body["stream"] is not original["stream"]):
         raise LuaAdapterError("lua_adapter_binding_changed")
     systems = "\n\n".join(row["content"] for row in original["messages"] if row["role"] == "system" and row["content"].strip())
     system = body.get("system", "")
@@ -267,9 +269,9 @@ def _anthropic_guard(body, original):
 
 
 def anthropic_request(profile, messages, max_tokens, *, effort=None, thinking=None,
-                      max_tokens_limit=None, binding=None):
+                      max_tokens_limit=None, binding=None, stream=False):
     """Execute the Messages Lua codec; capability/HTTP decisions remain host-owned."""
-    original = _anthropic_input(profile, messages, max_tokens, effort, thinking, max_tokens_limit)
+    original = _anthropic_input(profile, messages, max_tokens, effort, thinking, max_tokens_limit, stream)
     result = run_plugin("model.anthropic", original,
                         binding=binding if binding is not None else {"model": original["model"], "api_format": "anthropic"})
     return _anthropic_guard(result.payload, original)

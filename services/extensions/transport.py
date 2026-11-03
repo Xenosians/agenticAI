@@ -517,8 +517,15 @@ async def remote_generate(
 
 
 async def _messages_generate(profile: dict, budget, effort: str | None) -> str:
-    """Anthropic Messages API inference with the same budget and admission rules."""
+    """Anthropic Messages API inference with the same budget and admission rules.
+
+    While an answer is being written for someone watching the job, the
+    response is streamed and its visible text shown as it arrives (FR-080).
+    The returned answer is still the complete, checked response.
+    """
+    from services.job_progress import answer_listener, stream_answer_text
     plan = await anthropic.request_plan(profile, effort)
+    streamed = answer_listener() is not None
     from services.lua_adapters.plugins import anthropic_request_async
     body = await anthropic_request_async(
         profile,
@@ -527,6 +534,7 @@ async def _messages_generate(profile: dict, budget, effort: str | None) -> str:
         effort=effort,
         thinking=plan.thinking,
         max_tokens_limit=plan.max_tokens_limit,
+        stream=streamed,
     )
     admission = await admit_external_request(
         profile, budget.estimated_request_tokens + plan.thinking_allowance,
@@ -534,6 +542,7 @@ async def _messages_generate(profile: dict, budget, effort: str | None) -> str:
     data = await anthropic.post_messages(
         profile["url"], body, profile.get("api_key", ""),
         timeout=request_timeout_seconds(profile, anthropic.request_timeout()),
+        on_text=stream_answer_text if streamed else None,
     )
     total = anthropic.total_usage_tokens(data)
     if total is not None:

@@ -57,7 +57,8 @@ return function(event)
   if input.max_tokens_limit ~= nil and input.max_tokens_limit ~= adapter.null then
     tokens = math.min(tokens, input.max_tokens_limit)
   end
-  local body = adapter.object({model = input.model, max_tokens = tokens, messages = turns, stream = false})
+  local body = adapter.object({model = input.model, max_tokens = tokens, messages = turns,
+    stream = input.stream == true})
   local system = table.concat(systems, "\n\n")
   if has_text(system) then
     if utf8.len(system) >= 4096 then

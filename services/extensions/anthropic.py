@@ -254,11 +254,11 @@ async def request_plan(profile: dict, effort: str | None) -> RequestPlan:
     return RequestPlan(None, allowance, limit)
 
 
-def headers(api_key: str) -> dict[str, str]:
+def headers(api_key: str, *, streamed: bool = False) -> dict[str, str]:
     # Accept is required: some Anthropic-format gateways answer clients that
     # accept anything with an event-stream body even when stream is false.
     result = {
-        "Accept": "application/json",
+        "Accept": "text/event-stream" if streamed else "application/json",
         "anthropic-version": API_VERSION,
     }
     if api_key:
@@ -314,17 +314,26 @@ def build_request(
                              max_tokens_limit=max_tokens_limit)
 
 
-async def post_messages(url: str, payload: dict, api_key: str, *, timeout: float | None = None) -> dict:
-    """POST /v1/messages with bounded, secret-safe failure handling."""
+async def post_messages(url: str, payload: dict, api_key: str, *, timeout: float | None = None,
+                        on_text=None) -> dict:
+    """POST /v1/messages with bounded, secret-safe failure handling.
+
+    With ``payload["stream"]`` the server-sent events are assembled into the
+    same message object a complete response returns, so every later check
+    (stop reason, block types, empty text, usage) applies unchanged. Each piece
+    of visible text is also passed to ``on_text`` as it arrives; hidden
+    reasoning never is.
+    """
     from services.extensions.transport import read_bounded
 
     target = endpoint(url, "messages")
+    streamed = payload.get("stream") is True
     try:
         async with shared_async_client(
             timeout=request_timeout() if timeout is None else timeout, follow_redirects=False, trust_env=False,
         ) as client:
             async with client.stream(
-                "POST", target, json=payload, headers=headers(api_key),
+                "POST", target, json=payload, headers=headers(api_key, streamed=streamed),
             ) as response:
                 if response.status_code != 200:
                     content = await read_bounded(response, max_bytes=MAX_ERROR_BYTES)
@@ -338,6 +347,8 @@ async def post_messages(url: str, payload: dict, api_key: str, *, timeout: float
                         f"detail={diagnostic!r}"
                     )
                     raise ExternalProviderError(category, status_code=response.status_code)
+                if streamed:
+                    return await _assemble_stream(response, on_text)
                 content = await read_bounded(response, max_bytes=MAX_RESPONSE_BYTES)
     except ExternalProviderError:
         raise
@@ -354,6 +365,64 @@ async def post_messages(url: str, payload: dict, api_key: str, *, timeout: float
     if not isinstance(data, dict):
         raise ExternalProviderError("provider_malformed_response")
     return data
+
+
+async def _assemble_stream(response, on_text) -> dict:
+    """Rebuild the complete message from its server-sent events, bounded like a full response.
+
+    A stream that ends before ``message_stop`` has no stop reason, so it fails
+    later as an incomplete turn. A provider ``error`` event is classified the
+    same way as an HTTP error.
+    """
+    message: dict = {"content": [], "stop_reason": None, "usage": {}}
+    blocks: dict[int, dict] = {}
+    received = 0
+    async for line in response.aiter_lines():
+        received += len(line) + 1
+        if received > MAX_RESPONSE_BYTES:
+            raise ExternalProviderError("provider_malformed_response")
+        if not line.startswith("data:"):
+            continue
+        try:
+            event = json.loads(line[5:].strip())
+        except json.JSONDecodeError:
+            raise ExternalProviderError("provider_malformed_response") from None
+        if not isinstance(event, dict):
+            raise ExternalProviderError("provider_malformed_response")
+        kind = event.get("type")
+        if kind == "error":
+            error = event.get("error") if isinstance(event.get("error"), dict) else {}
+            raise ExternalProviderError(classify_messages_failure(json.dumps(error), 0))
+        if kind == "message_start" and isinstance(event.get("message"), dict):
+            usage = event["message"].get("usage")
+            if isinstance(usage, dict):
+                message["usage"].update(usage)
+        elif kind == "content_block_start" and isinstance(event.get("content_block"), dict):
+            block = dict(event["content_block"])
+            if block.get("type") == "text":
+                block["text"] = block.get("text") if isinstance(block.get("text"), str) else ""
+            blocks[event.get("index")] = block
+        elif kind == "content_block_delta" and isinstance(event.get("delta"), dict):
+            block = blocks.get(event.get("index"))
+            delta = event["delta"]
+            if block is None:
+                raise ExternalProviderError("provider_malformed_response")
+            if delta.get("type") == "text_delta" and block.get("type") == "text":
+                text = delta.get("text")
+                if not isinstance(text, str):
+                    raise ExternalProviderError("provider_malformed_response")
+                block["text"] += text
+                if on_text is not None and text:
+                    on_text(text)
+        elif kind == "message_delta" and isinstance(event.get("delta"), dict):
+            message["stop_reason"] = event["delta"].get("stop_reason")
+            usage = event.get("usage")
+            if isinstance(usage, dict):
+                message["usage"].update(usage)
+        elif kind == "message_stop":
+            break
+    message["content"] = [blocks[index] for index in sorted(blocks, key=lambda value: (value is None, value))]
+    return message
 
 
 def classify_messages_failure(diagnostic: str, status_code: int) -> str:

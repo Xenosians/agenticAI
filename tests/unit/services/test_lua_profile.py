@@ -252,6 +252,31 @@ def test_without_a_profile_no_links_are_declared(monkeypatch):
     assert profile.settings_values() == {} and profile.process_policy() == {}
 
 
+def test_model_text_is_unchanged_only_without_an_adapt_function_or_a_replaced_model_codec(
+        install, tmp_path, monkeypatch):
+    # A streamed answer preview skips the Lua response phase, so it is offered
+    # only when that phase cannot change the provider's text (FR-080).
+    for name in ("ITSM_LUA_ADAPTER_FILE", "ITSM_LUA_ADAPTER_SHA256"):
+        monkeypatch.delenv(name, raising=False)
+    assert profile.model_text_unchanged()
+    install(source='return {links = {sources = {user_sites = true}}}', secrets=None)
+    assert profile.model_text_unchanged()
+    install(source="return {links = {}, adapt = function(event) return event end}", secrets=None)
+    assert not profile.model_text_unchanged()
+    install(source="return function(event) return event end", secrets=None)
+    assert not profile.model_text_unchanged()
+    codec = tmp_path / "codec.lua"
+    codec.write_text("return function(event) return event end", encoding="utf-8")
+    digest = hashlib.sha256(codec.read_bytes()).hexdigest()
+    for plugin_id in ("model.anthropic", "model.local"):
+        install(source='return {plugins = {["%s"] = {file = "codec.lua", sha256 = "%s"}}}' % (plugin_id, digest),
+                secrets=None)
+        assert not profile.model_text_unchanged()
+    install(source='return {plugins = {["tool.default"] = {file = "codec.lua", sha256 = "%s"}}}' % digest,
+            secrets=None)
+    assert profile.model_text_unchanged()
+
+
 def test_declared_partial_sections_never_inherit_environment_credentials(install, monkeypatch):
     from config.settings import Settings
     install(source='return {links = {jira = {url = "https://new.example.test"}, directory = {host = "dc.example.test"}}}', secrets=None)

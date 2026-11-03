@@ -157,3 +157,15 @@ after an actual mutation must preserve the original provider receipt and its
 known or unknown effect state. It is never permission to resend that operation.
 `LuaAdapterError` exposes a stable `lua_adapter_*` code and a generic message;
 raw script errors and payload text do not cross that diagnostic boundary.
+
+## Streamed answer previews
+
+While a job is watched, an answer can be shown as the provider writes it
+(SRS 1.9 FR-080). The preview skips the `model` / `response` phase, so it is
+offered only when that phase cannot change the text: the packaged model codecs
+and no `adapt` function in the machine profile
+(`services.lua_adapters.profile.model_text_unchanged`). A profile that maps
+responses therefore turns previews off; its answers still arrive whole and
+pass through Lua. The `model.anthropic` request codec receives the host's
+`stream` flag and must return it unchanged. The answer that is saved is
+always the complete response after the response phase, never the preview.

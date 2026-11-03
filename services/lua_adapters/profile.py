@@ -103,8 +103,9 @@ def _read_secrets() -> dict | None:
 def _read_declared(source: str) -> dict:
     result = run_adapter(kind="source", phase="admission", payload={}, binding={"profile": "links"},
                          source=source, read_profile=True)
-    if (type(result.payload) is not dict or set(result.payload) != {"links", "plugins"}
-            or type(result.payload["links"]) is not dict or type(result.payload["plugins"]) is not dict):
+    if (type(result.payload) is not dict or set(result.payload) != {"links", "plugins", "adapts"}
+            or type(result.payload["links"]) is not dict or type(result.payload["plugins"]) is not dict
+            or type(result.payload["adapts"]) is not bool):
         raise _invalid()
     return result.payload
 
@@ -127,6 +128,21 @@ def load_links() -> Links:
             raise _invalid()
     return Links(declared, _read_secrets() if declared else None, plugins,
                  Path(os.environ["ITSM_LUA_ADAPTER_FILE"]))
+
+
+def model_text_unchanged() -> bool:
+    """Whether Lua returns a model's visible text exactly as the provider wrote it.
+
+    True only with the packaged model codecs and no machine-wide mapping
+    function: then the response phase of every model call is a pass-through,
+    so text shown while it is written equals the checked answer (FR-080).
+    """
+    from services.lua_adapters.host_boundaries import configured_source
+    source = configured_source()
+    if source is None:
+        return True
+    declared = _read_declared(source)
+    return not declared["adapts"] and not any(plugin.startswith("model.") for plugin in declared["plugins"])
 
 
 def plugin_artifact(plugin_id: str) -> dict | None:

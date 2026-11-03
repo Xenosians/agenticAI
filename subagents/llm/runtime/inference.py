@@ -90,6 +90,20 @@ def _answer_settings(profile: dict | None, stage, repair_of, messages: list[dict
     return profile, messages, max_new_tokens
 
 
+def _answer_preview(stage, repair_of):
+    """Where to show answer text as it is written, or None for steps the host parses.
+
+    A preview is offered only when Lua's response phase cannot change the
+    provider's text, so the text shown equals the checked answer.
+    """
+    from services.job_progress import current_answer_publisher
+    from services.lua_adapters.profile import model_text_unchanged
+    if repair_of is not None or InferenceStage(stage) not in ANSWER_STAGES:
+        return None
+    publisher = current_answer_publisher()
+    return publisher if publisher is not None and model_text_unchanged() else None
+
+
 def _stage_request(profile: dict, messages: list[dict], max_new_tokens: int, policy: StagePolicy):
     """Use the existing budget resolver, then only lower its effective limits."""
     from services.extensions.budget import (
@@ -224,6 +238,7 @@ class InferenceCoordinator:
                     estimated_input = budget.estimated_input_tokens
                     dropped_messages = budget.dropped_messages
                     from services.extensions.retry import with_retries
+                    from services.job_progress import answer_stream
                     if backend == "http":
                         from services.extensions import transport
                         from services.extensions.response_format import http_response_format_for_stage
@@ -231,9 +246,11 @@ class InferenceCoordinator:
                             profile, stage=stage, repair_of=repair_of,
                         )
                         format_options = {"response_format": response_format} if response_format is not None else {}
-                        result = await with_retries(profile, lambda: transport.remote_generate(
-                            profile, budget.messages, budget.max_output_tokens, **format_options,
-                        ))
+                        # Only the text the user reads is shown as it is written (FR-080).
+                        with answer_stream(_answer_preview(stage, repair_of)):
+                            result = await with_retries(profile, lambda: transport.remote_generate(
+                                profile, budget.messages, budget.max_output_tokens, **format_options,
+                            ))
                     else:
                         from services.extensions import harness
                         result = await with_retries(profile, lambda: harness.harness_generate(

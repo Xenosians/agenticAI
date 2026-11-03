@@ -394,6 +394,87 @@ def test_a_turned_away_request_is_retried_when_the_connection_allows_it(runtime,
     assert len(calls) == 1
 
 
+@pytest.mark.parametrize("stage, repair_of, streams", [
+    (InferenceStage.PRIMARY_RESPONSE, None, True),
+    (InferenceStage.SYNTHESIS, None, True),
+    (InferenceStage.SEMANTIC_ROUTING, None, False),
+    (InferenceStage.SPECIALIST_REASONING, None, False),
+    (InferenceStage.REPAIR, InferenceStage.SYNTHESIS, False),
+])
+def test_only_the_text_the_user_reads_is_shown_as_it_is_written(runtime, monkeypatch, stage, repair_of, streams):
+    # FR-080: an answer step reaches the job's progress channel; a step whose
+    # output the host parses (routing, a tool call, a repair) never does.
+    from services import job_progress
+    coordinator, _, _, _ = runtime
+    channel = job_progress.JobProgress("https://example.com", "private-token", "a" * 32, 1)
+
+    async def writes(profile, messages, max_new_tokens, **options):
+        job_progress.stream_answer_text("visible part")
+        return "remote result"
+
+    monkeypatch.setattr("services.extensions.transport.remote_generate", writes)
+    token = job_progress._current.set(channel)
+    try:
+        generate(coordinator, stage, repair_of=repair_of)
+    finally:
+        job_progress._current.reset(token)
+    seen = [channel.answers.get_nowait()["text"] for _ in range(channel.answers.qsize())]
+    assert seen == (["visible part"] if streams else [])
+
+
+def test_an_answer_is_not_previewed_when_lua_could_change_its_text(runtime, monkeypatch):
+    # A machine-profile adapt function or a replaced model codec may rewrite the
+    # response, and a preview skips that phase, so the answer is not streamed.
+    from services import job_progress
+    from services.lua_adapters import profile
+    coordinator, _, _, _ = runtime
+    channel = job_progress.JobProgress("https://example.com", "private-token", "a" * 32, 1)
+
+    async def writes(profile_, messages, max_new_tokens, **options):
+        job_progress.stream_answer_text("visible part")
+        return "remote result"
+
+    monkeypatch.setattr("services.extensions.transport.remote_generate", writes)
+    monkeypatch.setattr(profile, "model_text_unchanged", lambda: False)
+    token = job_progress._current.set(channel)
+    try:
+        assert generate(coordinator, InferenceStage.PRIMARY_RESPONSE) == "remote result"
+    finally:
+        job_progress._current.reset(token)
+    assert channel.answers.empty()
+
+
+def test_a_stream_cut_off_after_text_was_shown_is_not_retried(runtime, monkeypatch):
+    # The retry rule is unchanged: a timeout is never retried, so text already
+    # shown never belongs to a second, paid request.
+    from services import job_progress
+    from services.extensions import retry
+    from services.extensions.diagnostics import ExternalProviderError
+    coordinator, _, _, _ = runtime
+    calls = []
+    channel = job_progress.JobProgress("https://example.com", "private-token", "a" * 32, 1)
+
+    async def cut_off(profile, messages, max_new_tokens, **options):
+        calls.append(1)
+        job_progress.stream_answer_text("partial")
+        raise ExternalProviderError("provider_timeout")
+
+    async def no_wait(seconds):
+        return None
+
+    monkeypatch.setattr("services.extensions.transport.remote_generate", cut_off)
+    monkeypatch.setattr(retry, "_sleep", no_wait)
+    selected(retry_attempts=3)
+    token = job_progress._current.set(channel)
+    try:
+        with pytest.raises(ExternalProviderError, match="provider_timeout"):
+            generate(coordinator, InferenceStage.PRIMARY_RESPONSE)
+    finally:
+        job_progress._current.reset(token)
+    assert calls == [1]
+    assert channel.answers.qsize() == 1
+
+
 def test_oversized_mandatory_prompt_fails_before_external_dispatch(runtime):
     coordinator, manager, metrics, external = runtime
     with pytest.raises(ExternalInferenceBudgetError):
@@ -686,3 +767,33 @@ def test_a_lua_refusal_sends_nothing_to_any_model(runtime, lua_script):
     with pytest.raises(LuaAdapterError):
         generate(coordinator, InferenceStage.CONTROL_ROUTING)
     assert external == [] and manager.calls == []
+
+
+def test_a_profile_that_rewrites_responses_is_never_previewed(runtime, lua_script, monkeypatch):
+    # The preview would skip the rewrite, so a real adapt function turns streaming off
+    # and the answer still comes back through Lua (FR-080).
+    from services import job_progress
+    coordinator, _, _, _ = runtime
+    channel = job_progress.JobProgress("https://example.com", "private-token", "a" * 32, 1)
+
+    async def writes(profile, messages, max_new_tokens, **options):
+        job_progress.stream_answer_text("remote result")
+        return "remote result"
+
+    monkeypatch.setattr("services.extensions.transport.remote_generate", writes)
+    lua_script(ADAPT_BOTH_WAYS)
+    token = job_progress._current.set(channel)
+    try:
+        assert generate(coordinator, InferenceStage.PRIMARY_RESPONSE) == "REMOTE RESULT"
+    finally:
+        job_progress._current.reset(token)
+    assert channel.answers.empty()
+    # Control: the same step with the packaged pass-through adapter is previewed.
+    monkeypatch.delenv("ITSM_LUA_ADAPTER_FILE")
+    monkeypatch.delenv("ITSM_LUA_ADAPTER_SHA256")
+    token = job_progress._current.set(channel)
+    try:
+        assert generate(coordinator, InferenceStage.PRIMARY_RESPONSE) == "remote result"
+    finally:
+        job_progress._current.reset(token)
+    assert channel.answers.get_nowait()["text"] == "remote result"
