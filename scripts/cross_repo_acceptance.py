@@ -895,7 +895,7 @@ def _assert_history_roundtrip(
         raise AcceptanceFailure("Canonical chat history lacks the exact submitted job turn.")
     result = job.get("result")
     answer = result.get("answer") if isinstance(result, dict) else None
-    if job["status"] in {"failed", "denied", "outcome_unknown", "reconciliation_required"}:
+    if job["status"] in {"failed", "denied", "outcome_unknown", "reconciliation_required", "cancelled"}:
         answer = job.get("error") or answer
     if (not isinstance(answer, str) or not answer.strip() or len(assistants) != 1
             or assistants[0].get("content") != answer):

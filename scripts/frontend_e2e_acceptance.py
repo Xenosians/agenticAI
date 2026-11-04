@@ -50,6 +50,7 @@ TERMINAL = {
     "denied",
     "outcome_unknown",
     "reconciliation_required",
+    "cancelled",
 }
 
 # Cases where we explicitly prove reload persistence.

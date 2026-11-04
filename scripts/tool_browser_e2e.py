@@ -69,7 +69,7 @@ from tools.registry import TOOLS  # noqa: E402
 
 BACKEND_REPO = Path(os.getenv("ACCEPTANCE_BACKEND_REPO", str(PROJECT_ROOT.parents[1] / "agenticBackend" / "itsm_backend")))
 REPORT = PROJECT_ROOT / ".runtime" / "acceptance" / "tool-browser-e2e.json"
-TERMINAL = {"completed", "failed", "denied", "outcome_unknown", "reconciliation_required"}
+TERMINAL = {"completed", "failed", "denied", "outcome_unknown", "reconciliation_required", "cancelled"}
 BROWSER_REPORT_SCHEMA = "tool-browser-e2e.v2"
 
 
