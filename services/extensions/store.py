@@ -264,9 +264,11 @@ class ExtensionStore:
         return True
 
     def remove_crawl_site(self, owner: str, origin: str) -> bool:
+        """Forget one of the owner's sites, and when Janus last read it on its own."""
+        key = self._site_key(owner, origin)
         with self.connect() as db:
-            removed = db.execute("DELETE FROM crawl_site WHERE owner=? AND site_key=?",
-                                 (owner, self._site_key(owner, origin))).rowcount
+            removed = db.execute("DELETE FROM crawl_site WHERE owner=? AND site_key=?", (owner, key)).rowcount
+            db.execute("DELETE FROM auto_crawl WHERE owner=? AND site_key=?", (owner, key))
         return removed > 0
 
     def auto_crawl_read_at(self, owner: str, origin: str) -> float | None:

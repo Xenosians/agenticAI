@@ -23,6 +23,7 @@ from services.extensions.context import owner_execution  # noqa: E402
 from services.extensions.service import extension_store  # noqa: E402
 from services.knowledge import auto_crawl  # noqa: E402
 from services.knowledge.auto_crawl import AutoCrawler  # noqa: E402
+from services.knowledge.sites import CrawlSites  # noqa: E402
 from tools.knowledge.owner_search import owner_knowledge_search  # noqa: E402
 
 PAGES = {
@@ -198,6 +199,28 @@ def test_a_site_is_read_at_most_once_a_day_and_replaced_in_place(machine, site, 
     after = [row for row in store.list("alice") if row.get("kind") == "dataset"]
     latest = max(after, key=lambda row: row["version"])
     assert latest["lineage_id"] == first[0]["lineage_id"] and latest["version"] == 2
+
+
+def test_a_site_removed_and_added_again_is_read_again(machine, site, store, crawler):
+    # Removing a site forgets when Janus last read it: registering it again (after
+    # removing its dataset too) is a new site, read on the next unanswered question
+    # instead of a day after the first read.
+    machine(user_sites=True)
+    sites = CrawlSites(store)
+    sites.add("alice", site)
+    search("alice")
+    crawler.wait(timeout=60)
+    first = [row for row in store.list("alice") if row.get("kind") == "dataset"]
+    assert len(first) == 1
+    requests = len(Site.requested)
+
+    assert sites.remove("alice", site)
+    store.delete("alice", first[0]["id"])
+    sites.add("alice", site)
+    search("alice")
+    crawler.wait(timeout=60)
+    assert len(Site.requested) > requests
+    assert [row["crawl"]["automatic"] for row in store.list("alice") if row.get("kind") == "dataset"] == [True]
 
 
 def test_one_owner_has_at_most_one_crawl_running(machine, site, store, crawler):
