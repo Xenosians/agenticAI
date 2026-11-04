@@ -157,6 +157,20 @@ def build_hub(
         )
 
     # ============================================================
+    # CAPABILITY SIGNATURES
+    #
+    # Which arguments a capability requires comes from its executable
+    # signature, never from a model. The MCP server runs in its own
+    # process, so the hub captures the same signatures here; without them
+    # a request missing a required value would not be asked for it.
+    # No provider is configured or called.
+    # ============================================================
+
+    from mcp_server import register_capability_signatures
+
+    register_capability_signatures()
+
+    # ============================================================
     # AGENT REGISTRY
     # ============================================================
 

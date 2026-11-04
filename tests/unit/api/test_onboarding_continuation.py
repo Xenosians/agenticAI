@@ -282,6 +282,53 @@ async def test_orchestrator_suspends_saved_ticket_until_source_is_approved(sourc
 
 
 @run_async
+async def test_a_clarification_reply_saves_the_ticket_step_with_the_request_it_completes(tmp_path, monkeypatch):
+    # "Mvp" came in the first request, "Test" and KAN in the reply to Janus's
+    # clarification: the saved ticket step must keep both, or it cannot ground KAN.
+    account = delegation("account_create", "account-specialist", {"given_name": ["Mvp"], "family_name": ["Test"]})
+    ticket = delegation("ticket_create", "jira-specialist", {"project_key": ["KAN"]})
+    ticket.after_success_of = account.agent_name
+    routed = []
+
+    class Router:
+        async def route(self, request):
+            routed.append(request)
+            return [account, ticket]
+
+    approvals = ApprovalStore(tmp_path / "approvals.sqlite3")
+    approvals.initialize()
+    manager = ApprovalManager(store=approvals, mcp=Provider())
+    source = manager.create_approval("account_create", {
+        "given_name": "Mvp", "family_name": "Test", "expected_username": "mtest",
+        "expected_email": "mtest@itsm.test",
+    })
+
+    class Runtime:
+        async def run(self, task):
+            return AgentResult(task_id=task.task_id, agent_name=task.agent_name, status="approval_required",
+                               proposed_tool="account_create", approval_id=source["id"])
+
+    first = "Create an account for Mvp, then a Jira ticket for it."
+    reply = "Family name Test, ticket in KAN."
+    context = [{"role": "user", "content": first},
+               {"role": "assistant", "content": "Please provide the required family name before I continue.",
+                "result_evidence": {"job_id": "job-0", "job_status": "completed", "results_truncated": False,
+                                    "results": [{"agent_name": "account-specialist",
+                                                 "status": "clarification_required"}]}}]
+    hub_result = await Orchestrator(Router(), Runtime(), None, require_semantic_intent=True).run(reply, context=context)
+    assert routed == [first + "\n" + reply]
+    assert hub_result.user_request == reply
+
+    runtime = SimpleNamespace(approvals=manager)
+    extensions = ExtensionStore(tmp_path / "extensions")
+    monkeypatch.setattr("services.extensions.service.extension_store", lambda: extensions)
+    payload = SimpleNamespace(user_id="owner-1", job_id="job-1", attempt=1, context=[], message=reply)
+    with owner_execution("owner-1", reply):
+        persist_workflow_continuation(runtime, payload, hub_result)
+    assert WorkflowStore(approvals.path).get(source["id"])["plan"]["user_request"] == first + "\n" + reply
+
+
+@run_async
 async def test_account_result_advances_to_separately_approved_ticket_and_replays(env):
     protocol = await approve_source(env)
     # Changing preferences cannot silently change the selected workflow model.

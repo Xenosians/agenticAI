@@ -23,6 +23,10 @@ from subagents.core.orchestration.conversation_context import (
     normalize_conversation_context,
 )
 
+from subagents.core.orchestration.clarification import (
+    grounding_request,
+)
+
 from subagents.core.orchestration.router import (
     LLMRouter,
     RoutingContractError,
@@ -463,6 +467,10 @@ class Orchestrator:
             )
         )
 
+        # A reply to Janus's own clarification is grounded in the requests it
+        # completes (user text only); answers and the saved result keep the reply.
+        grounding = grounding_request(user_request, conversation_context)
+
         try:
             owners = None
             if workflow_contract is not None:
@@ -498,7 +506,7 @@ class Orchestrator:
                 delegations = (
                     await _call_with_optional_context(
                         route_with_repair,
-                        user_request,
+                        grounding,
                         context=conversation_context,
                         workflow_contract=workflow_contract,
                     )
@@ -509,7 +517,7 @@ class Orchestrator:
                 delegations = (
                     await _call_with_optional_context(
                         self.router.route,
-                        user_request,
+                        grounding,
                         context=conversation_context,
                         workflow_contract=workflow_contract,
                     )
@@ -627,7 +635,7 @@ class Orchestrator:
             return AgentTask(
                 task_id=task_ids[index],
                 agent_name=delegation.agent_name,
-                user_request=user_request,
+                user_request=grounding,
                 instructions=delegation.instructions,
                 semantic_intent=delegation.semantic_intent,
                 context={"conversation_context": conversation_context},
@@ -675,6 +683,7 @@ class Orchestrator:
             runtime_decisions_by_task_id=runtime_decisions_by_task_id,
             onboarding=onboarding,
             conversation_context=conversation_context,
+            grounding=grounding,
         )
 
     async def _run_delegations(
@@ -975,6 +984,7 @@ class Orchestrator:
         runtime_decisions_by_task_id: dict[str, dict],
         onboarding,
         conversation_context,
+        grounding: str,
     ) -> HubResult:
         from agent.onboarding import can_suspend_onboarding, encode_plan
 
@@ -1147,6 +1157,8 @@ class Orchestrator:
             # and training serialization. Only the API persists it with owner
             # and durable job identity, never a model-selected owner.
             setattr(hub_result, "_pending_onboarding", encode_plan(onboarding))
+            # The saved ticket step is grounded in the same text as this one.
+            setattr(hub_result, "_grounding_request", grounding)
 
         return (
             hub_result

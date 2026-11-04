@@ -306,6 +306,10 @@ def test_build_hub_injects_generation_configuration(
 ):
 
     import subagents.hub as hub_module
+    from tools import runtime_schema
+
+    # Building the hub captures executable signatures; keep them to this test.
+    monkeypatch.setattr(runtime_schema, "_SCHEMAS", {})
 
     monkeypatch.setattr(
         hub_module,

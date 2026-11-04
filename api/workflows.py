@@ -43,7 +43,10 @@ def persist_workflow_continuation(runtime, payload, hub_result) -> dict[str, Any
         raise ValueError("Onboarding must bind the authenticated execution selection.")
     decode_ticket(plan)
     approval_id = hub_result.results[0].approval_id
-    saved_plan = {"delegation": plan, "user_request": payload.message,
+    # The ticket step runs later from this saved text; it keeps the grounding
+    # the account step had (a clarification reply plus the request it completes).
+    user_request = getattr(hub_result, "_grounding_request", None) or payload.message
+    saved_plan = {"delegation": plan, "user_request": user_request,
                   "context": [turn.model_dump() for turn in payload.context],
                   "selection": dict(selection)}
     contract = getattr(payload, "workflow_contract", None)
