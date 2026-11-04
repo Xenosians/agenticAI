@@ -19,6 +19,12 @@ every case.
 Usage (AI repository root, AI service Python):
   python scripts/tool_browser_e2e.py [--only case-id ...] [--resume] [--headed]
 
+Add --adapter local, or --adapter http --model-id <connection> (plus --networking),
+to run every case on that inference profile, as scripts/tool_matrix.py does. The
+profile is chosen through the product API before the browser signs in, confirmed
+before each case, and the account's own selection is restored afterwards; a case
+passes only if the job's recorded steps ran on that profile.
+
 Exit status (same rules as scripts/tool_matrix.py):
   0  every selected case passed, and a full run covered every registered tool
   1  at least one case failed
@@ -44,7 +50,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from dotenv import dotenv_values  # noqa: E402
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright  # noqa: E402
 
-from scripts.cross_repo_acceptance import _assert_history_roundtrip, _tool_name  # noqa: E402
+from scripts.acceptance_profiles import ADAPTERS, AcceptanceProfileScope  # noqa: E402
+from scripts.cross_repo_acceptance import BrowserPathClient, _assert_history_roundtrip, _tool_name  # noqa: E402
 from scripts import tool_matrix as matrix  # noqa: E402
 from scripts.tool_matrix import (  # noqa: E402
     ATLASSIAN_ADMIN_TOOLS,
@@ -56,8 +63,11 @@ from scripts.tool_matrix import (  # noqa: E402
     atlassian_admin_configured,
     build_cases,
     discover_fixtures,
+    inference_evidence,
+    job_inference_metrics,
     load_matrix_report,
     plan_limited,
+    profile_request,
     prepare_git_fixture,
     provider_ok,
     record_created,
@@ -111,6 +121,11 @@ def save_browser_report(report: dict, path: Path, selected: list, *, full_scope:
     report["selection"] = {"scope": "full" if full_scope else "selected", "cases": [case[0] for case in selected]}
     report["acceptance"] = acceptance_summary(report["results"], selected, registered_tools=TOOLS,
                                                full_scope=full_scope, source_unchanged=source_unchanged)
+    restoration = report.get("inference_restoration")
+    if restoration is not None and restoration.get("status") != "restored":
+        # An account left on the test profile must never look like a clean run.
+        report["acceptance"].update(overall="FAIL", exit_code=1,
+                                    reason="The account's inference selection could not be restored; reconcile it")
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -345,7 +360,9 @@ def approve(page, timeout_ms: int) -> None:
     button.click()
 
 
-def run_case(page, traffic: BrowserTraffic, args, case: tuple, context: dict, *, row: dict, checkpoint) -> dict:
+def run_case(page, traffic: BrowserTraffic, args, case: tuple, context: dict, *, row: dict, checkpoint,
+             evidence=None) -> dict:
+    """Run one case in the browser. ``evidence(job_id, attempt)``, when given, proves where the job's steps ran."""
     identity, tool, prompt, approve_mode = case
     message = prompt.format(**context)
     row.update(tool=tool, prompt=message, stage="preparing_browser")
@@ -400,6 +417,8 @@ def run_case(page, traffic: BrowserTraffic, args, case: tuple, context: dict, *,
     row["provider"] = detail
     if used != tool:
         raise AssertionError(f"used {used} instead of {tool}")
+    if evidence is not None:
+        row["inference"] = evidence(job_id, final.get("attempts"))
     limited = plan_limited(worker)
     if limited:
         row["verdict"] = "plan_limited"
@@ -430,16 +449,25 @@ def main() -> int:
     parser.add_argument("--backend-url", default="http://127.0.0.1:4000")
     parser.add_argument("--login-env", type=Path, default=BACKEND_REPO / ".runtime" / "acceptance" / "login.env")
     parser.add_argument("--headed", action="store_true")
+    parser.add_argument("--adapter", choices=sorted(ADAPTERS),
+                        help="Run every case on this inference profile; the account's selection is restored")
+    parser.add_argument("--model-id", help="The owner's ready connection for an outbound --adapter")
+    parser.add_argument("--networking", choices=("preserve", "local", "follow"),
+                        help="Networking specialist: keep its assignment, use the local model, or follow --model-id")
     args = parser.parse_args()
     try:
         if args.only == []:
             raise ValueError("--only needs at least one case identity")
         # Reject invalid scope before reading credentials, repositories or starting a browser.
         select_matrix_cases(build_cases(RUN, matrix.PROJECT), args.only or [])
+        requested_profile = profile_request(args)
         identity = source_identity()
+        context_of_run = execution_context(args)
+        if requested_profile is not None:
+            context_of_run["inference_profile"] = requested_profile
         report = load_matrix_report(args.report, resume=args.resume, identity=identity,
                                     run=RUN, project=matrix.PROJECT, schema=BROWSER_REPORT_SCHEMA,
-                                    execution_context=execution_context(args))
+                                    execution_context=context_of_run)
         selected = select_matrix_cases(build_cases(report["run"], report["project"]), args.only or [])
     except ValueError as exc:
         parser.error(str(exc))
@@ -456,6 +484,7 @@ def main() -> int:
                             source_unchanged=final and source_identity() == identity)
 
     save()
+    scope = client = None
     try:
         if pending:
             login = dotenv_values(args.login_env)
@@ -491,6 +520,26 @@ def main() -> int:
                     save()
             admin_ready = atlassian_admin_configured()
             shots.mkdir(parents=True, exist_ok=True)
+            if requested_profile is not None:
+                # The same product API the matrix uses chooses the profile before
+                # the browser signs in, and puts the account back afterwards.
+                client = BrowserPathClient(args.backend_url, timeout_seconds=args.timeout)
+                client.preflight()
+                client.login(login["ACCEPTANCE_EMAIL"], login["ACCEPTANCE_PASSWORD"])
+                # Choosing restores the account itself when it fails; once chosen,
+                # the finally below is the one place that puts it back.
+                scope = AcceptanceProfileScope(client, **requested_profile).__enter__()
+                if scope.original is not None:
+                    report.setdefault("original_selection", {"selected": scope.original.selected,
+                                                             "roles": scope.original.roles})
+                if report.setdefault("inference_profile", scope.fingerprint) != scope.fingerprint:
+                    raise ValueError("The inference profile differs from the one this report was started with; "
+                                     "use a new report")
+                save()
+
+                def case_evidence(job_id, attempt):
+                    return inference_evidence(job_inference_metrics(client, job_id, attempt),
+                                              report["inference_profile"])
 
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(headless=not args.headed)
@@ -518,7 +567,11 @@ def main() -> int:
                         report["results"][case_id] = row
                         save()  # Persist intent before new_chat/send can create application work.
                         try:
-                            run_case(page, traffic, args, case, context, row=row, checkpoint=save)
+                            if scope is not None:
+                                # Every case must run on the chosen profile; a changed selection stops it.
+                                scope.assert_unchanged()
+                            run_case(page, traffic, args, case, context, row=row, checkpoint=save,
+                                     evidence=case_evidence if scope is not None else None)
                             if row.get("verdict") == "pass":
                                 row.pop("reason", None)
                         except Exception as exc:
@@ -536,6 +589,11 @@ def main() -> int:
                     browser.close()
         report["run_state"] = "finished"
     finally:
+        if scope is not None:
+            # Put the account's own selection back; a restore that cannot be confirmed fails the run.
+            report["inference_restoration"] = scope.restore()
+        if client is not None:
+            client.close()
         if report["results"].get("jira-project-archive", {}).get("verdict") == "pass":
             report["cleanup_required"] = {"archived_project": f"MY{report['run'][-4:]}",
                                           "action": "Reconcile and clean up this disposable project explicitly."}

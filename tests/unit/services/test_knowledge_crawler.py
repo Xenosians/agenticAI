@@ -311,6 +311,28 @@ def test_pages_that_ask_not_to_be_indexed_or_followed_are_respected(machine, sit
     assert "/kb/via-closed.html" not in Site.requested
 
 
+def test_translations_of_a_page_are_not_read_as_new_knowledge(machine, site):
+    # A site's language switcher links every page to its translations. The crawl
+    # reads the start page's language; a page the site declares as a translation
+    # (rel=alternate hreflang in its head, or hreflang on the link itself) is not
+    # followed, so the page budget goes to new knowledge.
+    declared = "".join(f"<link rel='alternate' hreflang='{code}' href='{site}/{code}/start'/>" for code in ("de", "fr"))
+    switcher = ("<a href='/de/start'>Deutsch</a><a href='/fr/start'>Français</a>"
+                "<a href='/ja/start' hreflang='ja'>日本語</a>")
+    Site.pages = {"/robots.txt": ("text/plain", ""),
+                  "/": ("text/html", f"<html lang='en'><head>{declared}</head><body><p>Router handbook</p>{switcher}"
+                                     "<a href='/docs/vlan'>VLANs</a><a href='/en/faq' hreflang='en'>FAQ</a></body></html>"),
+                  "/docs/vlan": ("text/html", "<html lang='en'><p>Tag the VLAN on the switch port.</p></html>"),
+                  "/en/faq": ("text/html", "<html lang='en'><p>Frequently asked questions.</p></html>"),
+                  **{f"/{code}/start": ("text/html", f"<html lang='{code}'><p>Startseite {code}</p></html>")
+                     for code in ("de", "fr", "ja")}}
+    machine(site)
+    result = run(site + "/")
+    assert [page.url.removeprefix(site) for page in result.pages] == ["/", "/docs/vlan", "/en/faq"]
+    assert not any(path.endswith("/start") for path in Site.requested)
+    assert result.skipped["other_language"] == 3
+
+
 def test_a_page_already_read_under_another_address_is_stored_once(machine, site):
     # The same document served at two addresses (a directory index and its file name).
     page = "<p>Same text</p><a href='index.html'></a>"

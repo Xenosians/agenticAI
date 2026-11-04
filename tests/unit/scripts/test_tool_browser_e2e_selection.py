@@ -215,7 +215,7 @@ def test_main_persists_intent_before_dispatch_and_keeps_unknown_job_on_failure(t
     monkeypatch.setattr(harness, "atlassian_admin_configured", lambda: False)
     monkeypatch.setattr(harness, "dotenv_values", lambda _: {"ACCEPTANCE_EMAIL": "test@example.test", "ACCEPTANCE_PASSWORD": "fixture-only"})
     monkeypatch.setattr(harness.matrix, "RUN", "10220000")
-    def interrupted(*args, row, checkpoint):
+    def interrupted(*args, row, checkpoint, evidence=None):
         saved = json.loads(path.read_text())
         assert saved["results"][CASE[0]]["stage"] == "prepared"
         assert saved["results"][CASE[0]]["verdict"] == "blocked"
@@ -258,3 +258,125 @@ def test_send_records_request_identity_even_when_its_response_is_lost():
         harness.send(page, "Read the fixture", 1000, on_submission=observed.append)
     assert observed == [{"chat_id": "chat", "submission_id": "submission"}]
     assert callbacks == {}
+
+
+FINGERPRINT = {"schema": "acceptance-inference-profile.v1", "sha256": "fixture", "adapter": "http",
+               "networking": {"adapter": "http"}}
+
+
+def scoped_run(tmp_path, monkeypatch, *, restoration, metrics):
+    """Run main() for one case on a chosen profile with every external effect faked."""
+    events = []
+
+    class Scope:
+        def __init__(self, client, *, adapter, model_id, networking):
+            events.append(("scope", adapter, model_id, networking))
+            self.fingerprint = FINGERPRINT
+            self.original = SimpleNamespace(selected={"model_id": "own", "dataset_id": None}, roles={"r": "local"})
+
+        def __enter__(self):
+            events.append("selected")
+            return self
+
+        def assert_unchanged(self):
+            events.append("checked")
+            return self.fingerprint
+
+        def restore(self):
+            events.append("restored")
+            return restoration
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def preflight(self):
+            pass
+
+        def login(self, *args):
+            events.append("api-login")
+
+        def close(self):
+            events.append("api-closed")
+
+    page = SimpleNamespace(screenshot=lambda **_: None)
+    browser = SimpleNamespace(new_context=lambda **_: SimpleNamespace(new_page=lambda: page), close=lambda: None)
+    playwright = SimpleNamespace(chromium=SimpleNamespace(launch=lambda **_: browser))
+
+    def case(*args, row, checkpoint, evidence=None):
+        events.append("case")
+        row.update(verdict="pass", job_id="a" * 32, inference=evidence("a" * 32, 1))
+        return row
+
+    monkeypatch.setattr(harness, "sync_playwright", lambda: nullcontext(playwright))
+    monkeypatch.setattr(harness, "BrowserTraffic", lambda _: SimpleNamespace(sockets=[]))
+    monkeypatch.setattr(harness, "sign_in", lambda *args: events.append("browser-login"))
+    monkeypatch.setattr(harness, "AcceptanceProfileScope", Scope)
+    monkeypatch.setattr(harness, "BrowserPathClient", Client)
+    monkeypatch.setattr(harness, "job_inference_metrics", lambda client, job_id, attempt: metrics)
+    monkeypatch.setattr(harness, "run_case", case)
+    monkeypatch.setattr(harness, "source_identity", lambda: SOURCE)
+    monkeypatch.setattr(harness, "build_cases", lambda *_: [CASE])
+    monkeypatch.setattr(harness, "TOOLS", {CASE[1]: {}})
+    monkeypatch.setattr(harness, "discover_fixtures", lambda _: None)
+    monkeypatch.setattr(harness, "atlassian_admin_configured", lambda: False)
+    monkeypatch.setattr(harness, "dotenv_values", lambda _: {"ACCEPTANCE_EMAIL": "test@example.test",
+                                                             "ACCEPTANCE_PASSWORD": "fixture-only"})
+    monkeypatch.setattr(harness.matrix, "RUN", "10220000")
+    path = tmp_path / "browser.json"
+    monkeypatch.setattr("sys.argv", ["tool_browser_e2e.py", "--report", str(path), "--login-env",
+                                     str(tmp_path / "login.env"), "--adapter", "http", "--model-id", "chosen",
+                                     "--networking", "follow"])
+    return harness.main(), json.loads(path.read_text()), events
+
+
+def metric(stage, adapter, *, role=None):
+    return {"operation": "generate", "stage": stage, "repair_of": None, "adapter": adapter,
+            "outcome": "success", "role": role}
+
+
+def test_a_chosen_profile_scopes_every_browser_case_and_restores_the_account(tmp_path, monkeypatch):
+    code, saved, events = scoped_run(tmp_path, monkeypatch, restoration={"status": "restored"},
+                                     metrics=[metric("CONTROL_ROUTING", "local"),
+                                              metric("SPECIALIST_REASONING", "http", role="account-specialist")])
+    assert code == 0
+    # Selected before the browser signs in, confirmed before the case, restored after it.
+    assert events == ["api-login", ("scope", "http", "chosen", "follow"), "selected", "browser-login",
+                      "checked", "case", "restored", "api-closed"]
+    assert saved["inference_profile"] == FINGERPRINT
+    assert saved["original_selection"] == {"selected": {"model_id": "own", "dataset_id": None},
+                                           "roles": {"r": "local"}}
+    assert saved["inference_restoration"] == {"status": "restored"}
+    assert saved["results"][CASE[0]]["inference"] == {"adapters": ["http"],
+                                                      "stages": ["CONTROL_ROUTING", "SPECIALIST_REASONING"]}
+    assert saved["execution_context"]["inference_profile"] == {"adapter": "http", "model_id": "chosen",
+                                                               "networking": "follow"}
+
+
+def test_an_account_left_on_the_test_profile_fails_the_browser_run(tmp_path, monkeypatch):
+    code, saved, _ = scoped_run(tmp_path, monkeypatch, restoration={"status": "reconciliation_required"},
+                                metrics=[metric("SPECIALIST_REASONING", "http", role="account-specialist")])
+    assert code == 1
+    assert saved["acceptance"]["overall"] == "FAIL"
+    assert "restored" in saved["acceptance"]["reason"]
+
+
+def test_a_case_whose_steps_ran_elsewhere_does_not_pass(tmp_path, monkeypatch):
+    code, saved, _ = scoped_run(tmp_path, monkeypatch, restoration={"status": "restored"},
+                                metrics=[metric("SPECIALIST_REASONING", "local", role="account-specialist")])
+    assert code == 1
+    row = saved["results"][CASE[0]]
+    assert row["verdict"] == "fail" and "ran on local, not http" in row["reason"]
+
+
+@pytest.mark.parametrize("profile", [["--model-id", "connection"], ["--adapter", "local", "--model-id", "connection"],
+                                     ["--adapter", "http"], ["--networking", "local"]])
+def test_an_incomplete_browser_profile_is_refused_before_source_credentials_or_browser(tmp_path, monkeypatch, profile):
+    monkeypatch.setattr(harness, "source_identity", lambda: pytest.fail("must not read repositories"))
+    monkeypatch.setattr(harness, "dotenv_values", lambda _: pytest.fail("must not read credentials"))
+    monkeypatch.setattr(harness, "sync_playwright", lambda: pytest.fail("must not start a browser"))
+    monkeypatch.setattr("sys.argv", ["tool_browser_e2e.py", "--report", str(tmp_path / "new.json"), *profile])
+    with pytest.raises(SystemExit) as exit_info:
+        harness.main()
+    assert exit_info.value.code == 2
+    assert not (tmp_path / "new.json").exists()

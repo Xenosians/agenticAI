@@ -14,6 +14,9 @@ and is bounded in pages, depth, bytes and time; when the time budget ends, the
 pages already read are kept. It returns text with per-page provenance; admission
 (secret/PII scanning, licence, review, versioning) is the dataset store's job,
 exactly as for an uploaded file.
+
+A page the site declares as a translation (``hreflang``) is not followed, so the
+page budget goes to new knowledge rather than to the same page in other languages.
 """
 from __future__ import annotations
 
@@ -113,10 +116,20 @@ class _Readable(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.title, self.links, self.robots, self._parts, self._skipping, self._in_title = "", [], [], [], 0, False
+        self.language = ""  # The page's own language (<html lang>), lower case.
+        self.other_language = 0  # Links the page marks as another language (hreflang).
+        # Addresses the page declares as its translations (<link rel=alternate hreflang>).
+        self.translations: list[str] = []
 
     def handle_starttag(self, tag, attrs):
+        values = dict(attrs)
+        if tag == "html":
+            self.language = (values.get("lang") or "").strip().lower()
+        if (tag == "link" and "alternate" in (values.get("rel") or "").lower().split()
+                and values.get("hreflang") and values.get("href")):
+            if _language(values["hreflang"].strip().lower()) != _language(self.language):
+                self.translations.append(values["href"])
         if tag == "meta":
-            values = dict(attrs)
             if (values.get("name") or "").lower() in {"robots", "januscrawler"} and values.get("content"):
                 self.robots.append(values["content"])
         if tag in SKIPPED_ELEMENTS:
@@ -124,8 +137,11 @@ class _Readable(HTMLParser):
         elif tag == "title":
             self._in_title = True
         elif tag == "a":
-            href = dict(attrs).get("href")
-            if href:
+            href = values.get("href")
+            language = (values.get("hreflang") or "").strip().lower()
+            if href and language and _language(language) != _language(self.language):
+                self.other_language += 1  # A translation of a page, not new knowledge.
+            elif href:
                 self.links.append(href)
         if tag in BLOCK_ELEMENTS:
             self._parts.append("\n")
@@ -223,6 +239,11 @@ async def _robots(client, origin: str) -> RobotFileParser:
 def _crawl_delay(rules: RobotFileParser) -> float:
     delay = rules.crawl_delay(USER_AGENT)
     return min(float(delay), MAX_CRAWL_DELAY) if delay else 0.0
+
+
+def _language(tag: str) -> str:
+    """The primary language of a language tag ("pt-br" -> "pt"); "" when unknown."""
+    return tag.split("-", 1)[0]
 
 
 def _meta_robots(parser: "_Readable") -> set[str]:
@@ -344,6 +365,11 @@ async def _crawl(result: CrawlResult, origin: str, prefix: str, limits: CrawlLim
                 parser.feed(page.document)
                 parser.close()
                 title, text, links = parser.title.strip() or page.address, parser.text(), parser.links
+                translations = {_normalized(page.address, href, origin, "/") for href in parser.translations}
+                kept = [href for href in links if _normalized(page.address, href, origin, "/") not in translations]
+                for _link in range(parser.other_language + len(links) - len(kept)):
+                    result.skip("other_language")
+                links = kept
                 directives = _meta_robots(parser)
                 index = not directives & {"noindex", "none"}
                 follow = not directives & {"nofollow", "none"}
