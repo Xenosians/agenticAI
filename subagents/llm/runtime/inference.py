@@ -266,6 +266,11 @@ class InferenceCoordinator:
 
             if not self.model_manager.exists(model_key):
                 raise KeyError(f"Model '{model_key}' is not registered.")
+            if operation == "generate":
+                # Another job holds the local model: say so while this job waits.
+                if await self.scheduler.job_turns.enter(lambda: report_progress("waiting_provider")):
+                    if progress_stage:
+                        report_progress(progress_stage)
             observe_local = True
             loaded_before = _observe("loaded_before", lambda: self.model_manager.is_loaded(model_key))
             memory_before = _observe("memory_before", self.memory_sampler)

@@ -1164,15 +1164,18 @@ async def execute_job(
             answer_references, answer_skills, owner_execution, private_request,
         )
         from services.job_progress import job_progress
+        from subagents.llm.runtime.scheduler import job_turn
         async with job_progress(runtime.settings, job_id, payload.attempt):
             with owner_execution(payload.user_id, payload.message) as (profile, has_dataset):
                 workflow_options = (
                     {"workflow_contract": payload.workflow_contract}
                     if payload.workflow_contract is not None else {}
                 )
-                result = await runtime.hub.run(
-                    payload.message, context=conversation_context, **workflow_options,
-                )
+                # Jobs on the local model take turns (GpuScheduler.job_turns).
+                with job_turn():
+                    result = await runtime.hub.run(
+                        payload.message, context=conversation_context, **workflow_options,
+                    )
                 # Citations of the reference passages a model was actually given,
                 # and the owner's skills that guided the answer.
                 references = answer_references()
@@ -1750,7 +1753,8 @@ async def run_agent(
     )
 
     from services.extensions.context import owner_execution
-    with owner_execution(payload.user_id, payload.message):
+    from subagents.llm.runtime.scheduler import job_turn
+    with owner_execution(payload.user_id, payload.message), job_turn():
         result = await runtime.hub.run(payload.message)
 
     if getattr(result, "_pending_onboarding", None) is not None:

@@ -4,6 +4,9 @@ import asyncio
 import heapq
 import itertools
 import time
+from collections import deque
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from dataclasses import (
     dataclass,
@@ -86,6 +89,77 @@ class ScheduledResult(
     metrics: SchedulerRunMetrics
 
 
+class _JobTurn:
+    """One job's place in the line for the local model."""
+
+    def __init__(self) -> None:
+        self.line: LocalModelTurns | None = None
+        self.granted: asyncio.Future | None = None
+        self.holds_model = False
+
+
+# The job whose steps run in this context; None outside a job (startup
+# warm-up, approved actions), whose steps never wait for a turn.
+_current_job_turn: ContextVar[_JobTurn | None] = ContextVar("current_job_turn", default=None)
+
+
+@contextmanager
+def job_turn():
+    """Run one job's steps; its local-model steps take turns with other jobs.
+
+    A job keeps the local model from its first local step until it ends, so
+    two local jobs do not interleave their steps on one GPU and both finish
+    late. Steps on an outbound connection never wait for this turn.
+    """
+    turn = _JobTurn()
+    token = _current_job_turn.set(turn)
+    try:
+        yield
+    finally:
+        _current_job_turn.reset(token)
+        if turn.line is not None:
+            turn.line.leave(turn)
+
+
+class LocalModelTurns:
+    """First-come line of jobs for the local model; one job holds it at a time."""
+
+    def __init__(self) -> None:
+        self._holder: _JobTurn | None = None
+        self._line: deque[_JobTurn] = deque()
+
+    async def enter(self, on_wait: Callable[[], None] | None = None) -> bool:
+        """Wait until the current job holds the local model; True if it had to wait."""
+        turn = _current_job_turn.get()
+        if turn is None or turn.holds_model:
+            return False
+        turn.line = self
+        if self._holder is None:
+            self._holder, turn.holds_model = turn, True
+            return False
+        if turn.granted is None:
+            turn.granted = asyncio.get_running_loop().create_future()
+            self._line.append(turn)
+        if on_wait is not None:
+            on_wait()
+        # Parallel steps of one job wait on the same grant and share the turn.
+        await asyncio.shield(turn.granted)
+        return True
+
+    def leave(self, turn: _JobTurn) -> None:
+        if turn in self._line:
+            self._line.remove(turn)
+        if turn.granted is not None and not turn.granted.done():
+            turn.granted.cancel()
+        if self._holder is turn:
+            self._holder = None
+            if self._line:
+                following = self._line.popleft()
+                self._holder, following.holds_model = following, True
+                if following.granted is not None:
+                    following.granted.set_result(None)
+
+
 class GpuScheduler:
     """
     Process-local serialized inference admission boundary.
@@ -125,6 +199,9 @@ class GpuScheduler:
         )
 
         self._active = False
+
+        # Jobs take turns on the local model; see job_turn().
+        self.job_turns = LocalModelTurns()
 
     @property
     def active(
