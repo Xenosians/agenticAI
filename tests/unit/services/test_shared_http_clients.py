@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import threading
+import time
 
 import pytest
 
@@ -20,12 +21,32 @@ from services.lua_adapters import http_clients  # noqa: E402
 
 
 @contextmanager
-def provider():
-    """A local chat-completions endpoint that records which connection each request used."""
+def provider(idle_timeout: float | None = None):
+    """A local chat-completions endpoint that records which connection each request used.
+
+    With ``idle_timeout`` it behaves like the live provider proxy: it advertises
+    ``Keep-Alive: timeout=N``, and a request that arrives on a connection idle for
+    longer gets no response; the connection is closed (the server already gave it up).
+    """
     seen = []
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
+
+        def setup(self):
+            super().setup()
+            self.answered_at = None
+
+        def handle_one_request(self):
+            if idle_timeout is not None and self.answered_at is not None:
+                if not self.rfile.peek(1):  # The client closed the connection.
+                    self.close_connection = True
+                    return
+                if time.monotonic() - self.answered_at > idle_timeout:
+                    self.close_connection = True  # Closed without a response.
+                    return
+            super().handle_one_request()
+            self.answered_at = time.monotonic()
 
         def do_POST(self):  # noqa: N802 - http.server API
             self.rfile.read(int(self.headers.get("Content-Length", 0)))
@@ -34,6 +55,8 @@ def provider():
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
+            if idle_timeout is not None:
+                self.send_header("Keep-Alive", f"timeout={idle_timeout:g}")
             self.end_headers()
             self.wfile.write(body)
 
@@ -83,6 +106,27 @@ def test_consecutive_provider_calls_share_one_connection(lua_requests, monkeypat
     assert len(seen) == 3
     assert len(set(seen)) == 1, "each call opened a new connection"
     assert lua_requests == [("connection", "request", "POST")] * 3
+
+
+def test_a_connection_idle_as_long_as_a_server_keeps_it_is_not_reused(lua_requests, monkeypatch):
+    # Node.js and Apache servers drop a connection idle for 5 seconds; the live
+    # provider proxy advertises "Keep-Alive: timeout=5". A request sent on such a
+    # connection got no response, and the job failed with "Server disconnected
+    # without sending a response" (provider_connection_failed).
+    with provider(idle_timeout=5.0) as (url, seen):
+        allow(monkeypatch, url)
+
+        async def call_wait_call():
+            await transport.request_json(url, payload={"messages": []})
+            await asyncio.sleep(0.2)
+            await transport.request_json(url, payload={"messages": []})  # Reused: same connection.
+            await asyncio.sleep(5.2)
+            reply = await transport.request_json(url, payload={"messages": []})
+            await http_clients.close_shared_clients()
+            return reply
+
+        assert asyncio.run(call_wait_call())["choices"]
+    assert len(seen) == 3 and seen[0] == seen[1] != seen[2]
 
 
 def test_each_event_loop_gets_its_own_connections(lua_requests, monkeypatch):

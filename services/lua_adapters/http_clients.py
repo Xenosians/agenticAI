@@ -18,8 +18,11 @@ from services.transport_tls import configured_context
 
 # Shared clients keep connections open between calls, so a call does not pay a
 # new TCP and TLS handshake first (33-52 ms to the model providers from the
-# development host). An idle connection is closed after this many seconds.
-KEEPALIVE_SECONDS = 30.0
+# development host). An idle connection is closed after this many seconds: less
+# than the 5 seconds Node.js and Apache servers (and the provider proxy, which
+# advertises "Keep-Alive: timeout=5") keep one. A request sent on a connection
+# the server is closing gets no response, so that request fails.
+KEEPALIVE_SECONDS = 4.0
 
 _shared_clients: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 

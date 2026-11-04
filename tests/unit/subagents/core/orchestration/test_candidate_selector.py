@@ -40,6 +40,10 @@ def production_registry():
     ("Show git log for /tmp/demo", "workspace_git_log"),
     ("Show me the contents of calculator.py in the mvp repository.", "workspace_read_text"),
     ("Execute a native process", "process_exec"),
+    # The browser acceptance prompt: without "repository" in the push capability's
+    # description this fell back to the whole catalog (about 19k tokens), where the
+    # outbound model sometimes answered in prose instead of proposing the push.
+    ("Push the committed changes in the mvp repository to its configured upstream.", "workspace_git_push"),
 ])
 def test_tiny_production_requests_have_small_trusted_packets(production_registry, user_request, expected):
     selection = DeterministicCandidateSelector().select(user_request, production_registry)

@@ -1251,7 +1251,8 @@ GIT_TOOLS[
 ] = {
     "description": (
         "PUSH the exact current commit of the current attached "
-        "Git branch to that branch's already-configured upstream. "
+        "Git branch of one configured repository to that branch's "
+        "already-configured upstream. "
         "Use this when the user explicitly asks to push the "
         "current branch or push current committed changes. "
         "Trusted policy binds the branch, exact HEAD SHA, remote, "
