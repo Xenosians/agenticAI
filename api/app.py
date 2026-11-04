@@ -27,7 +27,9 @@ from fastapi import (
 
 from pydantic import (
     BaseModel,
+    ConfigDict,
     Field,
+    StrictInt,
     model_validator,
 )
 
@@ -1349,7 +1351,32 @@ def schedule_job(
         payload.job_id
     ] = task
 
+    # The attempt each task runs, so a cancel stops only that attempt.
+    runtime.active_attempts[payload.job_id] = payload.attempt
+    task.add_done_callback(
+        lambda _: runtime.active_attempts.pop(payload.job_id, None)
+        if runtime.active_jobs.get(payload.job_id) in (None, task) else None
+    )
+
     return task
+
+
+def stop_job_attempt(
+    runtime: ApplicationRuntime,
+    job_id: str,
+    attempt: int,
+) -> str:
+    """Stop the task running exactly this attempt; Phoenix already saved the cancel.
+
+    A cancelled task sends no completion. Its local-model turn and read-ahead
+    steps end with it. An approval it already proposed stays pending in the
+    approval store and is never executed without the owner's decision.
+    """
+    task = runtime.active_jobs.get(job_id)
+    if task is None or task.done() or runtime.active_attempts.get(job_id) != attempt:
+        return "not_running"
+    task.cancel()
+    return "stopping"
 
 
 # ============================================================
@@ -1842,6 +1869,34 @@ async def execute_durable_job(
 
         "duplicate":
             False,
+    }
+
+
+# ============================================================
+# Owner cancel of a running attempt
+# ============================================================
+
+
+class JobCancelRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    attempt: StrictInt = Field(ge=1)
+
+
+@app.post(
+    "/v1/jobs/{job_id}/cancel"
+)
+async def cancel_durable_job(
+    job_id: str,
+    payload: JobCancelRequest,
+    request: Request,
+) -> dict:
+    from api.extensions import require_internal
+    require_internal(request)
+    runtime = require_ready_runtime(request)
+    return {
+        "job_id": job_id,
+        "attempt": payload.attempt,
+        "status": stop_job_attempt(runtime, job_id, payload.attempt),
     }
 
 

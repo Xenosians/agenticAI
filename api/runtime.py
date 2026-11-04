@@ -115,6 +115,9 @@ class ApplicationRuntime:
         default_factory=dict
     )
 
+    # The attempt number each active job task runs (see stop_job_attempt).
+    active_attempts: dict[str, int] = field(default_factory=dict)
+
     workflow_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
 
     outbox_task: (
