@@ -4,6 +4,10 @@ Runs on the host after the knowledge provider answers, inside the request's
 trusted owner context; the model never names the owner. Passages are quoted
 reference text: they never grant permission or change routing. Their citations
 are recorded with the answer like any other passage a model was given.
+
+When none of the owner's passages answers, Janus reads the owner's permitted
+sites that were not read in the last day, in the background (see
+services/knowledge/auto_crawl.py); the answer does not wait for it.
 """
 from __future__ import annotations
 
@@ -28,6 +32,8 @@ def owner_knowledge_search(result: dict[str, Any], arguments: dict[str, Any]) ->
 
     hits = extension_store().search_reference(owner, query, limit=MAX_OWNER_PASSAGES)
     if not hits:
+        from services.knowledge.auto_crawl import request_update
+        request_update(owner)
         return result
     disclose_references(hits)
     passages = [{"source": hit["source"], "text": hit["content"], "trust": "untrusted_reference"} for hit in hits]

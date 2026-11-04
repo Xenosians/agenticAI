@@ -103,6 +103,11 @@ class ExtensionStore:
                 CREATE TABLE IF NOT EXISTS crawl_site (
                     owner TEXT NOT NULL, site_key TEXT NOT NULL, origin BLOB NOT NULL,
                     PRIMARY KEY(owner, site_key));
+                -- When Janus last read each of an owner's crawl sites on its own
+                -- (services/knowledge/auto_crawl.py); keyed like crawl_site.
+                CREATE TABLE IF NOT EXISTS auto_crawl (
+                    owner TEXT NOT NULL, site_key TEXT NOT NULL, read_at REAL NOT NULL,
+                    PRIMARY KEY(owner, site_key));
                 -- Reference datasets whose passages are in their owner's passage index
                 -- (one FTS5 table per owner, named by passage_table). A dataset's
                 -- passages hold rowids first_row .. first_row + passages - 1.
@@ -263,6 +268,27 @@ class ExtensionStore:
             removed = db.execute("DELETE FROM crawl_site WHERE owner=? AND site_key=?",
                                  (owner, self._site_key(owner, origin))).rowcount
         return removed > 0
+
+    def auto_crawl_read_at(self, owner: str, origin: str) -> float | None:
+        """When Janus last read this site for this owner on its own, or None."""
+        with self.connect() as db:
+            row = db.execute("SELECT read_at FROM auto_crawl WHERE owner=? AND site_key=?",
+                             (owner, self._site_key(owner, origin))).fetchone()
+        return row["read_at"] if row else None
+
+    def record_auto_crawl(self, owner: str, origin: str, read_at: float) -> None:
+        with self.connect() as db:
+            db.execute("INSERT INTO auto_crawl VALUES (?,?,?) ON CONFLICT(owner, site_key) "
+                       "DO UPDATE SET read_at=excluded.read_at", (owner, self._site_key(owner, origin), read_at))
+
+    def auto_crawl_dataset(self, owner: str, origin: str) -> dict | None:
+        """The latest version of the reference dataset Janus keeps for this site, if any."""
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT id FROM resource WHERE owner=? AND kind='dataset' "
+                "AND json_extract(data, '$.crawl.automatic')=1 AND json_extract(data, '$.crawl.site')=? "
+                "ORDER BY json_extract(data, '$.version') DESC, rowid DESC LIMIT 1", (owner, origin)).fetchone()
+        return self.get(owner, row["id"]) if row else None
 
     def dataset(self, owner: str, *, name: str, text: str, source: str, license: str,
                 purpose: str, reviewed: bool, replaces: str | None = None,
