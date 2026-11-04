@@ -98,3 +98,51 @@ def test_cancel_rejects_an_invalid_attempt(monkeypatch):
     for body in ({}, {"attempt": 0}, {"attempt": "1"}, {"attempt": 1, "extra": True}):
         response = client.post(f"/v1/jobs/{'f' * 32}/cancel", json=body, headers={"x-internal-token": TOKEN})
         assert response.status_code == 422
+
+
+def test_an_attempt_stops_when_phoenix_ends_its_lease(monkeypatch):
+    # Phoenix's stop request may never arrive. The attempt's own heartbeat then
+    # learns the lease ended (cancelled, failed closed or superseded) and the
+    # attempt stops there, sending no completion.
+    completions, started = [], []
+
+    class Hub:
+        async def run(self, message, **kwargs):
+            started.append(message)
+            await asyncio.Event().wait()
+            return HubResult(status="success", user_request=message, answer="never")
+
+    @contextmanager
+    def owner(*args, **kwargs):
+        yield None, False
+
+    @asynccontextmanager
+    async def progress(*args, **kwargs):
+        yield
+
+    async def heartbeat_until_lease_ends(*args):
+        while not started:
+            await asyncio.sleep(0.01)
+        # The renewal answered job_not_processing: the worker returns.
+
+    monkeypatch.setattr("services.extensions.context.owner_execution", owner)
+    monkeypatch.setattr("services.job_progress.job_progress", progress)
+    monkeypatch.setattr(api, "job_heartbeat_worker", heartbeat_until_lease_ends)
+
+    async def scenario():
+        request = api.JobExecuteRequest.model_validate({
+            "job_id": "c" * 32, "user_id": "alice", "message": "router uptime", "attempt": 1, "context": []})
+        runtime = SimpleNamespace(
+            settings=SimpleNamespace(), hub=Hub(), active_jobs={}, active_attempts={},
+            trajectory_recorder=SimpleNamespace(record=lambda **kwargs: None),
+            completion_outbox=SimpleNamespace(put=lambda *args: completions.append(args)),
+            outbox_wakeup=asyncio.Event(),
+        )
+        task = api.schedule_job(runtime, request)
+        await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), timeout=5)
+        return task, runtime
+
+    task, runtime = asyncio.run(scenario())
+    assert task.cancelled()
+    assert completions == []
+    assert runtime.active_jobs == {}

@@ -855,6 +855,9 @@ def valid_completion_ack(
     if version == 2:
         valid_statuses.discard("reconciliation_required")
         valid_statuses.update({"denied", "outcome_unknown"})
+        # The owner cancelled first: Phoenix kept the cancel and only
+        # recognizes this completion, so "applied" stays impossible below.
+        valid_statuses.add("cancelled")
 
     if (
         durable_status
@@ -1143,6 +1146,15 @@ async def execute_job(
                 payload,
             )
         )
+    )
+
+    # Phoenix no longer holds this attempt's lease (cancelled, failed closed
+    # or superseded): stop the attempt, even if no stop request reaches here.
+    execution_task = asyncio.current_task()
+    heartbeat_task.add_done_callback(
+        lambda done: execution_task.cancel()
+        if not done.cancelled() and done.exception() is None and not execution_task.done()
+        else None
     )
 
     try:
