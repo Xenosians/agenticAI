@@ -20,6 +20,11 @@ def library(tmp_path):
     return SkillLibrary(ExtensionStore(tmp_path))
 
 
+def own(rows):
+    """The owner's own skills, without the built-in ones every owner starts with."""
+    return [row for row in rows if not row["builtin"]]
+
+
 def test_a_skill_file_is_read_from_its_front_matter_and_body():
     skill = parse_skill(skill_text(body="# Password resets\r\n\r\nConfirm the user's identity first.\r\n"))
     assert skill.name == "password-reset" and skill.description == "How to answer password reset requests."
@@ -60,7 +65,7 @@ def test_saving_again_makes_a_new_version_and_an_old_one_can_be_restored(tmp_pat
     assert skills.save("alice", skill_text(body="Version one."))["version"] == 1  # unchanged: no new version
     second = skills.save("alice", skill_text(body="Version two."))
     assert (first["version"], second["version"]) == (1, 2)
-    [row] = skills.list("alice")
+    [row] = own(skills.list("alice"))
     assert row["name"] == "password-reset" and row["body"] == "Version two." and row["enabled"] is True
     assert row["id"] == second["id"] and len(row["sha256"]) == 64 and row["triggers"] == ["password reset", "locked out"]
     assert [version["version"] for version in row["versions"]] == [2, 1]
@@ -72,7 +77,7 @@ def test_saving_again_makes_a_new_version_and_an_old_one_can_be_restored(tmp_pat
     assert parse_skill(skills.save("alice", tricky)["text"]) == parse_skill(tricky)
     restored = skills.restore("alice", first["id"])
     assert restored["version"] == 4 and restored["body"] == "Version one." and restored["sha256"] == first["sha256"]
-    assert skills.list("bob") == []
+    assert own(skills.list("bob")) == []
     with pytest.raises(ValueError, match="not found"):
         skills.restore("bob", first["id"])
     with pytest.raises(ValueError):
@@ -85,7 +90,7 @@ def test_history_and_library_sizes_are_bounded(tmp_path, monkeypatch):
     skills = library(tmp_path)
     for index in range(5):
         skills.save("alice", skill_text(body=f"Version {index}."))
-    [row] = skills.list("alice")
+    [row] = own(skills.list("alice"))
     assert [version["version"] for version in row["versions"]] == [5, 4, 3]
     skills.save("alice", skill_text(name="second-skill"))
     with pytest.raises(ValueError, match="at most 2"):
@@ -103,7 +108,7 @@ def test_a_disabled_skill_stays_disabled_across_new_versions_and_can_be_deleted(
     with pytest.raises(ValueError):
         skills.set_enabled("alice", "password-reset", "yes")
     skills.delete("alice", "password-reset")
-    assert skills.list("alice") == []
+    assert own(skills.list("alice")) == []
     with pytest.raises(ValueError, match="not found"):
         skills.set_enabled("alice", "password-reset", True)
     with pytest.raises(ValueError, match="not found"):

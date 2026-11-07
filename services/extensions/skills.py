@@ -21,8 +21,10 @@ identifier scan as datasets, and the skills an answer used are reported with it.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 import hashlib
 import json
+from pathlib import Path
 import re
 import uuid
 
@@ -126,8 +128,25 @@ def skill_file(data: dict) -> str:
     return f"---\n{front}\n---\n{data['body']}\n"
 
 
+BUILTIN_DIRECTORY = Path(__file__).resolve().parents[2] / "skills" / "defaults"
+
+
+@lru_cache(maxsize=1)
+def builtin_skills() -> tuple[Skill, ...]:
+    """The reviewed built-in skills, parsed and checked like any owner skill (a bad file fails loudly)."""
+    return tuple(parse_skill(path.read_text(encoding="utf-8")) for path in sorted(BUILTIN_DIRECTORY.glob("*.md")))
+
+
 class SkillLibrary:
-    """Each owner's skills, versioned, in the extension store's database."""
+    """Each owner's skills, versioned, in the extension store's database.
+
+    Every owner starts with the built-in skills shipped in skills/defaults (reviewed
+    SKILL.md files, checked by the same parser). They are seeded once, the first
+    time the owner's library is read; after that they belong to the owner like any
+    other skill: an edit becomes the owner's next version, turning one off keeps it,
+    and a deleted built-in skill is not added again. Built-in skills do not count
+    against the owner's skill limit.
+    """
 
     def __init__(self, store: ExtensionStore):
         self.store = store
@@ -140,7 +159,36 @@ class SkillLibrary:
                     owner TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, version INTEGER NOT NULL,
                     sha256 TEXT NOT NULL, data TEXT NOT NULL,
                     PRIMARY KEY(owner, id), UNIQUE(owner, name, version));
+                -- Built-in skills each owner has received: present while the owner keeps
+                -- the skill, and still present after a delete, so it is not seeded again.
+                CREATE TABLE IF NOT EXISTS skill_builtin (
+                    owner TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY(owner, name));
             """)
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(skill)")}
+            if "builtin" not in columns:
+                db.execute("ALTER TABLE skill ADD COLUMN builtin INTEGER NOT NULL DEFAULT 0")
+
+    def _seed_builtins(self, db, owner: str) -> None:
+        """Give the owner each built-in skill not received yet. Runs inside a write transaction."""
+        received = {row["name"] for row in db.execute("SELECT name FROM skill_builtin WHERE owner=?", (owner,))}
+        for skill in builtin_skills():
+            if skill.name in received:
+                continue
+            exists = db.execute("SELECT 1 FROM skill WHERE owner=? AND name=?", (owner, skill.name)).fetchone()
+            db.execute("INSERT INTO skill_builtin(owner, name) VALUES (?,?)", (owner, skill.name))
+            if exists is None:  # an owner skill with this name is kept as the owner's own
+                db.execute("INSERT INTO skill(owner, name, enabled, builtin) VALUES (?,?,1,1)", (owner, skill.name))
+                self._add_version(db, owner, skill)
+
+    def _ensure_builtins(self, owner: str) -> None:
+        """Seed only when something is missing, so the per-request read path takes no write lock."""
+        wanted = {skill.name for skill in builtin_skills()}
+        with self.store.connect() as db:
+            received = {row["name"] for row in db.execute("SELECT name FROM skill_builtin WHERE owner=?", (owner,))}
+            if wanted <= received:
+                return
+            db.execute("BEGIN IMMEDIATE")  # re-read under the lock: a concurrent request may have seeded
+            self._seed_builtins(db, owner)
 
     def _add_version(self, db, owner: str, skill: Skill) -> dict:
         data = {"name": skill.name, "description": skill.description, "triggers": list(skill.triggers),
@@ -151,10 +199,12 @@ class SkillLibrary:
         if latest is not None and latest["sha256"] == digest:
             return self._row(db, owner, skill.name)
         if latest is None:
-            count = db.execute("SELECT COUNT(*) FROM skill WHERE owner=?", (owner,)).fetchone()[0]
-            if count >= MAX_SKILLS_PER_OWNER:
-                raise SkillError("skill_limit", f"Keep at most {MAX_SKILLS_PER_OWNER} skills; delete one first.")
-            db.execute("INSERT INTO skill(owner, name, enabled) VALUES (?,?,1)", (owner, skill.name))
+            count = db.execute("SELECT COUNT(*) FROM skill WHERE owner=? AND builtin=0", (owner,)).fetchone()[0]
+            exists = db.execute("SELECT 1 FROM skill WHERE owner=? AND name=?", (owner, skill.name)).fetchone()
+            if exists is None:
+                if count >= MAX_SKILLS_PER_OWNER:
+                    raise SkillError("skill_limit", f"Keep at most {MAX_SKILLS_PER_OWNER} skills; delete one first.")
+                db.execute("INSERT INTO skill(owner, name, enabled) VALUES (?,?,1)", (owner, skill.name))
         version = 1 if latest is None else latest["version"] + 1
         db.execute("INSERT INTO skill_version VALUES (?,?,?,?,?,?)",
                    (owner, uuid.uuid4().hex, skill.name, version, digest, json.dumps(data)))
@@ -185,6 +235,7 @@ class SkillLibrary:
     def set_enabled(self, owner: str, name, enabled) -> dict:
         if not isinstance(enabled, bool):
             raise SkillError("skill_enabled", "enabled must be true or false.")
+        self._ensure_builtins(owner)
         with self.store.connect() as db:
             if db.execute("UPDATE skill SET enabled=? WHERE owner=? AND name=?",
                           (int(enabled), owner, name)).rowcount == 0:
@@ -192,22 +243,24 @@ class SkillLibrary:
             return self._row(db, owner, name)
 
     def delete(self, owner: str, name) -> None:
+        self._ensure_builtins(owner)  # a built-in deleted before its first read stays deleted
         with self.store.connect() as db:
             if db.execute("DELETE FROM skill WHERE owner=? AND name=?", (owner, name)).rowcount == 0:
                 raise SkillError("skill_not_found", "Skill not found.")
             db.execute("DELETE FROM skill_version WHERE owner=? AND name=?", (owner, name))
 
     def _row(self, db, owner: str, name: str) -> dict:
-        skill = db.execute("SELECT enabled FROM skill WHERE owner=? AND name=?", (owner, name)).fetchone()
+        skill = db.execute("SELECT enabled, builtin FROM skill WHERE owner=? AND name=?", (owner, name)).fetchone()
         versions = db.execute("SELECT id, version, sha256, data FROM skill_version WHERE owner=? AND name=? "
                               "ORDER BY version DESC", (owner, name)).fetchall()
         current = json.loads(versions[0]["data"])
         return {**current, "text": skill_file(current), "id": versions[0]["id"], "version": versions[0]["version"],
-                "sha256": versions[0]["sha256"], "enabled": bool(skill["enabled"]),
+                "sha256": versions[0]["sha256"], "enabled": bool(skill["enabled"]), "builtin": bool(skill["builtin"]),
                 "versions": [{"id": row["id"], "version": row["version"], "sha256": row["sha256"]}
                              for row in versions]}
 
     def list(self, owner: str) -> list[dict]:
+        self._ensure_builtins(owner)
         with self.store.connect() as db:
             names = [row["name"] for row in db.execute(
                 "SELECT name FROM skill WHERE owner=? ORDER BY name", (owner,)).fetchall()]

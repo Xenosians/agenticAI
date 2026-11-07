@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from api import extensions
 from services.extensions.service import extension_store
+from services.extensions.skills import builtin_skills
 
 SKILL = ("---\nname: password-reset\ndescription: How to answer password reset requests.\n"
          "triggers: [password reset]\n---\nConfirm the user's identity first.\n")
@@ -27,26 +28,35 @@ def client_for(tmp_path, monkeypatch):
     return call
 
 
+def own(rows):
+    """The owner's own skills, without the built-in ones every owner starts with."""
+    return [row for row in rows if not row["builtin"]]
+
+
 def test_skills_are_saved_versioned_listed_toggled_restored_and_deleted_per_owner(tmp_path, monkeypatch):
     call = client_for(tmp_path, monkeypatch)
     try:
         first = call("alice", "skill_save", {"text": SKILL}).json()
         assert first["name"] == "password-reset" and first["version"] == 1 and first["enabled"] is True
+        assert first["builtin"] is False
         second = call("alice", "skill_save", {"text": SKILL.replace("first.", "first, then reset.")}).json()
         assert second["version"] == 2
-        listed = call("alice", "skill_list", {}).json()["skills"]
+        listed = own(call("alice", "skill_list", {}).json()["skills"])
         assert [row["name"] for row in listed] == ["password-reset"] and listed[0]["version"] == 2
-        assert call("bob", "skill_list", {}).json()["skills"] == []
+        # Another owner starts with only the built-in skills, marked as such; never alice's.
+        bob = call("bob", "skill_list", {}).json()["skills"]
+        assert {row["name"] for row in bob} == {skill.name for skill in builtin_skills()}
+        assert all(row["builtin"] is True for row in bob)
         assert call("alice", "skill_enable", {"name": "password-reset", "enabled": False}).json()["enabled"] is False
         restored = call("alice", "skill_restore", {"id": first["id"]}).json()
         assert restored["version"] == 3 and restored["body"] == "Confirm the user's identity first."
         assert call("bob", "skill_restore", {"id": first["id"]}).status_code == 422
         assert call("bob", "skill_delete", {"name": "password-reset"}).status_code == 422
         assert call("alice", "skill_delete", {"name": "password-reset"}).json() == {"deleted": "password-reset"}
-        assert call("alice", "skill_list", {}).json()["skills"] == []
+        assert own(call("alice", "skill_list", {}).json()["skills"]) == []
         # The catalog lists the owner's skills too, so the browser needs one read.
         call("alice", "skill_save", {"text": SKILL})
-        assert [row["name"] for row in call("alice", "list", {}).json()["skills"]] == ["password-reset"]
+        assert [row["name"] for row in own(call("alice", "list", {}).json()["skills"])] == ["password-reset"]
     finally:
         extension_store.cache_clear()
 

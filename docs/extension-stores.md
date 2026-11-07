@@ -61,11 +61,12 @@ an operation already in flight. Any required system adapter that is disabled
 or unavailable must stop the affected operation. There is no non-Lua fallback.
 
 Seed the stores from real built-in sources: the MCP runtime registry,
-packaged/reviewed Lua adapters, enabled local model profiles, and each owner's
-actual saved resources and skills. Mark system-owned entries separately from
-user entries. Do not create fake provider connections, sample credentials, or
-placeholder skills to make a store look populated. A seeded entry's visible
-readiness still comes from a real readiness observation.
+packaged/reviewed Lua adapters, enabled local model profiles, the reviewed
+built-in skills below, and each owner's actual saved resources and skills.
+Mark system-owned entries separately from user entries. Do not create fake
+provider connections, sample credentials, or placeholder skills to make a
+store look populated. A seeded entry's visible readiness still comes from a
+real readiness observation.
 
 Add methods are source-specific because these stores admit different kinds of
 data:
@@ -92,6 +93,24 @@ supports app editing, `SKILL.md` upload, versions and toggling. MCP Tool and Lua
 Plugin stores are currently read-only runtime catalogs. ZIP intake, user Lua
 URLs/editor, remote MCP registration, and account-level tool/plugin switches
 are not yet implemented.
+
+### Built-in skills
+
+`skills/defaults/*.md` holds reviewed skills every owner starts with:
+`itsm-gap-finder`, `skill-finder`, `chat-tightening`, `proxmox-operator`,
+`tailscale-operator`, `research-with-citations` and `senior-engineer`. Each
+file passes the same parser, size and sensitive-content checks as an owner's
+skill; a bad file fails loudly. `SkillLibrary` gives an owner each built-in
+skill once, on the first read of their library, and records that in
+`skill_builtin`. From then on the skill is the owner's: an edit becomes their
+next version, turning it off keeps it off, and a deleted built-in skill is not
+added again. An owner skill that already had a built-in's name is kept as the
+owner's own. Built-in skills are marked `builtin` in the catalog (the Skill
+Store shows "Built in") and do not count against the owner's skill limit.
+Like every skill they only guide how answers are written; they choose no
+tool, grant no access and skip no approval. A new built-in skill reaches
+existing owners on their next read; a changed built-in file does not replace
+a version an owner already has.
 
 ## Next implementation stages
 
