@@ -1,3 +1,10 @@
+# Development directory lab (Samba AD domain controller) for the directory tools.
+# Its own project name: without one Compose derives "itsm-agent" from the folder,
+# which another checkout on this machine also resolves to, and bringing that stack
+# up replaced this lab. The volumes keep their original names because they hold
+# the provisioned domain, its users and the TLS CA in .runtime/trust.
+name: itsm-directory-lab
+
 services:
   samba-ad:
     build:
@@ -28,5 +35,8 @@ services:
 
 volumes:
   samba_etc:
+    name: itsm-agent_samba_etc
   samba_lib:
+    name: itsm-agent_samba_lib
   samba_cache:
+    name: itsm-agent_samba_cache

@@ -67,3 +67,13 @@ password, so a redirected connection fails instead of collecting it. The
 certificate must chain to `AD_TLS_CA_FILE` (the CA of a private directory),
 else the deployment's `ITSM_HTTP_CA_BUNDLE`, else the system trust store, and
 carry `AD_TLS_SERVER_NAME` (set it when `AD_HOST` is an address) or `AD_HOST`.
+
+## Local directory lab
+
+`docker-compose.yaml` runs a Samba AD domain controller (`ITSMDC.itsm.local`)
+for development under its own Compose project, `itsm-directory-lab`, with
+LDAPS published on loopback port 1636. The domain, its accounts and its CA live
+in three named volumes that the file declares by their exact names, so any
+checkout recreating the container reuses the provisioned domain instead of
+provisioning a new one with a different CA. Start it with
+`docker compose up -d samba-ad`. Removing those volumes deletes the lab domain.
