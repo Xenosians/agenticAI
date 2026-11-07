@@ -103,6 +103,37 @@ def resolve_plugin(plugin_id: str, *, source_file: str | Path | None = None,
     return PluginArtifact(plugin_id, path, actual, source, False)
 
 
+def plugin_catalog() -> dict:
+    """Describe Lua adapters that resolve under the active profile.
+
+    Inventory is not an install or execution receipt. Paths and credentials
+    remain host-only; the digest identifies the exact adapter bytes resolved
+    for a later dispatch.
+    """
+    entries = []
+    for plugin_id in sorted(PLUGIN_FILES):
+        protocol = plugin_id.partition(".")[0]
+        try:
+            artifact = resolve_plugin(plugin_id)
+        except LuaAdapterError as exc:
+            entries.append({
+                "id": plugin_id,
+                "protocol": protocol,
+                "state": "unavailable",
+                "source": "unavailable",
+                "reason_code": exc.code,
+            })
+            continue
+        entries.append({
+            "id": plugin_id,
+            "protocol": protocol,
+            "state": "resolved",
+            "source": "packaged" if artifact.packaged else "machine_profile",
+            "sha256": artifact.sha256,
+        })
+    return {"schema": "lua-plugin-catalog.v1", "scope": "runtime", "plugins": entries}
+
+
 def run_plugin(plugin_id: str, payload: Any, *, binding: dict, phase: str = "request",
                source_file: str | Path | None = None, source_sha256: str | None = None) -> AdapterResult:
     artifact = resolve_plugin(plugin_id, source_file=source_file, source_sha256=source_sha256)

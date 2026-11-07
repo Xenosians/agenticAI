@@ -308,6 +308,14 @@ Limits per transform: script 20,000 bytes, input 2,000,000 bytes and 10,000 rows
 output 2,000,000 bytes, 20 million Lua instructions, 64 MiB Lua memory, 10 s CPU
 and 20 s wall time.
 
+The row transform uses a versioned extension manifest, invocation schema and
+result schema from Phoenix's canonical `contracts/v1/extensions` directory.
+The AI image packages the same schema files and refuses an invalid or incompatible
+manifest, mismatched invocation, or malformed result before admitting any rows.
+These contracts describe shape and resource ceilings only; they do not register
+extensions or grant access. Registration, revocation and audit remain separate
+work.
+
 Only JSON data leaves the worker: tables with text keys, arrays with keys 1..n,
 text, finite numbers and booleans, nested at most 16 deep. A refusal crosses
 the API as `{code, message}`; the codes are `transform_syntax_error`,

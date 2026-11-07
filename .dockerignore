@@ -23,6 +23,9 @@ datasets
 artifacts
 outputs
 checkpoints
+# The training API package is source code, not generated dataset payloads.
+!learning/datasets/
+!learning/datasets/**
 deploy/private
 deploy/state
 *.safetensors

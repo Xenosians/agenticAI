@@ -2082,6 +2082,30 @@ async def integration_status(request: Request):
     return {"integrations": rows}
 
 
+@app.get("/internal/v1/proxmox/overview")
+def proxmox_overview(request: Request):
+    """Return a live, read-only Proxmox snapshot to the authenticated backend."""
+    from fastapi.responses import JSONResponse
+    from api.extensions import require_internal
+    from services.proxmox import build_proxmox_service
+
+    require_internal(request)
+    runtime = require_ready_runtime(request)
+    service = None
+    try:
+        service = build_proxmox_service(runtime.settings)
+        if service is None:
+            return JSONResponse(status_code=503, content={"error": "proxmox_not_configured"})
+        return service.overview()
+    except ValueError:
+        return JSONResponse(status_code=503, content={"error": "proxmox_configuration_invalid"})
+    except (httpx.HTTPError, RuntimeError):
+        return JSONResponse(status_code=502, content={"error": "proxmox_read_failed"})
+    finally:
+        if service is not None:
+            service.close()
+
+
 from api.extensions import router as extension_router
 app.include_router(extension_router)
 from api.learning import router as learning_router

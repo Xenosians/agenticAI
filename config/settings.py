@@ -678,6 +678,16 @@ class Settings(
     tailscale_client_secret: str | None = None
     tailscale_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
 
+    # Proxmox VE starts with read-only cluster, node, guest, storage and task
+    # tools. The API token should be scoped to those reads until governed
+    # mutation capabilities have their own exact approval/read-back contracts.
+    proxmox_base_url: str | None = None
+    proxmox_api_token_id: str | None = None
+    proxmox_api_token_secret: str | None = None
+    proxmox_verify_tls: bool = True
+    proxmox_ca_file: Path | None = None
+    proxmox_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+
     # DNS integrity check: a public resolver asked by plain DNS, the same
     # provider's DNS-over-HTTPS address, and the names checked when the user
     # names none.

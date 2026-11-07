@@ -653,7 +653,8 @@ class LLMRouter:
             )
 
             self._contract_error(
-                "Hub router returned invalid JSON."
+                "Hub router returned invalid JSON at "
+                f"line {exc.lineno}, column {exc.colno}: {exc.msg}."
             )
 
             return []

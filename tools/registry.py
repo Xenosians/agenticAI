@@ -46,6 +46,8 @@ from tools.knowledge.catalog import (
 
 from tools.networking.catalog import NETWORKING_TOOLS
 
+from tools.proxmox.catalog import PROXMOX_TOOLS
+
 from tools.operations.catalog import OPERATIONS_TOOLS
 
 from tools.servicedesk.catalog import SERVICE_DESK_TOOLS
@@ -522,7 +524,7 @@ def merge_capability_catalog(target: dict, catalog: dict):
 for catalog in (ACCOUNT_TOOLS, ACCESS_TOOLS, ATLASSIAN_TOOLS, ASSET_TOOLS,
                 DEVELOPER_TOOLS, DIRECTORY_TOOLS, GIT_TOOLS, KNOWLEDGE_TOOLS,
                 JIRA_TOOLS, TICKETING_TOOLS, NETWORKING_TOOLS,
-                OPERATIONS_TOOLS, SERVICE_DESK_TOOLS):
+                OPERATIONS_TOOLS, PROXMOX_TOOLS, SERVICE_DESK_TOOLS):
     merge_capability_catalog(TOOLS, catalog)
 
 

@@ -190,6 +190,37 @@ def test_one_bounded_repair_preserves_user_and_feedback_under_history_budget(reg
     assert all("old old" not in message["content"] for message in trimmed.messages)
 
 
+def test_invalid_json_repair_receives_parse_location_without_response_contents(registry, selected):
+    malformed = '{"delegations":['
+    router, inference = router_for(registry, malformed, account_plan(), selection=account_selection())
+    asyncio.run(router.route_with_repair("Check account status for alice"))
+
+    feedback = next(
+        message["content"] for message in inference.calls[1]["messages"]
+        if message["role"] == "system" and "VALIDATION FEEDBACK" in message["content"]
+    )
+    assert "line 1, column" in feedback
+    assert "Expecting value" in feedback
+    assert malformed not in feedback
+
+
+def test_effect_mismatch_repair_gets_trusted_effect_without_rewriting_intent(registry, selected):
+    router, inference = router_for(
+        registry,
+        account_plan(effect="mutation"),
+        account_plan(),
+        selection=account_selection(),
+    )
+    asyncio.run(router.route_with_repair("Check account status for alice"))
+
+    feedback = next(
+        message["content"] for message in inference.calls[1]["messages"]
+        if message["role"] == "system" and "VALIDATION FEEDBACK" in message["content"]
+    )
+    assert "effect 'mutation' conflicts with trusted capability effect 'read'" in feedback
+    assert "do not change the effect to fit a capability" in feedback
+
+
 def test_rejected_repair_is_not_retried_again(registry, selected):
     router, inference = router_for(registry, "invalid JSON", "invalid JSON", selection=account_selection())
     with pytest.raises(RoutingContractError):

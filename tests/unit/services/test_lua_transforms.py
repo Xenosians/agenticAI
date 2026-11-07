@@ -116,7 +116,7 @@ def test_steps_memory_and_output_are_bounded(script, code):
 
 def test_a_worker_that_outlives_its_wall_clock_is_stopped():
     refused("transform_time_limit", "return function(row) while true do end end", '{"a": 1}',
-            TransformLimits(instructions=10**12, wall_seconds=2, cpu_seconds=30))
+            TransformLimits(wall_seconds=0.01))
 
 
 @pytest.mark.parametrize("script", [
@@ -284,6 +284,20 @@ def test_only_transform_codes_from_the_worker_reach_the_caller(monkeypatch):
         with pytest.raises(TransformError) as caught:
             run_transform("return function(row) return row end", '{"a": 1}')
         assert caught.value.code == "transform_unavailable", answer
+
+
+@pytest.mark.parametrize("returncode", [1, 137])
+def test_nonzero_worker_exit_cannot_return_a_success_shaped_result(monkeypatch, returncode):
+    import services.extensions.transform as runner
+
+    answer = {"rows": [{"ticket": "SUP-12"}], "elapsed_ms": 0, "isolation": ["process"]}
+    completed = subprocess.CompletedProcess([], returncode, json.dumps(answer).encode(), b"")
+    monkeypatch.setattr(runner.subprocess, "run", lambda *args, **kwargs: completed)
+
+    with pytest.raises(TransformError) as caught:
+        run_transform("return function(row) return row end", '{"ticket":"SUP-12"}')
+
+    assert caught.value.code == "transform_unavailable"
 
 
 def test_the_worker_has_a_wall_clock_limit(monkeypatch):

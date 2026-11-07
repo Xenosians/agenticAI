@@ -8,6 +8,7 @@ mistral-common
 # MCP
 mcp>=2,<3
 pydantic>=2
+jsonschema==4.26.0
 
 # Directory integration
 ldap3>=2.9

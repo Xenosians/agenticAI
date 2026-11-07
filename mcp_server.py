@@ -61,10 +61,12 @@ from services.process_runner import (
 )
 
 from services.openwrt import build_openwrt_service
+from services.proxmox import build_proxmox_service
 from services.tailnet import build_tailnet_service
 from services.dns_integrity import build_dns_integrity_service
 from services.mailbox import MaddyMailboxService
 from tools.networking.mcp import register_networking_tools
+from tools.proxmox.mcp import register_proxmox_tools
 from tools.directory.mcp import register_directory_tools
 from tools.operations.mcp import register_operations_tools
 from tools.servicedesk.mcp import register_service_desk_tools
@@ -723,6 +725,12 @@ def create_mcp_server(
     register_networking_tools(server, build_openwrt_service(runtime_settings),
                               build_tailnet_service(runtime_settings),
                               build_dns_integrity_service(runtime_settings))
+
+    # ============================================================
+    # PROXMOX VE (read only)
+    # ============================================================
+
+    register_proxmox_tools(server, build_proxmox_service(runtime_settings))
 
     # ============================================================
     # DIRECTORY READS

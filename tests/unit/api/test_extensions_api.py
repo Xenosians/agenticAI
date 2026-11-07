@@ -31,6 +31,12 @@ def test_internal_auth_and_private_dataset_roundtrip(tmp_path, monkeypatch):
         assert client.post(url, json=body, headers=headers).json()["hits"][0]["dataset_id"] == row["id"]
         body["owner"] = "bob"
         assert client.post(url, json=body, headers=headers).status_code == 422
-        assert client.post(url, json={"owner": "bob", "action": "list"}, headers=headers).json()["resources"] == []
+        catalog = client.post(url, json={"owner": "bob", "action": "list"}, headers=headers).json()
+        assert catalog["resources"] == []
+        assert catalog["capabilities_schema"] == "mcp-tool-catalog.v1"
+        assert catalog["capabilities"]
+        assert catalog["plugin_catalog"]["schema"] == "lua-plugin-catalog.v1"
+        assert catalog["plugin_catalog"]["scope"] == "runtime"
+        assert catalog["plugin_catalog"]["plugins"]
     finally:
         extension_store.cache_clear()

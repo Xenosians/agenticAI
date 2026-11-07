@@ -35,6 +35,7 @@ def production_registry():
     ("Get Jira ticket OPS-12", "ticket_get"),
     ("Create Jira ticket in OPS", "ticket_create"),
     ("Check OpenWrt firmware", "network_system_info"),
+    ("List Proxmox VE nodes", "proxmox_nodes"),
     ("List jira projects and account status", "account_status"),
     ("Show git status for /tmp/demo", "workspace_git_status"),
     ("Show git log for /tmp/demo", "workspace_git_log"),

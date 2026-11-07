@@ -40,6 +40,7 @@ def test_nothing_selected_is_reported_not_configured_with_the_missing_settings_n
     assert rows["knowledge"]["missing"] == ["KNOWLEDGE_BACKEND"]
     assert rows["jira_admin"]["missing"] == ["JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN"]
     assert rows["openwrt"]["missing"] == ["OPENWRT_BASE_URL", "OPENWRT_USERNAME", "OPENWRT_PASSWORD"]
+    assert rows["proxmox"]["missing"] == ["PROXMOX_BASE_URL", "PROXMOX_API_TOKEN_ID", "PROXMOX_API_TOKEN_SECRET"]
     assert rows["mailbox_lab"]["missing"] == ["MAILBOX_LAB_ENABLED"]
     # Repository work runs inside the configured workspace root; it needs no provider.
     assert rows["workspace"]["state"] == "configured"
@@ -51,11 +52,15 @@ def test_a_selected_provider_without_its_credentials_names_each_missing_setting(
         directory_backend="ldap", ad_host="ldap.example.test",
         ticketing_backend="jira", jira_base_url="https://example.atlassian.net",
         openwrt_base_url="https://router.example.test", openwrt_username="reader",
+        proxmox_base_url="https://pve.example.test:8006", proxmox_api_token_id="reader@pam!janus",
+        proxmox_api_token_secret="fixture-proxmox-token",
     )))
     assert rows["directory"]["state"] == "not_configured"
     assert rows["directory"]["missing"] == ["AD_BIND_USER or AD_BIND_DN", "AD_BIND_PASSWORD", "AD_BASE_DN"]
     assert rows["ticketing"]["missing"] == ["JIRA_EMAIL", "JIRA_API_TOKEN"]
     assert rows["openwrt"]["missing"] == ["OPENWRT_PASSWORD"]
+    assert rows["proxmox"]["state"] == "configured"
+    assert rows["proxmox"]["missing"] == []
 
 
 def test_complete_configuration_is_configured_and_never_claims_a_verified_provider():

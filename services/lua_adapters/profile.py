@@ -33,6 +33,7 @@ SECTIONS = {
     "directory": {"host", "port", "tls", "ca_file", "server_name", "base_dn", "account_container", "email_domain",
                   "groups", "read", "write"},
     "router": {"url", "user", "secret", "verify_tls", "allow_loopback_http"},
+    "proxmox": {"url", "token_id", "secret", "verify_tls", "ca_file"},
     "jira": {"url", "email", "secret"},
     "atlassian": {"org_id", "jira_resource", "secret"},
     "mailbox": {"enabled", "domain", "smtp_port", "imap_port"},
@@ -46,6 +47,8 @@ CONTROLLED_FIELDS = {
                   "ad_base_dn", "ad_account_container_dn", "account_email_domain", "ad_access_groups", "ad_bind_user",
                   "ad_bind_dn", "ad_bind_password", "ad_write_bind_user", "ad_write_bind_dn", "ad_write_bind_password"},
     "router": {"openwrt_base_url", "openwrt_username", "openwrt_password", "openwrt_verify_tls", "openwrt_allow_loopback_http"},
+    "proxmox": {"proxmox_base_url", "proxmox_api_token_id", "proxmox_api_token_secret",
+                "proxmox_verify_tls", "proxmox_ca_file"},
     "jira": {"ticketing_backend", "jira_base_url", "jira_email", "jira_api_token"},
     "atlassian": {"atlassian_org_id", "atlassian_jira_resource_ari", "atlassian_admin_api_key"},
     "mailbox": {"mailbox_lab_enabled", "mailbox_lab_domain", "mailbox_smtp_port", "mailbox_imap_port"},
@@ -306,6 +309,18 @@ def _router(section, secrets, values):
     _secret(section, secrets, "openwrt_password", values)
 
 
+def _proxmox(section, secrets, values, base):
+    token_id = re.compile(r"[A-Za-z0-9_.-]{1,64}@[A-Za-z0-9_.-]{1,64}![A-Za-z0-9_.-]{1,64}")
+    _copy(section, values, (("url", _origin, "proxmox_base_url"),
+                            ("token_id", lambda value: _text(value, token_id), "proxmox_api_token_id"),
+                            ("verify_tls", _flag, "proxmox_verify_tls")))
+    _secret(section, secrets, "proxmox_api_token_secret", values)
+    if "ca_file" in section:
+        from config.path_portability import resolve_portable_path
+
+        values["proxmox_ca_file"] = str(resolve_portable_path(Path(_text(section["ca_file"])), base=base))
+
+
 def _jira(section, secrets, values):
     if not section:
         return
@@ -365,6 +380,7 @@ def settings_values() -> dict:
     base = links.profile_path.parent if links.profile_path else None
     _directory(_section(declared, "directory"), secrets, values, base)
     _router(_section(declared, "router"), secrets, values)
+    _proxmox(_section(declared, "proxmox"), secrets, values, base)
     _jira(_section(declared, "jira"), secrets, values)
     _atlassian(_section(declared, "atlassian"), secrets, values)
     _mailbox(_section(declared, "mailbox"), values)

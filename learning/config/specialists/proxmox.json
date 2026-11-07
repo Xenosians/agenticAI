@@ -1,0 +1,33 @@
+{
+  "schema": "specialist-training-config.v1",
+  "specialist": "proxmox-specialist",
+  "agent_definition": "subagents/agents/proxmox-specialist.md",
+  "base_model_key": "hub-main",
+  "candidate_model_key": "proxmox-func-trained",
+  "worker_prompt_profile": "compact",
+  "max_new_tokens": 128,
+  "examples": [
+    {"tool_name": "proxmox_cluster_status", "user_request": "Show the Proxmox cluster status.", "arguments": {}, "tags": ["read", "cluster"]},
+    {"tool_name": "proxmox_cluster_status", "user_request": "Is the Proxmox cluster quorate and which members are online?", "arguments": {}, "tags": ["read", "cluster"]},
+    {"tool_name": "proxmox_cluster_status", "user_request": "Which machines belong to our Proxmox VE cluster?", "arguments": {}, "tags": ["read", "cluster"]},
+    {"tool_name": "proxmox_nodes", "user_request": "List the Proxmox nodes.", "arguments": {}, "tags": ["read", "node"]},
+    {"tool_name": "proxmox_nodes", "user_request": "How much CPU and memory is each Proxmox node using?", "arguments": {}, "tags": ["read", "node"]},
+    {"tool_name": "proxmox_nodes", "user_request": "Which Proxmox hosts are online and how long have they been up?", "arguments": {}, "tags": ["read", "node"]},
+    {"tool_name": "proxmox_guests", "user_request": "List all virtual machines and containers on Proxmox.", "arguments": {}, "tags": ["read", "guest"]},
+    {"tool_name": "proxmox_guests", "user_request": "Which Proxmox VMs are stopped right now?", "arguments": {}, "tags": ["read", "guest"]},
+    {"tool_name": "proxmox_guests", "user_request": "Show the LXC containers running on our Proxmox cluster.", "arguments": {}, "tags": ["read", "guest"]},
+    {"tool_name": "proxmox_node_storage", "user_request": "Show the storage pools on Proxmox node pve1.", "arguments": {"node": "pve1"}, "tags": ["read", "storage"]},
+    {"tool_name": "proxmox_node_storage", "user_request": "How full is the storage on node pve-lab?", "arguments": {"node": "pve-lab"}, "tags": ["read", "storage"]},
+    {"tool_name": "proxmox_node_storage", "user_request": "Which storage backends are configured on Proxmox node spare-pc?", "arguments": {"node": "spare-pc"}, "tags": ["read", "storage"]},
+    {"tool_name": "proxmox_recent_tasks", "user_request": "Show the recent Proxmox tasks on node pve1.", "arguments": {"node": "pve1"}, "tags": ["read", "task"]},
+    {"tool_name": "proxmox_recent_tasks", "user_request": "Did any backup or migration task fail recently on node pve-lab?", "arguments": {"node": "pve-lab"}, "tags": ["read", "task"]},
+    {"tool_name": "proxmox_recent_tasks", "user_request": "What has Proxmox node spare-pc been doing lately?", "arguments": {"node": "spare-pc"}, "tags": ["read", "task"]}
+  ],
+  "eval_cases": [
+    {"name": "cluster-membership", "user": "Give me the membership and online state of the Proxmox VE cluster.", "allowed_tools": ["proxmox_cluster_status"], "allowed_arguments": {}, "expected_tool": "proxmox_cluster_status", "expected_arguments": {}},
+    {"name": "node-counters", "user": "Report CPU, memory, disk and uptime for every Proxmox node.", "allowed_tools": ["proxmox_nodes"], "allowed_arguments": {}, "expected_tool": "proxmox_nodes", "expected_arguments": {}},
+    {"name": "guest-inventory", "user": "Give me an inventory of the QEMU VMs and LXC containers on Proxmox.", "allowed_tools": ["proxmox_guests"], "allowed_arguments": {}, "expected_tool": "proxmox_guests", "expected_arguments": {}},
+    {"name": "node-storage", "user": "Read the storage pools of Proxmox node pve2.", "allowed_tools": ["proxmox_node_storage"], "allowed_arguments": {"node": ["pve2"]}, "expected_tool": "proxmox_node_storage", "expected_arguments": {"node": "pve2"}},
+    {"name": "node-tasks", "user": "List the latest tasks recorded on Proxmox node pve2.", "allowed_tools": ["proxmox_recent_tasks"], "allowed_arguments": {"node": ["pve2"]}, "expected_tool": "proxmox_recent_tasks", "expected_arguments": {"node": "pve2"}}
+  ]
+}

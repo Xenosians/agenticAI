@@ -300,9 +300,11 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
         )
         from services.extensions.transform import transforms_available
         from services.knowledge.sites import CrawlSites
+        from services.lua_adapters.plugins import plugin_catalog
         sites = CrawlSites(store)
         return {"schema": "extension-catalog.v1", "resources": [public_resource(r) for r in store.list(owner)],
                 "skills": skills.list(owner),
+                "capabilities_schema": "mcp-tool-catalog.v1",
                 "selected": store.selected(owner),
                 "role_assignments": store.role_assignments(owner),
                 "specialist_roles": specialist_roles(settings),
@@ -312,6 +314,7 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
                 "networking_inference_options": networking_inference_options(),
                 "local_profiles": [{"id": key, "backend": profile.backend} for key, profile in settings.model_profiles.items() if profile.enabled and not key.startswith("user-upload-")],
                 "capabilities": workflow_capabilities(settings),
+                "plugin_catalog": plugin_catalog(),
                 "harnesses": [{"id": kind, "available": _installed(kind)} for kind in ["opencode", "pi"]],
                 "transforms": [{"id": "lua-row-transform", "available": transforms_available()}],
                 # Sites this owner may crawl into reference knowledge: the machine's, then their own.

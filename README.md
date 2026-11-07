@@ -16,6 +16,7 @@ This is an evolving local-first **MVP candidate**. Model output is a proposal, n
 - Optional user-reviewed workflow contracts check complete operation lists, dependencies and exact target pins before dispatch for both local and outbound reasoning. Normal chat remains available; free-text submissions do not receive this completeness check.
 - Local Transformers models, quantization profiles, LoRA adapters, and serialized GPU scheduling.
 - Per-account model connections: compatible chat-completion APIs, including Groq; installed local profiles; and Pi/OpenCode inference adapters.
+- File-based Lua adapters for model, connection, source and tool protocols. The catalog reports the resolved source digest; the host retains credentials, network access and execution policy.
 - Shared provider usage queues, editable quota settings, and verified reasoning controls for supported connections.
 - Validated uploads of local safetensors model folders, private reference datasets (including bounded selectable-text PDF/DOCX extraction), and reviewed JSONL training data.
 - Local full-text retrieval for reference datasets, with source and trust metadata kept separate from execution authority.
@@ -108,6 +109,7 @@ The [tool acceptance matrix](docs/tool-acceptance-matrix.md) inventories all 67 
 - Dataset retrieval uses local full-text search, not embeddings or an external vector database.
 - PDF/DOCX ingestion extracts selectable text only in an isolated, resource-limited worker; scanned-image OCR, macros, images and attachments are not processed, and source binaries are not retained.
 - The n8n/workflow surface validates manifests only. It neither runs workflows nor registers webhooks.
+- The Lua Plugin Store is a read-only runtime inventory. User-authored plugin submission, review, activation, revocation and audit are not implemented; the MCP Tool Store reports registered capabilities, not provider health.
 - Uploaded models reject custom executable code and pickle weights. Format admission does not guarantee inference quality or sufficient GPU memory.
 - Ambiguous mutation outcomes require reconciliation; they are not automatically retried.
 - Multi-worker sharing of extension/upload storage and a unified three-repository deployment are not implemented.
@@ -115,6 +117,7 @@ The [tool acceptance matrix](docs/tool-acceptance-matrix.md) inventories all 67 
 ## More detail
 
 - [User models, harnesses, datasets, and workflow validation](docs/user-extensions.md)
+- [Extension stores, MCP catalog and Lua plugin lifecycle](docs/extension-stores.md)
 - [Account → Jira ticket → mailer](docs/account-ticket-workflow.md)
 - [Compact routing, inference stages, and ITSM verification](docs/compact-routing.md)
 - [Cross-repository acceptance checks](docs/cross-repo-acceptance.md)

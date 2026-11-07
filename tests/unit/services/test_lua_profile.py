@@ -18,6 +18,8 @@ return {
                  read = {user = "svc-read", secret = "ldap_read"},
                  write = {user = "svc-write", secret = "ldap_write"}},
     router = {url = "https://192.0.2.1", user = "auditor", secret = "router", verify_tls = true},
+    proxmox = {url = "https://pve.example.test:8006", token_id = "reporter@pam!readonly",
+               secret = "proxmox", verify_tls = true, ca_file = "trust/pve-ca.pem"},
     jira = {url = "https://example.atlassian.net", email = "bot@example.test", secret = "jira"},
     atlassian = {org_id = "org-1", jira_resource = "ari:cloud:jira::site/1", secret = "atlassian"},
     mailbox = {enabled = true, domain = "lab.test", smtp_port = 2587, imap_port = 2143},
@@ -30,9 +32,9 @@ return {
 }
 """
 SECRETS = {"ldap_read": "read-pass", "ldap_write": "write-pass", "router": "router-pass",
-           "jira": "jira-token", "atlassian": "admin-key"}
+           "proxmox": "pve-token-secret", "jira": "jira-token", "atlassian": "admin-key"}
 CREDENTIAL_FIELDS = {"ad_bind_password", "ad_write_bind_password", "openwrt_password",
-                     "jira_api_token", "atlassian_admin_api_key"}
+                     "proxmox_api_token_secret", "jira_api_token", "atlassian_admin_api_key"}
 
 
 @pytest.fixture
@@ -71,6 +73,10 @@ def test_the_machine_profile_becomes_the_settings_for_every_link(install):
     assert (values["ad_write_bind_user"], values["ad_write_bind_password"]) == ("svc-write", "write-pass")
     assert (values["openwrt_base_url"], values["openwrt_username"]) == ("https://192.0.2.1", "auditor")
     assert values["openwrt_password"] == "router-pass" and values["openwrt_verify_tls"] is True
+    assert (values["proxmox_base_url"], values["proxmox_api_token_id"]) == (
+        "https://pve.example.test:8006", "reporter@pam!readonly")
+    assert values["proxmox_api_token_secret"] == "pve-token-secret" and values["proxmox_verify_tls"] is True
+    assert values["proxmox_ca_file"] == str((Path(profile.load_links().profile_path.parent) / "trust/pve-ca.pem").resolve())
     assert (values["jira_base_url"], values["jira_email"]) == ("https://example.atlassian.net", "bot@example.test")
     assert values["jira_api_token"] == "jira-token" and values["atlassian_admin_api_key"] == "admin-key"
     assert (values["atlassian_org_id"], values["atlassian_jira_resource_ari"]) == ("org-1", "ari:cloud:jira::site/1")
@@ -89,7 +95,8 @@ def test_every_profile_value_is_a_real_settings_field(install):
 
 
 def test_the_directory_certificate_check_comes_from_the_profile(install, tmp_path):
-    install(source=PROFILE.replace('tls = true,', 'tls = true, ca_file = "trust/dc-ca.pem", server_name = "dc01.example.test",'))
+    install(source=PROFILE.replace('tls = true, base_dn =',
+                                   'tls = true, ca_file = "trust/dc-ca.pem", server_name = "dc01.example.test", base_dn ='))
     values = profile.settings_values()
     assert values["ad_tls_ca_file"] == str((tmp_path / "trust" / "dc-ca.pem").resolve())
     assert values["ad_tls_server_name"] == "dc01.example.test"

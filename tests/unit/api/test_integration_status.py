@@ -19,7 +19,10 @@ def client_for(settings, monkeypatch):
 def test_every_provider_family_is_listed_with_its_setup_state(monkeypatch):
     settings = Settings(_env_file=None, ticketing_backend="mock",
                         openwrt_base_url="https://router.example.test", openwrt_username="reader",
-                        openwrt_password="fixture-password-value")
+                        openwrt_password="fixture-password-value",
+                        proxmox_base_url="https://pve.example.test:8006",
+                        proxmox_api_token_id="reader@pam!janus",
+                        proxmox_api_token_secret="fixture-proxmox-token")
     body = client_for(settings, monkeypatch).get("/v1/integrations").json()
     rows = {row["id"]: row for row in body["integrations"]}
     assert set(rows) == {family.id for family in PROVIDER_FAMILIES}
@@ -30,4 +33,7 @@ def test_every_provider_family_is_listed_with_its_setup_state(monkeypatch):
     assert rows["openwrt"]["configured"] is True
     assert rows["openwrt"]["host"] == "router.example.test"
     assert rows["openwrt"]["verify_tls"] is True
+    assert rows["proxmox"]["state"] == "configured"
+    assert rows["proxmox"]["mode"] == "read_only"
     assert "fixture-password-value" not in repr(body)
+    assert "fixture-proxmox-token" not in repr(body)

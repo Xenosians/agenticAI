@@ -1651,8 +1651,10 @@ def parse_semantic_intent(
         ):
 
             raise ValueError(
-                "Semantic intent effect does not match "
-                "trusted capability metadata."
+                f"Semantic intent effect {effect!r} conflicts with "
+                f"trusted capability effect {trusted_effect!r}. "
+                "Select capabilities that match the user's requested "
+                "operation; do not change the effect to fit a capability."
             )
 
     elif (
