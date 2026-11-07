@@ -23,6 +23,9 @@ FAILURE_CATEGORY_BY_CODE = {
     "agent_tool_not_allowed":
         "authorization_denial",
 
+    "tool_disabled_by_owner":
+        "owner_disabled_tool",
+
     "unknown_tool":
         "capability_resolution_error",
 

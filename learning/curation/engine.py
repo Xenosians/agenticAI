@@ -63,6 +63,8 @@ KNOWN_OUTCOME_CODES = {
 
     "agent_tool_not_allowed",
     "unknown_tool",
+    # The request's owner turned the tool off: an owner preference, never model behaviour.
+    "tool_disabled_by_owner",
 
     "grounding_policy_invalid",
     "grounding_field_invalid",

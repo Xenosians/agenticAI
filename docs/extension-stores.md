@@ -89,10 +89,26 @@ and controlled ingestion path exist.
 Current features should remain clearly separated from planned imports: the
 Model Store already supports API connections and local model uploads; datasets
 support their current document/JSONL and crawl flows; the Skill Store already
-supports app editing, `SKILL.md` upload, versions and toggling. MCP Tool and Lua
-Plugin stores are currently read-only runtime catalogs. ZIP intake, user Lua
-URLs/editor, remote MCP registration, and account-level tool/plugin switches
-are not yet implemented.
+supports app editing, `SKILL.md` upload, versions and toggling; the MCP Tool
+Store has an owner on/off switch per tool (below). The Lua Plugin Store is a
+read-only runtime catalog. ZIP intake, user Lua URLs/editor and remote MCP
+registration are not yet implemented.
+
+### Owner tool switches
+
+An owner can turn a registered MCP tool off for their own account (action
+`tool_enable` with `{"id", "enabled"}`; the catalog's `capabilities` rows carry
+`enabled`). `services/extensions/tool_switches.py` stores only the turned-off
+tools per owner (no row means on); unregistered names and non-boolean values
+are refused (`tool_not_found`, `tool_enabled_invalid`). Each request reads its
+owner's switches once into `disabled_tools`; `ToolGateway` refuses a turned-off
+tool for that request with `denied` / `tool_disabled_by_owner` before grounding,
+policy, approval or provider, so no proposal made before the switch can slip
+through. The switch is a preference, not an authority: turning a tool on grants
+nothing its policy, approval and provider checks do not already allow. Learning
+records the outcome as the owner's choice (`owner_disabled_tool`), never as a
+model failure. Packaged Lua protocol adapters are required gates and stay
+host-owned; owner Lua plugins wait for the reviewed bytes store.
 
 ### Built-in skills
 

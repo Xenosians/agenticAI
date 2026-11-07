@@ -708,6 +708,25 @@ class ToolGateway:
             )
 
         # ========================================================
+        # OWNER SWITCH
+        # The request's owner turned this tool off for their account.
+        # Refuse before grounding, policy, approval or provider.
+        # ========================================================
+
+        from services.extensions.context import disabled_tools
+
+        if tool_name in disabled_tools.get():
+            return gateway_result(
+                ok=False,
+                status="denied",
+                decision_code="tool_disabled_by_owner",
+                error=(
+                    f"The tool '{tool_name}' is turned off in your MCP Tool Store. "
+                    "Turn it on there to use it."
+                ),
+            )
+
+        # ========================================================
         # TOOL EXISTENCE
         # ========================================================
 

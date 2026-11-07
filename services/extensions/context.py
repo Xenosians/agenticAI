@@ -52,6 +52,10 @@ request_skills: ContextVar[list[dict]] = ContextVar("request_skills", default=[]
 applied_skills: ContextVar[list | None] = ContextVar("applied_skills", default=None)
 SKILL_IDENTITY_FIELDS = ("name", "version", "id", "sha256")
 
+# The MCP tools the request's owner has turned off (services/extensions/tool_switches).
+# ToolGateway refuses them for this request; empty outside a request.
+disabled_tools: ContextVar[frozenset[str]] = ContextVar("disabled_tools", default=frozenset())
+
 NETWORKING_ROLE = "networking-specialist"
 
 
@@ -138,6 +142,8 @@ def owner_execution(
     from services.extensions.skills import SkillLibrary
     skills_token = request_skills.set(SkillLibrary(store).applicable(owner, message))
     applied_token = applied_skills.set([])
+    from services.extensions.tool_switches import ToolSwitches
+    disabled_token = disabled_tools.set(ToolSwitches(store).disabled(owner))
 
     try:
         # The second value says whether this request found any of the owner's
@@ -148,6 +154,7 @@ def owner_execution(
         )
 
     finally:
+        disabled_tools.reset(disabled_token)
         applied_skills.reset(applied_token)
         request_skills.reset(skills_token)
         request_owner.reset(owner_token)

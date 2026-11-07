@@ -11,6 +11,7 @@ from services.extensions.document_ingestion import DocumentIngestionError
 from services.extensions.transform import TransformError
 from services.knowledge.crawler import CrawlError
 from services.extensions.skills import SkillError
+from services.extensions.tool_switches import ToolSwitchError
 from services.lua_adapters.runtime import LuaAdapterError
 
 
@@ -54,6 +55,10 @@ async def extensions(body: ExtensionCommand, request: Request):
 
     except SkillError as exc:
         # A skill refusal: a stable skill_* code and a fixed message, never the skill's text.
+        raise HTTPException(422, exc.public_detail()) from None
+
+    except ToolSwitchError as exc:
+        # A tool switch refusal: a stable tool_* code and a fixed message.
         raise HTTPException(422, exc.public_detail()) from None
 
     except DocumentIngestionError as exc:

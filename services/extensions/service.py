@@ -84,6 +84,13 @@ def workflow_capabilities(settings) -> list[dict]:
         })
     return result
 
+def owner_capabilities(owner: str, capabilities: list[dict], store) -> list[dict]:
+    """The capability catalog with each tool's on/off state for this owner (absent switch = on)."""
+    from services.extensions.tool_switches import ToolSwitches
+    disabled = ToolSwitches(store).disabled(owner)
+    return [{**row, "enabled": row["id"] not in disabled} for row in capabilities]
+
+
 def replaced_dataset(payload: dict) -> str | None:
     """The dataset version a new upload replaces; absent or empty means a new dataset."""
     replaces = payload.get("replaces")
@@ -235,6 +242,7 @@ ACTIONS = frozenset({
     "crawl_site_add", "crawl_site_remove", "search", "resolve", "workflow_validate",
     "upload_begin", "upload_chunk", "upload_finish",
     "skill_list", "skill_save", "skill_restore", "skill_enable", "skill_delete",
+    "tool_enable",
 })
 
 
@@ -293,6 +301,10 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
             raise SkillError("skill_not_found", "Skill not found.")
         skills.delete(owner, payload["name"])
         return {"deleted": payload["name"]}
+    if action == "tool_enable":
+        # The owner turns one registered MCP tool on or off for their own account.
+        from services.extensions.tool_switches import ToolSwitches
+        return ToolSwitches(store).set_enabled(owner, payload.get("id"), payload.get("enabled"))
     if action == "list":
         from services.extensions.providers import (
             connection_presets,
@@ -313,7 +325,7 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
                 "inference_option_support": inference_option_support(),
                 "networking_inference_options": networking_inference_options(),
                 "local_profiles": [{"id": key, "backend": profile.backend} for key, profile in settings.model_profiles.items() if profile.enabled and not key.startswith("user-upload-")],
-                "capabilities": workflow_capabilities(settings),
+                "capabilities": owner_capabilities(owner, workflow_capabilities(settings), store),
                 "plugin_catalog": plugin_catalog(),
                 "harnesses": [{"id": kind, "available": _installed(kind)} for kind in ["opencode", "pi"]],
                 "transforms": [{"id": "lua-row-transform", "available": transforms_available()}],
