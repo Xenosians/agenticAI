@@ -67,6 +67,7 @@ from scripts.tool_matrix import (  # noqa: E402
     job_inference_metrics,
     load_matrix_report,
     plan_limited,
+    host_unset_provider_families,
     provider_not_configured,
     profile_request,
     prepare_git_fixture,
@@ -362,7 +363,7 @@ def approve(page, timeout_ms: int) -> None:
 
 
 def run_case(page, traffic: BrowserTraffic, args, case: tuple, context: dict, *, row: dict, checkpoint,
-             evidence=None) -> dict:
+             evidence=None, unset_families: dict | None = None) -> dict:
     """Run one case in the browser. ``evidence(job_id, attempt)``, when given, proves where the job's steps ran."""
     identity, tool, prompt, approve_mode = case
     message = prompt.format(**context)
@@ -421,7 +422,7 @@ def run_case(page, traffic: BrowserTraffic, args, case: tuple, context: dict, *,
     if evidence is not None:
         row["inference"] = evidence(job_id, final.get("attempts"))
     limited = plan_limited(worker)
-    unset = provider_not_configured(final)
+    unset = provider_not_configured(tool, final, unset_families or {})
     if limited:
         row["verdict"] = "plan_limited"
         row["reason"] = limited
@@ -525,6 +526,7 @@ def main() -> int:
                     pending = unattempted_cases(report, pending)
                     save()
             admin_ready = atlassian_admin_configured()
+            unset_families = host_unset_provider_families()
             shots.mkdir(parents=True, exist_ok=True)
             if requested_profile is not None:
                 # The same product API the matrix uses chooses the profile before
@@ -577,7 +579,8 @@ def main() -> int:
                                 # Every case must run on the chosen profile; a changed selection stops it.
                                 scope.assert_unchanged()
                             run_case(page, traffic, args, case, context, row=row, checkpoint=save,
-                                     evidence=case_evidence if scope is not None else None)
+                                     evidence=case_evidence if scope is not None else None,
+                                     unset_families=unset_families)
                             if row.get("verdict") == "pass":
                                 row.pop("reason", None)
                         except Exception as exc:

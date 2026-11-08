@@ -213,9 +213,10 @@ def test_main_persists_intent_before_dispatch_and_keeps_unknown_job_on_failure(t
     monkeypatch.setattr(harness, "TOOLS", {CASE[1]: {}})
     monkeypatch.setattr(harness, "discover_fixtures", lambda _: None)
     monkeypatch.setattr(harness, "atlassian_admin_configured", lambda: False)
+    monkeypatch.setattr(harness, "host_unset_provider_families", lambda: {})
     monkeypatch.setattr(harness, "dotenv_values", lambda _: {"ACCEPTANCE_EMAIL": "test@example.test", "ACCEPTANCE_PASSWORD": "fixture-only"})
     monkeypatch.setattr(harness.matrix, "RUN", "10220000")
-    def interrupted(*args, row, checkpoint, evidence=None):
+    def interrupted(*args, row, checkpoint, evidence=None, unset_families=None):
         saved = json.loads(path.read_text())
         assert saved["results"][CASE[0]]["stage"] == "prepared"
         assert saved["results"][CASE[0]]["verdict"] == "blocked"
@@ -303,7 +304,7 @@ def scoped_run(tmp_path, monkeypatch, *, restoration, metrics):
     browser = SimpleNamespace(new_context=lambda **_: SimpleNamespace(new_page=lambda: page), close=lambda: None)
     playwright = SimpleNamespace(chromium=SimpleNamespace(launch=lambda **_: browser))
 
-    def case(*args, row, checkpoint, evidence=None):
+    def case(*args, row, checkpoint, evidence=None, unset_families=None):
         events.append("case")
         row.update(verdict="pass", job_id="a" * 32, inference=evidence("a" * 32, 1))
         return row
@@ -320,6 +321,7 @@ def scoped_run(tmp_path, monkeypatch, *, restoration, metrics):
     monkeypatch.setattr(harness, "TOOLS", {CASE[1]: {}})
     monkeypatch.setattr(harness, "discover_fixtures", lambda _: None)
     monkeypatch.setattr(harness, "atlassian_admin_configured", lambda: False)
+    monkeypatch.setattr(harness, "host_unset_provider_families", lambda: {})
     monkeypatch.setattr(harness, "dotenv_values", lambda _: {"ACCEPTANCE_EMAIL": "test@example.test",
                                                              "ACCEPTANCE_PASSWORD": "fixture-only"})
     monkeypatch.setattr(harness.matrix, "RUN", "10220000")
@@ -380,3 +382,29 @@ def test_an_incomplete_browser_profile_is_refused_before_source_credentials_or_b
         harness.main()
     assert exit_info.value.code == 2
     assert not (tmp_path / "new.json").exists()
+
+
+def test_a_provider_this_host_has_not_set_up_is_reported_not_passed(tmp_path, monkeypatch):
+    row = {"verdict": "blocked"}
+    traffic = SimpleNamespace(sockets=[{"frames_in": 0}])
+    message = "Proxmox VE is not set up on this Janus host. Missing settings: PROXMOX_BASE_URL."
+    final = {"job_id": "job", "chat_id": "chat", "status": "failed", "error": message}
+
+    def failed(*_):
+        traffic.sockets[0]["frames_in"] += 1
+        return final
+
+    traffic.wait = failed
+    monkeypatch.setattr(harness, "new_chat", lambda *_: "chat")
+    monkeypatch.setattr(harness, "send", lambda *_, **__: ("job", "chat"))
+    monkeypatch.setattr(harness, "chat_history", lambda *_: {})
+    monkeypatch.setattr(harness, "_assert_history_roundtrip", lambda *_, **__: None)
+    monkeypatch.setattr(harness, "worker_evidence", lambda _: None)
+    monkeypatch.setattr(harness, "_tool_name", lambda _: "proxmox_nodes")
+    recorded = []
+    monkeypatch.setattr(harness, "record_created", lambda *args: recorded.append(args))
+    case = ("proxmox-nodes", "proxmox_nodes", "List the Proxmox VE nodes.", None)
+    result = harness.run_case(None, traffic, arguments(tmp_path), case, {}, row=row, checkpoint=lambda: None,
+                              unset_families={"proxmox": ["PROXMOX_BASE_URL"]})
+    assert (result["verdict"], result["reason"]) == ("not_configured", message)
+    assert recorded == []

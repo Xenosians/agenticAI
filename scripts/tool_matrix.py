@@ -481,12 +481,32 @@ def acceptance_summary(results, selected, *, registered_tools, full_scope, sourc
             "exit_code": exit_code}
 
 
-def provider_not_configured(job: dict) -> str | None:
-    """The provider's own setup message when this host has not set it up (not a product failure)."""
-    result = job.get("result") if isinstance(job.get("result"), dict) else {}
-    for step in result.get("results", []) or []:
-        if isinstance(step, dict) and step.get("error_code") == "not_configured":
-            return str(step.get("error") or "The provider is not set up on this host.")[:200]
+def unset_provider_families(rows) -> dict[str, list[str]]:
+    """Provider families this host has not set up, with the setting names each still needs."""
+    return {row["id"]: list(row.get("missing") or []) for row in rows if row.get("state") == "not_configured"}
+
+
+def host_unset_provider_families() -> dict[str, list[str]]:
+    from config import get_settings
+    from services.integration_readiness import integration_readiness
+
+    return unset_provider_families(integration_readiness(get_settings()))
+
+
+def provider_not_configured(tool: str, job: dict, unset: dict[str, list[str]]) -> str | None:
+    """The provider's own setup message when this host has not set it up (not a product failure).
+
+    Phoenix keeps only the error text of a failed job, so the verdict needs
+    both facts: integration readiness says the tool's family is unset, and the
+    job failed with that provider's own "not set up" message.
+    """
+    from services.integration_readiness import provider_for_capability
+
+    if provider_for_capability(tool) not in unset or job.get("status") != "failed":
+        return None
+    error = job.get("error")
+    if isinstance(error, str) and "is not set up on this Janus host." in error:
+        return error[:200]
     return None
 
 
@@ -585,6 +605,7 @@ def main() -> int:
                 }
             save()
     admin_ready = atlassian_admin_configured()
+    unset_families = host_unset_provider_families()
     scope = profile = None
     if requested_profile is not None:
         scope = AcceptanceProfileScope(client, **requested_profile)
@@ -665,7 +686,7 @@ def main() -> int:
                     row["inference"] = inference_evidence(
                         job_inference_metrics(client, job["job_id"], terminal.get("attempts")), profile)
                 limited = plan_limited(worker)
-                unset = provider_not_configured(terminal)
+                unset = provider_not_configured(tool, terminal, unset_families)
                 if limited:
                     row["verdict"] = "plan_limited"
                     row["reason"] = limited
