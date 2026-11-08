@@ -6,7 +6,7 @@ This is an evolving local-first **MVP candidate**. Model output is a proposal, n
 
 ## Features
 
-- Hub and specialist routing for directory accounts, access, tickets, Jira, developer workspaces, knowledge, assets, and networking.
+- Hub and specialist routing for directory accounts, access, tickets, Jira and Jira Service Management, Atlassian administration, developer workspaces, knowledge, assets, networking, platform operations and Proxmox.
 - Compact routing for selected model connections: local catalog search narrows the prompt, while the full registry still validates every proposed tool action.
 - Typed tools for LDAP/Jira integrations, workspace inspection, builds/tests, and governed Git changes. Provider availability depends on configuration.
 - Durable approvals that retain the exact proposed action, plus a completion outbox for reliable delivery to Phoenix.
@@ -21,6 +21,10 @@ This is an evolving local-first **MVP candidate**. Model output is a proposal, n
 - Shared provider usage queues, editable quota settings, and verified reasoning controls for supported connections.
 - Validated uploads of local safetensors model folders, private reference datasets (including bounded selectable-text PDF/DOCX extraction), and reviewed JSONL training data.
 - Local full-text retrieval for reference datasets, with source and trust metadata kept separate from execution authority.
+- A bounded crawler that turns an allowed site into reference text with per-page provenance; it honours robots.txt and stays on the starting site, and each fetch crosses the Lua-gated HTTP client.
+- Owner skills: Markdown guidance (SKILL.md format) that shapes the answers Janus writes, including built-in skills seeded once per owner.
+- Read-only Proxmox VE reads (cluster, nodes, virtual machines and containers, storage, recent tasks) and governed lab mailboxes on a local SMTP/IMAP server.
+- Nightly, verified backups of Janus state with a documented restore ([backups](docs/backups.md)).
 - Training/evaluation infrastructure for curated datasets, candidate adapters, behavioral checks, and promotion gates.
 - Advisory infrastructure drift: a saved desired topology is compared with what the read-only operations adapters observe (allow-listed containers, configured health endpoints, the configured OpenWrt router). The report is labelled simulated and never changes a device. KiCad netlists are inspected as text for connectivity findings, with no EDA tool or hardware attached.
 
@@ -159,7 +163,7 @@ python -m pytest -q tests/unit
 
 Real-model, GPU, provider, and container integration checks require their own configured environments. A successful connection probe confirms that request only; it is not a tool-use or model-quality evaluation.
 
-The [tool acceptance matrix](docs/tool-acceptance-matrix.md) inventories all 67 registered tools. Existing evaluation suites cover 49 tools, with reviewed supplemental proposal cases for the other 18. Proposal coverage, approval, provider execution, and durable app-flow evidence are separate checks. Fixtures alone never count as model or tool success.
+The [tool acceptance matrix](docs/tool-acceptance-matrix.md) inventories every registered tool; `python scripts/tool_acceptance_matrix.py --require-full-coverage` prints the current counts. Proposal coverage, approval, provider execution, and durable app-flow evidence are separate checks. Fixtures alone never count as model or tool success.
 
 ## Current boundaries
 
@@ -168,7 +172,7 @@ The [tool acceptance matrix](docs/tool-acceptance-matrix.md) inventories all 67 
 - Dataset retrieval uses local full-text search, not embeddings or an external vector database.
 - PDF/DOCX ingestion extracts selectable text only in an isolated, resource-limited worker; scanned-image OCR, macros, images and attachments are not processed, and source binaries are not retained.
 - The n8n/workflow surface validates manifests only. It neither runs workflows nor registers webhooks.
-- The Lua Plugin Store is a read-only runtime inventory. User-authored plugin submission, review, activation, revocation and audit are not implemented; the MCP Tool Store reports registered capabilities, not provider health.
+- The Lua Plugin Store lists the runtime plugin inventory. Phoenix keeps owner-scoped extension records with registration, review, activation, revocation, an on/off switch and an audit trail, but stores no plugin source yet and Lua dispatch does not read those records, so a record does not change which plugins run. The MCP Tool Store lets each owner turn individual tools off (the gateway then refuses them with `tool_disabled_by_owner`); it reports registered capabilities, not provider health.
 - Uploaded models reject custom executable code and pickle weights. Format admission does not guarantee inference quality or sufficient GPU memory.
 - Ambiguous mutation outcomes require reconciliation; they are not automatically retried.
 - Multi-worker sharing of extension/upload storage and a unified three-repository deployment are not implemented.
