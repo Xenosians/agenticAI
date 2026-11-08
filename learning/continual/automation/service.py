@@ -39,6 +39,13 @@ from learning.continual.automation.evaluation import (
 from learning.continual.automation.events import (
     learning_event_from_trajectory,
 )
+from learning.continual.automation.limiter import (
+    StepLimiter,
+    TrainingYielded,
+    gpu_budget,
+    on_mains_power,
+    room_to_train,
+)
 from learning.training.ppo import (
     SandboxPPOSettings,
     run_sandbox_sequence_ppo,
@@ -87,8 +94,11 @@ class ContinualAutomationService:
 
     Single-GPU mode:
         inference has priority;
-        training starts only after an idle window;
-        one short training micro-cycle holds the GPU scheduler.
+        training starts only after an idle window, on mains power, with
+        free RAM and free GPU memory (limiter.py);
+        training checks between optimizer steps and stops for any
+        request, battery or shutdown; the cycle is then interrupted and
+        its inputs return to pending.
 
     Multi-GPU production can move this service into a separate worker while
     keeping the same durable store/artifact contracts.
@@ -141,6 +151,7 @@ class ContinualAutomationService:
 
         self._wakeup = asyncio.Event()
         self._stop = asyncio.Event()
+        self._last_room_reason: str | None = None
         self._last_activity = (
             time.monotonic()
         )
@@ -401,6 +412,24 @@ class ContinualAutomationService:
             .idle_seconds_before_training
         )
 
+    def _yield_reason(
+        self,
+    ) -> str | None:
+        """Why training must stop now (None to continue); checked between steps."""
+        if self._stop.is_set():
+            return "stopping"
+        if (
+            self.runtime.active_jobs
+            or self.runtime.gpu_scheduler.queue_depth > 0
+        ):
+            return "request_waiting"
+        if (
+            self.settings.require_mains_power
+            and not on_mains_power()
+        ):
+            return "on_battery"
+        return None
+
     def _new_cycle_id(
         self,
     ) -> str:
@@ -571,22 +600,38 @@ class ContinualAutomationService:
         recipe,
         seed_adapter: Path | None,
     ):
+        limiter = StepLimiter(
+            should_yield=self._yield_reason,
+            pause_seconds=self.settings.step_pause_seconds,
+        )
+
         def work(
         ):
+            # A request that queued while this cycle waited for the GPU
+            # keeps the serving model: give the slot back untouched.
+            reason = self._yield_reason()
+            if reason is not None:
+                raise TrainingYielded(reason)
+
             # Release inference residency before the training model is loaded.
             self.runtime.model_manager.unload_all()
 
-            return (
-                train_continual_candidate(
-                    materialization_directory=(
-                        materialization_directory
-                    ),
-                    recipe=recipe,
-                    seed_adapter=(
-                        seed_adapter
-                    ),
+            with gpu_budget(
+                fraction=self.settings.gpu_memory_fraction,
+                min_free_gib=self.settings.min_free_gpu_gib,
+            ):
+                return (
+                    train_continual_candidate(
+                        materialization_directory=(
+                            materialization_directory
+                        ),
+                        recipe=recipe,
+                        seed_adapter=(
+                            seed_adapter
+                        ),
+                        between_steps=limiter,
+                    )
                 )
-            )
 
         return (
             await
@@ -722,6 +767,18 @@ class ContinualAutomationService:
         if not self._idle_ready():
             return None
 
+        room = room_to_train(
+            require_mains_power=self.settings.require_mains_power,
+            min_free_ram_gib=self.settings.min_free_ram_gib,
+            min_free_gpu_gib=self.settings.min_free_gpu_gib,
+        )
+        if room is not None:
+            if room != self._last_room_reason:
+                print(f"[CONTINUAL] waiting for room reason={room}")
+            self._last_room_reason = room
+            return None
+        self._last_room_reason = None
+
         cycle_id = self._new_cycle_id()
         recipe = self.store.load_recipe(
             self.settings.recipe
@@ -823,11 +880,14 @@ class ContinualAutomationService:
                     state_store=self.store,
                 )
 
-            behavior_materialization = (
-                self._behavior_materialization()
+            # Preparing training data reads and hashes the base model; keep
+            # it off the event loop so chats are served meanwhile.
+            behavior_materialization = await asyncio.to_thread(
+                self._behavior_materialization
             )
             effective_materialization = (
-                augment_materialization_with_corpus(
+                await asyncio.to_thread(
+                    augment_materialization_with_corpus,
                     base_directory=behavior_materialization,
                     cycle_id=cycle_id,
                     pages=pages,
@@ -1056,6 +1116,39 @@ class ContinualAutomationService:
             self.store.finalize_pages(
                 cycle_id=cycle_id,
                 consumed=True,
+            )
+            return result
+
+        except TrainingYielded as stopped:
+            # Stopped at a step boundary to give the machine back. No
+            # candidate was registered, so the inputs return to pending.
+            result = ContinualAutomationCycleResult(
+                cycle_id=cycle_id,
+                completed_at=_utc_now(),
+                state="interrupted",
+                training_started=training_started,
+                training_executed=False,
+                corpus_target_roles=corpus_target_roles,
+                target_coverage=target_coverage,
+                guard_signal=stopped.reason,
+                notes=["Training gave way: " + stopped.reason],
+            )
+            self.store.save_cycle_result(result)
+            self.store.finalize_events(
+                cycle_id=cycle_id,
+                consumed=False,
+            )
+            self.store.finalize_pages(
+                cycle_id=cycle_id,
+                consumed=False,
+            )
+            # Whatever needed the machine is activity: wait a full idle
+            # window before trying again, instead of retrying at once.
+            self._last_activity = time.monotonic()
+            print(
+                "[CONTINUAL] cycle interrupted "
+                f"cycle={cycle_id} "
+                f"reason={stopped.reason}"
             )
             return result
 

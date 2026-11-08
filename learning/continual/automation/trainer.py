@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import contextmanager
 from pathlib import Path
 
 from config import Settings
@@ -57,17 +59,40 @@ def seed_adapter_directory(
     )
 
 
+@contextmanager
+def _after_each_optimizer_step(check: Callable[[], None] | None):
+    """Run ``check`` after every optimizer step taken in this block.
+
+    The check may raise (for example TrainingYielded) to end training at a
+    step boundary. The hook is removed when the block ends, so other
+    optimizers in the process are unaffected.
+    """
+    if check is None:
+        yield
+        return
+
+    from torch.optim.optimizer import register_optimizer_step_post_hook
+
+    handle = register_optimizer_step_post_hook(lambda *_: check())
+    try:
+        yield
+    finally:
+        handle.remove()
+
+
 def train_continual_candidate(
     *,
     materialization_directory: Path,
     recipe: AdaptiveRecipe,
     seed_adapter: Path | None,
+    between_steps: Callable[[], None] | None = None,
 ):
     """
     One bounded micro-cycle.
 
     The patched Phase-5 trainer accepts a promoted seed adapter when
     available. With no active adapter it starts from the frozen base model.
+    ``between_steps`` runs after every optimizer step (see limiter.py).
     """
     settings = (
         HubTrainingSettings(
@@ -109,26 +134,27 @@ def train_continual_candidate(
         )
     )
 
-    return (
-        train_hub_adapter(
-            materialization_directory=(
-                materialization_directory
-            ),
-            settings=settings,
-            allow_training=True,
-            backend=(
-                profile.backend
-            ),
-            agent_directory=(
-                REPOSITORY_ROOT
-                / "subagents"
-                / "agents"
-            ),
-            seed_adapter_directory=(
-                seed_adapter
-            ),
+    with _after_each_optimizer_step(between_steps):
+        return (
+            train_hub_adapter(
+                materialization_directory=(
+                    materialization_directory
+                ),
+                settings=settings,
+                allow_training=True,
+                backend=(
+                    profile.backend
+                ),
+                agent_directory=(
+                    REPOSITORY_ROOT
+                    / "subagents"
+                    / "agents"
+                ),
+                seed_adapter_directory=(
+                    seed_adapter
+                ),
+            )
         )
-    )
 
 
 def update_recipe(

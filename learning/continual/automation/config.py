@@ -92,6 +92,33 @@ class ContinualAutomationSettings(BaseModel):
 
     single_gpu_idle_only: bool = True
 
+    # Breathing room on a shared machine (see limiter.py). Training starts
+    # only on mains power with this much free RAM and free GPU memory, takes
+    # at most this share of GPU memory, pauses between optimizer steps, and
+    # stops at the next step when a request or shutdown needs the machine.
+    require_mains_power: bool = True
+
+    step_pause_seconds: float = Field(
+        default=2.0,
+        ge=0.0,
+    )
+
+    min_free_ram_gib: float = Field(
+        default=3.0,
+        ge=0.0,
+    )
+
+    min_free_gpu_gib: float = Field(
+        default=4.0,
+        ge=0.0,
+    )
+
+    gpu_memory_fraction: float = Field(
+        default=0.85,
+        gt=0.0,
+        le=1.0,
+    )
+
     # Keep the previous physical runtime location for backward-compatible
     # recovery of any already-persisted state. The Python namespace itself
     # is now consistently "continual".
@@ -435,6 +462,39 @@ class ContinualAutomationSettings(BaseModel):
             single_gpu_idle_only=cls._bool(
                 "CONTINUAL_SINGLE_GPU_IDLE_ONLY",
                 base.single_gpu_idle_only,
+            ),
+
+            require_mains_power=cls._bool(
+                "CONTINUAL_REQUIRE_MAINS_POWER",
+                base.require_mains_power,
+            ),
+
+            step_pause_seconds=float(
+                os.getenv(
+                    "CONTINUAL_STEP_PAUSE_SECONDS",
+                    str(base.step_pause_seconds),
+                )
+            ),
+
+            min_free_ram_gib=float(
+                os.getenv(
+                    "CONTINUAL_MIN_FREE_RAM_GIB",
+                    str(base.min_free_ram_gib),
+                )
+            ),
+
+            min_free_gpu_gib=float(
+                os.getenv(
+                    "CONTINUAL_MIN_FREE_GPU_GIB",
+                    str(base.min_free_gpu_gib),
+                )
+            ),
+
+            gpu_memory_fraction=float(
+                os.getenv(
+                    "CONTINUAL_GPU_MEMORY_FRACTION",
+                    str(base.gpu_memory_fraction),
+                )
             ),
 
             state_db_path=cls._path_env(

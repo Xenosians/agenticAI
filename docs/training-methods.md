@@ -17,6 +17,35 @@ on this laptop or that all SRS acceptance criteria are complete.
 
 PEFT is a family of parameter-efficient techniques; LoRA and QLoRA are tuning
 configurations, not additional learning objectives. LangChain is not a training method.
+
+## Idle training on a shared machine
+
+The continual automation service (`learning/continual/automation`) trains only
+after Janus has been idle, and it keeps out of the way of the person using the
+machine (`limiter.py`):
+
+- A cycle starts only on mains power, with `CONTINUAL_MIN_FREE_RAM_GIB` of RAM
+  available and `CONTINUAL_MIN_FREE_GPU_GIB` of GPU memory that the cycle can
+  use (free memory plus the serving models it unloads). Nothing is claimed
+  when there is no room.
+- Training holds at most `CONTINUAL_GPU_MEMORY_FRACTION` of GPU memory and
+  pauses `CONTINUAL_STEP_PAUSE_SECONDS` between optimizer steps.
+- After every optimizer step, and during the pause, it stops when a request
+  is running or waiting, on battery, or at shutdown. The cycle then ends
+  `interrupted`, its inputs return to pending, and the next attempt waits a
+  full idle window.
+- A finished cycle registers an unpromoted candidate checkpoint; promotion
+  stays a separate decision.
+
+Set `CONTINUAL_REQUIRE_MAINS_POWER=false` only on machines without a battery
+report. The service is off unless `CONTINUAL_LEARNING_ENABLED` and
+`CONTINUAL_AUTO_TRAIN` are set.
+
+A Hub cycle trains the Hub model itself with QLoRA: the 4-bit model, LoRA
+and optimizer state, and the activations and logits of SFT and DPO examples
+must fit inside the GPU memory cap. A 3B Hub model does not fit in 85 % of a
+6 GiB GPU, so on such a machine leave idle training off or train a smaller
+model; raising the cap removes the room the limiter exists to keep.
 DPO and PPO default to a 12 GiB free-VRAM preflight in their new CLI entry points.
 These are conservative policies, not claims that every model needs that much memory.
 
