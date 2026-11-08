@@ -119,6 +119,20 @@ class ContinualAutomationSettings(BaseModel):
         le=1.0,
     )
 
+    # What idle cycles train. Small local specialists (see specialists.py)
+    # train from their reviewed training sets and need no queued events; the
+    # Hub cycle trains the Hub model from queued events. Both stay off unless
+    # switched on, and both obey the breathing-room limits above.
+    specialist_training: bool = False
+    hub_training: bool = True
+
+    # A specialist's base model is trained only when its weights fit in this
+    # many GiB; bigger models (such as the shared Hub model) are left out.
+    specialist_max_weights_gib: float = Field(
+        default=2.0,
+        gt=0.0,
+    )
+
     # Keep the previous physical runtime location for backward-compatible
     # recovery of any already-persisted state. The Python namespace itself
     # is now consistently "continual".
@@ -494,6 +508,23 @@ class ContinualAutomationSettings(BaseModel):
                 os.getenv(
                     "CONTINUAL_GPU_MEMORY_FRACTION",
                     str(base.gpu_memory_fraction),
+                )
+            ),
+
+            specialist_training=cls._bool(
+                "CONTINUAL_SPECIALIST_TRAINING",
+                base.specialist_training,
+            ),
+
+            hub_training=cls._bool(
+                "CONTINUAL_HUB_TRAINING",
+                base.hub_training,
+            ),
+
+            specialist_max_weights_gib=float(
+                os.getenv(
+                    "CONTINUAL_SPECIALIST_MAX_WEIGHTS_GIB",
+                    str(base.specialist_max_weights_gib),
                 )
             ),
 

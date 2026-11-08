@@ -46,6 +46,31 @@ and optimizer state, and the activations and logits of SFT and DPO examples
 must fit inside the GPU memory cap. A 3B Hub model does not fit in 85 % of a
 6 GiB GPU, so on such a machine leave idle training off or train a smaller
 model; raising the cap removes the room the limiter exists to keep.
+
+### Small specialists
+
+The specialists choose and fill in the tool calls, so they gain the most from
+training, and the small ones fit beside normal use of a workstation.
+With `CONTINUAL_SPECIALIST_TRAINING=true` an idle cycle trains one small
+specialist (`learning/continual/automation/specialists.py`):
+
+- Targets are the reviewed configs in `learning/config/specialists` whose base
+  model weights fit in `CONTINUAL_SPECIALIST_MAX_WEIGHTS_GIB` (default 2).
+  Training files named `<config>-*.jsonl` beside a config belong to it.
+- A specialist is trained when its inputs changed since its last candidate:
+  the reviewed examples and extra files, its tools and its worker prompt. An
+  interrupted run is tried again; specialists take turns.
+- The run uses the specialist SFT recipe (QLoRA, 120 steps, 1,536 tokens)
+  under the same limits as above, and needs no queued learning events.
+- The candidate is checked on the specialist's held-out cases and next to the
+  specialist serving now. It is kept as `candidate` only when it passes every
+  case and does at least as well; otherwise as `rejected`. Either way it is
+  not registered: `scripts/specialist_sft_register_candidate.py` puts one into
+  service.
+
+`CONTINUAL_HUB_TRAINING=false` leaves the Hub cycle off while specialists
+train. On a 6 GiB laptop GPU a 0.5B specialist run peaked at 3.3 GiB of GPU
+memory and about 2 GiB of RAM, at about 5 s per optimizer step.
 DPO and PPO default to a 12 GiB free-VRAM preflight in their new CLI entry points.
 These are conservative policies, not claims that every model needs that much memory.
 

@@ -50,6 +50,12 @@ from learning.training.ppo import (
     SandboxPPOSettings,
     run_sandbox_sequence_ppo,
 )
+from learning.continual.automation.specialists import (
+    SpecialistCandidateStore,
+    SpecialistCycleResult,
+    SpecialistIdleTrainer,
+    small_specialist_targets,
+)
 from learning.continual.automation.store import (
     ContinualAutomationStore,
 )
@@ -111,6 +117,7 @@ class ContinualAutomationService:
         *,
         runtime,
         settings: ContinualAutomationSettings | None = None,
+        specialist_trainer=None,
     ) -> None:
         self.runtime = runtime
 
@@ -160,6 +167,9 @@ class ContinualAutomationService:
             store=self.store,
             settings=self.settings,
         )
+
+        self._specialist_trainer = specialist_trainer
+        self._latest_specialist_cycle: dict | None = None
 
     @property
     def enabled(
@@ -299,7 +309,11 @@ class ContinualAutomationService:
                 "auto_evaluate": self.settings.auto_evaluate,
                 "ppo_enabled": self.settings.ppo_enabled,
                 "auto_promote": self.settings.auto_promote,
+                "specialist_training":
+                    self.settings.specialist_training,
+                "hub_training": self.settings.hub_training,
             },
+            "latest_specialist_cycle": self._latest_specialist_cycle,
             "trigger_ready": trigger_ready,
             "idle_ready": idle_ready,
             "training_stage_ready": bool(
@@ -749,24 +763,9 @@ class ContinualAutomationService:
 
             return False
 
-    async def run_cycle(
+    def _room_ready(
         self,
-    ) -> ContinualAutomationCycleResult | None:
-        if not self.enabled:
-            return None
-
-        if not self.settings.auto_train:
-            # Collection-only mode: evidence remains pending and no cycle
-            # claims, materialization, optimizer, evaluation, PPO, or
-            # promotion work is started.
-            return None
-
-        if not self._trigger_ready():
-            return None
-
-        if not self._idle_ready():
-            return None
-
+    ) -> bool:
         room = room_to_train(
             require_mains_power=self.settings.require_mains_power,
             min_free_ram_gib=self.settings.min_free_ram_gib,
@@ -776,8 +775,102 @@ class ContinualAutomationService:
             if room != self._last_room_reason:
                 print(f"[CONTINUAL] waiting for room reason={room}")
             self._last_room_reason = room
-            return None
+            return False
         self._last_room_reason = None
+        return True
+
+    def _specialists(
+        self,
+    ):
+        if self._specialist_trainer is None:
+            self._specialist_trainer = SpecialistIdleTrainer(
+                runtime=self.runtime,
+                settings=self.settings,
+                targets=small_specialist_targets(
+                    profiles=Settings().model_profiles,
+                    max_weights_gib=(
+                        self.settings.specialist_max_weights_gib
+                    ),
+                ),
+                store=SpecialistCandidateStore(
+                    self.settings.state_db_path.parent
+                ),
+                yield_reason=self._yield_reason,
+            )
+        return self._specialist_trainer
+
+    async def _run_specialist_cycle(
+        self,
+    ) -> SpecialistCycleResult | None:
+        try:
+            result = await self._specialists().run_cycle()
+        finally:
+            await self._rewarm_serving_model()
+        if result is None:
+            return None
+        self._latest_specialist_cycle = {
+            "specialist": result.specialist,
+            "outcome": result.outcome,
+            "reason": result.reason,
+            "candidate": result.candidate,
+            "heldout_passed": result.passed,
+            "heldout_total": result.total,
+            "serving_passed": result.serving_passed,
+            "seconds": result.seconds,
+            "completed_at": _utc_now(),
+        }
+        if result.outcome == "interrupted":
+            # Whatever needed the machine is activity: wait a full idle
+            # window before trying again, instead of retrying at once.
+            self._last_activity = time.monotonic()
+        return result
+
+    async def _rewarm_serving_model(
+        self,
+    ) -> None:
+        try:
+            await self.runtime.inference.warm(
+                self.runtime.settings.hub_model_key,
+                stage=InferenceStage.CONTROL_ROUTING,
+            )
+        except Exception as exc:
+            print(
+                "[CONTINUAL] production model rewarm failed "
+                f"error={exc!r}"
+            )
+
+    async def run_cycle(
+        self,
+    ) -> ContinualAutomationCycleResult | SpecialistCycleResult | None:
+        if not self.enabled:
+            return None
+
+        if not self.settings.auto_train:
+            # Collection-only mode: evidence remains pending and no cycle
+            # claims, materialization, optimizer, evaluation, PPO, or
+            # promotion work is started.
+            return None
+
+        if self.settings.specialist_training:
+            # Small specialists train from their reviewed training sets, so
+            # they do not wait for queued events.
+            if not self._idle_ready() or not self._room_ready():
+                return None
+            specialist = await self._run_specialist_cycle()
+            if specialist is not None:
+                return specialist
+
+        if not self.settings.hub_training:
+            return None
+
+        if not self._trigger_ready():
+            return None
+
+        if not self._idle_ready():
+            return None
+
+        if not self._room_ready():
+            return None
 
         cycle_id = self._new_cycle_id()
         recipe = self.store.load_recipe(
@@ -1227,16 +1320,7 @@ class ContinualAutomationService:
             return result
 
         finally:
-            try:
-                await self.runtime.inference.warm(
-                    self.runtime.settings.hub_model_key,
-                    stage=InferenceStage.CONTROL_ROUTING,
-                )
-            except Exception as exc:
-                print(
-                    "[CONTINUAL] production model rewarm failed "
-                    f"error={exc!r}"
-                )
+            await self._rewarm_serving_model()
 
     async def run_forever(
         self,

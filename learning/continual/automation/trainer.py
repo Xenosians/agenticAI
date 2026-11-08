@@ -60,7 +60,7 @@ def seed_adapter_directory(
 
 
 @contextmanager
-def _after_each_optimizer_step(check: Callable[[], None] | None):
+def after_each_optimizer_step(check: Callable[[], None] | None):
     """Run ``check`` after every optimizer step taken in this block.
 
     The check may raise (for example TrainingYielded) to end training at a
@@ -134,7 +134,7 @@ def train_continual_candidate(
         )
     )
 
-    with _after_each_optimizer_step(between_steps):
+    with after_each_optimizer_step(between_steps):
         return (
             train_hub_adapter(
                 materialization_directory=(

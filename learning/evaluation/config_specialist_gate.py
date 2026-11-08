@@ -262,7 +262,9 @@ async def evaluate_specialist_config_gate(
     gate_name: str,
     max_new_tokens: int | None = None,
     exclude_tool_prefixes: tuple[str, ...] = (),
+    settings: Settings | None = None,
 ) -> SpecialistModelEvaluationReport:
+    """Run one specialist's held-out cases; ``settings`` may carry a candidate profile."""
     project_root = project_root.expanduser().resolve()
     resolved_configs = [
         path.expanduser().resolve()
@@ -282,7 +284,7 @@ async def evaluate_specialist_config_gate(
         if config.agent_definition != agent_definition:
             raise ValueError("Combined gate configs must use the same agent definition.")
 
-    settings = Settings()
+    settings = settings or Settings()
     profile = settings.require_model_profile(model_key)
     agent = load_agent_definition(project_root / agent_definition)
 
