@@ -169,7 +169,7 @@ def test_staged_diff_uses_fixed_cached_command(
                     ),
 
                 "timeout_seconds":
-                    10,
+                    git_tools.DEFAULT_TIMEOUT_SECONDS,
             }
         ]
     )

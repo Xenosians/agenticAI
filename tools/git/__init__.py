@@ -20,7 +20,9 @@ from services.process_runner import (
 )
 
 
-DEFAULT_TIMEOUT_SECONDS = 10
+# A status read of a large working tree on a mounted Windows drive takes
+# several seconds; reads may use the full process-policy limit.
+DEFAULT_TIMEOUT_SECONDS = 30
 
 # Git subcommands that contact a remote; they are outbound links (Lua first).
 GIT_NETWORK_COMMANDS = frozenset({"clone", "fetch", "ls-remote", "pull", "push"})
@@ -112,6 +114,7 @@ def _process_failure(
         str,
         Any,
     ],
+    timeout_seconds: int,
 ) -> dict[
     str,
     Any,
@@ -145,6 +148,20 @@ def _process_failure(
             error = (
                 stderr.strip()
             )
+
+    if result.get("timed_out") is True:
+        # Say what happened instead of a bare "failed": the command ran
+        # out of time and is safe to ask again for a read.
+        return {
+            "ok": False,
+            "status": "timeout",
+            "repository": repository,
+            "error_code": "provider_timeout",
+            "error": (
+                f"Git did not finish within {timeout_seconds} "
+                f"seconds on repository '{repository}'."
+            ),
+        }
 
     if not isinstance(
         error,
@@ -802,6 +819,10 @@ def workspace_git_status(
                 result=(
                     result
                 ),
+
+                timeout_seconds=(
+                    timeout_seconds
+                ),
             )
         )
 
@@ -983,6 +1004,10 @@ def workspace_git_branches(
                 result=(
                     result
                 ),
+
+                timeout_seconds=(
+                    timeout_seconds
+                ),
             )
         )
 
@@ -1144,6 +1169,10 @@ def workspace_git_log(
 
                 result=(
                     result
+                ),
+
+                timeout_seconds=(
+                    timeout_seconds
                 ),
             )
         )
@@ -1376,6 +1405,10 @@ def _workspace_git_diff(
                 result=(
                     result
                 ),
+
+                timeout_seconds=(
+                    timeout_seconds
+                ),
             )
         )
 
@@ -1536,6 +1569,10 @@ def workspace_git_changed_files(
 
                 result=(
                     result
+                ),
+
+                timeout_seconds=(
+                    timeout_seconds
                 ),
             )
         )
@@ -2077,6 +2114,10 @@ def workspace_git_stage_files(
                 result=(
                     mutation
                 ),
+
+                timeout_seconds=(
+                    timeout_seconds
+                ),
             )
         )
 
@@ -2132,6 +2173,10 @@ def workspace_git_stage_files(
 
                 result=(
                     verification
+                ),
+
+                timeout_seconds=(
+                    timeout_seconds
                 ),
             )
         )
@@ -2401,6 +2446,7 @@ def workspace_git_unstage_files(
             _process_failure(
                 repository=target.name,
                 result=before,
+                timeout_seconds=timeout_seconds,
             )
         )
 
@@ -2489,6 +2535,7 @@ def workspace_git_unstage_files(
             _process_failure(
                 repository=target.name,
                 result=mutation,
+                timeout_seconds=timeout_seconds,
             )
         )
 
@@ -2542,6 +2589,7 @@ def workspace_git_unstage_files(
             _process_failure(
                 repository=target.name,
                 result=verification,
+                timeout_seconds=timeout_seconds,
             )
         )
 
@@ -3162,6 +3210,7 @@ def workspace_git_create_branch(
             _process_failure(
                 repository=target.name,
                 result=mutation,
+                timeout_seconds=timeout_seconds,
             )
         )
 
@@ -3216,6 +3265,7 @@ def workspace_git_create_branch(
             _process_failure(
                 repository=target.name,
                 result=verification,
+                timeout_seconds=timeout_seconds,
             )
         )
 
@@ -3938,6 +3988,7 @@ def workspace_git_switch_branch(
             _process_failure(
                 repository=target.name,
                 result=mutation,
+                timeout_seconds=timeout_seconds,
             )
         )
 
@@ -3985,6 +4036,7 @@ def workspace_git_switch_branch(
             _process_failure(
                 repository=target.name,
                 result=current,
+                timeout_seconds=timeout_seconds,
             )
         )
 
@@ -4296,6 +4348,7 @@ def _git_mutation_worktree_state(
             _process_failure(
                 repository=target.name,
                 result=result,
+                timeout_seconds=timeout_seconds,
             )
         )
 
@@ -4650,6 +4703,7 @@ def workspace_git_stage_all(
             _process_failure(
                 repository=target.name,
                 result=mutation,
+                timeout_seconds=timeout_seconds,
             )
         )
 
@@ -4921,6 +4975,7 @@ def _git_internal_path(
             _process_failure(
                 repository=target.name,
                 result=result,
+                timeout_seconds=timeout_seconds,
             )
         )
 
@@ -5102,6 +5157,7 @@ def _git_staged_paths(
             _process_failure(
                 repository=target.name,
                 result=result,
+                timeout_seconds=timeout_seconds,
             )
         )
 
@@ -5611,6 +5667,7 @@ def workspace_git_commit(
             _process_failure(
                 repository=target.name,
                 result=mutation,
+                timeout_seconds=timeout_seconds,
             )
         )
 
@@ -6074,6 +6131,7 @@ def _git_push_remote_head(
             _process_failure(
                 repository=target.name,
                 result=result,
+                timeout_seconds=timeout_seconds,
             )
         )
 
@@ -6894,6 +6952,7 @@ def workspace_git_push(
             _process_failure(
                 repository=target.name,
                 result=mutation,
+                timeout_seconds=timeout_seconds,
             )
         )
 

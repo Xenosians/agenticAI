@@ -16,6 +16,12 @@ def test_semantic_catalog_has_exact_registry_coverage():
 
 
 def test_every_capability_has_full_explicit_semantics():
+    # Requiredness comes from the executable signatures, so register them here
+    # instead of relying on an earlier test having done it.
+    from mcp_server import register_capability_signatures
+
+    register_capability_signatures()
+
     for tool_name, metadata in TOOLS.items():
         expected = CAPABILITY_SEMANTICS[tool_name]
 

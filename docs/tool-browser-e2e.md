@@ -55,7 +55,7 @@ after a run or on resume.
 
 Exit status: 0 only when every selected case passed (and, without `--only`, every
 registered tool was covered); 1 when a case failed; 2 when the run is incomplete
-(blocked, skipped or plan-limited cases, or uncovered tools). An unknown `--only`
+(blocked, skipped, plan-limited or not-configured cases, or uncovered tools). An unknown `--only`
 case id is rejected before the browser starts.
 
 ## Verdicts
@@ -64,6 +64,7 @@ case id is rejected before the browser starts.
 |---|---|
 | `pass` | The expected tool ran and the provider reported success. |
 | `plan_limited` | Routed, approved and executed, but the provider account's plan does not include the API (tool result `error_code: plan_required`). Example: Atlassian user invitations need a paid subscription, so they are plan-limited on the free plan. Not a product failure. |
+| `not_configured` | Routed and executed, but this host has not set the provider up (the failed step reports `error_code: not_configured` and names the missing settings). Example: the Proxmox VE reads before a host is connected. Not a product failure, and not a pass. |
 | `blocked` | A prerequisite is missing or an in-flight/interrupted case needs reconciliation. |
 | `skipped` | The case needs context from an earlier case (for example a ticket key) that is missing. |
 | `fail` | Anything else. A screenshot is saved. |

@@ -231,7 +231,7 @@ def test_git_status_uses_fixed_trusted_command(
                 ),
 
             "timeout_seconds":
-                10,
+                git_tools.DEFAULT_TIMEOUT_SECONDS,
         }
     ]
 
@@ -1099,3 +1099,21 @@ def test_process_policy_rejects_unapproved_revision():
         ]
         == "denied"
     )
+
+def test_a_git_read_that_runs_out_of_time_says_so(monkeypatch):
+    install_target(monkeypatch, name="ai")
+
+    def timed_out(executable, args, cwd=None, timeout_seconds=60):
+        return {"ok": False, "status": "timeout", "executable": executable, "args": args, "cwd": cwd,
+                "exit_code": None, "stdout": "", "stderr": "", "timed_out": True, "duration_ms": 10000}
+
+    monkeypatch.setattr(git_tools, "run_trusted_process", timed_out)
+    result = git_tools.workspace_git_status(repository="ai", timeout_seconds=10)
+    assert (result["ok"], result["status"], result["error_code"]) == (False, "timeout", "provider_timeout")
+    assert result["error"] == "Git did not finish within 10 seconds on repository 'ai'."
+
+
+def test_git_reads_allow_for_a_large_working_tree():
+    # A status read of a large working tree on a mounted Windows drive has
+    # been measured near 8 seconds; the default leaves headroom for that.
+    assert git_tools.DEFAULT_TIMEOUT_SECONDS >= 30

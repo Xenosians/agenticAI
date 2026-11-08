@@ -1396,6 +1396,10 @@ class AgentRuntime:
                     error=(
                         error
                     ),
+
+                    error_code=(
+                        gateway_result.get("error_code")
+                    ),
                 )
             )
 

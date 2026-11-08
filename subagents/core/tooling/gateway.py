@@ -1174,6 +1174,22 @@ class ToolGateway:
                     "tool_execution_error"
                 )
 
+            # A read changes nothing, so an unconfirmed read has no effect to
+            # reconcile: say so plainly. A change keeps the provider's
+            # "reconcile before retrying" answer, because its effect may exist.
+            error = result.get(
+                "error",
+                "MCP tool execution failed.",
+            )
+            if (
+                result_status == "outcome_unknown"
+                and tool.get("effect") == "read"
+            ):
+                error = (
+                    "The read did not complete, so there is no answer. "
+                    "It changed nothing; ask again to retry."
+                )
+
             return gateway_result(
                 ok=False,
                 status=(
@@ -1186,13 +1202,12 @@ class ToolGateway:
                     tool_name
                 ),
                 error=(
-                    result.get(
-                        "error",
-                        (
-                            "MCP tool execution "
-                            "failed."
-                        ),
-                    )
+                    error
+                ),
+                error_code=(
+                    result.get("error_code")
+                    if isinstance(result.get("error_code"), str)
+                    else None
                 ),
             )
 

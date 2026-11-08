@@ -60,6 +60,7 @@ from services.process_runner import (
     run_process,
 )
 
+from services.integration_readiness import integration_readiness
 from services.openwrt import build_openwrt_service
 from services.proxmox import build_proxmox_service
 from services.tailnet import build_tailnet_service
@@ -722,15 +723,20 @@ def create_mcp_server(
     # NETWORKING (OpenWrt, read only)
     # ============================================================
 
+    # Setting names a provider still needs, so its reads can say what is missing.
+    missing_settings = {row["id"]: row["missing"] for row in integration_readiness(runtime_settings)}
+
     register_networking_tools(server, build_openwrt_service(runtime_settings),
                               build_tailnet_service(runtime_settings),
-                              build_dns_integrity_service(runtime_settings))
+                              build_dns_integrity_service(runtime_settings),
+                              missing_settings=missing_settings)
 
     # ============================================================
     # PROXMOX VE (read only)
     # ============================================================
 
-    register_proxmox_tools(server, build_proxmox_service(runtime_settings))
+    register_proxmox_tools(server, build_proxmox_service(runtime_settings),
+                           missing_settings=missing_settings.get("proxmox", ()))
 
     # ============================================================
     # DIRECTORY READS

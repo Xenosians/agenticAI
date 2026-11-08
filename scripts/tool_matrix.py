@@ -161,6 +161,12 @@ def build_cases(run: str, project: str) -> list[tuple[str, str, str, object]]:
         ("network-tailnet-devices", "network_tailnet_devices", "Which devices are on our Tailscale network, and are they online?", None),
         ("network-tailnet-dns", "network_tailnet_dns", "Do our Tailscale devices resolve names over encrypted DNS?", None),
         ("network-dns-integrity", "network_dns_integrity_check", "Is our ISP rewriting DNS answers? Check vimeo.com and example.com.", None),
+        # --- Proxmox VE (read only; not_configured until a host is set up) ---
+        ("proxmox-cluster", "proxmox_cluster_status", "What is the Proxmox VE cluster status?", None),
+        ("proxmox-nodes", "proxmox_nodes", "List the Proxmox VE nodes and their status.", None),
+        ("proxmox-guests", "proxmox_guests", "Which virtual machines and containers run on Proxmox VE?", None),
+        ("proxmox-storage", "proxmox_node_storage", "Show the storage pools of Proxmox node {proxmox_node}.", None),
+        ("proxmox-tasks", "proxmox_recent_tasks", "Show recent tasks on Proxmox node {proxmox_node}.", None),
     ]
 
 
@@ -376,7 +382,9 @@ def profile_request(args) -> dict | None:
 
 # Verdicts. plan_limited: the request was routed, approved and executed, but the
 # provider account's plan (for example free Atlassian) does not include the API.
-VERDICTS = ("pass", "fail", "plan_limited", "blocked", "skipped")
+# not_configured: routed and executed, but this host has not set the provider up
+# (for example no Proxmox VE host yet); the tool said so instead of guessing.
+VERDICTS = ("pass", "fail", "plan_limited", "not_configured", "blocked", "skipped")
 REPORT_SCHEMA = "live-tool-matrix.v2"
 
 
@@ -473,6 +481,15 @@ def acceptance_summary(results, selected, *, registered_tools, full_scope, sourc
             "exit_code": exit_code}
 
 
+def provider_not_configured(job: dict) -> str | None:
+    """The provider's own setup message when this host has not set it up (not a product failure)."""
+    result = job.get("result") if isinstance(job.get("result"), dict) else {}
+    for step in result.get("results", []) or []:
+        if isinstance(step, dict) and step.get("error_code") == "not_configured":
+            return str(step.get("error") or "The provider is not set up on this host.")[:200]
+    return None
+
+
 def plan_limited(worker: dict | None) -> str | None:
     """Provider reason when the account's plan lacks this API (not a product failure)."""
     tool_result = (worker or {}).get("tool_result") or {}
@@ -542,7 +559,8 @@ def main() -> int:
     for key, value in (("org_id", os.environ.get("ATLASSIAN_ORG_ID")),
                        ("account_id", os.environ.get("ATLASSIAN_ACCOUNT_ID")),
                        ("assignee", os.environ.get("ACCEPTANCE_JIRA_ASSIGNEE")),
-                       ("status", os.environ.get("ACCEPTANCE_JIRA_STATUS"))):
+                       ("status", os.environ.get("ACCEPTANCE_JIRA_STATUS")),
+                       ("proxmox_node", os.environ.get("ACCEPTANCE_PROXMOX_NODE"))):
         if value and key not in context:
             context[key] = value
     # Notifications go to the signed-in lab user, a registered application user.
@@ -647,9 +665,13 @@ def main() -> int:
                     row["inference"] = inference_evidence(
                         job_inference_metrics(client, job["job_id"], terminal.get("attempts")), profile)
                 limited = plan_limited(worker)
+                unset = provider_not_configured(terminal)
                 if limited:
                     row["verdict"] = "plan_limited"
                     row["reason"] = limited
+                elif unset:
+                    row["verdict"] = "not_configured"
+                    row["reason"] = unset
                 elif terminal.get("status") not in TERMINAL_OK or not ok:
                     raise AcceptanceFailure(f"status={terminal.get('status')} {detail}")
                 else:

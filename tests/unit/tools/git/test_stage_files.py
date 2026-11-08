@@ -365,7 +365,7 @@ def test_stage_files_uses_literal_pathspecs_and_verifies(
                 ),
 
             "timeout_seconds":
-                10,
+                git_tools.DEFAULT_TIMEOUT_SECONDS,
         }
     )
 

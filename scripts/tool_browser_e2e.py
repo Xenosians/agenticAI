@@ -67,6 +67,7 @@ from scripts.tool_matrix import (  # noqa: E402
     job_inference_metrics,
     load_matrix_report,
     plan_limited,
+    provider_not_configured,
     profile_request,
     prepare_git_fixture,
     provider_ok,
@@ -420,18 +421,23 @@ def run_case(page, traffic: BrowserTraffic, args, case: tuple, context: dict, *,
     if evidence is not None:
         row["inference"] = evidence(job_id, final.get("attempts"))
     limited = plan_limited(worker)
+    unset = provider_not_configured(final)
     if limited:
         row["verdict"] = "plan_limited"
         row["reason"] = limited
+    elif unset:
+        row["verdict"] = "not_configured"
+        row["reason"] = unset
     elif final.get("status") not in TERMINAL_OK or not ok:
         raise AssertionError(f"status={final.get('status')} {detail}")
 
     row["websocket"] = socket_evidence(traffic, sockets_before)
-    if not limited:
+    settled = limited or unset
+    if not settled:
         record_created(tool, worker["tool_result"], context)
     if row["websocket"]["frames_in"] < 1:
         raise AssertionError("No live-update WebSocket frame was observed during this case")
-    if not limited:
+    if not settled:
         row["verdict"] = "pass"
     row.update(stage="verified", reconciliation_required=False)
     row["seconds"] = round(time.monotonic() - started, 1)

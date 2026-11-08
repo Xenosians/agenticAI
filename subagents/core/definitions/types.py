@@ -327,6 +327,13 @@ class AgentResult:
         str | None
     ) = None
 
+    # The provider's own failure code for a failed tool call (for example
+    # not_configured, provider_unreachable or plan_required), so callers and
+    # learning can tell a setup gap from a provider fault without parsing prose.
+    error_code: (
+        str | None
+    ) = None
+
     # Authoritative structured result returned by the trusted tool.
     tool_result: (
         dict[

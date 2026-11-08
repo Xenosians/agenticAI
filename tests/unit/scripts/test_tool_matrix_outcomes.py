@@ -301,3 +301,28 @@ def test_every_case_runs_inside_the_chosen_profile_and_the_account_is_restored(t
     monkeypatch.setattr(matrix.sys, "argv", ["tool_matrix", "--report", str(tmp_path / "second.json"),
                                              "--only", "read", "--adapter", "local", "--networking", "local"])
     assert matrix.main() == 1
+
+
+def test_every_registered_tool_has_a_live_matrix_case():
+    from mcp_server import register_capability_signatures
+    from tools.registry import TOOLS
+
+    register_capability_signatures()
+    covered = {case[1] for case in matrix.build_cases("10191234", "FIX")}
+    assert sorted(set(TOOLS) - covered) == []
+
+
+def test_a_provider_that_is_not_set_up_is_reported_as_such_not_as_a_failure():
+    message = "Proxmox VE is not set up on this Janus host. Missing settings: PROXMOX_BASE_URL."
+    # A failed step carries the provider's code and message on the step itself.
+    job = {"result": {"results": [{"agent_name": "proxmox-specialist", "proposed_tool": "proxmox_nodes",
+                                   "status": "error", "outcome_code": "tool_execution_error",
+                                   "error_code": "not_configured", "error": message}]}}
+    assert matrix.provider_not_configured(job) == message
+    other = {"result": {"results": [{"status": "error", "error_code": "provider_error", "error": "x"}]}}
+    assert matrix.provider_not_configured(other) is None
+    assert matrix.provider_not_configured({}) is None
+    result = matrix.acceptance_summary({"read": {"tool": "read_tool", "verdict": "not_configured"}},
+                                       [CASE], registered_tools=("read_tool",), full_scope=True)
+    assert result["overall"] == "INCOMPLETE" and result["exit_code"] == 2
+    assert result["not_configured"] == 1 and result["all_registered_tools_passed"] is False

@@ -1107,3 +1107,51 @@ def test_policy_cannot_add_undeclared_execution_argument():
         mcp.calls
         == []
     )
+
+
+UNCONFIRMED = {
+    "ok": False, "status": "outcome_unknown", "error_code": "mcp_tool_error",
+    "error": "The MCP tool outcome could not be confirmed. Reconcile the operation before attempting another execution.",
+}
+
+
+def _interrupted_gateway(effect):
+    class InterruptedMCP(FakeMCP):
+        async def call_tool(self, tool_name, arguments):
+            self.calls.append((tool_name, arguments))
+            return dict(UNCONFIRMED)
+
+    def lookup(name):
+        tool = TOOLS.get(name)
+        return None if tool is None else {**tool, "effect": effect, "requires_approval": False}
+
+    return ToolGateway(tool_lookup=lookup, approval_creator=fake_create_approval, mcp=InterruptedMCP())
+
+
+def test_an_interrupted_read_says_it_changed_nothing_instead_of_asking_to_reconcile():
+    result = asyncio.run(_interrupted_gateway("read").execute(
+        agent=ACCOUNT_AGENT, user_input="Is jdoe locked?", tool_name="account_status", arguments={"user_id": "jdoe"}))
+    assert (result["ok"], result["status"], result["decision_code"]) == (False, "error", "tool_execution_error")
+    assert "Reconcile" not in result["error"]
+    assert result["error"] == "The read did not complete, so there is no answer. It changed nothing; ask again to retry."
+
+
+def test_an_interrupted_change_still_requires_reconciliation():
+    result = asyncio.run(_interrupted_gateway("mutation").execute(
+        agent=ACCOUNT_AGENT, user_input="Unlock jdoe", tool_name="unlock_user", arguments={"user_id": "jdoe"}))
+    assert result["ok"] is False and result["error"] == UNCONFIRMED["error"]
+
+
+def test_a_failed_provider_read_keeps_its_typed_failure_for_the_caller():
+    class RefusingMCP(FakeMCP):
+        async def call_tool(self, tool_name, arguments):
+            self.calls.append((tool_name, arguments))
+            return {"ok": False, "status": "error", "provider": "openwrt", "error_code": "not_configured",
+                    "error": "The OpenWrt router is not set up on this Janus host."}
+
+    gateway = ToolGateway(tool_lookup=fake_get_tool, approval_creator=fake_create_approval, mcp=RefusingMCP())
+    result = asyncio.run(gateway.execute(
+        agent=ACCOUNT_AGENT, user_input="Is jdoe locked?", tool_name="account_status", arguments={"user_id": "jdoe"}))
+    assert result["decision_code"] == "tool_execution_error"
+    assert result["error_code"] == "not_configured"
+    assert result["error"] == "The OpenWrt router is not set up on this Janus host."

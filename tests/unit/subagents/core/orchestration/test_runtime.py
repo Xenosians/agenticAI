@@ -772,6 +772,18 @@ def test_runtime_returns_gateway_error():
     )
 
 
+def test_runtime_keeps_the_provider_failure_code():
+    runtime, _inference, gateway = build_runtime()
+    gateway.result = {"ok": False, "status": "error", "decision_code": "tool_execution_error",
+                      "error_code": "not_configured",
+                      "error": "The directory is not set up on this Janus host."}
+    result = asyncio.run(runtime.run(AgentTask(
+        task_id="task-009", agent_name="account-specialist", user_request="Is jdoe locked?")))
+    assert (result.status, result.outcome_code) == ("error", "tool_execution_error")
+    assert result.error_code == "not_configured"
+    assert result.error == "The directory is not set up on this Janus host."
+
+
 # ============================================================
 # CURRENT-TURN CAPABILITY NARROWING
 # ============================================================

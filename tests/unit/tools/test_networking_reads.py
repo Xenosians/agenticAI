@@ -132,3 +132,43 @@ def test_tailnet_dns_reads_in_words():
     local = TOOLS["network_tailnet_dns"]["result_formatter"]({"ok": True, "data": {
         "magic_dns": False, "override_local_dns": False, "nameservers": [], "split_dns": [], "search_domains": []}})
     assert local == "Tailnet DNS: MagicDNS off; devices use the local network's resolvers."
+
+
+class _Server:
+    def __init__(self):
+        self.tools = {}
+
+    def tool(self):
+        return lambda function: self.tools.setdefault(function.__name__, function)
+
+
+def test_unconfigured_network_providers_answer_with_what_is_missing():
+    from tools.networking.mcp import register_networking_tools
+
+    server = _Server()
+    register_networking_tools(server, None, None, None, missing_settings={
+        "openwrt": ["OPENWRT_BASE_URL"], "tailscale": ["TAILSCALE_CLIENT_ID"]})
+    router = server.tools["network_dhcp_leases"]()
+    assert (router.ok, router.provider, router.error_code) == (False, "openwrt", "not_configured")
+    assert router.error == "The OpenWrt router is not set up on this Janus host. Missing settings: OPENWRT_BASE_URL."
+    tailnet = server.tools["network_tailnet_devices"]()
+    assert (tailnet.provider, tailnet.error_code) == ("tailscale", "not_configured")
+    assert server.tools["network_dns_integrity_check"](["example.com"]).error_code == "not_configured"
+
+
+def test_a_router_that_drops_the_connection_is_read_again_once():
+    import httpx
+    from tools.networking.mcp import register_networking_tools
+
+    class Router:
+        calls = 0
+
+        def dhcp_leases(self):
+            Router.calls += 1
+            if Router.calls == 1:
+                raise httpx.RemoteProtocolError("peer closed connection without sending complete message body")
+            return {"ok": True, "status": "success", "provider": "openwrt", "data": {"count": 0, "leases": []}}
+
+    server = _Server()
+    register_networking_tools(server, Router())
+    assert server.tools["network_dhcp_leases"]().ok is True and Router.calls == 2
