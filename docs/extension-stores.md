@@ -39,17 +39,24 @@ separate observation.
 
 ## Current scope
 
-The store pages are read-only catalogs. The MCP page consumes the catalog
-already generated from `workflow_capabilities` and marks only registration
-metadata. The Lua page resolves each packaged or machine-profile adapter and
+The Model and Skill stores manage the owner's own resources; the MCP page
+adds a per-owner on/off switch for each tool (below); the Lua page is a
+read-only catalog. The MCP page consumes the catalog already generated from
+`workflow_capabilities` and reports registration metadata, never provider
+health. The Lua page resolves each packaged or machine-profile adapter and
 reports its state and digest without returning its path. A broken selected
 adapter is shown as unavailable; the catalog does not substitute the packaged
 adapter. The existing model and skill management flows keep their current
 owner and validation behavior.
 
-User-authored plugin installation, revocation and audit are not enabled yet.
-The current machine profile selects reviewed Lua files globally; it is not an
-owner-scoped plugin registry. The store UI must remain explicit about this.
+Phoenix keeps owner-scoped Lua extension records (`/api/v1/extensions/records`):
+a manifest validated against `extension-manifest.v1` with its digest pinned,
+a lifecycle `pending` → `reviewed` → `active` ⇄ `disabled`, `revoked` from any
+state after review, and an audit event for every transition. Those records
+store no Lua source bytes, and dispatch does not read them yet, so a record
+changes nothing that runs. The current machine profile still selects reviewed
+Lua files globally; it is not an owner-scoped plugin registry. The store UI
+must remain explicit about this.
 
 ## Requested store experience
 
@@ -91,7 +98,8 @@ Model Store already supports API connections and local model uploads; datasets
 support their current document/JSONL and crawl flows; the Skill Store already
 supports app editing, `SKILL.md` upload, versions and toggling; the MCP Tool
 Store has an owner on/off switch per tool (below). The Lua Plugin Store is a
-read-only runtime catalog. ZIP intake, user Lua URLs/editor and remote MCP
+read-only runtime catalog; the Phoenix record lifecycle above has no store
+screen yet. ZIP intake, user Lua URLs/editor, a Lua bytes store and remote MCP
 registration are not yet implemented.
 
 ### Owner tool switches
@@ -135,10 +143,11 @@ a version an owner already has.
    digest. Include source provenance and required/optional status. Reject
    unknown fields and unsupported protocols. Never accept an executable path
    from a browser.
-2. Add Phoenix-owned, owner-scoped lifecycle records and audit events. A plugin
-   must pass validation and explicit review before activation. Revoke is a
-   durable state transition; it prevents future dispatches and does not rewrite
-   the identity pinned to an already-running request.
+2. Phoenix-owned, owner-scoped lifecycle records and audit events (done; see
+   Current scope). A plugin must pass validation and explicit review before
+   activation. Revoke is a durable state transition; once dispatch reads the
+   records it must prevent future dispatches without rewriting the identity
+   pinned to an already-running request.
 3. Store immutable Lua bytes in a host-controlled directory or object store.
    Enforce source-size, interpreter-time and output-size limits. Do not expose
    filesystem access, `require`, network, credentials, process creation or host

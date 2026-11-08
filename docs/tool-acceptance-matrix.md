@@ -31,7 +31,7 @@ python scripts/tool_acceptance_matrix.py --require-full-coverage
 
 The command registers executable signatures without starting MCP transport, validates the trusted capability contracts, loads specialist ownership, and checks authored evaluation targets against the production intent parser and SemanticGuard. It makes no inference or tool execution calls. The JSON report defaults to `.runtime/tool-acceptance-matrix.json`.
 
-The current corpus covers all 67 registered tools. Existing specialist evaluation suites cover 49 tools; 18 additional tools have explicitly reviewed proposal-level acceptance cases in `config/tool_acceptance_reviewed_cases.json`. Newly authored future cases remain isolated in `config/tool_acceptance_authored_cases.json` until human review. Reviewed proposal cases are not production routing rules and do not prove that any provider or adapter executes successfully.
+The report's `summary` gives the current counts: `registered_tools`, `tools_with_existing_held_out_proposal_cases` (covered by existing specialist evaluation suites) and `tools_with_reviewed_proposal_cases`. Reviewed proposal-level acceptance cases for tools the existing suites do not cover live in `config/tool_acceptance_reviewed_cases.json`. Newly authored future cases remain isolated in `config/tool_acceptance_authored_cases.json` until human review. Reviewed proposal cases are not production routing rules and do not prove that any provider or adapter executes successfully.
 
 Prompts also present in version-controlled specialist training examples are excluded from held-out acceptance. This overlap check cannot establish what every underlying model has seen. Negative safety cases remain separate references rather than being mistaken for successful tool proposals.
 
