@@ -13,18 +13,18 @@ import hashlib
 import sqlite3
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from types import SimpleNamespace
 
 import pytest
 
 pytest.importorskip("lupa.lua54")
 
+from config.settings import Settings  # noqa: E402
 from services.extensions.service import command, extension_store  # noqa: E402
 from services.knowledge.crawler import CrawlError  # noqa: E402
 from services.knowledge.sites import MAX_SITES_PER_OWNER  # noqa: E402
 from services.lua_adapters import profile  # noqa: E402
 
-SETTINGS = SimpleNamespace(model_profiles={}, require_internal_job_token=lambda: "sites-test-token")
+SETTINGS = Settings(_env_file=None, itsm_internal_job_token="sites-test-token")
 PAGES = {
     "/robots.txt": ("text/plain", ""),
     "/docs/": ("text/html", "<html><head><title>VPN runbook</title></head><body>"

@@ -1,15 +1,15 @@
-from types import SimpleNamespace
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from api import extensions
+from config.settings import Settings
 from services.extensions.service import extension_store
 
 
 def test_internal_auth_and_private_dataset_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setenv("EXTENSION_STORAGE_ROOT", str(tmp_path))
-    settings = SimpleNamespace(require_internal_job_token=lambda: "test-internal-secret", model_profiles={})
+    settings = Settings(_env_file=None, itsm_internal_job_token="test-internal-secret")
     monkeypatch.setattr(extensions, "get_settings", lambda: settings)
     extension_store.cache_clear()
     app = FastAPI()

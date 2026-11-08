@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from config.settings import Settings
 from services.extensions import service
 from services.extensions.context import (
     execution_profile, networking_inference_stage, owner_execution, selected_profile,
@@ -89,12 +90,12 @@ def test_catalog_modes_are_detached_and_current_owner_preferences_are_unchanged(
     store = ExtensionStore(tmp_path)
     monkeypatch.setattr(service, "extension_store", lambda: store)
     monkeypatch.setattr(service, "_installed", lambda kind: False)
-    catalog = asyncio.run(service.command("alice", "list", {}, SimpleNamespace(model_profiles={})))
+    catalog = asyncio.run(service.command("alice", "list", {}, Settings(_env_file=None)))
     modes = catalog["networking_inference_options"]
     assert modes["default"] == "dedicated_local"
     assert [row["id"] for row in modes["choices"]] == ["dedicated_local", "selected_model"]
     modes["choices"].clear()
-    repeated = asyncio.run(service.command("alice", "list", {}, SimpleNamespace(model_profiles={})))
+    repeated = asyncio.run(service.command("alice", "list", {}, Settings(_env_file=None)))
     assert len(repeated["networking_inference_options"]["choices"]) == 2
     assert catalog["selected"] == store.selected("alice")
 

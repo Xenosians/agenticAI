@@ -1,10 +1,10 @@
 """Skill actions through the internal extensions API: owner-scoped, validated, never a credential path."""
-from types import SimpleNamespace
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from api import extensions
+from config.settings import Settings
 from services.extensions.service import extension_store
 from services.extensions.skills import builtin_skills
 
@@ -14,7 +14,7 @@ SKILL = ("---\nname: password-reset\ndescription: How to answer password reset r
 
 def client_for(tmp_path, monkeypatch):
     monkeypatch.setenv("EXTENSION_STORAGE_ROOT", str(tmp_path))
-    settings = SimpleNamespace(require_internal_job_token=lambda: "test-internal-secret", model_profiles={})
+    settings = Settings(_env_file=None, itsm_internal_job_token="test-internal-secret")
     monkeypatch.setattr(extensions, "get_settings", lambda: settings)
     extension_store.cache_clear()
     app = FastAPI()

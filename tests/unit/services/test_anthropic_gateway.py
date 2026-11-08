@@ -5,6 +5,7 @@ import asyncio
 import httpx
 import pytest
 
+from config.settings import Settings
 from services.extensions import anthropic
 from services.extensions.budget import external_provider
 from services.extensions.transport import insecure_http_origins, is_insecure_transport, remote_generate, validate_url
@@ -134,14 +135,13 @@ def test_gateway_inference_requests_json_and_uses_gateway_records(monkeypatch):
 
 
 def test_saved_gateway_connection_is_flagged_insecure(tmp_path, monkeypatch):
-    from types import SimpleNamespace
     from services.extensions import service
     from services.extensions.store import ExtensionStore
 
     allow_gateway(monkeypatch)
     store = ExtensionStore(tmp_path)
     monkeypatch.setattr(service, "extension_store", lambda: store)
-    settings = SimpleNamespace(model_profiles={})
+    settings = Settings(_env_file=None)
     saved = asyncio.run(service.command("alice", "model", {
         "name": "Claude via 9router", "backend": "http", "model": "cc/claude-sonnet-5-5",
         "url": GATEWAY + "/v1", "api_format": "anthropic", "provider_id": "9Router",

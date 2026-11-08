@@ -6,7 +6,6 @@ The public boundary carries only a transform code and a bounded message.
 """
 import asyncio
 import json
-from types import SimpleNamespace
 
 import pytest
 
@@ -15,6 +14,7 @@ pytest.importorskip("lupa.lua54")
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+from config.settings import Settings  # noqa: E402
 from api import extensions  # noqa: E402
 from services.extensions.service import command, extension_store  # noqa: E402
 
@@ -25,7 +25,7 @@ return function(row)
   return {messages = {{role = "user", content = row.subject}, {role = "assistant", content = row.fix}}}
 end
 """
-SETTINGS = SimpleNamespace(model_profiles={}, require_internal_job_token=lambda: TOKEN)
+SETTINGS = Settings(_env_file=None, itsm_internal_job_token=TOKEN)
 
 
 @pytest.fixture
@@ -105,8 +105,7 @@ def test_rows_that_are_not_text_are_refused_like_every_text_field(store):
 
 
 def test_the_catalog_says_whether_lua_transforms_are_available(store):
-    catalog = asyncio.run(command("alice", "list", {}, SimpleNamespace(
-        model_profiles={}, require_internal_job_token=lambda: TOKEN, tool_registry=None)))
+    catalog = asyncio.run(command("alice", "list", {}, SETTINGS))
     assert {"id": "lua-row-transform", "available": True} in catalog["transforms"]
 
 

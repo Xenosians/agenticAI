@@ -8,6 +8,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from config.settings import Settings
 from services.lua_adapters import LuaAdapterError
 from services.lua_adapters import host_boundaries as host
 from services.lua_adapters.http_clients import client, async_client
@@ -211,14 +212,13 @@ def test_a_dataset_at_the_store_limit_passes_its_lua_admission(script):
 
 def test_a_lua_refusal_reaches_the_owner_as_its_own_code(script, tmp_path, monkeypatch):
     """Without the code the owner only sees a generic rejection and cannot tell Lua refused."""
-    from types import SimpleNamespace
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from api import extensions
     from services.extensions.service import extension_store
 
     monkeypatch.setenv("EXTENSION_STORAGE_ROOT", str(tmp_path / "store"))
-    settings = SimpleNamespace(require_internal_job_token=lambda: "fixture-internal", model_profiles={})
+    settings = Settings(_env_file=None, itsm_internal_job_token="fixture-internal")
     monkeypatch.setattr(extensions, "get_settings", lambda: settings)
     script("return function(e) error('operator adapter refuses this connection') end")
     app = FastAPI()

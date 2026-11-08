@@ -1,10 +1,10 @@
 """Per-specialist model connections: the hub keeps the main selection while each
 specialist role can run on its own connection or its own local model."""
 import asyncio
-from types import SimpleNamespace
 
 import pytest
 
+from config.settings import Settings
 from services.extensions import service
 from services.extensions.context import (
     execution_roles,
@@ -165,7 +165,7 @@ def test_assign_role_action_accepts_only_registered_specialists(store, tmp_path)
         "---\nname: jira-specialist\ndescription: Jira work\nmodel: jira-func-trained\ntools:\n  - ticket_get\n---\nBody\n",
         encoding="utf-8",
     )
-    settings = SimpleNamespace(model_profiles={}, agents_dir=agents)
+    settings = Settings(_env_file=None, agents_dir=agents)
     groq = _connection(store, "alice", "groq")
     result = asyncio.run(service.command("alice", "assign_role", {"role": "jira-specialist", "model_id": groq}, settings))
     assert result == {"role_assignments": {"jira-specialist": groq}}

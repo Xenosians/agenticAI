@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from config.settings import Settings
 from services.extensions.admission import ProviderAdmission, ProviderAdmissionError, validate_admission_settings
 from services.extensions.options import reasoning_effort
 from services.extensions.store import ExtensionStore
@@ -336,7 +337,7 @@ def test_inference_option_catalog_matches_admitted_profiles_and_is_detached(tmp_
     store = ExtensionStore(tmp_path)
     monkeypatch.setattr(service, "extension_store", lambda: store)
     monkeypatch.setattr(service, "harness_binary", lambda _: tmp_path / "harness")
-    settings = SimpleNamespace(model_profiles={})
+    settings = Settings(_env_file=None)
 
     async def run():
         catalog = await service.command("alice", "list", {}, settings)

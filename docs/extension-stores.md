@@ -6,12 +6,15 @@ user-authored plugins can already be installed or activated.
 
 ## Store boundaries
 
+The browser shows the Model Store on its own and one **Store** page with three
+sections: Tools, Skill Library and Plugin Store.
+
 | Store | Current source of truth | What the UI may claim |
 | --- | --- | --- |
 | Model Store | Authenticated extension catalog: owner-selected model connections, local model profiles, harness choices and datasets | A saved resource exists; selection and validation status come from the returned resource metadata. A listed provider is not proof that it is reachable. |
-| Skill Store | The owner's versioned skill library | A skill is saved, enabled, disabled or versioned. Skill text can guide written answers; it cannot select a tool or grant permission. |
-| MCP Tool Store | `tools.registry.TOOLS`, checked against the actual MCP runtime registration and the same capability contracts used by the orchestrator | A capability is registered and its declared effect, risk, provider and approval requirements. Registration is not provider health or evidence of a completed action. |
-| Lua Plugin Store | The runtime's `PLUGIN_FILES` inventory, resolved through the active reviewed machine profile | An adapter source resolves for its protocol and has a specific SHA-256 identity. Resolution is not proof of successful execution, user ownership or provider availability. |
+| Skill Library (Store section) | The owner's versioned skill library | A skill is saved, enabled, disabled or versioned. Skill text can guide written answers; it cannot select a tool or grant permission. |
+| Tools (Store section) | `tools.registry.TOOLS`, checked against the actual MCP runtime registration and the same capability contracts used by the orchestrator | A capability is registered and its declared effect, risk, provider and approval requirements. Registration is not provider health or evidence of a completed action. |
+| Plugin Store (Store section) | The runtime's `PLUGIN_FILES` inventory, resolved through the active reviewed machine profile | An adapter source resolves for its protocol and has a specific SHA-256 identity. Resolution is not proof of successful execution, user ownership or provider availability. |
 
 The authenticated browser reads the catalog through Phoenix. Phoenix derives
 the owner from the signed-in session and calls the private AI endpoint; a
@@ -95,10 +98,10 @@ and controlled ingestion path exist.
 
 Current features should remain clearly separated from planned imports: the
 Model Store already supports API connections and local model uploads; datasets
-support their current document/JSONL and crawl flows; the Skill Store already
-supports app editing, `SKILL.md` upload, versions and toggling; the MCP Tool
-Store has an owner on/off switch per tool (below). The Lua Plugin Store is a
-read-only runtime catalog; the Phoenix record lifecycle above has no store
+support their current document/JSONL and crawl flows; the Skill Library already
+supports app editing, `SKILL.md` upload, versions and toggling; the Tools section
+groups tools into packages and has an owner on/off switch per package and per
+tool (below). The Plugin Store is a read-only runtime catalog; the Phoenix record lifecycle above has no store
 screen yet. ZIP intake, user Lua URLs/editor, a Lua bytes store and remote MCP
 registration are not yet implemented.
 
@@ -115,7 +118,16 @@ policy, approval or provider, so no proposal made before the switch can slip
 through. The switch is a preference, not an authority: turning a tool on grants
 nothing its policy, approval and provider checks do not already allow. Learning
 records the outcome as the owner's choice (`owner_disabled_tool`), never as a
-model failure. Packaged Lua protocol adapters are required gates and stay
+model failure.
+
+Tools are grouped into **packages**, one per provider family of
+`services/integration_readiness.py` (every registered tool belongs to exactly
+one). The catalog's `tool_packages` rows carry each package's `id`, `name`,
+`kind` and setup `state` from the same readiness rule as the integration status;
+each capability row's `provider` names its package. Action
+`tool_package_enable` with `{"package", "enabled"}` switches every tool of one
+package in one write (`tool_package_not_found`, `tool_enabled_invalid`); a single
+tool can still be switched on its own afterwards. Packaged Lua protocol adapters are required gates and stay
 host-owned; owner Lua plugins wait for the reviewed bytes store.
 
 ### Built-in skills

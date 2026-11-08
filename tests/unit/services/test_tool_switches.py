@@ -40,6 +40,49 @@ def test_only_registered_tools_and_real_booleans_are_accepted(store):
     assert switches.disabled("alice") == frozenset()
 
 
+def test_a_package_switch_turns_every_tool_of_that_service_off_and_on_together(store):
+    from services.integration_readiness import PROVIDER_FAMILIES
+
+    switches = ToolSwitches(store)
+    openwrt = next(family for family in PROVIDER_FAMILIES if family.id == "openwrt")
+    result = switches.set_package_enabled("alice", "openwrt", False)
+    assert result == {"package": "openwrt", "enabled": False, "tools": sorted(openwrt.capabilities)}
+    assert switches.disabled("alice") == frozenset(openwrt.capabilities)
+    assert switches.disabled("bob") == frozenset()
+    # One tool of the package back on, then the whole package on.
+    switches.set_enabled("alice", "network_system_info", True)
+    assert "network_system_info" not in switches.disabled("alice")
+    switches.set_package_enabled("alice", "openwrt", True)
+    assert switches.disabled("alice") == frozenset()
+
+
+def test_a_package_switch_stores_only_registered_tools(store, monkeypatch):
+    # A package may name a tool this build does not register; switching the package never stores it.
+    from dataclasses import replace
+
+    from services import integration_readiness
+
+    families = tuple(replace(family, capabilities=family.capabilities | {"retired_tool"})
+                     if family.id == "openwrt" else family for family in integration_readiness.PROVIDER_FAMILIES)
+    monkeypatch.setattr(integration_readiness, "PROVIDER_FAMILIES", families)
+    result = ToolSwitches(store).set_package_enabled("alice", "openwrt", False)
+    assert "retired_tool" not in result["tools"]
+    assert "retired_tool" not in ToolSwitches(store).disabled("alice")
+
+
+def test_a_package_switch_names_a_known_package_and_a_real_boolean(store):
+    switches = ToolSwitches(store)
+    for package in ("no_such_package", "", None, 7, "openwrt; DROP"):
+        with pytest.raises(ToolSwitchError) as refused:
+            switches.set_package_enabled("alice", package, False)
+        assert refused.value.code == "tool_package_not_found"
+    for value in ("false", 0, None):
+        with pytest.raises(ToolSwitchError) as refused:
+            switches.set_package_enabled("alice", "openwrt", value)
+        assert refused.value.code == "tool_enabled_invalid"
+    assert switches.disabled("alice") == frozenset()
+
+
 def test_the_request_carries_the_owners_turned_off_tools(store):
     ToolSwitches(store).set_enabled("alice", "account_status", False)
     assert disabled_tools.get() == frozenset()

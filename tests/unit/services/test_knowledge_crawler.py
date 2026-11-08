@@ -20,12 +20,13 @@ import pytest
 
 pytest.importorskip("lupa.lua54")
 
+from config.settings import Settings  # noqa: E402
 from services.extensions.service import command, extension_store  # noqa: E402
 from services.knowledge.crawler import MAX_REDIRECTS, CrawlError, CrawlLimits, crawl  # noqa: E402
 from services.knowledge.sites import CrawlSites  # noqa: E402
 from services.lua_adapters import profile  # noqa: E402
 
-SETTINGS = SimpleNamespace(model_profiles={}, require_internal_job_token=lambda: "crawler-test-token")
+SETTINGS = Settings(_env_file=None, itsm_internal_job_token="crawler-test-token")
 
 PAGES = {
     "/robots.txt": ("text/plain", "User-agent: *\nDisallow: /docs/private/\n"),
@@ -478,8 +479,7 @@ def test_crawled_sites_are_reference_knowledge_never_training_data(machine, site
 
 def test_the_catalog_lists_the_sites_this_machine_lets_users_crawl(machine, site, store):
     machine(site, "https://docs.example.org")
-    catalog = asyncio.run(command("alice", "list", {}, SimpleNamespace(
-        model_profiles={}, require_internal_job_token=lambda: "crawler-test-token")))
+    catalog = asyncio.run(command("alice", "list", {}, SETTINGS))
     assert catalog["crawl_sites"] == [{"origin": site, "managed": True},
                                       {"origin": "https://docs.example.org", "managed": True}]
     assert catalog["crawl_site_registration"] is False
@@ -488,8 +488,7 @@ def test_the_catalog_lists_the_sites_this_machine_lets_users_crawl(machine, site
 def test_a_catalog_without_declared_sources_offers_no_crawling(monkeypatch, store):
     monkeypatch.delenv("ITSM_LUA_ADAPTER_FILE", raising=False)
     monkeypatch.delenv("ITSM_LUA_ADAPTER_SHA256", raising=False)
-    catalog = asyncio.run(command("alice", "list", {}, SimpleNamespace(
-        model_profiles={}, require_internal_job_token=lambda: "crawler-test-token")))
+    catalog = asyncio.run(command("alice", "list", {}, SETTINGS))
     assert catalog["crawl_sites"] == []
 
 

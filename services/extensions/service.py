@@ -84,6 +84,14 @@ def workflow_capabilities(settings) -> list[dict]:
         })
     return result
 
+def tool_packages(settings) -> list[dict]:
+    """The packages the tools are grouped in: one per provider, with its setup state."""
+    from services.integration_readiness import integration_readiness
+
+    return [{"id": row["id"], "name": row["name"], "kind": row["kind"], "state": row["state"]}
+            for row in integration_readiness(settings)]
+
+
 def owner_capabilities(owner: str, capabilities: list[dict], store) -> list[dict]:
     """The capability catalog with each tool's on/off state for this owner (absent switch = on)."""
     from services.extensions.tool_switches import ToolSwitches
@@ -242,7 +250,7 @@ ACTIONS = frozenset({
     "crawl_site_add", "crawl_site_remove", "search", "resolve", "workflow_validate",
     "upload_begin", "upload_chunk", "upload_finish",
     "skill_list", "skill_save", "skill_restore", "skill_enable", "skill_delete",
-    "tool_enable",
+    "tool_enable", "tool_package_enable",
 })
 
 
@@ -305,6 +313,10 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
         # The owner turns one registered MCP tool on or off for their own account.
         from services.extensions.tool_switches import ToolSwitches
         return ToolSwitches(store).set_enabled(owner, payload.get("id"), payload.get("enabled"))
+    if action == "tool_package_enable":
+        # Every tool of one package (one provider) on or off for this owner.
+        from services.extensions.tool_switches import ToolSwitches
+        return ToolSwitches(store).set_package_enabled(owner, payload.get("package"), payload.get("enabled"))
     if action == "list":
         from services.extensions.providers import (
             connection_presets,
@@ -326,6 +338,7 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
                 "networking_inference_options": networking_inference_options(),
                 "local_profiles": [{"id": key, "backend": profile.backend} for key, profile in settings.model_profiles.items() if profile.enabled and not key.startswith("user-upload-")],
                 "capabilities": owner_capabilities(owner, workflow_capabilities(settings), store),
+                "tool_packages": tool_packages(settings),
                 "plugin_catalog": plugin_catalog(),
                 "harnesses": [{"id": kind, "available": _installed(kind)} for kind in ["opencode", "pi"]],
                 "transforms": [{"id": "lua-row-transform", "available": transforms_available()}],
