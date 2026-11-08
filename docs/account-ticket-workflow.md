@@ -59,6 +59,28 @@ does not certify whole-plan completeness.
    approved-state revalidation and result read-back. Completion mail follows
    the terminal durable job result through the existing mail outbox.
 
+## Handing over the temporary password
+
+The new person's own mailbox does not exist yet, so the temporary password is
+never mailed to it, and nobody has to sign in as the new person to receive it.
+The person who asked for the account hands it over:
+
+1. After approval, the answer offers **Reveal temporary password** (also after a
+   reload, and after the onboarding ticket step whatever its outcome).
+2. The requester confirms with their own Janus password. Wrong passwords count
+   against the normal sign-in limit.
+3. Janus shows the password once, on one line, with **Copy password**. It is not
+   stored in the browser and cannot be revealed again; Phoenix erases the
+   ciphertext in the same step that marks it revealed.
+4. The person signs in with it and must change it at first sign-in. If it was
+   lost or has expired, request an approved password reset; that reset's
+   password is handed over the same way.
+
+Only the owner of the request can reveal it, and only for a credential that an
+approval Phoenix recorded as approved and succeeded names. A new local mailbox
+password and a password reset use the same hand-over. The API and its refusals
+are described in the backend's `docs/account-controls.md`.
+
 ## Recovery and limits
 
 - SQLite commits a generation claim before preparing the follow-up proposal.

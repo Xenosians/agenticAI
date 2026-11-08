@@ -1,11 +1,22 @@
 from typing import Any
 
+# The new person's own mailbox does not exist yet, so a temporary password is
+# never mailed to it; the person who asked reveals it once on the request.
+CREDENTIAL_HANDOVER = (
+    "Reveal it once on this request in Janus and give it to the person; "
+    "they must change it at first sign-in."
+)
+
 
 def format_mailbox_result(result: dict[str, Any]) -> str:
     if (result.get("ok") and result.get("operation") == "mailbox_create"
             and all(result.get(flag) is True for flag in
                     ("credential_persisted", "smtp_verified", "imap_verified", "delivery_verified"))):
-        return f"Local mailbox {result.get('email')} created and authenticated SMTP/IMAP delivery verified. Its credential is encrypted; the .test address has no public mail reachability."
+        return (
+            f"Local mailbox {result.get('email')} created and authenticated SMTP/IMAP delivery verified. "
+            "Its temporary password is encrypted; the .test address has no public mail reachability. "
+            + CREDENTIAL_HANDOVER
+        )
     if result.get("ok") and result.get("operation") == "mailbox_status":
         return (
             f"Local mailbox {result.get('email')}: credentials {'present' if result.get('credential_exists') else 'absent'}, "

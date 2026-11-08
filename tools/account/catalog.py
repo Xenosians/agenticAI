@@ -3,7 +3,7 @@ from tools.account.policy import (
     evaluate_password_reset_policy,
 )
 from tools.presentation import format_password_reset_approval
-from tools.mailbox.catalog import MAILBOX_TOOLS
+from tools.mailbox.catalog import CREDENTIAL_HANDOVER, MAILBOX_TOOLS
 
 from typing import (
     Any,
@@ -164,7 +164,8 @@ def format_account_create_result(
         if isinstance(email, str):
             message += f" with email {email}"
         if isinstance(credential_id, str):
-            message += ". The temporary credential is encrypted in SurrealDB"
+            message += ". Its temporary password is encrypted. " + CREDENTIAL_HANDOVER
+            return message
         return message + "."
 
     error = result.get("error")
@@ -194,8 +195,8 @@ def format_password_reset_result(
     user_id = result.get("user_id")
     if result.get("ok") is True and isinstance(user_id, str):
         return (
-            f"The password for {user_id} was reset. A temporary credential is encrypted "
-            "in SurrealDB and must be changed at the next sign-in."
+            f"The password for {user_id} was reset. Its temporary password is encrypted. "
+            + CREDENTIAL_HANDOVER
         )
     error = result.get("error")
     if isinstance(error, str) and error.strip():

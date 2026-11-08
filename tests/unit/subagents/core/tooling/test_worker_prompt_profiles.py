@@ -121,3 +121,28 @@ def test_legacy_worker_templates_remain_the_exact_rendered_contract(profile):
     assert build_worker_system_prompt(
         agent, capability_catalog=capabilities, prompt_profile=profile,
     ) == expected
+
+
+def test_compact_capabilities_say_which_arguments_may_be_left_out():
+    text = build_compact_capability_text([{
+        "name": "account_create",
+        "argument_schema": {"given_name": {"type": "str"}, "department": {"type": "str"}},
+        "required_arguments": ["given_name"],
+        "optional_arguments": ["department"],
+    }])
+
+    assert "required=[given_name]" in text
+    assert "optional=[department]" in text
+
+
+@pytest.mark.parametrize("profile", ["standard", "compact", "compact_grounded"])
+def test_every_worker_protocol_answers_a_missing_value_with_the_call_not_prose(profile):
+    prompt = " ".join(build_worker_system_prompt(
+        _agent(),
+        capability_catalog=[{"name": "ticket_get", "argument_schema": {}}],
+        prompt_profile=profile,
+    ).lower().split())
+
+    assert "optional" in prompt
+    assert "still return the call with the values the user gave" in prompt
+    assert "never ask the user a question" in prompt

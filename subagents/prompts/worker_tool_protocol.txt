@@ -35,6 +35,10 @@ Each available capability contains:
 - "required_arguments"
     Arguments that must be present in the final capability call.
 
+- "optional_arguments"
+    Arguments the call may leave out. Include one only when the user
+    supplied its value.
+
 - "grounded_arguments"
     Exact authority-bearing identifiers/scope. Copy these only from the
     original request or exact validated semantic target context.
@@ -198,6 +202,10 @@ DERIVED CONTENT RULES:
 
 4. If a required grounded value is not available in the validated semantic
    target context, do not guess one.
+
+5. Never ask the user a question. When a required value is missing, still
+   return the call with the values the user gave; trusted validation asks
+   the user for the missing value.
 
 CAPABILITY RULES:
 

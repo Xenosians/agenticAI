@@ -1,4 +1,7 @@
+from types import SimpleNamespace
+
 from api.app import (
+    completion_payload,
     completion_status,
 )
 
@@ -40,3 +43,15 @@ def test_approval_remains_waiting():
         )
         == "waiting_approval"
     )
+
+
+def test_a_denied_request_reports_the_reason_of_the_step_that_stopped_it():
+    reason = "The tool 'user_groups' is turned off in your MCP Tool Store. Turn it on there to use it."
+
+    payload = completion_payload(
+        SimpleNamespace(attempt=1),
+        {"status": "denied", "error": None, "answer": reason},
+    )
+
+    assert payload["status"] == "denied"
+    assert payload["error"] == reason

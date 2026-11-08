@@ -426,6 +426,11 @@ def completion_payload(
             result_dict.get(
                 "error"
             )
+            # A denied or failed request's answer is composed only from
+            # the trusted reasons of the steps that stopped it.
+            or result_dict.get(
+                "answer"
+            )
             or (
                 "AI job finished with "
                 "status="

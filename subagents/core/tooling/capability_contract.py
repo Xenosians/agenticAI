@@ -3,6 +3,8 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from tools.capability_contract import argument_requiredness
+
 CAPABILITY_CONTRACT_SCHEMA = "model-capability.v2"
 CAPABILITY_CONTRACT_VERSION = 2
 
@@ -82,6 +84,10 @@ def build_model_capability_contract(
 
     SemanticGuard, ToolGateway, provider policy and approval execution remain
     authoritative.
+
+    Required and optional arguments come from the same requiredness
+    resolution as the trusted contract (the executable signature), so the
+    model is shown exactly the set SemanticGuard enforces.
     """
 
     risk, effect = _effect_from_risk(
@@ -108,10 +114,9 @@ def build_model_capability_contract(
         value=tool.get("condition_fields", []),
     )
 
-    required_arguments = _string_list(
-        tool_name=tool_name,
-        field_name="required_arguments",
-        value=tool.get("required_arguments", []),
+    required_arguments, optional_arguments = argument_requiredness(
+        tool_name,
+        tool,
     )
 
     derived_arguments = _string_list(
@@ -216,6 +221,7 @@ def build_model_capability_contract(
         "requires_approval": requires_approval,
         "grounded_arguments": grounded_arguments,
         "required_arguments": required_arguments,
+        "optional_arguments": optional_arguments,
         "derived_arguments": derived_arguments,
         "condition_fields": condition_fields,
         "policy_owns_preconditions": policy_owns_preconditions,

@@ -134,6 +134,7 @@ def build_compact_capability_text(
 
         for role_name, role_key in [
             ("required", "required_arguments"),
+            ("optional", "optional_arguments"),
             ("grounded", "grounded_arguments"),
             ("derived", "derived_arguments"),
         ]:

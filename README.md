@@ -13,6 +13,7 @@ This is an evolving local-first **MVP candidate**. Model output is a proposal, n
 - Authenticated WebSocket progress from the AI runtime to Phoenix, alongside durable job and approval state that can be restored after reconnecting.
 - Content-free, job-bound inference observations for the Operations view: measured stage duration, scheduler wait and available token counts, with missing measurements kept explicit.
 - A bounded account → Jira ticket → completion mail workflow on durable jobs, with verified account data, separate approvals, and saved continuation recovery.
+- Temporary passwords are never mailed to a new account's (not yet existing) mailbox: the requester reveals them once in Janus and hands them over ([how](docs/account-ticket-workflow.md#handing-over-the-temporary-password)).
 - Optional user-reviewed workflow contracts check complete operation lists, dependencies and exact target pins before dispatch for both local and outbound reasoning. Normal chat remains available; free-text submissions do not receive this completeness check.
 - Local Transformers models, quantization profiles, LoRA adapters, and serialized GPU scheduling.
 - Per-account model connections: compatible chat-completion APIs, including Groq; installed local profiles; and Pi/OpenCode inference adapters.
@@ -25,6 +26,8 @@ This is an evolving local-first **MVP candidate**. Model output is a proposal, n
 
 ## How the repositories fit together
 
+![How one request travels through Janus: browser, Phoenix, the Lua gateway, hub routing, a specialist, the trusted guard, your approval, the MCP tool, the verified result and the answer](docs/assets/request-flow.svg)
+
 ```text
 agenticFrontend (Nim/Karax browser)
     -> agenticBackend / itsm_backend (Phoenix API + SurrealDB)
@@ -32,7 +35,63 @@ agenticFrontend (Nim/Karax browser)
             -> policy, approvals, tools and configured providers
 ```
 
-Phoenix owns authentication, chats, and durable user-facing jobs. This service owns inference and guarded execution. The browser communicates with Phoenix only. Internal service calls use a shared token.
+Phoenix owns authentication, chats, and durable user-facing jobs. This service owns inference and guarded execution. The browser communicates with Phoenix only. Internal service calls use a shared token. `scripts/render_request_flow.py` regenerates the animation; a test keeps the committed file equal to its output.
+
+## Roadmap
+
+```mermaid
+flowchart TB
+  classDef done fill:#f2f2f2,stroke:#0b0b0b,stroke-width:2px,color:#0b0b0b
+  classDef open fill:#0b0b0b,stroke:#f2f2f2,stroke-width:3px,stroke-dasharray:6 4,color:#f2f2f2
+
+  subgraph S1["1 · Correctness and latency"]
+    direction TB
+    A1["Busy chats<br>kept safe"]:::done
+    A2["Resource-aware<br>admission"]:::done
+    A3["Job cancel"]:::done
+    A4["Compact<br>local routing"]:::open
+  end
+  subgraph S2["2 · Every feature works"]
+    direction TB
+    B1["Live mutation<br>sweeps"]:::done
+    B2["Learning evaluation<br>and promotion"]:::open
+  end
+  subgraph S3["3 · Knowledge"]
+    direction TB
+    C1["Automatic crawl<br>with citations"]:::done
+  end
+  subgraph S4["4 · Extensions and stores"]
+    direction TB
+    D1["Extension schemas<br>and records"]:::done
+    D2["Model, Skill, Tool<br>and Plugin stores"]:::done
+    D3["Built-in skills"]:::done
+    D4["Owner switch<br>for MCP tools"]:::done
+    D5["Owner switch<br>for Lua plugins"]:::open
+    D1 ~~~ D4
+    D2 ~~~ D5
+  end
+  subgraph S5["5 · Operations and release"]
+    direction TB
+    E1["Always-on stack<br>and backups"]:::done
+    E2["Directory lab<br>over LDAPS"]:::done
+    E3["Password hand-over<br>in Janus"]:::done
+    E4["Proxmox read tools<br>and dashboard"]:::done
+    E5["Proxmox host<br>on the tailnet"]:::open
+    E6["Full tool matrix,<br>both profiles"]:::open
+    E1 ~~~ E4
+    E2 ~~~ E5
+    E3 ~~~ E6
+  end
+  subgraph Key["Key"]
+    direction TB
+    K1["Built and verified"]:::done
+    K2["Open"]:::open
+  end
+  S1 ==> S2 ==> S3 ==> S4 ==> S5
+  S5 ~~~ Key
+```
+
+Light boxes are built and verified; dark dashed boxes are open. "Busy chats kept safe" covers refusing to delete a chat with an unfinished request and holding a chat's next turn while an approval is open. The trust model and the next architecture work packages are in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Stack
 

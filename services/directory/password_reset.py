@@ -160,8 +160,8 @@ def _persist(credential_store: PhoenixCredentialStore, user_id: str, password: s
         ok=True, status="executed", changed=True, user_id=user_id, must_change_at_next_logon=True,
         credential_persisted=True, credential_id=persisted.credential_id,
         credential_expires_at=persisted.credential_expires_at, retry_safe=False,
-        message=(f"Password for '{user_id}' was reset. The temporary credential is encrypted by Phoenix "
-                 "and must be changed at next sign-in."),
+        message=(f"Password for '{user_id}' was reset. The temporary password is encrypted by Phoenix; "
+                 "the requester reveals it once in Janus, and it must be changed at next sign-in."),
     )
 
 

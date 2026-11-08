@@ -394,6 +394,27 @@ def required_arguments_for(tool_name: str, tool: Mapping[str, Any]) -> list[str]
     return list(build_capability_contract(tool_name, tool).required_arguments)
 
 
+def argument_requiredness(tool_name: str, tool: Mapping[str, Any]) -> tuple[list[str], list[str]]:
+    """Required and optional caller arguments of one capability.
+
+    The same resolution the trusted contract uses: the executable signature
+    when registered, otherwise the catalog's declared required arguments.
+    The model-facing catalog reads it so a specialist is shown exactly the
+    set SemanticGuard enforces.
+    """
+    parameters = tool.get("parameters", {})
+    if not isinstance(parameters, dict):
+        raise ValueError(f"Capability '{tool_name}' parameters must be an object.")
+    trusted_policy = tuple(_string_list(tool_name, tool, "trusted_policy_arguments"))
+    required, optional, _source = _runtime_authoritative_requiredness(
+        tool_name,
+        tool,
+        tuple(parameters),
+        trusted_policy,
+    )
+    return required, optional
+
+
 def normalize_capability_catalog(
     tools: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, dict[str, Any]]:
