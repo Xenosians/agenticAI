@@ -73,8 +73,11 @@ dispatch; there is no silent Python-only substitute.
 Normal model/API/dataset uploads and connection settings use the frontend.
 Integrity digests and credential encryption are host responsibilities. A digest
 is an identity/integrity check, not encryption or permission to install a plugin.
-Custom machine-profile/plugin installation is currently operator-managed; a
-complete owner-scoped frontend Lua plugin lifecycle is still separate work.
+Custom machine-profile/plugin installation is currently operator-managed.
+Phoenix keeps owner-scoped Lua extension records (review, activation,
+revocation, on/off and audit events) without source bytes, and dispatch does
+not read them yet, so a complete owner-scoped Lua plugin lifecycle is still
+separate work.
 
 See [Lua adapters](docs/lua-adapters.md), [protocol plugins](docs/lua-plugins.md),
 [machine profiles](docs/lua-machine-profiles.md) and
@@ -84,7 +87,7 @@ See [Lua adapters](docs/lua-adapters.md), [protocol plugins](docs/lua-plugins.md
 
 | Area | Source boundary | Scope and limits |
 | --- | --- | --- |
-| ITSM tools | `tools/registry.py`, `tools/`, `services/` | Registered directory/access, ticketing, Git/workspace, operations, knowledge, mailbox and network adapters; actual setup and provider permissions still matter |
+| ITSM tools | `tools/registry.py`, `tools/`, `services/` | Registered directory/access, ticketing, Atlassian, Git/workspace, operations, Proxmox (read-only), knowledge, mailbox and network adapters; each owner can turn a tool off (`services/extensions/tool_switches.py`); actual setup and provider permissions still matter |
 | Ticketing | `services/ticketing/`, `tools/ticketing/` | Jira reads and selected governed writes; no automatic migration of a failed Jira action to another provider |
 | Workflows | Phoenix `Workflows`, `api/workflows.py`, frontend workflow canvas | Saved/versioned capability request contracts and durable runs; not a general arbitrary-code graph runtime |
 | Engineering | `services/engineering/`, `api/engineering.py` | Read-only topology drift and KiCad netlist inspection; labelled advisory/simulated, with no infrastructure or physical actuation |
