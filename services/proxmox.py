@@ -378,7 +378,13 @@ class ProxmoxService:
         return POWER_ACTIONS[action]
 
     def _guest_row(self, node: str, vmid: int) -> dict:
-        """The guest's inventory row: identity, state, lock and template flag in one read."""
+        """The exact guest as it is now: identity from the inventory, state from the guest itself.
+
+        /cluster/resources is refreshed by Proxmox every few seconds, so its
+        status can lag a just-finished action. Type, name and the template
+        flag come from that inventory row; status and lock come from the
+        guest's live status/current, which decides whether an action applies.
+        """
         rows = self._rows(self._get("/cluster/resources", {"type": "vm"}), required=("type", "node", "status"))
         matches = []
         for row in rows:
@@ -392,8 +398,12 @@ class ProxmoxService:
         if len(matches) != 1 or matches[0]["type"] not in {"qemu", "lxc"}:
             raise _invalid()
         row = matches[0]
+        live = self._get(f"/nodes/{node}/{row['type']}/{vmid}/status/current")
+        if not isinstance(live, dict):
+            raise _invalid()
+        self._validate_guest_identity(live, node, vmid)
         return {"node": node, "vmid": vmid, "type": row["type"], "name": _text(row, "name"),
-                "status": _text(row, "status", required=True), "lock": _text(row, "lock"),
+                "status": _text(live, "status", required=True), "lock": _text(live, "lock"),
                 "template": bool(_boolean(row, "template"))}
 
     @staticmethod
@@ -469,6 +479,10 @@ class ProxmoxService:
             guest = self._guest_row(node, vmid)
         except ProviderResourceNotFound as error:
             return outcome(False, "not_found", str(error))
+        except (httpx.HTTPError, RuntimeError):
+            # The check before sending failed; nothing was sent, so a retry is safe.
+            return outcome(False, "error", "Proxmox could not confirm the guest's current state; "
+                           "nothing was sent.")
         receipt.update(type=guest["type"], name=guest["name"])
         if guest["type"] != expected_type or guest["name"] != (expected_name or None):
             return outcome(False, "conflict", "The guest no longer matches the approved target "

@@ -26,12 +26,15 @@ def ok(request, data):
 class FakeProxmox:
     """Answers like Proxmox VE 9: the inventory, a power POST returning a task, the task and the guest."""
 
-    def __init__(self, *, post=None, task_polls=1, exitstatus="OK", after=None, rows=ROWS):
+    def __init__(self, *, post=None, task_polls=1, exitstatus="OK", after=None, rows=ROWS, current=None):
         self.rows = rows
         self.post = post
         self.task_polls = task_polls
         self.exitstatus = exitstatus
         self.after = after
+        # The guest's own live state before the action; the inventory row by default.
+        self.current = current
+        self.posted = False
         self.polls = 0
         self.calls = []
 
@@ -42,6 +45,7 @@ class FakeProxmox:
         if path == "/api2/json/cluster/resources":
             return ok(request, self.rows)
         if request.method == "POST":
+            self.posted = True
             if self.post is not None:
                 return self.post(request)
             return ok(request, UPID)
@@ -51,7 +55,14 @@ class FakeProxmox:
                 return ok(request, {"status": "running", "upid": UPID})
             return ok(request, {"status": "stopped", "exitstatus": self.exitstatus, "upid": UPID})
         if path.endswith("/status/current"):
-            return ok(request, {"status": self.after, "vmid": int(path.split("/")[-3])})
+            vmid = int(path.split("/")[-3])
+            if self.posted:
+                return ok(request, {"status": self.after, "vmid": vmid})
+            row = next(row for row in self.rows if row["vmid"] == vmid)
+            live = {"status": self.current or row["status"], "vmid": vmid}
+            if row.get("lock"):
+                live["lock"] = row["lock"]
+            return ok(request, live)
         return httpx.Response(404, json={"data": None}, request=request)
 
     def posts(self):
@@ -141,6 +152,47 @@ def test_a_guest_that_is_gone_is_not_found_and_nothing_is_sent():
     assert fake.posts() == []
 
 
+def test_the_live_state_decides_whether_an_action_applies_not_the_inventory_cache():
+    # Proxmox refreshes /cluster/resources every few seconds, so right after a
+    # start the inventory can still say "stopped" while the guest already runs.
+    fake = FakeProxmox(current="running", after="stopped")
+    receipt = run(fake, action="shutdown")
+    assert receipt["ok"] is True
+    assert fake.posts() == [("/api2/json/nodes/pve-a/lxc/990/status/shutdown", "timeout=60")]
+
+
+def test_a_guest_the_inventory_still_shows_running_but_is_stopped_is_not_touched():
+    fake = FakeProxmox(rows=[dict(ROWS[0], status="running")], current="stopped")
+    receipt = run(fake, action="shutdown")
+    assert (receipt["ok"], receipt["status"]) == (False, "conflict")
+    assert "stopped" in receipt["error"]
+    assert fake.posts() == []
+
+
+@pytest.mark.parametrize("failure", ["refused", "unreachable"])
+def test_a_failed_check_before_sending_is_a_plain_error_and_nothing_is_sent(failure):
+    fake = FakeProxmox()
+
+    def answer(request):
+        if request.url.path.endswith("/status/current"):
+            if failure == "refused":
+                return httpx.Response(500, json={"data": None}, request=request)
+            raise httpx.ConnectError("refused", request=request)
+        return fake(request)
+
+    client = httpx.Client(transport=httpx.MockTransport(answer))
+    service = ProxmoxService(ProxmoxConfig("https://pve.example.test", TOKEN_ID, TOKEN_SECRET), client)
+    try:
+        receipt = service.guest_power("pve-a", 990, "start", expected_type="lxc", expected_name="lab",
+                                      sleep=Clock().sleep, clock=Clock().monotonic)
+    finally:
+        client.close()
+    assert (receipt["ok"], receipt["status"], receipt["retry_safe"]) == (False, "error", True)
+    assert "nothing was sent" in receipt["error"].lower()
+    assert fake.posts() == []
+    assert "fixture-token-secret" not in repr(receipt)
+
+
 def test_a_failed_task_is_a_failed_receipt_with_the_proxmox_exit_status():
     fake = FakeProxmox(exitstatus="startup for container '990' failed", after="stopped")
     receipt = run(fake)
@@ -201,7 +253,7 @@ def test_an_answer_that_is_not_a_task_of_this_node_is_an_unknown_outcome():
     fake = FakeProxmox(post=lambda request: ok(request, "UPID:other-node:0:0:0:vzstart:990:root@pam:"))
     receipt = run(fake)
     assert (receipt["ok"], receipt["status"]) == (False, "outcome_unknown")
-    assert [method for method, _, _ in fake.calls].count("GET") == 1
+    assert not any("/tasks/" in path for _, path, _ in fake.calls)
 
 
 def test_power_target_names_the_exact_guest_and_whether_the_action_applies():
