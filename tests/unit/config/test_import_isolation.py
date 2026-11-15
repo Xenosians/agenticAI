@@ -65,3 +65,17 @@ def test_explicit_startup_still_exports_policy_before_constructing_server(monkey
     monkeypatch.setattr(mcp_server, "create_mcp_server", construct)
     mcp_server.main()
     assert calls == ["policy", "construct", "run"]
+
+
+def test_importing_the_api_and_mcp_server_does_not_load_model_libraries():
+    # PyTorch and Transformers take tens of seconds to import on the
+    # development host. They are needed only when a local model loads, so
+    # serving the API, the MCP tools or a test must not pay for them.
+    child('''
+        import sys
+        import mcp_server
+        import api.app
+        loaded = sorted(name for name in ("torch", "transformers", "accelerate", "bitsandbytes", "peft")
+                        if name in sys.modules)
+        assert loaded == [], loaded
+    ''')

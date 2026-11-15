@@ -44,7 +44,7 @@ def test_cluster_nodes_guests_storage_and_tasks_use_fixed_lua_gated_requests():
                          "status": "running", "cpu_fraction": None, "memory_bytes": 512,
                          "memory_total_bytes": None, "disk_bytes": None, "disk_total_bytes": None,
                          "uptime_seconds": None}
-        assert client_service.node_storage("pve-a")["data"]["storage"][0]["active"] is None
+        assert client_service.node_storage("pve-a")["data"]["storage"][0]["active"] is True
         assert client_service.recent_tasks("pve-a")["data"]["tasks"][0]["status"] == "OK"
         assert [request.method for request in calls] == ["GET"] * 5
         assert [request.url.path for request in calls] == list(fixtures)
@@ -63,8 +63,9 @@ def test_overview_aggregates_live_provider_reads_under_one_typed_schema():
         paths.append((request.method, request.url.path, dict(request.url.params)))
         payloads = {
             "/api2/json/cluster/status": [{"id": "cluster", "type": "cluster"}],
-            "/api2/json/nodes": [{"node": "pve-a", "status": "online"}],
-            "/api2/json/cluster/resources": [{"type": "lxc", "vmid": 201, "node": "pve-a", "status": "running"}],
+            "/api2/json/cluster/resources": [
+                {"id": "node/pve-a", "type": "node", "node": "pve-a", "status": "online"},
+                {"id": "lxc/201", "type": "lxc", "vmid": 201, "node": "pve-a", "status": "running"}],
         }
         return response(request, payloads[request.url.path])
 
@@ -79,8 +80,7 @@ def test_overview_aggregates_live_provider_reads_under_one_typed_schema():
         assert overview["data"]["guests"]["guests"][0]["vmid"] == 201
         assert paths == [
             ("GET", "/api2/json/cluster/status", {}),
-            ("GET", "/api2/json/nodes", {}),
-            ("GET", "/api2/json/cluster/resources", {"type": "vm"}),
+            ("GET", "/api2/json/cluster/resources", {}),
         ]
     finally:
         client.close()
@@ -136,6 +136,35 @@ def test_configuration_requires_https_and_a_valid_api_token_id():
                        httpx.Client(transport=httpx.MockTransport(lambda request: response(request, []))))
 
 
+def test_a_lan_origin_verifies_the_certificate_name_without_weakening_tls():
+    seen = []
+
+    def handler(request):
+        seen.append(request.extensions.get("sni_hostname"))
+        return response(request, [])
+
+    config = ProxmoxConfig("https://192.0.2.10:8006", TOKEN_ID, TOKEN_SECRET,
+                           ca_file=None, server_name="pve.example.test")
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    client_service = ProxmoxService(config, client)
+    try:
+        client_service.nodes()
+        assert seen == ["pve.example.test"]
+    finally:
+        client.close()
+
+
+def test_a_malformed_certificate_name_is_refused():
+    client = httpx.Client(transport=httpx.MockTransport(lambda request: response(request, [])))
+    try:
+        for name in ("*", "pve..example.test", "-pve.example.test", "pve example.test"):
+            with pytest.raises(ValueError, match="TLS server name"):
+                ProxmoxService(ProxmoxConfig("https://192.0.2.10:8006", TOKEN_ID, TOKEN_SECRET,
+                                             server_name=name), client)
+    finally:
+        client.close()
+
+
 def test_both_tailnet_origin_shapes_are_accepted():
     # Native Proxmox behind its own TLS on 8006; delegated reads via
     # `tailscale serve` use the default HTTPS port (no explicit port).
@@ -151,3 +180,162 @@ def test_factory_keeps_an_unconfigured_provider_unavailable():
     settings = Settings(_env_file=None)
     assert build_proxmox_service(settings) is None
     assert not settings.proxmox_base_url
+
+
+def test_proxmox_integer_flags_are_reported_as_booleans():
+    # Proxmox VE 9 sends these flags as 0/1 integers (observed live on
+    # /cluster/status and /nodes/{node}/storage), not JSON booleans.
+    def handler(request):
+        payloads = {
+            "/api2/json/cluster/status": [{"id": "node/pve-a", "type": "node", "name": "pve-a", "online": 1},
+                                          {"id": "node/pve-b", "type": "node", "name": "pve-b", "online": 0}],
+            "/api2/json/nodes/pve-a/storage": [{"storage": "local", "type": "dir", "active": 1, "enabled": 0}],
+        }
+        return response(request, payloads[request.url.path])
+
+    client_service, client = service(handler)
+    try:
+        members = client_service.cluster_status()["data"]["members"]
+        assert [member["online"] for member in members] == [True, False]
+        pool = client_service.node_storage("pve-a")["data"]["storage"][0]
+        assert (pool["active"], pool["enabled"]) == (True, False)
+    finally:
+        client.close()
+
+
+def test_a_flag_that_is_neither_boolean_nor_zero_or_one_is_an_invalid_answer():
+    client_service, client = service(lambda request: response(
+        request, [{"id": "node/pve-a", "type": "node", "online": 2}]))
+    try:
+        with pytest.raises(RuntimeError, match="invalid answer"):
+            client_service.cluster_status()
+    finally:
+        client.close()
+
+
+def guest_handler(resources, details, calls=None):
+    def handler(request):
+        if calls is not None:
+            calls.append((request.method, request.url.path, dict(request.url.params)))
+        if request.url.path == "/api2/json/cluster/resources":
+            # Proxmox applies the type filter itself: type=vm keeps QEMU and LXC rows.
+            wanted = request.url.params.get("type")
+            rows = [row for row in resources
+                    if wanted is None or (wanted == "vm" and row["type"] in {"qemu", "lxc"}) or row["type"] == wanted]
+            return response(request, rows)
+        if request.url.path in details:
+            return response(request, details[request.url.path])
+        return httpx.Response(404, json={"data": None}, request=request)
+    return handler
+
+
+LAB_RESOURCES = [{"id": "node/pve-a", "type": "node", "node": "pve-a", "status": "online"},
+                 {"id": "lxc/990", "type": "lxc", "vmid": 990, "node": "pve-a", "name": "lab", "status": "stopped"},
+                 {"id": "qemu/101", "type": "qemu", "vmid": 101, "node": "pve-a", "name": "db", "status": "running"}]
+
+
+def test_guest_status_reads_the_exact_guest_after_confirming_its_type():
+    calls = []
+    details = {"/api2/json/nodes/pve-a/lxc/990/status/current": {
+        "vmid": 990, "name": "lab", "status": "stopped", "uptime": 0, "cpus": 1, "maxmem": 134217728,
+        "ha": {"managed": 0}, "lock": "backup"}}
+    client_service, client = service(guest_handler(LAB_RESOURCES, details, calls))
+    try:
+        status = client_service.guest_status("pve-a", 990)["data"]
+        assert status["schema"] == "proxmox-guest-status.v1"
+        assert (status["node"], status["vmid"], status["type"], status["name"]) == ("pve-a", 990, "lxc", "lab")
+        assert status["status"] == "stopped"
+        assert status["lock"] == "backup"
+        assert status["memory_total_bytes"] == 134217728
+        assert [path for _, path, _ in calls] == ["/api2/json/cluster/resources",
+                                                  "/api2/json/nodes/pve-a/lxc/990/status/current"]
+        assert all(method == "GET" for method, _, _ in calls)
+    finally:
+        client.close()
+
+
+def test_a_guest_missing_from_the_inventory_is_not_found_and_nothing_else_is_read():
+    from services.provider_errors import ProviderResourceNotFound
+
+    calls = []
+    client_service, client = service(guest_handler(LAB_RESOURCES, {}, calls))
+    try:
+        with pytest.raises(ProviderResourceNotFound, match="989"):
+            client_service.guest_status("pve-a", 989)
+        with pytest.raises(ProviderResourceNotFound):
+            client_service.guest_status("pve-b", 990)
+        assert {path for _, path, _ in calls} == {"/api2/json/cluster/resources"}
+    finally:
+        client.close()
+
+
+def test_guest_arguments_cannot_change_the_provider_path():
+    calls = []
+    client_service, client = service(guest_handler(LAB_RESOURCES, {}, calls))
+    try:
+        for node, vmid in (("../x", 990), ("pve-a", 0), ("pve-a", "990"), ("pve-a", True), ("pve-a", -5)):
+            with pytest.raises(ValueError):
+                client_service.guest_status(node, vmid)
+        assert calls == []
+    finally:
+        client.close()
+
+
+def test_guest_config_reports_qemu_memory_given_as_text():
+    # A QEMU guest's `memory` is a property string in Proxmox VE 9
+    # ("4096" or "current=4096"); an LXC guest's is an integer.
+    details = {"/api2/json/nodes/pve-a/qemu/101/config": {
+        "name": "db", "memory": "current=4096", "cores": 2, "sockets": 1, "onboot": 1, "ostype": "l26",
+        "cipassword": "fixture-secret-value", "sshkeys": "ssh-ed25519 AAAA fixture", "net0": "virtio=AA:BB"},
+        "/api2/json/nodes/pve-a/lxc/990/config": {
+        "hostname": "lab", "memory": 128, "swap": 0, "cores": 1, "onboot": 0, "ostype": "alpine"}}
+    client_service, client = service(guest_handler(LAB_RESOURCES, details))
+    try:
+        qemu = client_service.guest_config("pve-a", 101)["data"]
+        assert (qemu["memory_mib"], qemu["on_boot"], qemu["name"]) == (4096, True, "db")
+        assert "fixture-secret-value" not in repr(qemu) and "ssh-ed25519" not in repr(qemu)
+        assert "net0" not in qemu
+        lxc = client_service.guest_config("pve-a", 990)["data"]
+        assert (lxc["memory_mib"], lxc["swap_mib"], lxc["on_boot"], lxc["name"]) == (128, 0, False, "lab")
+    finally:
+        client.close()
+
+
+def test_guest_config_refuses_unreadable_memory_text():
+    details = {"/api2/json/nodes/pve-a/qemu/101/config": {"name": "db", "memory": "lots"}}
+    client_service, client = service(guest_handler(LAB_RESOURCES, details))
+    try:
+        with pytest.raises(RuntimeError, match="invalid answer"):
+            client_service.guest_config("pve-a", 101)
+    finally:
+        client.close()
+
+
+def test_overview_reads_nodes_and_guests_from_one_cluster_resources_call():
+    calls = []
+    resources = [
+        {"id": "node/pve-a", "type": "node", "node": "pve-a", "status": "online", "maxcpu": 8, "cpu": 0.25,
+         "mem": 512, "maxmem": 1024, "disk": 10, "maxdisk": 100, "uptime": 3600},
+        {"id": "lxc/990", "type": "lxc", "vmid": 990, "node": "pve-a", "name": "lab", "status": "stopped",
+         "template": 0},
+        {"id": "storage/pve-a/local", "type": "storage", "node": "pve-a", "storage": "local", "status": "available"},
+    ]
+
+    def handler(request):
+        calls.append(request.url.path)
+        payloads = {"/api2/json/cluster/status": [{"id": "node/pve-a", "type": "node", "name": "pve-a",
+                                                   "online": 1}],
+                    "/api2/json/cluster/resources": resources}
+        return response(request, payloads[request.url.path])
+
+    client_service, client = service(handler)
+    try:
+        data = client_service.overview()["data"]
+        assert sorted(calls) == ["/api2/json/cluster/resources", "/api2/json/cluster/status"]
+        assert data["nodes"]["nodes"] == [{"node": "pve-a", "status": "online", "uptime_seconds": 3600,
+                                           "cpu_fraction": 0.25, "cpu_count": 8, "memory_bytes": 512,
+                                           "memory_total_bytes": 1024, "disk_bytes": 10, "disk_total_bytes": 100}]
+        assert [guest["vmid"] for guest in data["guests"]["guests"]] == [990]
+        assert data["cluster"]["members"][0]["online"] is True
+    finally:
+        client.close()

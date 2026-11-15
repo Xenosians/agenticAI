@@ -1,21 +1,29 @@
-"""Catalog and setup-state coverage for the Proxmox read-only tool family."""
+"""Catalog and setup-state coverage for the Proxmox tool family."""
 from config.settings import Settings
 from services.integration_readiness import integration_readiness, provider_for_capability
 from tools.proxmox.catalog import PROXMOX_TOOLS
 from tools.proxmox.mcp import register_proxmox_tools
 from tools.registry import TOOLS
 
+POWER_TOOLS = {"proxmox_guest_start", "proxmox_guest_shutdown", "proxmox_guest_reboot", "proxmox_guest_force_stop"}
+
 
 def test_each_proxmox_read_is_registered_with_read_only_semantics_and_one_provider():
-    assert set(PROXMOX_TOOLS) == {
+    reads = {
         "proxmox_cluster_status", "proxmox_nodes", "proxmox_guests",
+        "proxmox_guest_status", "proxmox_guest_config",
         "proxmox_node_storage", "proxmox_recent_tasks",
     }
+    assert set(PROXMOX_TOOLS) == reads | POWER_TOOLS
     assert set(PROXMOX_TOOLS) <= set(TOOLS)
     for name in PROXMOX_TOOLS:
         assert provider_for_capability(name) == "proxmox"
+    for name in reads:
         assert TOOLS[name]["effect"] == "read"
         assert TOOLS[name]["requires_approval"] is False
+    for name in POWER_TOOLS:
+        assert TOOLS[name]["effect"] == "mutation"
+        assert TOOLS[name]["requires_approval"] is True
 
 
 def test_proxmox_setup_reports_only_missing_setting_names():

@@ -12,30 +12,36 @@ from subagents.llm.runtime.memory import (
     release_unused_accelerator_memory,
 )
 
-from subagents.llm.runtime.load_profile import (
-    build_transformers_model_load_kwargs,
-)
-
-from subagents.llm.backends.ministral_hub import (
-    MinistralHubBackend,
-)
-
-from subagents.llm.backends.qwen_funcall import (
-    QwenFuncCallBackend,
-)
-
-from subagents.llm.backends.qwen3_worker import (
-    Qwen3WorkerBackend,
-)
-
-from subagents.llm.backends.qwen_coder_worker import (
-    QwenCoderWorkerBackend,
-)
+# The backends and the Transformers load profile import PyTorch and
+# Transformers, which take tens of seconds. They load on first use, when a
+# local model is built, so the API, the MCP server and tests that never load
+# a model do not pay for them. Each stays a module attribute (tests replace
+# them by name).
+_LAZY_ATTRIBUTES = {
+    "build_transformers_model_load_kwargs": "subagents.llm.runtime.load_profile",
+    "MinistralHubBackend": "subagents.llm.backends.ministral_hub",
+    "QwenFuncCallBackend": "subagents.llm.backends.qwen_funcall",
+    "Qwen3WorkerBackend": "subagents.llm.backends.qwen3_worker",
+    "QwenCoderWorkerBackend": "subagents.llm.backends.qwen_coder_worker",
+    "HFCausalWorkerBackend": "subagents.llm.backends.hf_causal_worker",
+}
 
 
-from subagents.llm.backends.hf_causal_worker import (
-    HFCausalWorkerBackend,
-)
+def __getattr__(name: str):
+    module_name = _LAZY_ATTRIBUTES.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import importlib
+
+    value = getattr(importlib.import_module(module_name), name)
+    globals()[name] = value
+    return value
+
+
+def _attribute(name: str):
+    """A backend or helper, as replaced by a test or loaded on first use."""
+    return globals()[name] if name in globals() else __getattr__(name)
+
 
 def require_local_model_path(
     profile: ModelProfileSettings,
@@ -123,7 +129,7 @@ def build_model_backend(
         == "ministral"
     ):
         return (
-            MinistralHubBackend(
+            _attribute("MinistralHubBackend")(
                 model_path=(
                     model_path
                 ),
@@ -174,13 +180,13 @@ def build_model_backend(
         == "qwen-funccall"
     ):
         return (
-            QwenFuncCallBackend(
+            _attribute("QwenFuncCallBackend")(
                 model_path=(
                     model_path
                 ),
 
                 model_load_kwargs=(
-                    build_transformers_model_load_kwargs(
+                    _attribute("build_transformers_model_load_kwargs")(
                         profile
                     )
                 ),
@@ -196,13 +202,13 @@ def build_model_backend(
         == "qwen3"
     ):
         return (
-            Qwen3WorkerBackend(
+            _attribute("Qwen3WorkerBackend")(
                 model_path=(
                     model_path
                 ),
 
                 model_load_kwargs=(
-                    build_transformers_model_load_kwargs(
+                    _attribute("build_transformers_model_load_kwargs")(
                         profile
                     )
                 ),
@@ -218,13 +224,13 @@ def build_model_backend(
         == "qwen-coder"
     ):
         return (
-            QwenCoderWorkerBackend(
+            _attribute("QwenCoderWorkerBackend")(
                 model_path=(
                     model_path
                 ),
 
                 model_load_kwargs=(
-                    build_transformers_model_load_kwargs(
+                    _attribute("build_transformers_model_load_kwargs")(
                         profile
                     )
                 ),
@@ -240,13 +246,13 @@ def build_model_backend(
         == "hf-causal"
     ):
         return (
-            HFCausalWorkerBackend(
+            _attribute("HFCausalWorkerBackend")(
                 model_path=(
                     model_path
                 ),
 
                 model_load_kwargs=(
-                    build_transformers_model_load_kwargs(
+                    _attribute("build_transformers_model_load_kwargs")(
                         profile
                     )
                 ),

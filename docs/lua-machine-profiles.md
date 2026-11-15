@@ -29,6 +29,9 @@ return {
                  read = {user = "svc-read", secret = "ldap_read"},
                  write = {user = "svc-write", secret = "ldap_write"}},
     router = {url = "https://192.0.2.1", user = "auditor", secret = "router", verify_tls = true},
+    proxmox = {url = "https://192.0.2.10:8006", token_id = "janus-reader@pve!operations",
+               secret = "proxmox", verify_tls = true, ca_file = "trust/pve-root-ca.pem",
+               server_name = "pve.example.org"},
     jira = {url = "https://example.atlassian.net", email = "bot@example.org", secret = "jira"},
     atlassian = {org_id = "org-id", jira_resource = "ari:cloud:jira::site/id", secret = "atlassian"},
     mailbox = {enabled = true, domain = "lab.example.org", smtp_port = 587, imap_port = 993},
@@ -53,6 +56,7 @@ and a malformed host, port, origin or name.
 | --- | --- | --- |
 | `directory` | `host`, `port`, `tls`, `ca_file`, `server_name`, `base_dn`, `account_container`, `email_domain`, `groups`, `read`, `write` | LDAP directory backend, its certificate check and its read and write bind accounts |
 | `router` | `url`, `user`, `secret`, `verify_tls`, `allow_loopback_http` | OpenWrt base URL and account |
+| `proxmox` | `url`, `token_id`, `secret`, `verify_tls`, `ca_file`, `server_name` | Proxmox VE reads: cluster, nodes, guests, storage and tasks |
 | `jira` | `url`, `email`, `secret` | Jira ticketing backend |
 | `atlassian` | `org_id`, `jira_resource`, `secret` | Atlassian organization administration |
 | `mailbox` | `enabled`, `domain`, `smtp_port`, `imap_port` | Lab mailbox provisioning |
@@ -65,9 +69,11 @@ environment or `.env` therefore never reaches a connection. Sections the profile
 does not declare keep their existing configuration. Explicit constructor
 arguments still win.
 
-Relative model paths, and the directory's `ca_file` (the CA that signed its
-certificate), resolve beside the profile. `server_name` is the name on the
-directory's certificate when `host` is an address. `allowed_origins` lists exact
+Relative model paths, and the directory's and Proxmox's `ca_file` (the CA that
+signed their certificates), resolve beside the profile. `server_name` is the
+name on the certificate when the host is an address: the directory uses it for
+LDAP TLS, and Proxmox uses it as the TLS server name (SNI) while keeping full
+verification against `ca_file`. `allowed_origins` lists exact
 `scheme://host[:port]` origins; plain HTTP is allowed only for an origin listed
 in both `allowed_origins` and `insecure_http_origins`.
 
@@ -128,7 +134,7 @@ A credential is never written into Lua. A key named `secret` holds the name of
 an entry in the private JSON object at `ITSM_LINK_SECRETS_FILE`:
 
 ```json
-{"ldap_read": "...", "ldap_write": "...", "router": "...", "jira": "...", "atlassian": "..."}
+{"ldap_read": "...", "ldap_write": "...", "router": "...", "proxmox": "...", "jira": "...", "atlassian": "..."}
 ```
 
 Only the host process reads that file, after Lua has returned its declarations.

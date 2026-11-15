@@ -362,6 +362,11 @@ def semantic_context_for(
         if isinstance(value, str):
             allowed_arguments[key] = [value]
 
+        # An integer identifier (a Proxmox VMID) is grounded by its exact
+        # decimal text, as at runtime; bool is never an identifier.
+        elif type(value) is int:
+            allowed_arguments[key] = [str(value)]
+
         elif (
             isinstance(value, list)
             and value

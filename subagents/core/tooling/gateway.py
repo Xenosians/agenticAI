@@ -130,6 +130,17 @@ def _grounded_values(
             None,
         )
 
+    # An integer identifier (a Proxmox VMID) is grounded by its exact decimal
+    # text. bool is an int subclass and never an identifier.
+    if type(value) is int:
+
+        return (
+            [
+                str(value),
+            ],
+            None,
+        )
+
     if isinstance(
         value,
         list,
@@ -197,7 +208,7 @@ def _grounded_values(
     return (
         None,
         (
-            f"{field_name} must be a string "
+            f"{field_name} must be a string, an integer "
             "or a list of strings."
         ),
     )

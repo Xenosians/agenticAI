@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import gc
-
-import torch
+import sys
 
 
 def release_unused_accelerator_memory(
@@ -37,6 +36,12 @@ def release_unused_accelerator_memory(
     """
 
     gc.collect()
+
+    # No PyTorch loaded means no model was ever placed on an accelerator, so
+    # there is no allocator cache to return (and importing it costs seconds).
+    torch = sys.modules.get("torch")
+    if torch is None:
+        return
 
     if not (
         torch.cuda.is_available()

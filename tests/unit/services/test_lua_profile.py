@@ -19,7 +19,8 @@ return {
                  write = {user = "svc-write", secret = "ldap_write"}},
     router = {url = "https://192.0.2.1", user = "auditor", secret = "router", verify_tls = true},
     proxmox = {url = "https://pve.example.test:8006", token_id = "reporter@pam!readonly",
-               secret = "proxmox", verify_tls = true, ca_file = "trust/pve-ca.pem"},
+               secret = "proxmox", verify_tls = true, ca_file = "trust/pve-ca.pem",
+               server_name = "pve.example.test"},
     jira = {url = "https://example.atlassian.net", email = "bot@example.test", secret = "jira"},
     atlassian = {org_id = "org-1", jira_resource = "ari:cloud:jira::site/1", secret = "atlassian"},
     mailbox = {enabled = true, domain = "lab.test", smtp_port = 2587, imap_port = 2143},
@@ -77,6 +78,7 @@ def test_the_machine_profile_becomes_the_settings_for_every_link(install):
         "https://pve.example.test:8006", "reporter@pam!readonly")
     assert values["proxmox_api_token_secret"] == "pve-token-secret" and values["proxmox_verify_tls"] is True
     assert values["proxmox_ca_file"] == str((Path(profile.load_links().profile_path.parent) / "trust/pve-ca.pem").resolve())
+    assert values["proxmox_server_name"] == "pve.example.test"
     assert (values["jira_base_url"], values["jira_email"]) == ("https://example.atlassian.net", "bot@example.test")
     assert values["jira_api_token"] == "jira-token" and values["atlassian_admin_api_key"] == "admin-key"
     assert (values["atlassian_org_id"], values["atlassian_jira_resource_ari"]) == ("org-1", "ari:cloud:jira::site/1")
@@ -107,6 +109,11 @@ def test_a_wildcard_certificate_name_is_refused(install):
     refused(profile.settings_values)
 
 
+def test_a_wildcard_proxmox_certificate_name_is_refused(install):
+    install(source=PROFILE.replace('server_name = "pve.example.test"', 'server_name = "*"'))
+    refused(profile.settings_values)
+
+
 def test_settings_refuse_a_certificate_name_that_would_match_anything():
     from pydantic import ValidationError
 
@@ -114,7 +121,10 @@ def test_settings_refuse_a_certificate_name_that_would_match_anything():
 
     with pytest.raises(ValidationError):
         Settings(_env_file=None, ad_tls_server_name="*.example.test")
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, proxmox_server_name="*.example.test")
     assert Settings(_env_file=None, ad_tls_server_name=" dc01.example.test ").ad_tls_server_name == "dc01.example.test"
+    assert Settings(_env_file=None, proxmox_server_name=" pve.example.test ").proxmox_server_name == "pve.example.test"
 
 
 def test_settings_take_their_links_from_the_profile_over_the_environment(install, monkeypatch):

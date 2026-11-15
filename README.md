@@ -23,7 +23,7 @@ This is an evolving local-first **MVP candidate**. Model output is a proposal, n
 - Local full-text retrieval for reference datasets, with source and trust metadata kept separate from execution authority.
 - A bounded crawler that turns an allowed site into reference text with per-page provenance; it honours robots.txt and stays on the starting site, and each fetch crosses the Lua-gated HTTP client.
 - Owner skills: Markdown guidance (SKILL.md format) that shapes the answers Janus writes, including built-in skills seeded once per owner.
-- Read-only Proxmox VE reads (cluster, nodes, virtual machines and containers, storage, recent tasks) and governed lab mailboxes on a local SMTP/IMAP server.
+- Proxmox VE reads (cluster, nodes, virtual machines and containers, storage, recent tasks) and approval-gated guest power actions (start, shut down, reboot, force stop) with task and read-back receipts ([Proxmox](docs/proxmox.md)), and governed lab mailboxes on a local SMTP/IMAP server.
 - Nightly, verified backups of Janus state with a documented restore ([backups](docs/backups.md)).
 - Training/evaluation infrastructure for curated datasets, candidate adapters, behavioral checks, and promotion gates.
 - Advisory infrastructure drift: a saved desired topology is compared with what the read-only operations adapters observe (allow-listed containers, configured health endpoints, the configured OpenWrt router). The report is labelled simulated and never changes a device. KiCad netlists are inspected as text for connectivity findings, with no EDA tool or hardware attached.

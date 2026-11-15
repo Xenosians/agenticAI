@@ -732,7 +732,7 @@ def create_mcp_server(
                               missing_settings=missing_settings)
 
     # ============================================================
-    # PROXMOX VE (read only)
+    # PROXMOX VE (reads + approval-gated guest power actions)
     # ============================================================
 
     register_proxmox_tools(server, build_proxmox_service(runtime_settings),

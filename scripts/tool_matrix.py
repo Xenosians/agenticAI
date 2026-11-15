@@ -161,12 +161,21 @@ def build_cases(run: str, project: str) -> list[tuple[str, str, str, object]]:
         ("network-tailnet-devices", "network_tailnet_devices", "Which devices are on our Tailscale network, and are they online?", None),
         ("network-tailnet-dns", "network_tailnet_dns", "Do our Tailscale devices resolve names over encrypted DNS?", None),
         ("network-dns-integrity", "network_dns_integrity_check", "Is our ISP rewriting DNS answers? Check vimeo.com and example.com.", None),
-        # --- Proxmox VE (read only; not_configured until a host is set up) ---
+        # --- Proxmox VE (reads; power actions are approval-gated, lab guest only) ---
         ("proxmox-cluster", "proxmox_cluster_status", "What is the Proxmox VE cluster status?", None),
         ("proxmox-nodes", "proxmox_nodes", "List the Proxmox VE nodes and their status.", None),
         ("proxmox-guests", "proxmox_guests", "Which virtual machines and containers run on Proxmox VE?", None),
+        ("proxmox-guest-status", "proxmox_guest_status", "Read current status for VMID {proxmox_vmid} on node {proxmox_node}.", None),
+        ("proxmox-guest-config", "proxmox_guest_config", "Read the non-secret configuration for VMID {proxmox_vmid} on node {proxmox_node}.", None),
         ("proxmox-storage", "proxmox_node_storage", "Show the storage pools of Proxmox node {proxmox_node}.", None),
         ("proxmox-tasks", "proxmox_recent_tasks", "Show recent tasks on Proxmox node {proxmox_node}.", None),
+        # Power actions run on the lab guest (ACCEPTANCE_PROXMOX_VMID) in an order
+        # that leaves it as found: start, reboot, shutdown, then start and force stop.
+        ("proxmox-guest-start", "proxmox_guest_start", "Start container {proxmox_vmid} on node {proxmox_node}.", True),
+        ("proxmox-guest-reboot", "proxmox_guest_reboot", "Reboot guest {proxmox_vmid} on node {proxmox_node}.", True),
+        ("proxmox-guest-shutdown", "proxmox_guest_shutdown", "Shut down guest {proxmox_vmid} on node {proxmox_node}.", True),
+        ("proxmox-guest-restart", "proxmox_guest_start", "Start guest {proxmox_vmid} on node {proxmox_node} again.", True),
+        ("proxmox-guest-force-stop", "proxmox_guest_force_stop", "Force stop guest {proxmox_vmid} on node {proxmox_node}.", True),
     ]
 
 
@@ -580,7 +589,8 @@ def main() -> int:
                        ("account_id", os.environ.get("ATLASSIAN_ACCOUNT_ID")),
                        ("assignee", os.environ.get("ACCEPTANCE_JIRA_ASSIGNEE")),
                        ("status", os.environ.get("ACCEPTANCE_JIRA_STATUS")),
-                       ("proxmox_node", os.environ.get("ACCEPTANCE_PROXMOX_NODE"))):
+                       ("proxmox_node", os.environ.get("ACCEPTANCE_PROXMOX_NODE")),
+                       ("proxmox_vmid", os.environ.get("ACCEPTANCE_PROXMOX_VMID"))):
         if value and key not in context:
             context[key] = value
     # Notifications go to the signed-in lab user, a registered application user.

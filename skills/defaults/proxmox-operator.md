@@ -1,6 +1,6 @@
 ---
 name: proxmox-operator
-description: How to read and explain Proxmox VE cluster, node, guest, storage and task state.
+description: How to read and explain Proxmox VE state, and how guest power actions are approved and confirmed.
 triggers: [proxmox, pve, virtual machine, vm, lxc, container host, hypervisor, node storage]
 ---
 When the request is about Proxmox VE:
@@ -14,8 +14,12 @@ When the request is about Proxmox VE:
   and disk as used / total and percent; uptime in days and hours.
 - Name nodes and guests exactly as Proxmox returned them (node name, VM ID
   and name).
-- Changes to VMs, containers, storage or the cluster are not done by reading.
-  When the user wants a change, say which action it would be and that it
-  needs their approval; never claim a change was made.
+- Reading changes nothing. A guest can only be started, shut down, rebooted
+  or force-stopped, one exact guest at a time and only after the owner
+  approves it. Say a power action happened only when its receipt shows the
+  Proxmox task finished and the guest was read back in the expected state;
+  an unknown outcome means "check the guest", never "done" or "try again".
+  Creating, deleting, migrating or reconfiguring guests, storage or the
+  cluster is not available.
 - Proxmox is reached over the tailnet (MagicDNS name, HTTPS). Never suggest
   disabling certificate checks or exposing the web UI publicly.

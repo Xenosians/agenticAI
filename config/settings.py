@@ -678,14 +678,19 @@ class Settings(
     tailscale_client_secret: str | None = None
     tailscale_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
 
-    # Proxmox VE starts with read-only cluster, node, guest, storage and task
-    # tools. The API token should be scoped to those reads until governed
-    # mutation capabilities have their own exact approval/read-back contracts.
+    # Proxmox VE: cluster, node, guest, storage and task reads, plus governed
+    # guest power actions (start, shutdown, reboot, force stop) that need the
+    # owner's approval for one exact guest and confirm a task and read-back
+    # receipt. Scope the API token to those reads and VM.PowerMgmt on /vms.
     proxmox_base_url: str | None = None
     proxmox_api_token_id: str | None = None
     proxmox_api_token_secret: str | None = None
     proxmox_verify_tls: bool = True
     proxmox_ca_file: Path | None = None
+    # The certificate name when the HTTPS origin is an address without a DNS
+    # entry (a LAN Proxmox). It changes only which name TLS verifies, never
+    # whether verification runs.
+    proxmox_server_name: str | None = None
     proxmox_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
 
     # DNS integrity check: a public resolver asked by plain DNS, the same
@@ -1281,6 +1286,17 @@ class Settings(
         if not CERTIFICATE_NAME.fullmatch(name):
             # A wildcard would accept any certificate the trust store vouches for.
             raise ValueError("AD_TLS_SERVER_NAME must be the exact DNS name on the directory's certificate.")
+        return name
+
+    @field_validator("proxmox_server_name", mode="before")
+    @classmethod
+    def validate_proxmox_server_name(cls, value):
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        name = str(value).strip()
+        if not CERTIFICATE_NAME.fullmatch(name):
+            # A wildcard would accept any certificate the trust store vouches for.
+            raise ValueError("PROXMOX_SERVER_NAME must be the exact DNS name on the Proxmox certificate.")
         return name
 
     @model_validator(mode="after")

@@ -94,6 +94,17 @@ def _runtime_grounded_values(
             False,
         )
 
+    # An integer identifier (a Proxmox VMID) is grounded by its exact decimal
+    # text; bool is an int subclass and never an identifier.
+    if type(value) is int:
+
+        return (
+            [
+                str(value),
+            ],
+            False,
+        )
+
     if isinstance(
         value,
         list,

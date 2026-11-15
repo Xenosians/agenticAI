@@ -62,14 +62,37 @@ def _parameter_expects_collection(
     )
 
 
+def _parameter_expects_integer(
+    *,
+    tool: dict,
+    argument_name: str,
+) -> bool:
+    """Whether trusted capability metadata declares an integer argument."""
+
+    parameter = (tool.get("parameters") or {}).get(argument_name)
+    if not isinstance(parameter, dict) or not isinstance(parameter.get("type"), str):
+        return False
+    return parameter["type"].strip().lower() in {"int", "integer"}
+
+
 def _bound_runtime_value(
     *,
     trusted_value: str,
     expects_collection: bool,
+    expects_integer: bool = False,
 ) -> Any:
+    # Contract values are the exact request text. An integer argument (a
+    # Proxmox VMID) binds as the integer that text names, but only canonical
+    # decimal text converts ("0990" or "+990" stay text and the tool refuses
+    # them), so the bound value always prints back as the grounded text.
+    if expects_integer and trusted_value.isascii() and trusted_value.isdigit() \
+            and str(int(trusted_value)) == trusted_value:
+        value: Any = int(trusted_value)
+    else:
+        value = trusted_value
     if expects_collection:
-        return [trusted_value]
-    return trusted_value
+        return [value]
+    return value
 
 
 def determined_read_call(
@@ -116,7 +139,9 @@ def determined_read_call(
         if _parameter_expects_collection(tool=tool, argument_name=name):
             arguments[name] = list(values)
         elif len(values) == 1:
-            arguments[name] = values[0]
+            arguments[name] = _bound_runtime_value(
+                trusted_value=values[0], expects_collection=False,
+                expects_integer=_parameter_expects_integer(tool=tool, argument_name=name))
         else:
             return None
     return {"name": tool_name, "arguments": arguments}
@@ -313,6 +338,13 @@ def bind_authoritative_grounded_arguments(
                 expects_collection=(
                     expects_collection
                 ),
+
+                expects_integer=(
+                    _parameter_expects_integer(
+                        tool=tool,
+                        argument_name=argument_name,
+                    )
+                ),
             )
         )
 
@@ -354,6 +386,13 @@ def bind_authoritative_grounded_arguments(
 
             worker_proposes_forbidden = (
                 worker_value
+                in forbidden_values
+            )
+
+        elif type(worker_value) is int:
+
+            worker_proposes_forbidden = (
+                str(worker_value)
                 in forbidden_values
             )
 

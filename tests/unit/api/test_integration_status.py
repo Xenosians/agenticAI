@@ -34,6 +34,7 @@ def test_every_provider_family_is_listed_with_its_setup_state(monkeypatch):
     assert rows["openwrt"]["host"] == "router.example.test"
     assert rows["openwrt"]["verify_tls"] is True
     assert rows["proxmox"]["state"] == "configured"
-    assert rows["proxmox"]["mode"] == "read_only"
+    # Proxmox has approval-gated guest power actions besides its reads.
+    assert rows["proxmox"]["mode"] == "read_write"
     assert "fixture-password-value" not in repr(body)
     assert "fixture-proxmox-token" not in repr(body)

@@ -20,6 +20,7 @@ from json import JSONDecodeError
 import httpx
 
 from services.lua_adapters.runtime import LuaAdapterError
+from services.provider_errors import ProviderResourceNotFound
 
 UNREACHABLE = "could not be reached, or it closed the connection before answering."
 
@@ -37,6 +38,8 @@ def not_configured(provider: str, label: str, missing: Iterable[str] = ()) -> di
 def _failure_of(provider: str, label: str, error: Exception) -> dict | None:
     if isinstance(error, LuaAdapterError):
         return failure(provider, error.code, error.message)
+    if isinstance(error, ProviderResourceNotFound):
+        return failure(provider, "provider_not_found", str(error))
     if isinstance(error, httpx.TimeoutException):
         return failure(provider, "provider_timeout", f"{label} did not answer in time.")
     if isinstance(error, httpx.HTTPStatusError):
