@@ -164,7 +164,14 @@ def test_a_job_that_fails_or_is_cancelled_gives_up_its_turn():
 
 def test_a_waiting_job_says_it_is_waiting_for_the_model(monkeypatch):
     stages = []
-    monkeypatch.setattr("services.job_progress.report_progress", stages.append)
+    waiting_reported = asyncio.Event()
+
+    def record_stage(stage):
+        stages.append(stage)
+        if stage == "waiting_provider":
+            waiting_reported.set()
+
+    monkeypatch.setattr("services.job_progress.report_progress", record_stage)
 
     async def scenario():
         coordinator, _ = local_runtime()
@@ -183,7 +190,7 @@ def test_a_waiting_job_says_it_is_waiting_for_the_model(monkeypatch):
         first = asyncio.create_task(first_job())
         await holding.wait()
         second = asyncio.create_task(second_job())
-        await asyncio.sleep(0.05)
+        await asyncio.wait_for(waiting_reported.wait(), 5)
         waiting = list(stages)
         finish.set()
         await asyncio.wait_for(asyncio.gather(first, second), 5)
