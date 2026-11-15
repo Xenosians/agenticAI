@@ -22,6 +22,13 @@ MAX_DEVICES = 200
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 # Renew this long before the token's stated expiry, so no read uses an expiring token.
 TOKEN_MARGIN = timedelta(minutes=5)
+# A node key that lapses within this window is flagged, so it can be renewed before the device drops off.
+KEY_EXPIRING_WITHIN = timedelta(days=14)
+# Advertising either default route offers the device as an exit node.
+EXIT_ROUTES = frozenset({"0.0.0.0/0", "::/0"})
+# Fixed order, most urgent first: what an operator should look at on a device.
+ISSUE_ORDER = ("key_expired", "key_expiring", "waiting_for_approval", "tailnet_lock_error",
+               "routes_waiting_for_approval", "blocks_incoming", "udp_blocked", "update_available")
 # Public resolvers Tailscale reaches over DNS-over-HTTPS (Cloudflare, Google, Quad9).
 DOH_RESOLVERS = frozenset({
     "1.1.1.1", "1.0.0.1", "2606:4700:4700::1111", "2606:4700:4700::1001",
@@ -68,6 +75,15 @@ def _flag(value) -> bool | None:
     raise _invalid()
 
 
+def _shape(value, kind: type):
+    """A missing field reads as empty; one of the wrong type is an invalid answer, even when it is empty."""
+    if value is None:
+        return kind()
+    if not isinstance(value, kind):
+        raise _invalid()
+    return value
+
+
 def _address(value) -> str:
     if not isinstance(value, str):
         raise _invalid()
@@ -75,6 +91,42 @@ def _address(value) -> str:
         return str(ipaddress.ip_address(value))
     except ValueError:
         raise _invalid() from None
+
+
+def _routes(value) -> list[str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list) or not all(isinstance(route, str) for route in value):
+        raise _invalid()
+    return value
+
+
+def _connectivity(value) -> dict | None:
+    """How the device reaches its peers, from its last report; endpoints and addresses are not kept."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise _invalid()
+    supports = _shape(value.get("clientSupports"), dict)
+    latency = _shape(value.get("latency"), dict)
+    mapping = [_flag(supports.get(name)) for name in ("upnp", "pmp", "pcp")]
+    relay = None
+    for region, row in latency.items():
+        if not isinstance(row, dict):
+            raise _invalid()
+        milliseconds = row.get("latencyMs")
+        if milliseconds is not None and (isinstance(milliseconds, bool) or not isinstance(milliseconds, (int, float))):
+            raise _invalid()
+        if _flag(row.get("preferred")) is True:
+            relay = (region[:60], None if milliseconds is None else round(float(milliseconds), 1))
+    return {
+        "udp": _flag(supports.get("udp")),
+        # The router changes the public port per destination ("hard NAT"): more connections are relayed.
+        "hard_nat": _flag(value.get("mappingVariesByDestIP")),
+        "port_mapping": True if True in mapping else None if None in mapping else False,
+        "nearest_relay": relay and relay[0],
+        "relay_latency_ms": relay and relay[1],
+    }
 
 
 class TailnetService:
@@ -121,8 +173,8 @@ class TailnetService:
             self._token = (token, now + timedelta(seconds=lifetime) - TOKEN_MARGIN)
             return token
 
-    def _get(self, path: str) -> dict:
-        body = self._send(httpx.Request("GET", API + path, headers={
+    def _get(self, path: str, params: dict | None = None) -> dict:
+        body = self._send(httpx.Request("GET", API + path, params=params, headers={
             "Authorization": f"Bearer {self._access_token()}", "Accept": "application/json"}))
         if not isinstance(body, dict):
             raise _invalid()
@@ -135,13 +187,16 @@ class TailnetService:
     def _device(self, item) -> dict:
         if not isinstance(item, dict) or not isinstance(item.get("hostname"), str) or not item["hostname"]:
             raise _invalid()
-        tags = item.get("tags") or []
-        if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
+        tags = _shape(item.get("tags"), list)
+        if not all(isinstance(tag, str) for tag in tags):
             raise _invalid()
         never = _flag(item.get("keyExpiryDisabled")) is True
         expires = None if never else _time(item.get("expires"))
         version = _text(item.get("clientVersion"), 60)
-        return {
+        advertised, enabled = _routes(item.get("advertisedRoutes")), _routes(item.get("enabledRoutes"))
+        waiting = None if advertised is None or enabled is None else len(set(advertised) - set(enabled))
+        lock_error = _text(item.get("tailnetLockError"))
+        device = {
             "name": _text(item["hostname"], 120),
             "dns_name": _text(item.get("name"), 255),
             "os": _text(item.get("os"), 40),
@@ -156,26 +211,50 @@ class TailnetService:
             "authorized": _flag(item.get("authorized")),
             "shared_from_another_tailnet": _flag(item.get("isExternal")),
             "tags": [tag[:60] for tag in tags[:20]],
+            # "Shields up": the device accepts no incoming tailnet connections.
+            "blocks_incoming": _flag(item.get("blocksIncomingConnections")),
+            # Counts only; the routes themselves describe private networks.
+            "routes_advertised": None if advertised is None else len(advertised),
+            "routes_waiting_for_approval": waiting,
+            "exit_node_offered": None if advertised is None else bool(EXIT_ROUTES & set(advertised)),
+            # Whether tailnet lock reports a problem; its text is not repeated.
+            "tailnet_lock_error": None if lock_error is None else bool(lock_error),
+            "connectivity": _connectivity(item.get("clientConnectivity")),
         }
+        found = set()
+        if expires is not None:
+            found.add("key_expired" if expires <= self.clock() else
+                      "key_expiring" if expires - self.clock() < KEY_EXPIRING_WITHIN else "")
+        found.add("waiting_for_approval" if device["authorized"] is False else "")
+        found.add("tailnet_lock_error" if device["tailnet_lock_error"] else "")
+        found.add("routes_waiting_for_approval" if waiting else "")
+        found.add("blocks_incoming" if device["blocks_incoming"] else "")
+        found.add("udp_blocked" if device["connectivity"] and device["connectivity"]["udp"] is False else "")
+        found.add("update_available" if device["update_available"] else "")
+        device["issues"] = [issue for issue in ISSUE_ORDER if issue in found]
+        return device
 
     def devices(self) -> dict:
-        body = self._get("/tailnet/-/devices")
+        # Every field: reachability (UDP, NAT, nearest relay), routes and shields-up come only with fields=all.
+        body = self._get("/tailnet/-/devices", {"fields": "all"})
         rows = body.get("devices")
         if not isinstance(rows, list):
             raise _invalid()
         devices = [self._device(item) for item in rows]
         devices.sort(key=lambda row: row["name"].lower())
+        summary = {"online": sum(row["online"] is True for row in devices),
+                   "offline": sum(row["online"] is False for row in devices),
+                   "with_issues": sum(bool(row["issues"]) for row in devices)}
         return self._result({"count": len(devices), "truncated": len(devices) > MAX_DEVICES,
-                             "devices": devices[:MAX_DEVICES]})
+                             "summary": summary, "devices": devices[:MAX_DEVICES]})
 
     def dns_settings(self) -> dict:
         body = self._get("/tailnet/-/dns/configuration")
-        preferences = body.get("preferences") or {}
-        nameservers = body.get("nameservers") or []
-        split = body.get("splitDNS") or {}
-        search = body.get("searchPaths") or []
-        if (not isinstance(preferences, dict) or not isinstance(nameservers, list) or not isinstance(split, dict)
-                or not isinstance(search, list) or not all(isinstance(item, str) for item in search)):
+        preferences = _shape(body.get("preferences"), dict)
+        nameservers = _shape(body.get("nameservers"), list)
+        split = _shape(body.get("splitDNS"), dict)
+        search = _shape(body.get("searchPaths"), list)
+        if not all(isinstance(item, str) for item in search):
             raise _invalid()
         resolvers = []
         for item in nameservers:
@@ -185,8 +264,8 @@ class TailnetService:
             resolvers.append({"address": address, "encrypted": address in DOH_RESOLVERS})
         domains = []
         for domain, servers in sorted(split.items()):
-            servers = servers or []
-            if not isinstance(domain, str) or not isinstance(servers, list):
+            servers = _shape(servers, list)
+            if not isinstance(domain, str):
                 raise _invalid()
             domains.append({"domain": domain[:255], "nameservers": [
                 _address(server.get("address") if isinstance(server, dict) else None) for server in servers]})

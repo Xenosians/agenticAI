@@ -683,6 +683,26 @@
       ]
     },
     {
+      "tool_name": "network_tailnet_devices",
+      "user_request": "Which Tailscale devices need attention right now?",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-health"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_devices",
+      "user_request": "Is any tailnet device stuck on a relay or blocking incoming connections?",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-health"
+      ]
+    },
+    {
       "tool_name": "network_tailnet_dns",
       "user_request": "Do our Tailscale devices resolve names over encrypted DNS?",
       "arguments": {},
@@ -965,6 +985,16 @@
     {
       "name": "tailnet-devices-terse",
       "user": "Remote access devices online right now?",
+      "allowed_tools": [
+        "network_tailnet_devices"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "network_tailnet_devices",
+      "expected_arguments": {}
+    },
+    {
+      "name": "tailnet-health-paraphrase",
+      "user": "Check the health of our Tailscale devices.",
       "allowed_tools": [
         "network_tailnet_devices"
       ],

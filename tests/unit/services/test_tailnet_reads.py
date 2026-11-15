@@ -26,7 +26,20 @@ DEVICE = {
     "keyExpiryDisabled": False, "authorized": True, "isExternal": False, "tags": ["tag:janus-lab"],
     "addresses": ["100.64.0.7", "fd7a:115c:a1e0::7"], "nodeKey": "nodekey:secret", "machineKey": "mkey:secret",
     "user": "tagged-devices", "advertisedRoutes": [], "enabledRoutes": [],
+    # Only with ?fields=all:
+    "blocksIncomingConnections": False, "tailnetLockError": "", "sshEnabled": False,
+    "clientConnectivity": {
+        "endpoints": ["203.0.113.9:41641", "192.168.100.20:41641"], "mappingVariesByDestIP": False,
+        "latency": {"Singapore": {"preferred": True, "latencyMs": 27.24}, "Tokyo": {"latencyMs": 90.1}},
+        "clientSupports": {"hairPinning": None, "ipv6": True, "pcp": False, "pmp": False, "udp": True, "upnp": False},
+    },
+    "postureStatus": {"lastSeen": "2026-11-02T02:59:00Z"}, "distro": {"name": "debian", "version": "13"},
 }
+HEALTHY = {"blocks_incoming": False, "routes_advertised": 0, "routes_waiting_for_approval": 0,
+           "exit_node_offered": False, "tailnet_lock_error": False,
+           "connectivity": {"udp": True, "hard_nat": False, "port_mapping": False,
+                            "nearest_relay": "Singapore", "relay_latency_ms": 27.2},
+           "issues": []}
 DNS = {
     "nameservers": [{"address": "1.1.1.1"}, {"address": "1.0.0.1"}],
     "splitDNS": {"corp.example": [{"address": "10.0.0.53"}]},
@@ -39,7 +52,8 @@ def service(routes, *, now=NOW, scopes="devices:core:read dns:read"):
     calls = []
 
     def handler(request):
-        calls.append((request.method, request.url.path, request.headers.get("authorization")))
+        calls.append((request.method, request.url.path, request.headers.get("authorization"),
+                      dict(request.url.params)))
         if request.url.path == "/api/v2/oauth/token":
             form = dict(item.split("=", 1) for item in request.content.decode().split("&"))
             assert form["grant_type"] == "client_credentials"
@@ -60,17 +74,94 @@ def test_devices_report_identity_reachability_and_key_state_without_addresses_or
     result = tailnet.devices()
 
     assert result["ok"] is True and result["status"] == "success" and result["provider"] == "tailscale"
-    assert result["data"] == {"count": 1, "truncated": False, "devices": [{
+    assert result["data"] == {"count": 1, "truncated": False,
+                              "summary": {"online": 1, "offline": 0, "with_issues": 0}, "devices": [{
         "name": "janus-router-lab", "dns_name": "janus-router-lab.tail1234.ts.net", "os": "linux",
         "client_version": "1.104.4", "update_available": False, "online": True,
         "last_seen": "2026-11-02T02:59:00Z", "key_expires": "2027-05-01T00:00:00Z",
         "key_expiry_disabled": False, "key_expires_in_days": 179, "authorized": True,
-        "shared_from_another_tailnet": False, "tags": ["tag:janus-lab"]}]}
+        "shared_from_another_tailnet": False, "tags": ["tag:janus-lab"], **HEALTHY}]}
     text = json.dumps(result)
-    for private in ("100.64.0.7", "fd7a:", "nodekey", "mkey", "client-secret", "token-"):
+    for private in ("100.64.0.7", "fd7a:", "nodekey", "mkey", "client-secret", "token-", "203.0.113.9",
+                    "192.168.100.20", "41641", "debian", "postureStatus"):
         assert private not in text
     assert [call[1] for call in calls] == ["/api/v2/oauth/token", "/api/v2/tailnet/-/devices"]
     assert calls[1][2] == "Bearer token-1"
+    # The connectivity facts come only with every field; the token's read scopes allow it.
+    assert calls[1][3] == {"fields": "all"}
+
+
+def test_each_condition_an_operator_should_look_at_is_named():
+    soon = {**DEVICE, "hostname": "laptop", "expires": (NOW + timedelta(days=13)).isoformat().replace("+00:00", "Z")}
+    expired = {**DEVICE, "hostname": "old-phone", "expires": "2026-10-01T00:00:00Z", "connectedToControl": False}
+    pending = {**DEVICE, "hostname": "new-server", "authorized": False, "updateAvailable": True,
+               "advertisedRoutes": ["192.168.100.0/24", "0.0.0.0/0", "::/0"], "enabledRoutes": ["192.168.100.0/24"]}
+    shielded = {**DEVICE, "hostname": "kiosk", "blocksIncomingConnections": True,
+                "tailnetLockError": "this node is locked out by tailnet lock",
+                "clientConnectivity": {**DEVICE["clientConnectivity"], "mappingVariesByDestIP": True,
+                                       "clientSupports": {**DEVICE["clientConnectivity"]["clientSupports"],
+                                                          "udp": False}}}
+    tailnet, _, _ = service({"/api/v2/tailnet/-/devices": (200, {"devices": [soon, expired, pending, shielded]})})
+
+    data = tailnet.devices()["data"]
+    rows = {row["name"]: row for row in data["devices"]}
+
+    assert rows["laptop"]["issues"] == ["key_expiring"]
+    assert rows["old-phone"]["issues"] == ["key_expired"] and rows["old-phone"]["online"] is False
+    assert rows["new-server"]["issues"] == ["waiting_for_approval", "routes_waiting_for_approval", "update_available"]
+    assert (rows["new-server"]["routes_advertised"], rows["new-server"]["routes_waiting_for_approval"],
+            rows["new-server"]["exit_node_offered"]) == (3, 2, True)
+    assert rows["kiosk"]["issues"] == ["tailnet_lock_error", "blocks_incoming", "udp_blocked"]
+    assert rows["kiosk"]["connectivity"]["hard_nat"] is True and rows["kiosk"]["tailnet_lock_error"] is True
+    assert "locked out" not in json.dumps(data)
+    assert data["summary"] == {"online": 3, "offline": 1, "with_issues": 4}
+
+
+def test_a_device_without_connectivity_facts_reports_them_as_unknown():
+    asleep = {key: value for key, value in DEVICE.items()
+              if key not in ("clientConnectivity", "blocksIncomingConnections", "tailnetLockError")}
+    quiet = {**DEVICE, "hostname": "phone", "connectedToControl": False,
+             "clientConnectivity": {"endpoints": [], "latency": {}, "mappingVariesByDestIP": False,
+                                    "clientSupports": {"udp": True}}}
+    tailnet, _, _ = service({"/api/v2/tailnet/-/devices": (200, {"devices": [asleep, quiet]})})
+
+    rows = {row["name"]: row for row in tailnet.devices()["data"]["devices"]}
+
+    assert rows["janus-router-lab"]["connectivity"] is None
+    assert rows["janus-router-lab"]["blocks_incoming"] is None and rows["janus-router-lab"]["issues"] == []
+    assert rows["phone"]["connectivity"] == {"udp": True, "hard_nat": False, "port_mapping": None,
+                                             "nearest_relay": None, "relay_latency_ms": None}
+
+
+def test_a_key_that_expired_hours_ago_is_expired_not_expiring():
+    lapsed = {**DEVICE, "hostname": "tablet", "expires": (NOW - timedelta(hours=2)).isoformat().replace("+00:00", "Z")}
+    tailnet, _, _ = service({"/api/v2/tailnet/-/devices": (200, {"devices": [lapsed]})})
+
+    row = tailnet.devices()["data"]["devices"][0]
+
+    assert row["key_expires_in_days"] == 0 and row["issues"] == ["key_expired"]
+
+
+@pytest.mark.parametrize("change", [
+    {"clientConnectivity": "nope"}, {"clientConnectivity": {"latency": []}},
+    {"clientConnectivity": {"latency": {"Singapore": {"preferred": True, "latencyMs": "fast"}}}},
+    {"clientConnectivity": {"clientSupports": {"udp": "yes"}}}, {"advertisedRoutes": "all"},
+    {"enabledRoutes": [7]}, {"blocksIncomingConnections": "no"}, {"tailnetLockError": 3},
+    {"clientConnectivity": {"clientSupports": []}}, {"tags": {}},
+])
+def test_malformed_health_facts_are_refused(change):
+    tailnet, _, _ = service({"/api/v2/tailnet/-/devices": (200, {"devices": [{**DEVICE, **change}]})})
+    with pytest.raises(RuntimeError, match="Tailscale"):
+        tailnet.devices()
+
+
+@pytest.mark.parametrize("change", [
+    {"preferences": []}, {"splitDNS": []}, {"nameservers": {}}, {"searchPaths": ""},
+])
+def test_malformed_dns_settings_are_refused_not_read_as_empty(change):
+    tailnet, _, _ = service({"/api/v2/tailnet/-/dns/configuration": (200, {**DNS, **change})})
+    with pytest.raises(RuntimeError, match="Tailscale"):
+        tailnet.dns_settings()
 
 
 def test_a_key_that_has_expired_or_is_close_to_expiring_is_stated():

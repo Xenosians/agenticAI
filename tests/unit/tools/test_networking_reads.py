@@ -122,6 +122,52 @@ def test_tailnet_devices_read_in_words():
     ]
 
 
+def _health_device(**changes):
+    device = {"name": "hummingbird", "dns_name": "hummingbird.tail1234.ts.net", "os": "linux",
+              "client_version": "1.104.4", "update_available": False, "online": True, "last_seen": None,
+              "key_expires": "2027-05-01T00:00:00Z", "key_expiry_disabled": False, "key_expires_in_days": 179,
+              "authorized": True, "shared_from_another_tailnet": False, "tags": [], "blocks_incoming": False,
+              "routes_advertised": 0, "routes_waiting_for_approval": 0, "exit_node_offered": False,
+              "tailnet_lock_error": False,
+              "connectivity": {"udp": True, "hard_nat": False, "port_mapping": False,
+                               "nearest_relay": "Singapore", "relay_latency_ms": 27.2},
+              "issues": []}
+    return {**device, **changes}
+
+
+def test_tailnet_device_health_reads_in_words():
+    text = TOOLS["network_tailnet_devices"]["result_formatter"]({"ok": True, "data": {
+        "count": 3, "truncated": False, "summary": {"online": 2, "offline": 1, "with_issues": 2}, "devices": [
+            _health_device(),
+            _health_device(name="kiosk", blocks_incoming=True, tailnet_lock_error=True,
+                           connectivity={"udp": False, "hard_nat": True, "port_mapping": None,
+                                         "nearest_relay": "Tokyo", "relay_latency_ms": 90.1},
+                           issues=["tailnet_lock_error", "blocks_incoming", "udp_blocked"]),
+            _health_device(name="new-server", online=False, last_seen="2026-11-01T00:00:00Z", authorized=False,
+                           routes_advertised=3, routes_waiting_for_approval=2, exit_node_offered=True,
+                           connectivity=None,
+                           issues=["waiting_for_approval", "routes_waiting_for_approval"])]}})
+    assert text.splitlines() == [
+        "3 device(s) on the tailnet: 2 online, 1 offline; 2 need attention.",
+        "hummingbird (linux, Tailscale 1.104.4): online; key expires in 179 days; direct connections possible, "
+        "nearest relay Singapore 27.2 ms",
+        "kiosk (linux, Tailscale 1.104.4): online; key expires in 179 days; tailnet lock reports a problem; "
+        "blocks incoming connections; UDP blocked, so traffic goes through a relay; "
+        "hard NAT (more connections relayed); nearest relay Tokyo 90.1 ms",
+        "new-server (linux, Tailscale 1.104.4): offline since 2026-11-01; key expires in 179 days; "
+        "waiting for approval; 2 of 3 advertised routes waiting for approval; offers itself as an exit node",
+    ]
+
+
+def test_a_key_that_lapsed_today_reads_as_expired_not_as_expiring_in_0_days():
+    text = TOOLS["network_tailnet_devices"]["result_formatter"]({"ok": True, "data": {
+        "count": 1, "truncated": False, "summary": {"online": 0, "offline": 1, "with_issues": 1}, "devices": [
+            _health_device(name="tablet", online=False, last_seen="2026-11-02T01:00:00Z", key_expires_in_days=0,
+                           connectivity=None, issues=["key_expired"])]}})
+    assert text.splitlines()[1] == "tablet (linux, Tailscale 1.104.4): offline since 2026-11-02; key expired"
+    assert text.splitlines()[0] == "1 device(s) on the tailnet: 0 online, 1 offline; 1 needs attention."
+
+
 def test_tailnet_dns_reads_in_words():
     text = TOOLS["network_tailnet_dns"]["result_formatter"]({"ok": True, "data": {
         "magic_dns": True, "override_local_dns": True,

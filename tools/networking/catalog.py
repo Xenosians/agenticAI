@@ -83,28 +83,68 @@ def _tailscale(value: bool | None, on: str, off: str) -> str:
     return on if value else off
 
 
+def _reachability(connectivity: dict | None) -> list[str]:
+    """How the device reaches peers, from its last report. Nothing is said when it sent none."""
+    if not connectivity:
+        return []
+    relay = []
+    if connectivity["nearest_relay"]:
+        latency = connectivity["relay_latency_ms"]
+        relay = [f"nearest relay {connectivity['nearest_relay']}" + (f" {latency} ms" if latency is not None else "")]
+    degraded = (["UDP blocked, so traffic goes through a relay"] if connectivity["udp"] is False else []) + (
+        ["hard NAT (more connections relayed)"] if connectivity["hard_nat"] else [])
+    if degraded:
+        return degraded + relay
+    if connectivity["udp"]:
+        return [", ".join(["direct connections possible"] + relay)]
+    return relay
+
+
 def format_tailnet_devices(result: dict) -> str:
     if not result.get("ok"):
         return "Tailscale read did not succeed."
     data = result["data"]
-    lines = [f"{data['count']} device(s) on the tailnet" + (" (list cut to the first 200)" if data["truncated"] else "") + ":"]
+    head = f"{data['count']} device(s) on the tailnet" + (" (list cut to the first 200)" if data["truncated"] else "")
+    summary = data.get("summary")
+    if summary:
+        attention = summary["with_issues"]
+        head += (f": {summary['online']} online, {summary['offline']} offline; "
+                 + (f"{attention} need{'s' if attention == 1 else ''} attention." if attention else "none need attention."))
+    else:
+        head += ":"
+    lines = [head]
     for device in data["devices"]:
         about = ", ".join(part for part in (device["os"], device["client_version"] and f"Tailscale {device['client_version']}") if part)
         state = ("online" if device["online"] else
                  "offline since " + device["last_seen"][:10] if device["last_seen"] else "offline")
+        days = device["key_expires_in_days"]
         if device["key_expiry_disabled"]:
             key = "key never expires"
-        elif device["key_expires_in_days"] is None:
+        elif days is None:
             key = "key expiry unknown"
-        elif device["key_expires_in_days"] < 0:
-            key = f"key expired {-device['key_expires_in_days']} days ago"
+        elif days < 0:
+            key = f"key expired {-days} days ago"
+        elif "key_expired" in device.get("issues", ()):
+            # Lapsed within the last day: the whole-day count is still 0.
+            key = "key expired"
         else:
-            key = f"key expires in {device['key_expires_in_days']} days"
+            key = f"key expires in {days} days"
         parts = [state, key]
-        if device["update_available"]:
-            parts.append("update available")
         if device["authorized"] is False:
             parts.append("waiting for approval")
+        if device.get("tailnet_lock_error"):
+            parts.append("tailnet lock reports a problem")
+        if device.get("routes_waiting_for_approval"):
+            parts.append(f"{device['routes_waiting_for_approval']} of {device['routes_advertised']} advertised routes "
+                         "waiting for approval")
+        if device.get("exit_node_offered"):
+            parts.append("offers itself as an exit node")
+        if device.get("blocks_incoming"):
+            parts.append("blocks incoming connections")
+        if device["online"]:
+            parts += _reachability(device.get("connectivity"))
+        if device["update_available"]:
+            parts.append("update available")
         if device["shared_from_another_tailnet"]:
             parts.append("shared from another tailnet")
         if device["tags"]:
@@ -200,8 +240,10 @@ NETWORKING_TOOLS = {
 TAILNET_TOOLS = {
     "network_tailnet_devices": _read(
         "List the devices on the Tailscale network (tailnet) with their operating system, Tailscale version, "
-        "whether each is online, when its key expires, pending updates and tags. Use this for remote-access "
-        "devices and VPN reachability. Read only; it does not approve, expire or remove devices.",
+        "whether each is online, when its key expires, pending updates and tags, and each device's health: "
+        "approval, routes waiting for approval, blocked incoming connections, tailnet lock problems and how it "
+        "reaches peers (UDP, NAT, nearest relay). Use this for remote-access devices, VPN reachability and "
+        "tailnet health. Read only; it does not approve, expire or remove devices.",
         "network.tailnet.device", "network.tailnet.device.read", format_tailnet_devices),
     "network_tailnet_dns": _read(
         "Read the Tailscale network's DNS settings: MagicDNS, which resolvers devices use and whether they "

@@ -2091,6 +2091,8 @@ from api.extensions import router as extension_router
 app.include_router(extension_router)
 from api.proxmox_actions import router as proxmox_router
 app.include_router(proxmox_router)
+from api.tailnet_overview import router as tailnet_router
+app.include_router(tailnet_router)
 from api.learning import router as learning_router
 app.include_router(learning_router)
 from api.engineering import router as engineering_router

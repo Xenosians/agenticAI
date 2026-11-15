@@ -35,8 +35,19 @@ it expires, so most reads make one API request.
 
 | Tool | Reads | Notes |
 |---|---|---|
-| `network_tailnet_devices` | `GET /tailnet/-/devices` | Each device's name, OS, Tailscale version, online state, last seen, key expiry (days left, or never), pending update, approval and tags (at most 200). Tailscale addresses, node and machine keys and user details are not returned. |
+| `network_tailnet_devices` | `GET /tailnet/-/devices?fields=all` | Each device's name, OS, Tailscale version, online state, last seen, key expiry (days left, or never), pending update, approval and tags (at most 200), plus its health: whether it blocks incoming connections, how many advertised routes wait for approval, whether it offers itself as an exit node, whether tailnet lock reports a problem, and how it reaches peers (UDP, hard NAT, nearest relay and its latency, from the device's last report). Each device lists its `issues` (below), and a summary counts online, offline and devices needing attention. Tailscale addresses, endpoints, route prefixes, node and machine keys, posture data and user details are not returned. |
 | `network_tailnet_dns` | `GET /tailnet/-/dns/configuration` | MagicDNS, whether devices use the tailnet's resolvers instead of the local network's, each resolver and whether Tailscale reaches it over DNS-over-HTTPS, split DNS and search domains. |
+
+Device issues, most urgent first: `key_expired`, `key_expiring` (within 14
+days), `waiting_for_approval`, `tailnet_lock_error`,
+`routes_waiting_for_approval`, `blocks_incoming`, `udp_blocked` (traffic goes
+through a relay) and `update_available`. A device that sent no connectivity
+report has `connectivity: null`; that is unknown, not healthy.
+
+The backend reads both through `GET /internal/v1/tailnet/overview` (internal
+token) and serves them to the signed-in owner at `GET /api/v1/tailnet/overview`
+for the Operations page. Devices decide whether the overview succeeds; a failed
+DNS read is named beside them in `dns_error`.
 
 A resolver counts as encrypted when it is one of the public resolvers Tailscale
 upgrades to DNS-over-HTTPS automatically (Cloudflare, Google, Quad9). That is
