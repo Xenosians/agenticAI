@@ -242,6 +242,9 @@ PROXMOX_TOOLS = {
             "backups and capacity. Read only; it never connects to a database or runs queries.",
             "proxmox.database", "proxmox.database.inventory"),
         "result_formatter": format_database_inventory,
+        # The formatter states every fact in words (including unknown coverage
+        # and the tagging hint); synthesis works from that, not the raw flags.
+        "synthesis_evidence": "answer",
     },
     "proxmox_guest_start": _power(
         "start",

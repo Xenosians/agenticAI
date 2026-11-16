@@ -35,6 +35,19 @@ def test_answer_is_the_evidence_when_there_is_no_structured_result():
     assert evidence["answer"] == "Only prose."
 
 
+def test_a_tool_whose_answer_is_its_complete_reading_gives_synthesis_that_reading():
+    # Live, the synthesis model misread the database inventory's raw fields: it
+    # took backup_coverage_known=true for "no visibility" and invented missing
+    # backup jobs. The tool's own formatter states the same facts in words.
+    reading = 'No Proxmox guest is tagged as a database host. Tag a VM or container "db" in Proxmox.'
+    evidence = synthesis_evidence(worker_result(
+        agent_name="proxmox-specialist", proposed_tool="proxmox_database_inventory", proposed_arguments={},
+        tool_result={"ok": True, "data": {"databases": [], "backup_coverage_known": True}}, answer=reading))
+    assert evidence["answer"] == reading
+    assert "tool_result" not in evidence
+    assert evidence["proposed_tool"] == "proxmox_database_inventory"
+
+
 class RecordingInference:
     def __init__(self):
         self.calls = []

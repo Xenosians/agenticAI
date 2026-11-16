@@ -9,6 +9,7 @@ from config import (
 from subagents.llm.runtime.stages import InferenceStage
 
 from services.capability_context import capability_messages
+from tools.registry import get_tool
 from services.extensions.context import answer_token_limit
 
 from subagents.core.orchestration.conversation_context import (
@@ -58,8 +59,13 @@ def synthesis_evidence(result: AgentResult) -> dict:
         for field in SYNTHESIS_FIELDS
         if getattr(result, field) is not None
     }
-    if result.tool_result is None and result.answer:
+    tool = get_tool(result.proposed_tool) if result.proposed_tool else None
+    answer_is_reading = (tool or {}).get("synthesis_evidence") == "answer"
+    if result.answer and (result.tool_result is None or answer_is_reading):
         # Without a structured result the specialist's answer is the evidence.
+        # A tool whose formatter states its complete reading in words declares
+        # synthesis_evidence="answer": its raw flags are not reinterpreted.
+        evidence.pop("tool_result", None)
         evidence["answer"] = result.answer
     return evidence
 
