@@ -191,6 +191,26 @@ BACKUP_JOB_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
 DAY_SECONDS = 86_400
 # HA: a resource id is vm:<vmid> or ct:<vmid>; a state word is lower case,
 # with the spaces Proxmox uses ("not found", "clearing error flag").
+# One node's maintenance state (node_maintenance): most urgent issue first.
+MAINTENANCE_ISSUES = ("service_not_running", "certificate_expired", "certificate_expiring",
+                      "enterprise_repository_without_subscription", "no_update_repository",
+                      "reboot_for_newer_kernel", "test_repository_enabled")
+CERTIFICATE_EXPIRING_DAYS = 30
+PVE_VERSION = re.compile(r"pve-manager/([0-9]+(?:\.[0-9]+){1,3})(?:/[0-9a-f]+)?")
+KERNEL_RELEASE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+-[0-9]+-pve")
+# Installed kernels are proxmox-kernel-<release>-signed (or older pve-kernel-<release>); the
+# proxmox-kernel-<series> meta packages and proxmox-kernel-helper are not kernels.
+KERNEL_PACKAGE = re.compile(r"(?:proxmox|pve)-kernel-([0-9]+\.[0-9]+\.[0-9]+-[0-9]+-pve)(?:-signed)?")
+SERVICE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.@-]{0,63}")
+REPOSITORY_HANDLE = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
+# Certificate files pveproxy can serve, in the order it prefers them.
+SERVED_CERTIFICATES = ("pveproxy-ssl.pem", "pve-ssl.pem")
+CERTIFICATE_ROLES = {"pve-root-ca.pem": "cluster_ca", "pve-ssl.pem": "node", "pveproxy-ssl.pem": "custom"}
+PROXMOX_CA_NAME = "/CN=Proxmox Virtual Environment/"
+KEY_TYPES = {"rsaEncryption": "RSA", "id-ecPublicKey": "EC", "ED25519": "Ed25519", "ED448": "Ed448"}
+SUBSCRIPTION_STATES = {"active": "active", "notfound": "none", "new": "not_checked", "expired": "expired",
+                       "invalid": "invalid", "suspended": "suspended"}
+
 HA_SID = re.compile(r"(vm|ct):([0-9]{1,9})")
 HA_WORD = re.compile(r"[a-z][a-z_ ]{0,31}")
 # The state word in a manager or node status text ("pve-a (active, ...)"),
@@ -632,6 +652,156 @@ class ProxmoxService:
                         "not_reported": sum(row["active"] is None for row in interfaces)},
             "missing_ports": missing,
             "interfaces": interfaces[:MAX_ROWS]})
+
+    def node_maintenance(self, node: str) -> dict:
+        """One node's maintenance state: version, kernels, services, certificates and update source.
+
+        Each section is its own read; one Proxmox refuses (or, on an older
+        release, does not have) is listed in `unreadable` and is None, never
+        healthy. Certificate subjects,
+        issuers, SANs, fingerprints and PEM, the subscription key and server
+        id, and repository paths never leave the service. Pending package
+        updates need Sys.Modify (apt/update), which Janus does not hold.
+        """
+        if not isinstance(node, str) or not NODE_ID.fullmatch(node):
+            raise ValueError("Enter one exact Proxmox node name.")
+        unreadable: list[str] = []
+
+        def section(name: str, path: str):
+            try:
+                return self._get(path)
+            except (ProxmoxRefused, ProviderResourceNotFound):
+                unreadable.append(name)
+                return None
+
+        status = self._get(f"/nodes/{node}/status")
+        if not isinstance(status, dict):
+            raise _invalid()
+        version = PVE_VERSION.fullmatch(_text(status, "pveversion", required=True))
+        if not version:
+            raise _invalid()
+        current = status.get("current-kernel")
+        running = _text(current, "release") if isinstance(current, dict) else None
+        if running is None:
+            # Before Proxmox VE 8 only kversion ("Linux <release> #1 SMP ...") names the running kernel.
+            words = (_text(status, "kversion", limit=400) or "").split()
+            running = words[1] if len(words) > 1 else None
+        if running is not None and not KERNEL_RELEASE.fullmatch(running):
+            raise _invalid()
+        boot = status.get("boot-info")
+        boot = {"mode": _text(boot, "mode"), "secure_boot": _boolean(boot, "secureboot")} if isinstance(boot, dict) else None
+
+        kernels = set()
+        for row in self._rows(self._get(f"/nodes/{node}/apt/versions"), required=("Package",)):
+            match = KERNEL_PACKAGE.fullmatch(row["Package"])
+            if match and row.get("CurrentState") == "Installed":
+                kernels.add(match.group(1))
+        def release_key(release: str):
+            return tuple(int(part) for part in re.findall(r"[0-9]+", release))
+        newest = max(kernels | {running} - {None}, key=release_key, default=None)
+
+        cluster = section("cluster", "/cluster/status")
+        in_cluster = None if cluster is None else any(
+            isinstance(row, dict) and row.get("type") == "cluster" for row in self._rows(cluster))
+
+        services = section("services", f"/nodes/{node}/services")
+        service_summary = None
+        if services is not None:
+            rows = self._rows(services, required=("name", "active-state", "unit-state"))
+            not_running, expected_stopped, turned_off, missing, running_count = [], [], [], 0, 0
+            for row in rows:
+                name = row["name"]
+                if not SERVICE_NAME.fullmatch(name):
+                    raise _invalid()
+                active, unit_state = row["active-state"], row["unit-state"]
+                if unit_state == "not-found":
+                    missing += 1
+                elif active == "active":
+                    running_count += 1
+                elif unit_state == "disabled":
+                    turned_off.append(name)
+                elif name == "corosync" and in_cluster is False:
+                    # corosync starts only when the node has a cluster configuration.
+                    expected_stopped.append(name)
+                else:
+                    not_running.append({"name": name, "state": _text(row, "active-state", required=True)})
+            service_summary = {"installed": len(rows) - missing, "running": running_count,
+                               "not_running": sorted(not_running, key=lambda row: row["name"]),
+                               "expected_stopped": sorted(expected_stopped), "turned_off": sorted(turned_off),
+                               "not_installed": missing}
+
+        certificates = section("certificates", f"/nodes/{node}/certificates/info")
+        certificate_rows = None
+        if certificates is not None:
+            now = time.time()
+            certificate_rows = []
+            names = set()
+            for row in self._rows(certificates, required=("filename",)):
+                not_after = row.get("notafter")
+                if type(not_after) is not int:
+                    raise _invalid()
+                file = row["filename"]
+                names.add(file)
+                issuer, subject = row.get("issuer"), row.get("subject")
+                key_type = KEY_TYPES.get(row.get("public-key-type"), "other")
+                bits = row.get("public-key-bits")
+                certificate_rows.append({
+                    "file": file, "role": CERTIFICATE_ROLES.get(file, "other"), "served": False,
+                    "issuer": "self_signed" if issuer == subject else
+                              "proxmox_ca" if isinstance(issuer, str) and issuer.startswith(PROXMOX_CA_NAME) else
+                              "other_ca",
+                    "key": f"{key_type} {bits}" if type(bits) is int else key_type,
+                    "days_left": math.floor((not_after - now) / DAY_SECONDS)})
+            served = next((name for name in SERVED_CERTIFICATES if name in names), None)
+            for row in certificate_rows:
+                row["served"] = row["file"] == served
+            certificate_rows.sort(key=lambda row: (not row["served"], row["days_left"]))
+
+        subscription = section("subscription", f"/nodes/{node}/subscription")
+        if subscription is not None:
+            if not isinstance(subscription, dict):
+                raise _invalid()
+            subscription = SUBSCRIPTION_STATES.get(_text(subscription, "status") or "", "unknown")
+
+        repositories = section("repositories", f"/nodes/{node}/apt/repositories")
+        repository_summary = None
+        if repositories is not None:
+            if not isinstance(repositories, dict) or not isinstance(repositories.get("standard-repos"), list):
+                raise _invalid()
+            enabled, turned_off_repos = [], []
+            for row in self._rows(repositories["standard-repos"], required=("handle",)):
+                handle, state = row["handle"], row.get("status")
+                if not REPOSITORY_HANDLE.fullmatch(handle) or state not in (None, 0, 1) or type(state) is bool:
+                    raise _invalid()
+                if state == 1:
+                    enabled.append(handle)
+                elif state == 0:
+                    turned_off_repos.append(handle)
+            errors = repositories.get("errors")
+            repository_summary = {"enabled": enabled, "turned_off": turned_off_repos,
+                                  "errors": len(errors) if isinstance(errors, list) else 0}
+
+        found = {
+            "service_not_running": bool(service_summary and service_summary["not_running"]),
+            "certificate_expired": any(row["served"] and row["days_left"] < 0 for row in certificate_rows or []),
+            "certificate_expiring": any(
+                0 <= row["days_left"] < CERTIFICATE_EXPIRING_DAYS for row in certificate_rows or []),
+            "enterprise_repository_without_subscription": bool(
+                repository_summary and "enterprise" in repository_summary["enabled"]
+                and subscription is not None and subscription != "active"),
+            "no_update_repository": bool(repository_summary and not set(repository_summary["enabled"])
+                                         & {"enterprise", "no-subscription", "test"}),
+            "reboot_for_newer_kernel": bool(running and newest and newest != running),
+            "test_repository_enabled": bool(repository_summary and "test" in repository_summary["enabled"]),
+        }
+        return self._result({
+            "schema": "proxmox-node-maintenance.v1", "node": node, "version": version.group(1),
+            "kernel": {"running": running, "newest_installed": newest, "installed": len(kernels)},
+            "boot": boot, "in_cluster": in_cluster, "services": service_summary,
+            "certificates": certificate_rows, "subscription": subscription, "repositories": repository_summary,
+            "issues": [issue for issue in MAINTENANCE_ISSUES if found[issue]],
+            "unreadable": unreadable,
+        })
 
     def node_disks(self, node: str) -> dict:
         """Physical disks of one node: health and wear, never serials, WWNs or by-id links."""

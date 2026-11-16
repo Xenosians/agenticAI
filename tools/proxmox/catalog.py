@@ -198,6 +198,84 @@ def format_ha_status(result: dict) -> str:
     return "\n".join(lines)
 
 
+MAINTENANCE_ISSUE_WORDS = {
+    "certificate_expired": "a served certificate has expired",
+    "certificate_expiring": "a certificate expires within 30 days",
+    "enterprise_repository_without_subscription": "the enterprise repository is on without a subscription, so "
+                                                  "updates from it fail",
+    "no_update_repository": "no Proxmox update repository is on",
+    "test_repository_enabled": "the test repository is on",
+}
+CERTIFICATE_ROLE_WORDS = {"node": "served to browsers", "cluster_ca": "cluster CA", "custom": "uploaded",
+                          "other": "other"}
+CERTIFICATE_ISSUER_WORDS = {"proxmox_ca": "signed by the Proxmox cluster CA", "self_signed": "self-signed",
+                            "other_ca": "signed by another CA"}
+SUBSCRIPTION_WORDS = {"active": "active subscription", "none": "no subscription", "expired": "subscription expired",
+                      "invalid": "subscription invalid", "suspended": "subscription suspended",
+                      "not_checked": "subscription not checked yet", "unknown": "subscription state unknown"}
+
+
+def _days(days: int) -> str:
+    if days < 0:
+        return f"expired {-days} day{'s' if -days != 1 else ''} ago"
+    return f"expires in {days} day{'s' if days != 1 else ''}"
+
+
+def format_node_maintenance(result: dict) -> str:
+    if not result.get("ok"):
+        return "The Proxmox read did not succeed."
+    data = result["data"]
+    kernel, boot = data["kernel"], data["boot"]
+    head = f"Node {data['node']} runs Proxmox VE {data['version']}"
+    if kernel["running"]:
+        head += f" on kernel {kernel['running']}"
+    if boot and boot["mode"]:
+        head += "; boots " + ("EFI" if boot["mode"] == "efi" else "legacy BIOS" if boot["mode"] == "legacy-bios"
+                              or boot["mode"] == "legacy" else boot["mode"])
+        if boot["mode"] == "efi" and boot["secure_boot"] is not None:
+            head += " with Secure Boot " + ("on" if boot["secure_boot"] else "off")
+    lines = [head + "."]
+    services = data["services"]
+    attention = []
+    for issue in data["issues"]:
+        if issue == "service_not_running":
+            attention.append(", ".join(f"{row['name']} {row['state']}" for row in services["not_running"]))
+        elif issue == "reboot_for_newer_kernel":
+            attention.append(f"kernel {kernel['newest_installed']} is installed but not running; a reboot starts it")
+        else:
+            attention.append(MAINTENANCE_ISSUE_WORDS[issue])
+    lines.append("Needs attention: " + "; ".join(attention) + "." if attention else "Nothing needs attention.")
+    if services:
+        line = f"Services: {services['running']} of {services['installed']} running"
+        if services["not_running"]:
+            line += "; not running: " + ", ".join(f"{row['name']} ({row['state']})" for row in services["not_running"])
+        if services["expected_stopped"]:
+            line += "; " + ", ".join(services["expected_stopped"]) + " stopped as expected (the node is not in a cluster)"
+        if services["turned_off"]:
+            line += "; turned off: " + ", ".join(services["turned_off"])
+        lines.append(line + ".")
+    if data["certificates"]:
+        lines.append("Certificates: " + "; ".join(
+            f"{row['file']} ({CERTIFICATE_ROLE_WORDS.get(row['role'], row['role'])}, "
+            f"{CERTIFICATE_ISSUER_WORDS[row['issuer']]}, {row['key']}) {_days(row['days_left'])}"
+            for row in data["certificates"]) + ".")
+    repositories = data["repositories"]
+    if repositories:
+        line = "Updates come from: " + (", ".join(repositories["enabled"]) or "no repository")
+        if repositories["turned_off"]:
+            line += "; turned off: " + ", ".join(repositories["turned_off"])
+        if repositories["errors"]:
+            line += f"; {repositories['errors']} repository error" + ("s" if repositories["errors"] != 1 else "")
+        if data["subscription"]:
+            line += "; " + SUBSCRIPTION_WORDS.get(data["subscription"], data["subscription"])
+        lines.append(line + ".")
+    if data["unreadable"]:
+        lines.append("Not readable with Janus's access: " + ", ".join(data["unreadable"]) + ".")
+    else:
+        lines.append("Pending package updates are not read: that needs a privilege Janus does not hold.")
+    return "\n".join(lines)
+
+
 def format_node_network(result: dict) -> str:
     if not result.get("ok"):
         return "The Proxmox read did not succeed."
@@ -534,6 +612,18 @@ PROXMOX_TOOLS = {
             "proxmox.network", "proxmox.network.list", ("node",),
             {"node": {"type": "str", "description": "Exact node name returned by proxmox_nodes."}}),
         "result_formatter": format_node_network,
+        "synthesis_evidence": "answer",
+    },
+    "proxmox_node_maintenance": {
+        **_read(
+            "Show the maintenance state of one exact Proxmox node: Proxmox VE version, running kernel and whether "
+            "a newer installed kernel waits for a reboot, boot mode and Secure Boot, which Proxmox services are "
+            "not running, when its certificates expire, the subscription and which update repositories are on. "
+            "Requires the node name exactly as listed by Proxmox. Read only; it never shows certificate names, "
+            "fingerprints or the subscription key, and never installs updates.",
+            "proxmox.node.maintenance", "proxmox.node.maintenance", ("node",),
+            {"node": {"type": "str", "description": "Exact node name returned by proxmox_nodes."}}),
+        "result_formatter": format_node_maintenance,
         "synthesis_evidence": "answer",
     },
     "proxmox_disk_smart": {

@@ -183,6 +183,38 @@ def _endpoint(host: str, port: str) -> str:
     return host if port == "*" else f"{host}:{port}"
 
 
+# Tailscale policy words a reading may use, defined once so neither a reader nor a model has to guess them
+# (live, "check autogroup:member -> autogroup:self" was retold without check mode's fresh sign-in).
+TAILNET_POLICY_TERMS = {
+    "accept": "SSH without a fresh sign-in",
+    "check": "SSH asks for a fresh sign-in unless the user signed in recently",
+    "*": "any user, device or address",
+    "autogroup:member": "every member of the tailnet",
+    "autogroup:tagged": "every tagged device",
+    "autogroup:self": "the user's own devices",
+    "autogroup:nonroot": "any local user except root",
+    "autogroup:admin": "the tailnet's admins",
+    "autogroup:owner": "the tailnet's owner",
+    "autogroup:internet": "the internet through an exit node",
+    "autogroup:danger-all": "any source, including devices outside the tailnet",
+    "a named user": "a local account other than root, name not shown",
+}
+
+
+def _policy_terms(data: dict) -> str | None:
+    used = []
+    for rule in data["rules"]:
+        used += rule["sources"] + rule["destinations"]
+    for rule in data["ssh"]:
+        used += [rule["action"], *rule["sources"], *rule["destinations"], *rule["users"]]
+    for row in data["tag_owners"]:
+        used += row["owners"]
+    defined = [term for term in dict.fromkeys(used) if term in TAILNET_POLICY_TERMS]
+    if not defined:
+        return None
+    return "Words: " + "; ".join(f"{term} = {TAILNET_POLICY_TERMS[term]}" for term in defined) + "."
+
+
 def format_tailnet_policy(result: dict) -> str:
     if not result.get("ok"):
         return "Tailscale read did not succeed."
@@ -224,6 +256,9 @@ def format_tailnet_policy(result: dict) -> str:
         lines.append("Groups: " + "; ".join(f"{row['name']} ({row['members']} members)" for row in data["groups"]) + ".")
     if data["other_sections"]:
         lines.append("Also set: " + ", ".join(data["other_sections"]) + ".")
+    terms = _policy_terms(data)
+    if terms:
+        lines.append(terms)
     lines.append('Users, host aliases and addresses are shown as "a user", "a host alias" and "an address".')
     return "\n".join(lines)
 

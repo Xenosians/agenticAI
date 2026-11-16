@@ -226,6 +226,9 @@ def test_the_tailnet_policy_reads_in_words_with_users_and_addresses_masked():
         "Tag owners: tag:janus-lab by autogroup:admin.",
         "Groups: group:ops (2 members).",
         "Also set: nodeAttrs.",
+        "Words: autogroup:member = every member of the tailnet; * = any user, device or address; check = SSH asks "
+        "for a fresh sign-in unless the user signed in recently; autogroup:self = the user's own devices; "
+        "autogroup:nonroot = any local user except root; autogroup:admin = the tailnet's admins.",
         "Users, host aliases and addresses are shown as \"a user\", \"a host alias\" and \"an address\".",
     ]
     git = dict(data, externally_managed=True, other_sections=[], groups=[], hosts=0,
@@ -233,6 +236,24 @@ def test_the_tailnet_policy_reads_in_words_with_users_and_addresses_masked():
     text = formatter({"ok": True, "data": git})
     assert "managed outside the admin console (GitOps)" in text and "Every member can reach" not in text
     assert formatter({"ok": False}) == "Tailscale read did not succeed."
+
+
+def test_the_policy_reading_defines_only_the_terms_it_uses():
+    # Live, synthesis read "check autogroup:member -> autogroup:self" as "members can SSH to themselves" and
+    # dropped the fresh sign-in that check mode requires. The reading now says what its terms mean.
+    formatter = TOOLS["network_tailnet_policy"]["result_formatter"]
+    data = {"schema": "tailnet-policy.v1", "externally_managed": None, "truncated": False,
+            "rules": [{"kind": "acl", "sources": ["tag:ci"], "destinations": ["tag:db"], "ports": ["5432"],
+                       "app_capabilities": 0}],
+            "ssh": [{"action": "accept", "sources": ["autogroup:tagged"], "destinations": ["tag:db"],
+                     "users": ["a named user"]}],
+            "tag_owners": [], "groups": [], "hosts": 0, "tests": 0, "other_sections": [],
+            "summary": {"rules": 1, "ssh_rules": 1, "tags": 0, "groups": 0, "open_to_all_members": False}}
+    words = [line for line in formatter({"ok": True, "data": data}).splitlines() if line.startswith("Words: ")]
+    assert words == ["Words: accept = SSH without a fresh sign-in; autogroup:tagged = every tagged device; "
+                     "a named user = a local account other than root, name not shown."]
+    empty = dict(data, rules=[], ssh=[], summary=dict(data["summary"], rules=0, ssh_rules=0))
+    assert not [line for line in formatter({"ok": True, "data": empty}).splitlines() if line.startswith("Words: ")]
 
 
 def test_device_posture_reads_in_words_and_names_what_needs_attention():

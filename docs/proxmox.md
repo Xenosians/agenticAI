@@ -145,6 +145,28 @@ problem; so do a resource in `error`, `fence`, `recovery`, `freeze`,
 `deleting` or `not found`. Resource comments are operator free text and
 stay in the service. It cannot change HA, migrate or fence anything.
 
+## Node maintenance
+
+`proxmox_node_maintenance` reads one exact node's maintenance state, each
+part from its own read (all allowed by `Sys.Audit`):
+
+| Part | Read | Kept |
+| --- | --- | --- |
+| Version, kernel, boot | `GET /nodes/{node}/status`, `GET /nodes/{node}/apt/versions` | Proxmox VE version, running kernel, newest installed kernel (a newer one means a reboot is due), EFI or legacy boot and Secure Boot |
+| Services | `GET /nodes/{node}/services` | Running count; services not running with their state; services turned off; corosync stopped is expected only when `GET /cluster/status` shows no cluster |
+| Certificates | `GET /nodes/{node}/certificates/info` | File, role, whether pveproxy serves it, issuer kind (Proxmox CA, self-signed, other CA), key type and size, days left |
+| Updates | `GET /nodes/{node}/subscription`, `GET /nodes/{node}/apt/repositories` | Subscription state; which standard repositories are on or off; repository error count |
+
+Issues, most urgent first: `service_not_running`, `certificate_expired` (the
+served certificate), `certificate_expiring` (within 30 days),
+`enterprise_repository_without_subscription`, `no_update_repository`,
+`reboot_for_newer_kernel`, `test_repository_enabled`. A part Proxmox refuses
+(or an older release does not have) is listed as unreadable and is unknown,
+never healthy. Certificate subjects, issuers, SANs, fingerprints and PEM, the
+subscription key and server id, and repository file paths never leave the
+service. Pending package updates need `Sys.Modify` (`GET apt/update`), which
+Janus does not hold, so they are not read; nothing is installed or rebooted.
+
 The live tool matrix can exercise the guest detail and power calls when the
 disposable acceptance profile provides `ACCEPTANCE_PROXMOX_NODE` and
 `ACCEPTANCE_PROXMOX_VMID`. Without both values those cases remain skipped for

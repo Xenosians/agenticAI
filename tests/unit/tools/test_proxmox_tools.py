@@ -14,7 +14,7 @@ def test_each_proxmox_read_is_registered_with_read_only_semantics_and_one_provid
         "proxmox_guest_status", "proxmox_guest_config",
         "proxmox_node_storage", "proxmox_recent_tasks", "proxmox_database_inventory",
         "proxmox_backups", "proxmox_node_disks", "proxmox_guest_snapshots", "proxmox_node_network",
-        "proxmox_ha_status", "proxmox_disk_smart",
+        "proxmox_ha_status", "proxmox_disk_smart", "proxmox_node_maintenance",
     }
     assert set(PROXMOX_TOOLS) == reads | POWER_TOOLS
     assert set(PROXMOX_TOOLS) <= set(TOOLS)
@@ -354,6 +354,71 @@ def test_disk_smart_reads_in_words():
         "threshold.")
     assert formatter(dict(result, data=dict(nvme_failing, health="failed"))).splitlines()[-1] == (
         "Needs attention: media errors, spare capacity below its threshold.")
+    assert formatter({"ok": False}) == "The Proxmox read did not succeed."
+
+
+def test_node_maintenance_is_a_grounded_read_in_the_specialist():
+    from pathlib import Path
+
+    definition = Path("subagents/agents/proxmox-specialist.md").read_text(encoding="utf-8")
+    tool = TOOLS["proxmox_node_maintenance"]
+    assert (tool["effect"], tool["requires_approval"], tool["grounded_arguments"]) == ("read", False, ["node"])
+    assert tool["synthesis_evidence"] == "answer"
+    assert "  - proxmox_node_maintenance\n" in definition
+    assert provider_for_capability("proxmox_node_maintenance") == "proxmox"
+
+
+MAINTENANCE = {
+    "schema": "proxmox-node-maintenance.v1", "node": "hummingbird", "version": "9.2.27",
+    "kernel": {"running": "7.0.14-28-pve", "newest_installed": "7.0.14-29-pve", "installed": 3},
+    "boot": {"mode": "efi", "secure_boot": True}, "in_cluster": False,
+    "services": {"installed": 21, "running": 20, "not_running": [], "expected_stopped": ["corosync"],
+                 "turned_off": [], "not_installed": 2},
+    "certificates": [
+        {"file": "pve-ssl.pem", "role": "node", "served": True, "issuer": "proxmox_ca", "key": "RSA 2048",
+         "days_left": 725},
+        {"file": "pve-root-ca.pem", "role": "cluster_ca", "served": False, "issuer": "self_signed",
+         "key": "RSA 4096", "days_left": 3645}],
+    "subscription": "none",
+    "repositories": {"enabled": ["no-subscription", "ceph-squid-no-subscription"], "turned_off": ["enterprise"],
+                     "errors": 0},
+    "issues": ["reboot_for_newer_kernel"], "unreadable": [],
+}
+
+
+def test_node_maintenance_reads_in_words():
+    formatter = TOOLS["proxmox_node_maintenance"]["result_formatter"]
+    result = {"ok": True, "status": "success", "provider": "proxmox", "data": MAINTENANCE}
+    assert formatter(result).splitlines() == [
+        "Node hummingbird runs Proxmox VE 9.2.27 on kernel 7.0.14-28-pve; boots EFI with Secure Boot on.",
+        "Needs attention: kernel 7.0.14-29-pve is installed but not running; a reboot starts it.",
+        "Services: 20 of 21 running; corosync stopped as expected (the node is not in a cluster).",
+        "Certificates: pve-ssl.pem (served to browsers, signed by the Proxmox cluster CA, RSA 2048) expires in "
+        "725 days; pve-root-ca.pem (cluster CA, self-signed, RSA 4096) expires in 3645 days.",
+        "Updates come from: no-subscription, ceph-squid-no-subscription; turned off: enterprise; no subscription.",
+        "Pending package updates are not read: that needs a privilege Janus does not hold.",
+    ]
+    failing = dict(MAINTENANCE, kernel=dict(MAINTENANCE["kernel"], newest_installed="7.0.14-28-pve"),
+                   boot={"mode": "legacy", "secure_boot": None}, in_cluster=None,
+                   services=dict(MAINTENANCE["services"], running=18, expected_stopped=[], turned_off=["spiceproxy"],
+                                 not_running=[{"name": "corosync", "state": "inactive"},
+                                              {"name": "pvestatd", "state": "failed"}]),
+                   certificates=[dict(MAINTENANCE["certificates"][0], days_left=-1),
+                                 dict(MAINTENANCE["certificates"][1], days_left=12)],
+                   subscription=None, repositories={"enabled": ["enterprise", "test"], "turned_off": [], "errors": 1},
+                   issues=["service_not_running", "certificate_expired", "certificate_expiring",
+                           "test_repository_enabled"], unreadable=["subscription"])
+    lines = formatter(dict(result, data=failing)).splitlines()
+    assert lines[0] == "Node hummingbird runs Proxmox VE 9.2.27 on kernel 7.0.14-28-pve; boots legacy BIOS."
+    assert lines[1] == ("Needs attention: corosync inactive, pvestatd failed; a served certificate has expired; "
+                        "a certificate expires within 30 days; the test repository is on.")
+    assert lines[2] == "Services: 18 of 21 running; not running: corosync (inactive), pvestatd (failed); turned off: spiceproxy."
+    assert lines[3] == ("Certificates: pve-ssl.pem (served to browsers, signed by the Proxmox cluster CA, RSA 2048) "
+                        "expired 1 day ago; pve-root-ca.pem (cluster CA, self-signed, RSA 4096) expires in 12 days.")
+    assert lines[4] == "Updates come from: enterprise, test; 1 repository error."
+    assert lines[5] == "Not readable with Janus's access: subscription."
+    nothing = dict(MAINTENANCE, issues=[], kernel=dict(MAINTENANCE["kernel"], newest_installed="7.0.14-28-pve"))
+    assert formatter(dict(result, data=nothing)).splitlines()[1] == "Nothing needs attention."
     assert formatter({"ok": False}) == "The Proxmox read did not succeed."
 
 
