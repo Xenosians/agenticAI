@@ -201,19 +201,37 @@ def test_the_database_inventory_leaves_backup_questions_to_the_backups_read():
 def test_backups_read_in_words():
     formatter = TOOLS["proxmox_backups"]["result_formatter"]
     assert formatter(backups_result()).splitlines() == [
-        "3 guest(s); 1 backup job (1 enabled). 1 with a recent backup, 1 overdue (newest older than 8 days), "
-        "1 never backed up, 1 without a backup job.",
-        "old (LXC 103 on pve-a): never backed up; no backup job.",
-        "cache (LXC 102 on pve-a): newest backup 12.0 days ago on pbs (512 MiB). Overdue.",
-        "orders-db (VM 101 on pve-a): newest backup 0.5 days ago on pbs (2.0 GiB, protected, encrypted, "
-        "verified ok); 2 backups.",
-        "Backup storage: pbs on pve-a (pbs, shared) holds 3 backup(s).",
+        "3 guest(s); 1 backup job (1 enabled). 1 with a recent backup, 1 overdue, 1 never backed up, "
+        "1 without a backup job. A backup is overdue when the newest copy is more than 8 days old.",
+        "old (LXC 103 on node pve-a): never backed up; no backup job.",
+        "cache (LXC 102 on node pve-a): newest backup 12.0 days ago on storage pbs (512 MiB). Overdue.",
+        "orders-db (VM 101 on node pve-a): newest backup 0.5 days ago on storage pbs (2.0 GiB, protected, "
+        "encrypted, verified ok); 2 backups.",
+        "Backup storage: pbs on node pve-a (pbs, shared) holds 3 backup(s).",
     ]
+    # Live, with no backup at all, a definition beside the count ("0 overdue (newest older than 8 days)")
+    # was restated as a fact ("the oldest backup is older than 8 days"); the rule now stands apart, and
+    # an empty listing says no backup exists.
+    none = formatter(backups_result(
+        jobs={"count": 0, "enabled": 0}, count=1,
+        summary={"guests": 1, "with_recent_backup": 0, "stale": 0, "never": 1, "without_backup_job": 1},
+        storages=[{"node": "hummingbird", "storage": "local", "type": "dir", "shared": False, "backups": 0}],
+        guests=[{"vmid": 990, "node": "hummingbird", "type": "lxc", "name": "janus-lab", "backup_job": False,
+                 "backups": 0, "latest": None, "issues": ["never_backed_up", "no_backup_job"]}]))
+    assert none.splitlines() == [
+        "1 guest(s); no backup jobs. No backup exists on any backup storage that was read.",
+        "janus-lab (LXC 990 on node hummingbird): never backed up; no backup job.",
+        "Backup storage: local on node hummingbird (dir) holds 0 backup(s).",
+    ]
+    nowhere = formatter(backups_result(storages=[], guests=[], count=0,
+                                       summary={"guests": 0, "with_recent_backup": 0, "stale": 0, "never": 0,
+                                                "without_backup_job": 0}))
+    assert nowhere.splitlines()[0] == "0 guest(s); 1 backup job (1 enabled). No storage is set up to hold backups."
     partial = formatter(backups_result(listing_complete=False, unreadable_storages=[
         {"node": "pve-a", "storage": "nas", "reason": "Proxmox refused the read (HTTP 403)."}],
         summary={"guests": 3, "with_recent_backup": 1, "stale": 0, "never": 0, "without_backup_job": 1}))
-    assert ("Not every backup storage could be read (nas on pve-a: Proxmox refused the read (HTTP 403).), so "
-            "missing or old backups cannot be confirmed.") in partial
+    assert ("Not every backup storage could be read (nas on node pve-a: Proxmox refused the read (HTTP 403).), "
+            "so missing or old backups cannot be confirmed.") in partial
     unknown = formatter(backups_result(jobs=None, coverage_known=False,
                                        coverage_note="Proxmox refused the backup coverage read (HTTP 403)."))
     assert "backup jobs unknown (Proxmox refused the backup coverage read (HTTP 403).)" in unknown.splitlines()[0]

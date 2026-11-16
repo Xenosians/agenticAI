@@ -68,10 +68,13 @@ def format_database_inventory(result: dict) -> str:
 
 
 def _backup_guest(row: dict) -> str:
-    return f"{row['name'] or 'unnamed'} ({'VM' if row['type'] == 'qemu' else 'LXC'} {row['vmid']} on {row['node']})"
+    kind = "VM" if row["type"] == "qemu" else "LXC"
+    return f"{row['name'] or 'unnamed'} ({kind} {row['vmid']} on node {row['node']})"
 
 
 def format_backups(result: dict) -> str:
+    # Each sentence states a fact; the overdue rule stands apart from the
+    # counts, since a definition beside a count was once restated as a fact.
     if not result.get("ok"):
         return "The Proxmox read did not succeed."
     data = result["data"]
@@ -79,16 +82,24 @@ def format_backups(result: dict) -> str:
     head = f"{data['count']} guest(s); "
     if jobs is None or not data["coverage_known"]:
         head += f"backup jobs unknown ({data['coverage_note'] or 'Proxmox did not report them'}). "
+    elif jobs["count"] == 0:
+        head += "no backup jobs. "
     else:
         head += f"{jobs['count']} backup job{'s' if jobs['count'] != 1 else ''} ({jobs['enabled']} enabled). "
-    head += (f"{summary['with_recent_backup']} with a recent backup, {summary['stale']} overdue (newest older than "
-             f"{data['stale_after_days']} days), {summary['never']} never backed up")
-    head += (f", {summary['without_backup_job']} without a backup job." if summary["without_backup_job"] is not None
-             else ".")
+    if not data["storages"] and not data["unreadable_storages"]:
+        head += "No storage is set up to hold backups."
+    elif not sum(row["backups"] for row in data["storages"]):
+        head += "No backup exists on any backup storage that was read."
+    else:
+        head += (f"{summary['with_recent_backup']} with a recent backup, {summary['stale']} overdue, "
+                 f"{summary['never']} never backed up")
+        head += (f", {summary['without_backup_job']} without a backup job."
+                 if summary["without_backup_job"] is not None else ".")
+        head += f" A backup is overdue when the newest copy is more than {data['stale_after_days']} days old."
     lines = [head]
     if not data["listing_complete"]:
         lines.append("Not every backup storage could be read (" + "; ".join(
-            f"{row['storage']} on {row['node']}: {row['reason']}" for row in data["unreadable_storages"])
+            f"{row['storage']} on node {row['node']}: {row['reason']}" for row in data["unreadable_storages"])
             + "), so missing or old backups cannot be confirmed.")
     for row in data["guests"]:
         latest = row["latest"]
@@ -101,7 +112,8 @@ def format_backups(result: dict) -> str:
                                                  ("encrypted", latest["encrypted"])) if present]
             if latest["verified"]:
                 facts.append(f"verified {latest['verified']}")
-            text = (f"{_backup_guest(row)}: newest backup {latest['age_days']:.1f} days ago on {latest['storage']}"
+            text = (f"{_backup_guest(row)}: newest backup {latest['age_days']:.1f} days ago on storage "
+                    f"{latest['storage']}"
                     + (f" ({', '.join(facts)})" if facts else ""))
             if row["backups"] > 1:
                 text += f"; {row['backups']} backups"
@@ -111,7 +123,7 @@ def format_backups(result: dict) -> str:
         lines.append(text)
     if data["storages"]:
         lines.append("Backup storage: " + "; ".join(
-            f"{row['storage']} on {row['node']} ({row['type']}{', shared' if row['shared'] else ''}) holds "
+            f"{row['storage']} on node {row['node']} ({row['type']}{', shared' if row['shared'] else ''}) holds "
             f"{row['backups']} backup(s)" for row in data["storages"]) + ".")
     return "\n".join(lines)
 
