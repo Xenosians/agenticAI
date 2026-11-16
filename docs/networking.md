@@ -27,15 +27,20 @@ and has no radios, so both client reads are empty there.
 
 ## Tailscale network (tailnet)
 
-Two more reads use the Tailscale API with the deployment's own OAuth client
-(`TAILSCALE_CLIENT_ID`, `TAILSCALE_CLIENT_SECRET`). Give that client only the
-`devices:core:read` and `dns:read` scopes; it cannot approve, expire or remove
-devices, or change DNS. Its one-hour token is reused until five minutes before
-it expires, so most reads make one API request.
+Four reads (and the coverage join below) use the Tailscale API with the deployment's own trust credential
+(`TAILSCALE_CLIENT_ID`, `TAILSCALE_CLIENT_SECRET`), holding `devices:core:read`,
+`dns:read`, `devices:posture_attributes:read` and `policy_file`. `policy_file`
+also allows writing the policy; these reads only read it, and a policy change
+is a separate, owner-approved action. The credential cannot approve, expire
+or remove devices, or change DNS. Its one-hour token is reused until five
+minutes before it expires, so most reads make one API request.
 
 | Tool | Reads | Notes |
 |---|---|---|
 | `network_tailnet_devices` | `GET /tailnet/-/devices?fields=all` | Each device's name, OS, Tailscale version, online state, last seen, key expiry (days left, or never), pending update, approval and tags (at most 200), plus its health: whether it blocks incoming connections, how many advertised routes wait for approval, whether it offers itself as an exit node, whether tailnet lock reports a problem, and how it reaches peers (UDP, hard NAT, nearest relay and its latency, from the device's last report). Each device lists its `issues` (below), and a summary counts online, offline and devices needing attention. Tailscale addresses, endpoints, route prefixes, node and machine keys, posture data and user details are not returned. |
+| `network_tailnet_policy` | `GET /tailnet/-/acl`, `GET /tailnet/-/settings` | Who may reach what: each grant and ACL rule (sources, destinations, ports), SSH rules (action, sources, destinations, local users), tag owners, group sizes, the number of host aliases and policy tests, other policy sections by name, whether the policy is managed outside the admin console, and whether every member reaches every device on every port. Tags, groups, autogroups and `*` stay as written; users (emails) read "a user", host aliases "a host alias", addresses and CIDRs "an address", SSH users other than `root` and autogroups "a named user". At most 200 rules per section. |
+| `network_tailnet_posture` | `GET /tailnet/-/devices`, then `GET /device/{id}/attributes` per device (at most 50) | Each device's OS and version, Tailscale version and release track, whether Tailscale auto-update is on and whether it stores its Tailscale state encrypted; custom and integration attributes are only counted. A device whose posture cannot be read is unknown. |
+| `network_tailnet_coverage` | Proxmox `GET /cluster/resources` and the tailnet devices read | Which Proxmox nodes and guests (templates left out) have a tailnet device, which running machines have their device offline (`device_offline`), and which devices are named like no Proxmox machine. The two inventories share no identifier Janus may expose, so they match by name: the device's host name or the first label of its MagicDNS name, lower case with every other character run as one hyphen. A machine without a match has `no_tailnet_device` and may still be on the tailnet under another name; when either listing was cut, no machine is called missing. Each side's failure is named (`proxmox` or `tailscale`). |
 | `network_tailnet_dns` | `GET /tailnet/-/dns/configuration` | MagicDNS, whether devices use the tailnet's resolvers instead of the local network's, each resolver and whether Tailscale reaches it over DNS-over-HTTPS, split DNS and search domains. |
 
 Device issues, most urgent first: `key_expired`, `key_expiring` (within 14

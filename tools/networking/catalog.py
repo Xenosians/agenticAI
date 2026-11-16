@@ -179,6 +179,125 @@ def format_tailnet_dns(result: dict) -> str:
     return text + "."
 
 
+def _endpoint(host: str, port: str) -> str:
+    return host if port == "*" else f"{host}:{port}"
+
+
+def format_tailnet_policy(result: dict) -> str:
+    if not result.get("ok"):
+        return "Tailscale read did not succeed."
+    data = result["data"]
+    summary = data["summary"]
+    managed = data["externally_managed"]
+    head = (f"Tailnet policy: {summary['rules']} access rule(s), {summary['ssh_rules']} SSH rule(s), "
+            f"{summary['tags']} tag(s), {summary['groups']} group(s), {data['hosts']} host alias(es), "
+            f"{data['tests']} policy test(s); "
+            + ("managed outside the admin console (GitOps)." if managed else
+               "edited in the Tailscale admin console." if managed is False else "where it is edited is unknown."))
+    lines = [head]
+    if summary["open_to_all_members"]:
+        lines.append("Every member can reach every device on every port (a rule allows autogroup:member to * on "
+                     "all ports).")
+    if data["rules"]:
+        parts = []
+        for rule in data["rules"]:
+            if rule["kind"] == "acl":
+                targets = ", ".join(_endpoint(host, port) for host, port in zip(rule["destinations"], rule["ports"]))
+            else:
+                targets = ", ".join(rule["destinations"]) + (
+                    " (all ports)" if rule["ports"] == ["*"] else " (" + ", ".join(rule["ports"]) + ")"
+                    if rule["ports"] else "")
+                if rule["app_capabilities"]:
+                    targets += f", {rule['app_capabilities']} app capability(ies)"
+            parts.append(f"{rule['kind']} {', '.join(rule['sources'])} -> {targets}")
+        lines.append("Access: " + "; ".join(parts) + ("; list cut" if data["truncated"] else "") + ".")
+    else:
+        lines.append("Access: no rules, so no device can reach another.")
+    if data["ssh"]:
+        lines.append("SSH: " + "; ".join(f"{rule['action']} {', '.join(rule['sources'])} -> "
+                                         f"{', '.join(rule['destinations'])} as {', '.join(rule['users'])}"
+                                         for rule in data["ssh"]) + ".")
+    if data["tag_owners"]:
+        lines.append("Tag owners: " + "; ".join(f"{row['tag']} by {', '.join(row['owners']) or 'nobody'}"
+                                                for row in data["tag_owners"]) + ".")
+    if data["groups"]:
+        lines.append("Groups: " + "; ".join(f"{row['name']} ({row['members']} members)" for row in data["groups"]) + ".")
+    if data["other_sections"]:
+        lines.append("Also set: " + ", ".join(data["other_sections"]) + ".")
+    lines.append('Users, host aliases and addresses are shown as "a user", "a host alias" and "an address".')
+    return "\n".join(lines)
+
+
+def format_tailnet_posture(result: dict) -> str:
+    if not result.get("ok"):
+        return "Tailscale read did not succeed."
+    data = result["data"]
+    if not data["devices"]:
+        return "No device is on the tailnet."
+    summary = data["summary"]
+    lines = [f"Posture of {data['count']} tailnet device(s)"
+             + (f" (first {len(data['devices'])} read)" if data["truncated"] else "")
+             + f": {summary['auto_update_off']} with Tailscale auto-update off, "
+             f"{summary['state_not_encrypted']} storing Tailscale state unencrypted."]
+    for row in data["devices"]:
+        if row["other_attributes"] is None:
+            lines.append(f"{row['name']}: posture could not be read.")
+            continue
+        system = " ".join(part for part in (row["os"], row["os_version"]) if part) or "OS unknown"
+        version = f"Tailscale {row['tailscale_version']}" if row["tailscale_version"] else "Tailscale version unknown"
+        if row["release_track"]:
+            version += f" ({row['release_track']})"
+        parts = [f"{system}, {version}",
+                 {True: "auto-update on", False: "auto-update off", None: "auto-update unknown"}[row["auto_update"]],
+                 {True: "Tailscale state stored encrypted", False: "Tailscale state stored unencrypted",
+                  None: "state encryption unknown"}[row["state_encrypted"]]]
+        if row["other_attributes"]:
+            parts.append(f"{row['other_attributes']} other attribute(s)")
+        lines.append(f"{row['name']}: " + "; ".join(parts) + ".")
+    return "\n".join(lines)
+
+
+def _online_word(value) -> str:
+    return {True: "online", False: "offline"}.get(value, "online state unknown")
+
+
+def _coverage_line(label: str, row: dict) -> str:
+    devices = row["tailnet_devices"]
+    if devices:
+        text = ("tailnet device " if len(devices) == 1 else "tailnet devices ") + ", ".join(
+            f"{device['name']} ({_online_word(device['online'])})" for device in devices)
+    else:
+        text = "no tailnet device named like it"
+    if "device_offline" in row["issues"]:
+        text += "; it runs, but its tailnet device is offline"
+    return f"{label}: {text}."
+
+
+def format_tailnet_coverage(result: dict) -> str:
+    if not result.get("ok"):
+        return "Tailnet coverage read did not succeed."
+    data = result["data"]
+    summary = data["summary"]
+    if not data["nodes"] and not data["guests"]:
+        return "Proxmox lists no nodes or guests, so there is nothing to match with the tailnet."
+    head = (f"Tailnet coverage, matched by name: {summary['nodes_with_device']} of {summary['nodes']} Proxmox "
+            f"node(s) and {summary['guests_with_device']} of {summary['guests']} guest(s) have a tailnet device "
+            "named like them.")
+    if summary["device_offline"]:
+        head += f" {summary['device_offline']} running machine(s) have their tailnet device offline."
+    if not data["complete"]:
+        head += " A listing was cut, so no machine is called missing from the tailnet."
+    lines = [head]
+    lines += [_coverage_line(f"{row['node']} (node, {row['status']})", row) for row in data["nodes"]]
+    lines += [_coverage_line(f"{row['name'] or 'unnamed'} ({'VM' if row['type'] == 'qemu' else 'LXC'} "
+                             f"{row['vmid']} on {row['node']}, {row['status']})", row) for row in data["guests"]]
+    if data["devices_outside_proxmox"]:
+        lines.append("Tailnet devices named like no Proxmox node or guest: "
+                     + ", ".join(data["devices_outside_proxmox"]) + ".")
+    lines.append("A machine may be on the tailnet under another name; names are the only link Janus reads.")
+    return "\n".join(lines)
+
+
 def _read(description: str, resource_type: str, permission: str, formatter) -> dict:
     return {
         "description": description, "resource_type": resource_type, "operation_kind": "read", "effect": "read",
@@ -242,7 +361,8 @@ NETWORKING_TOOLS = {
         "network.dns", "network.dns.read", format_dns_config),
 }
 
-# Tailscale network (tailnet) reads, through the deployment's read-only Tailscale credential.
+# Tailscale network (tailnet) reads, through the deployment's own trust credential (read scopes plus
+# policy_file, which these reads use only to read the policy).
 TAILNET_TOOLS = {
     "network_tailnet_devices": _read(
         "List the devices on the Tailscale network (tailnet) with their operating system, Tailscale version, "
@@ -256,6 +376,34 @@ TAILNET_TOOLS = {
         "are encrypted (DNS-over-HTTPS), split DNS domains and search domains. Use this to check whether "
         "remote devices are protected from DNS tampering. Read only.",
         "network.tailnet.dns", "network.tailnet.dns.read", format_tailnet_dns),
+    "network_tailnet_policy": {
+        **_read(
+            "Read the Tailscale network's access policy (ACL): who may reach which devices and ports (grants and "
+            "ACL rules), SSH rules, tag owners, group sizes, host aliases and whether the policy file is managed "
+            "outside the admin console. Users, host aliases and addresses are masked. Use this for tailnet "
+            "policy questions (access control, whether every member can reach every device). Read only; it "
+            "never changes the policy.",
+            "network.tailnet.policy", "network.tailnet.policy.read", format_tailnet_policy),
+        "synthesis_evidence": "answer",
+    },
+    "network_tailnet_posture": {
+        **_read(
+            "Read each tailnet device's posture attributes: operating system and version, Tailscale version and "
+            "release track, whether Tailscale auto-update is on and whether the device stores its Tailscale "
+            "state encrypted. Use this for device posture and compliance questions; for online state, key "
+            "expiry and reachability use network_tailnet_devices. Read only.",
+            "network.tailnet.posture", "network.tailnet.posture.read", format_tailnet_posture),
+        "synthesis_evidence": "answer",
+    },
+    "network_tailnet_coverage": {
+        **_read(
+            "Check which Proxmox nodes and guests (VMs and containers) have a device on the Tailscale network, "
+            "matched by name, which running machines have their tailnet device offline, and which tailnet devices "
+            "are named like no Proxmox machine. Use this for tailnet coverage of the Proxmox estate; for device "
+            "health use network_tailnet_devices. Read only.",
+            "network.tailnet.coverage", "network.tailnet.coverage.read", format_tailnet_coverage),
+        "synthesis_evidence": "answer",
+    },
 }
 
 

@@ -160,6 +160,9 @@ def build_cases(run: str, project: str) -> list[tuple[str, str, str, object]]:
         ("network-dns-config", "network_dns_config", "Which DNS servers does the OpenWrt router use, and is rebind protection on?", None),
         ("network-tailnet-devices", "network_tailnet_devices", "Which devices are on our Tailscale network, and are they online?", None),
         ("network-tailnet-dns", "network_tailnet_dns", "Do our Tailscale devices resolve names over encrypted DNS?", None),
+        ("network-tailnet-policy", "network_tailnet_policy", "Who can reach what under our Tailscale ACL policy?", None),
+        ("network-tailnet-posture", "network_tailnet_posture", "Which tailnet devices have Tailscale auto-update off?", None),
+        ("network-tailnet-coverage", "network_tailnet_coverage", "Which Proxmox VMs and containers are not on the tailnet?", None),
         ("network-dns-integrity", "network_dns_integrity_check", "Is our ISP rewriting DNS answers? Check vimeo.com and example.com.", None),
         # --- Proxmox VE (reads; power actions are approval-gated, lab guest only) ---
         ("proxmox-cluster", "proxmox_cluster_status", "What is the Proxmox VE cluster status?", None),

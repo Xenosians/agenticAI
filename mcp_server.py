@@ -726,16 +726,18 @@ def create_mcp_server(
     # Setting names a provider still needs, so its reads can say what is missing.
     missing_settings = {row["id"]: row["missing"] for row in integration_readiness(runtime_settings)}
 
+    # One Proxmox client serves its own tools and the tailnet coverage join.
+    proxmox_service = build_proxmox_service(runtime_settings)
     register_networking_tools(server, build_openwrt_service(runtime_settings),
                               build_tailnet_service(runtime_settings),
                               build_dns_integrity_service(runtime_settings),
-                              missing_settings=missing_settings)
+                              missing_settings=missing_settings, proxmox=proxmox_service)
 
     # ============================================================
     # PROXMOX VE (reads + approval-gated guest power actions)
     # ============================================================
 
-    register_proxmox_tools(server, build_proxmox_service(runtime_settings),
+    register_proxmox_tools(server, proxmox_service,
                            missing_settings=missing_settings.get("proxmox", ()))
 
     # ============================================================

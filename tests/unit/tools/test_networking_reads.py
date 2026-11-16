@@ -7,7 +7,8 @@ from services.integration_readiness import provider_for_capability
 from tools.registry import TOOLS
 
 NEW_READS = ("network_router_health", "network_interfaces", "network_known_hosts", "network_dns_config")
-TAILNET_READS = ("network_tailnet_devices", "network_tailnet_dns")
+TAILNET_READS = ("network_tailnet_devices", "network_tailnet_dns", "network_tailnet_policy",
+                 "network_tailnet_posture", "network_tailnet_coverage")
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -201,6 +202,118 @@ class _Server:
 
     def tool(self):
         return lambda function: self.tools.setdefault(function.__name__, function)
+
+
+def test_the_tailnet_policy_reads_in_words_with_users_and_addresses_masked():
+    formatter = TOOLS["network_tailnet_policy"]["result_formatter"]
+    data = {"schema": "tailnet-policy.v1", "externally_managed": False, "truncated": False,
+            "rules": [{"kind": "grant", "sources": ["autogroup:member"], "destinations": ["*"], "ports": ["*"],
+                       "app_capabilities": 0},
+                      {"kind": "acl", "sources": ["group:ops", "a user"], "destinations": ["tag:db", "an address"],
+                       "ports": ["5432", "22"], "app_capabilities": 0}],
+            "ssh": [{"action": "check", "sources": ["autogroup:member"], "destinations": ["autogroup:self"],
+                     "users": ["autogroup:nonroot", "root"]}],
+            "tag_owners": [{"tag": "tag:janus-lab", "owners": ["autogroup:admin"]}],
+            "groups": [{"name": "group:ops", "members": 2}], "hosts": 1, "tests": 2, "other_sections": ["nodeAttrs"],
+            "summary": {"rules": 2, "ssh_rules": 1, "tags": 1, "groups": 1, "open_to_all_members": True}}
+    lines = formatter({"ok": True, "data": data}).splitlines()
+    assert lines == [
+        "Tailnet policy: 2 access rule(s), 1 SSH rule(s), 1 tag(s), 1 group(s), 1 host alias(es), 2 policy test(s); "
+        "edited in the Tailscale admin console.",
+        "Every member can reach every device on every port (a rule allows autogroup:member to * on all ports).",
+        "Access: grant autogroup:member -> * (all ports); acl group:ops, a user -> tag:db:5432, an address:22.",
+        "SSH: check autogroup:member -> autogroup:self as autogroup:nonroot, root.",
+        "Tag owners: tag:janus-lab by autogroup:admin.",
+        "Groups: group:ops (2 members).",
+        "Also set: nodeAttrs.",
+        "Users, host aliases and addresses are shown as \"a user\", \"a host alias\" and \"an address\".",
+    ]
+    git = dict(data, externally_managed=True, other_sections=[], groups=[], hosts=0,
+               summary=dict(data["summary"], groups=0, open_to_all_members=False))
+    text = formatter({"ok": True, "data": git})
+    assert "managed outside the admin console (GitOps)" in text and "Every member can reach" not in text
+    assert formatter({"ok": False}) == "Tailscale read did not succeed."
+
+
+def test_device_posture_reads_in_words_and_names_what_needs_attention():
+    formatter = TOOLS["network_tailnet_posture"]["result_formatter"]
+    devices = [{"name": "Blackhawk", "os": "windows", "os_version": "10.0.26300.9974", "tailscale_version": "1.104.4",
+                "auto_update": True, "release_track": "stable", "state_encrypted": False, "other_attributes": 0},
+               {"name": "janus-router-lab", "os": "linux", "os_version": "6.18.58.1-microsoft-standard-WSL2",
+                "tailscale_version": "1.104.4", "auto_update": False, "release_track": "stable",
+                "state_encrypted": False, "other_attributes": 2},
+               {"name": "old-phone", "os": None, "os_version": None, "tailscale_version": None, "auto_update": None,
+                "release_track": None, "state_encrypted": None, "other_attributes": None}]
+    text = formatter({"ok": True, "data": {"schema": "tailnet-posture.v1", "count": 3, "truncated": False,
+                                           "devices": devices,
+                                           "summary": {"auto_update_off": 1, "state_not_encrypted": 2}}})
+    # node:tsStateEncrypted says whether the device stores its Tailscale state (keys) encrypted at rest.
+    assert text.splitlines() == [
+        "Posture of 3 tailnet device(s): 1 with Tailscale auto-update off, 2 storing Tailscale state unencrypted.",
+        "Blackhawk: windows 10.0.26300.9974, Tailscale 1.104.4 (stable); auto-update on; "
+        "Tailscale state stored unencrypted.",
+        "janus-router-lab: linux 6.18.58.1-microsoft-standard-WSL2, Tailscale 1.104.4 (stable); auto-update off; "
+        "Tailscale state stored unencrypted; 2 other attribute(s).",
+        "old-phone: posture could not be read.",
+    ]
+
+
+def test_policy_and_posture_are_grounded_reads_in_the_networking_specialist():
+    definition = (ROOT / "subagents/agents/networking-specialist.md").read_text(encoding="utf-8")
+    for name in ("network_tailnet_policy", "network_tailnet_posture"):
+        tool = TOOLS[name]
+        assert (tool["effect"], tool["requires_approval"], tool["parameters"]) == ("read", False, {})
+        assert tool["synthesis_evidence"] == "answer"
+        assert f"  - {name}\n" in definition
+        assert provider_for_capability(name) == "tailscale"
+
+
+def test_tailnet_coverage_joins_proxmox_and_the_tailnet_and_names_each_sides_failure():
+    from tools.networking.mcp import register_networking_tools
+
+    class Tailnet:
+        def devices(self):
+            return {"ok": True, "status": "success", "provider": "tailscale", "data": {
+                "count": 2, "truncated": False, "devices": [
+                    {"name": "hummingbird", "dns_name": "hummingbird.tail1234.ts.net", "online": True},
+                    {"name": "Blackhawk", "dns_name": "blackhawk.tail1234.ts.net", "online": True}]}}
+
+    class Proxmox:
+        def machines(self):
+            return {"ok": True, "status": "success", "provider": "proxmox", "data": {
+                "truncated": False, "nodes": [{"node": "hummingbird", "status": "online"}],
+                "guests": [{"vmid": 990, "node": "hummingbird", "type": "lxc", "name": "janus-lab",
+                            "status": "running"}]}}
+
+    class Refusing:
+        def machines(self):
+            raise RuntimeError("Proxmox refused the read (HTTP 403).")
+
+    server = _Server()
+    register_networking_tools(server, None, Tailnet(), proxmox=Proxmox())
+    result = server.tools["network_tailnet_coverage"]()
+    assert (result.ok, result.provider, result.data["schema"]) == (True, "tailscale", "tailnet-coverage.v1")
+    assert result.data["summary"]["guests_with_device"] == 0
+    text = TOOLS["network_tailnet_coverage"]["result_formatter"](result.model_dump())
+    assert text.splitlines() == [
+        "Tailnet coverage, matched by name: 1 of 1 Proxmox node(s) and 0 of 1 guest(s) have a tailnet device "
+        "named like them.",
+        "hummingbird (node, online): tailnet device hummingbird (online).",
+        "janus-lab (LXC 990 on hummingbird, running): no tailnet device named like it.",
+        "Tailnet devices named like no Proxmox node or guest: Blackhawk.",
+        "A machine may be on the tailnet under another name; names are the only link Janus reads.",
+    ]
+    refused = _Server()
+    register_networking_tools(refused, None, Tailnet(), proxmox=Refusing())
+    failed = refused.tools["network_tailnet_coverage"]()
+    assert (failed.ok, failed.provider, failed.error_code) == (False, "proxmox", "provider_error")
+    assert failed.error == "Proxmox refused the read (HTTP 403)."
+    unconfigured = _Server()
+    register_networking_tools(unconfigured, None, Tailnet(), proxmox=None,
+                              missing_settings={"proxmox": ["PROXMOX_BASE_URL"]})
+    missing = unconfigured.tools["network_tailnet_coverage"]()
+    assert (missing.provider, missing.error_code) == ("proxmox", "not_configured")
+    assert "PROXMOX_BASE_URL" in missing.error
 
 
 def test_unconfigured_network_providers_answer_with_what_is_missing():

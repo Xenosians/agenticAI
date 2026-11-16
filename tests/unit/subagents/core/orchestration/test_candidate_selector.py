@@ -74,6 +74,9 @@ def test_shared_capabilities_keep_all_owners(production_registry):
 @pytest.mark.parametrize("user_request,expected", [
     ("Which devices are on our Tailscale network, and are they online?", "network_tailnet_devices"),
     ("List our Jira projects and their keys", "jira_project_list"),
+    ("Who can reach what under our Tailscale ACL policy?", "network_tailnet_policy"),
+    ("Which tailnet devices have Tailscale auto-update off?", "network_tailnet_posture"),
+    ("Which Proxmox VMs are not on the tailnet?", "network_tailnet_coverage"),
 ])
 def test_pronouns_and_auxiliaries_are_not_request_evidence(production_registry, user_request, expected):
     # "our" or "they" name no operation or resource: a clear request that uses

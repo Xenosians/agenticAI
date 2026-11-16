@@ -1,15 +1,18 @@
-"""Bounded read-only Tailscale API provider: tailnet devices and DNS settings.
+"""Bounded read-only Tailscale API provider: tailnet devices, DNS, policy and device posture.
 
-Signs in with the deployment's own OAuth client, which should hold only the
-devices:core:read and dns:read scopes; the token lasts an hour and is reused
-until shortly before it expires. Every answer is normalized: device addresses,
-node and machine keys and user details never leave this module.
+Signs in with the deployment's own trust credential (devices:core:read,
+dns:read, devices:posture_attributes:read and policy_file); the token lasts an
+hour and is reused until shortly before it expires. Every answer is
+normalized: device addresses, node and machine keys and user details never
+leave this module. The policy is summarized with users, host aliases and
+addresses replaced by fixed words.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import ipaddress
+import re
 import threading
 from typing import Callable
 
@@ -36,6 +39,19 @@ DOH_RESOLVERS = frozenset({
     "9.9.9.9", "149.112.112.112", "2620:fe::fe", "2620:fe::9",
 })
 NEVER = "0001-01-01T00:00:00Z"
+# Posture is one read per device, asked for by chat only.
+MAX_POSTURE_DEVICES = 50
+MAX_POLICY_RULES = 200
+NODE_ID = re.compile(r"[A-Za-z0-9]{1,64}")
+# Policy identifiers that name no person or address stay as written.
+POLICY_NAME_PREFIXES = ("autogroup:", "tag:", "group:", "ipset:", "svc:")
+ACL_PORTS = re.compile(r"\*|[0-9]{1,5}(?:-[0-9]{1,5})?(?:,[0-9]{1,5}(?:-[0-9]{1,5})?)*")
+POLICY_SECTIONS = ("acls", "grants", "ssh", "tagOwners", "groups", "hosts", "tests")
+# The fixed node attributes Tailscale reports; custom and integration attributes are only counted.
+POSTURE_ATTRIBUTES = {"node:os": ("os", 40), "node:osVersion": ("os_version", 60),
+                      "node:tsVersion": ("tailscale_version", 40), "node:tsAutoUpdate": ("auto_update", None),
+                      "node:tsReleaseTrack": ("release_track", 20),
+                      "node:tsStateEncrypted": ("state_encrypted", None)}
 
 
 @dataclass(frozen=True)
@@ -45,8 +61,66 @@ class TailnetConfig:
     timeout_seconds: float = 10.0
 
 
+class TailscaleRefused(RuntimeError):
+    """Tailscale answered with a status other than 200; the answer itself is never repeated."""
+
+
 def _invalid() -> RuntimeError:
     return RuntimeError("Tailscale returned an invalid answer.")
+
+
+def _strings(value, limit: int = 1000) -> list[str]:
+    if not isinstance(value, list) or len(value) > limit or not all(isinstance(item, str) for item in value):
+        raise _invalid()
+    return value
+
+
+def _principal(value) -> str:
+    """A policy source or destination with every user, host alias and address replaced by a fixed word."""
+    if not isinstance(value, str) or not value or len(value) > 255:
+        raise _invalid()
+    if value == "*" or value.startswith(POLICY_NAME_PREFIXES):
+        return value[:120]
+    if "@" in value:
+        return "a user"
+    candidate = value[1:-1] if value.startswith("[") and value.endswith("]") else value
+    try:
+        ipaddress.ip_network(candidate, strict=False)
+    except ValueError:
+        return "a host alias"
+    return "an address"
+
+
+def _acl_destination(value) -> tuple[str, str]:
+    """An ACL destination "host:ports" as its masked host and its ports."""
+    if not isinstance(value, str):
+        raise _invalid()
+    host, _, ports = value.rpartition(":")
+    if not host or not ACL_PORTS.fullmatch(ports):
+        raise _invalid()
+    return _principal(host), ports
+
+
+def _rule(kind: str, row) -> dict:
+    if not isinstance(row, dict):
+        raise _invalid()
+    sources = [_principal(item) for item in _strings(row.get("src"))]
+    if kind == "acl":
+        pairs = [_acl_destination(item) for item in _strings(row.get("dst"))]
+        destinations, ports = [host for host, _ in pairs], [port for _, port in pairs]
+        capabilities = 0
+    else:
+        destinations = [_principal(item) for item in _strings(row.get("dst"))]
+        ports = [item[:40] for item in _strings(_shape(row.get("ip"), list))]
+        capabilities = len(_shape(row.get("app"), dict))
+    return {"kind": kind, "sources": sources, "destinations": destinations, "ports": ports,
+            "app_capabilities": capabilities}
+
+
+def _ssh_user(value) -> str:
+    if not isinstance(value, str) or not value or len(value) > 255:
+        raise _invalid()
+    return value[:120] if value == "root" or value.startswith("autogroup:") else "a named user"
 
 
 def _text(value, limit: int = 200) -> str | None:
@@ -148,7 +222,7 @@ class TailnetService:
                                 content=request.content) as response:
             if response.status_code != 200:
                 # The answer is never echoed: it can repeat what was sent.
-                raise RuntimeError(f"Tailscale refused the read (HTTP {response.status_code}).")
+                raise TailscaleRefused(f"Tailscale refused the read (HTTP {response.status_code}).")
             payload = bytearray()
             for chunk in response.iter_bytes(chunk_size=65536):
                 payload.extend(chunk)
@@ -274,6 +348,89 @@ class TailnetService:
             "override_local_dns": _flag(preferences.get("overrideLocalDNS")) is True,
             "nameservers": resolvers, "split_dns": domains, "search_domains": [item[:255] for item in search[:20]],
         })
+
+
+    def policy(self) -> dict:
+        """Who may reach what under the tailnet policy, with users, host aliases and addresses masked."""
+        body = self._get("/tailnet/-/acl")
+        try:
+            settings = self._get("/tailnet/-/settings")
+            managed = _flag(settings.get("aclsExternallyManagedOn"))
+        except (TailscaleRefused, httpx.TransportError):
+            managed = None
+        rules = [_rule("acl", row) for row in _shape(body.get("acls"), list)]
+        rules += [_rule("grant", row) for row in _shape(body.get("grants"), list)]
+        ssh = []
+        for row in _shape(body.get("ssh"), list):
+            if not isinstance(row, dict) or not isinstance(row.get("action"), str):
+                raise _invalid()
+            ssh.append({"action": row["action"][:20],
+                        "sources": [_principal(item) for item in _strings(row.get("src"))],
+                        "destinations": [_principal(item) for item in _strings(row.get("dst"))],
+                        "users": [_ssh_user(item) for item in _strings(_shape(row.get("users"), list))]})
+        owners = []
+        for tag, names in sorted(_shape(body.get("tagOwners"), dict).items()):
+            if not isinstance(tag, str):
+                raise _invalid()
+            owners.append({"tag": tag[:120], "owners": [_principal(item) for item in _strings(names)]})
+        groups = []
+        for name, members in sorted(_shape(body.get("groups"), dict).items()):
+            if not isinstance(name, str):
+                raise _invalid()
+            groups.append({"name": name[:120], "members": len(_strings(members))})
+        hosts = _shape(body.get("hosts"), dict)
+        if not all(isinstance(value, str) for value in hosts.values()):
+            raise _invalid()
+        # Every member reaches every device on every port.
+        open_to_all = any(set(rule["sources"]) & {"*", "autogroup:member"}
+                          and any(host == "*" and port == "*" for host, port in zip(rule["destinations"], rule["ports"]))
+                          if rule["kind"] == "acl" else
+                          set(rule["sources"]) & {"*", "autogroup:member"} and "*" in rule["destinations"]
+                          and "*" in rule["ports"] for rule in rules)
+        return self._result({
+            "schema": "tailnet-policy.v1",
+            "externally_managed": managed,
+            "truncated": len(rules) > MAX_POLICY_RULES or len(ssh) > MAX_POLICY_RULES,
+            "rules": rules[:MAX_POLICY_RULES], "ssh": ssh[:MAX_POLICY_RULES],
+            "tag_owners": owners[:MAX_POLICY_RULES], "groups": groups[:MAX_POLICY_RULES],
+            "hosts": len(hosts), "tests": len(_shape(body.get("tests"), list)),
+            "other_sections": sorted(str(key)[:60] for key in body if key not in POLICY_SECTIONS)[:40],
+            "summary": {"rules": len(rules), "ssh_rules": len(ssh), "tags": len(owners), "groups": len(groups),
+                        "open_to_all_members": bool(open_to_all)},
+        })
+
+    def device_posture(self) -> dict:
+        """Each device's fixed posture attributes (OS, Tailscale version, auto-update, encrypted state)."""
+        rows = self._get("/tailnet/-/devices").get("devices")
+        if not isinstance(rows, list):
+            raise _invalid()
+        devices = []
+        for row in rows:
+            if not isinstance(row, dict) or not isinstance(row.get("hostname"), str) or not row["hostname"] \
+                    or not isinstance(row.get("nodeId"), str) or not NODE_ID.fullmatch(row["nodeId"]):
+                raise _invalid()
+            devices.append((row["hostname"][:120], row["nodeId"]))
+        devices.sort(key=lambda device: device[0].lower())
+        result = []
+        for name, node_id in devices[:MAX_POSTURE_DEVICES]:
+            row: dict = {"name": name, **{field: None for field, _ in POSTURE_ATTRIBUTES.values()},
+                         "other_attributes": None}
+            try:
+                attributes = _shape(self._get(f"/device/{node_id}/attributes").get("attributes"), dict)
+            except (TailscaleRefused, httpx.TransportError):
+                result.append(row)
+                continue
+            for key, value in attributes.items():
+                if key in POSTURE_ATTRIBUTES:
+                    field, limit = POSTURE_ATTRIBUTES[key]
+                    row[field] = _flag(value) if limit is None else _text(value, limit)
+            row["other_attributes"] = sum(key not in POSTURE_ATTRIBUTES for key in attributes)
+            result.append(row)
+        return self._result({
+            "schema": "tailnet-posture.v1", "count": len(devices), "truncated": len(devices) > MAX_POSTURE_DEVICES,
+            "devices": result,
+            "summary": {"auto_update_off": sum(row["auto_update"] is False for row in result),
+                        "state_not_encrypted": sum(row["state_encrypted"] is False for row in result)}})
 
 
 def tailnet_integration_status(settings) -> dict:

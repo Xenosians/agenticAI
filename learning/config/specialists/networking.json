@@ -721,6 +721,96 @@
       ]
     },
     {
+      "tool_name": "network_tailnet_policy",
+      "user_request": "Who can reach what under our Tailscale ACL?",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-policy"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_policy",
+      "user_request": "Can every member of the tailnet reach every device on every port?",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-policy"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_policy",
+      "user_request": "Show the tailnet SSH rules and who owns the tags.",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-policy"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_posture",
+      "user_request": "Which Tailscale devices have auto-update turned off?",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-posture"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_posture",
+      "user_request": "Show the OS version and posture of every tailnet device.",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-posture"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_posture",
+      "user_request": "Do our tailnet devices store their Tailscale keys encrypted?",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-posture"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_coverage",
+      "user_request": "Which Proxmox VMs and containers are not on the tailnet?",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-coverage"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_coverage",
+      "user_request": "Is every Proxmox node reachable over Tailscale?",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-coverage"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_coverage",
+      "user_request": "Do all our Proxmox guests have a Tailscale device?",
+      "arguments": {},
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-coverage"
+      ]
+    },
+    {
       "tool_name": "network_dns_integrity_check",
       "user_request": "Is our ISP tampering with DNS?",
       "arguments": {},
@@ -1010,6 +1100,36 @@
       ],
       "allowed_arguments": {},
       "expected_tool": "network_tailnet_dns",
+      "expected_arguments": {}
+    },
+    {
+      "name": "tailnet-policy-open",
+      "user": "Is our tailnet wide open, or do ACL rules restrict access between devices?",
+      "allowed_tools": [
+        "network_tailnet_policy"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "network_tailnet_policy",
+      "expected_arguments": {}
+    },
+    {
+      "name": "tailnet-coverage-proxmox",
+      "user": "Which of our Proxmox machines are missing from Tailscale?",
+      "allowed_tools": [
+        "network_tailnet_coverage"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "network_tailnet_coverage",
+      "expected_arguments": {}
+    },
+    {
+      "name": "tailnet-posture-compliance",
+      "user": "Are any tailnet devices out of compliance on OS or Tailscale version?",
+      "allowed_tools": [
+        "network_tailnet_posture"
+      ],
+      "allowed_arguments": {},
+      "expected_tool": "network_tailnet_posture",
       "expected_arguments": {}
     },
     {

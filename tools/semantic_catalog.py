@@ -130,6 +130,9 @@ CAPABILITY_SEMANTICS: dict[str, dict[str, str]] = {
     "network_dns_config": {"resource_type": "network.dns", "operation_kind": "read", "effect": "read", "permission": "network.dns.read"},
     "network_tailnet_devices": {"resource_type": "network.tailnet.device", "operation_kind": "read", "effect": "read", "permission": "network.tailnet.device.read"},
     "network_tailnet_dns": {"resource_type": "network.tailnet.dns", "operation_kind": "read", "effect": "read", "permission": "network.tailnet.dns.read"},
+    "network_tailnet_policy": {"resource_type": "network.tailnet.policy", "operation_kind": "read", "effect": "read", "permission": "network.tailnet.policy.read"},
+    "network_tailnet_posture": {"resource_type": "network.tailnet.posture", "operation_kind": "read", "effect": "read", "permission": "network.tailnet.posture.read"},
+    "network_tailnet_coverage": {"resource_type": "network.tailnet.coverage", "operation_kind": "read", "effect": "read", "permission": "network.tailnet.coverage.read"},
     "network_dns_integrity_check": {"resource_type": "network.dns.integrity", "operation_kind": "read", "effect": "read", "permission": "network.dns.integrity.read"},
 }
 

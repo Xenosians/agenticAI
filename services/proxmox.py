@@ -362,6 +362,26 @@ class ProxmoxService:
         rows = self._rows(self._get("/cluster/resources", {"type": "vm"}), required=("type", "node", "status"))
         return self._result(self._guest_rows(rows))
 
+    def machines(self) -> dict:
+        """Every node and every guest (templates left out) by name, from one cluster read.
+
+        Names and states only: what the tailnet coverage read matches against.
+        """
+        nodes, guests = [], []
+        for row in self._rows(self._get("/cluster/resources"), required=("type",)):
+            if row["type"] == "node":
+                nodes.append({"node": _text(row, "node", required=True), "status": _text(row, "status") or "unknown"})
+            elif row["type"] in ("qemu", "lxc") and not _boolean(row, "template"):
+                vmid = row.get("vmid")
+                if type(vmid) is not int or not (1 <= vmid <= MAX_VMID):
+                    raise _invalid()
+                guests.append({"vmid": vmid, "node": _text(row, "node", required=True), "type": row["type"],
+                               "name": _text(row, "name"), "status": _text(row, "status") or "unknown"})
+        nodes.sort(key=lambda row: row["node"].lower())
+        guests.sort(key=lambda row: (row["node"].lower(), row["vmid"]))
+        return self._result({"truncated": len(nodes) > MAX_ROWS or len(guests) > MAX_ROWS,
+                             "nodes": nodes[:MAX_ROWS], "guests": guests[:MAX_ROWS]})
+
     def _inventory_guest(self, node: str, vmid: int) -> dict:
         """The one inventory row for an exact node and VMID (its type is qemu or lxc)."""
         if not isinstance(node, str) or not NODE_ID.fullmatch(node):
