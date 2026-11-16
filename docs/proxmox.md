@@ -77,6 +77,19 @@ node's disks, every part a typed read result so one node's refused disk read
 never hides the rest. It is read once a minute while the page is open, apart
 from the ten-second overview.
 
+## Guest snapshots
+
+`proxmox_guest_snapshots` lists one exact guest's snapshots
+(`GET /nodes/{node}/{type}/{vmid}/snapshot`, after the guest's type is
+confirmed from the inventory; `VM.Audit`), newest first: name, when it was
+taken, its parent, whether it saved the guest's RAM (VMs only; a container
+snapshot never does) and which snapshot the current state follows. Proxmox's
+synthetic `current` entry ("You are here!") is the guest's position, never a
+snapshot. A snapshot whose time Proxmox did not record has an unknown age, not
+1970. Snapshot descriptions are operator free text and never leave the AI
+service. It cannot create, delete or roll back a snapshot. A snapshot lives on
+the guest's own storage and is not a backup.
+
 The live tool matrix can exercise the guest detail and power calls when the
 disposable acceptance profile provides `ACCEPTANCE_PROXMOX_NODE` and
 `ACCEPTANCE_PROXMOX_VMID`. Without both values those cases remain skipped for

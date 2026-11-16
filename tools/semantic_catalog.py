@@ -50,6 +50,7 @@ CAPABILITY_SEMANTICS: dict[str, dict[str, str]] = {
     "proxmox_guest_reboot": {"resource_type": "proxmox.guest", "operation_kind": "action", "effect": "mutation", "permission": "proxmox.guest.reboot"},
     "proxmox_guest_shutdown": {"resource_type": "proxmox.guest", "operation_kind": "action", "effect": "mutation", "permission": "proxmox.guest.shutdown"},
     "proxmox_guest_start": {"resource_type": "proxmox.guest", "operation_kind": "action", "effect": "mutation", "permission": "proxmox.guest.start"},
+    "proxmox_guest_snapshots": {"resource_type": "proxmox.snapshot", "operation_kind": "read", "effect": "read", "permission": "proxmox.snapshot.list"},
     "proxmox_guest_status": {"resource_type": "proxmox.guest", "operation_kind": "read", "effect": "read", "permission": "proxmox.guest.status"},
     "proxmox_guests": {"resource_type": "proxmox.guest", "operation_kind": "read", "effect": "read", "permission": "proxmox.guest.list"},
     "proxmox_node_storage": {"resource_type": "proxmox.storage", "operation_kind": "read", "effect": "read", "permission": "proxmox.storage.read"},

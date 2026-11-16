@@ -110,6 +110,11 @@ def register_proxmox_tools(server, service: ProxmoxService | None, missing_setti
         return proxmox(lambda: service.backups())
 
     @server.tool()
+    def proxmox_guest_snapshots(node: str, vmid: int) -> ProxmoxReadResult:
+        """List one exact guest's snapshots: name, age, parent and whether RAM was saved."""
+        return proxmox(lambda: service.guest_snapshots(node, vmid))
+
+    @server.tool()
     def proxmox_node_disks(node: str) -> ProxmoxReadResult:
         """Show one exact node's physical disks with SMART health and SSD wear."""
         return proxmox(lambda: service.node_disks(node))

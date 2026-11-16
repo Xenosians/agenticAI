@@ -309,7 +309,8 @@ class ProxmoxService:
         rows = self._rows(self._get("/cluster/resources", {"type": "vm"}), required=("type", "node", "status"))
         return self._result(self._guest_rows(rows))
 
-    def _guest_type(self, node: str, vmid: int) -> str:
+    def _inventory_guest(self, node: str, vmid: int) -> dict:
+        """The one inventory row for an exact node and VMID (its type is qemu or lxc)."""
         if not isinstance(node, str) or not NODE_ID.fullmatch(node):
             raise ValueError("Enter one exact Proxmox node name.")
         if type(vmid) is not int or not (1 <= vmid <= MAX_VMID):
@@ -326,7 +327,10 @@ class ProxmoxService:
             raise ProviderResourceNotFound(f"Proxmox VMID {vmid} was not found on node {node}.")
         if len(matches) != 1 or matches[0]["type"] not in {"qemu", "lxc"}:
             raise _invalid()
-        return matches[0]["type"]
+        return matches[0]
+
+    def _guest_type(self, node: str, vmid: int) -> str:
+        return self._inventory_guest(node, vmid)["type"]
 
     @staticmethod
     def _validate_guest_identity(data: dict, node: str, vmid: int) -> None:
@@ -395,6 +399,39 @@ class ProxmoxService:
             "tags": _text(data, "tags", limit=2048),
         }
         return self._result(config)
+
+    def guest_snapshots(self, node: str, vmid: int) -> dict:
+        """One guest's snapshots, newest first: name, time, age, parent and whether RAM was saved.
+
+        Proxmox lists a synthetic "current" entry for where the guest stands;
+        it is not a snapshot. Descriptions are operator free text and stay here.
+        """
+        guest = self._inventory_guest(node, vmid)
+        rows = self._rows(self._get(f"/nodes/{node}/{guest['type']}/{vmid}/snapshot"))
+        now = time.time()
+        snapshots, current_parent = [], None
+        for row in rows:
+            name = _text(row, "name", required=True)
+            parent = _text(row, "parent")
+            if name == "current":
+                current_parent = parent
+                continue
+            created = row.get("snaptime")
+            if created is not None and (type(created) is not int or created < 0):
+                raise _invalid()
+            # Proxmox sends 0 when the config records no time; that is unknown, not 1970.
+            created = created or None
+            snapshots.append({"name": name, "time": created,
+                              "age_days": None if created is None else round(max(0.0, now - created) / 86_400, 1),
+                              "parent": parent, "includes_ram": _boolean(row, "vmstate")})
+        snapshots.sort(key=lambda row: (row["time"] is None, -(row["time"] or 0), row["name"]))
+        ages = [row["age_days"] for row in snapshots if row["age_days"] is not None]
+        return self._result({
+            "schema": "proxmox-guest-snapshots.v1", "node": node, "vmid": vmid, "type": guest["type"],
+            "name": _text(guest, "name"), "count": len(snapshots), "truncated": len(snapshots) > MAX_ROWS,
+            "current_parent": current_parent, "oldest_age_days": max(ages) if ages else None,
+            "snapshots": snapshots[:MAX_ROWS],
+        })
 
     def node_storage(self, node: str) -> dict:
         if not isinstance(node, str) or not NODE_ID.fullmatch(node):
@@ -704,19 +741,7 @@ class ProxmoxService:
         flag come from that inventory row; status and lock come from the
         guest's live status/current, which decides whether an action applies.
         """
-        rows = self._rows(self._get("/cluster/resources", {"type": "vm"}), required=("type", "node", "status"))
-        matches = []
-        for row in rows:
-            row_vmid = row.get("vmid")
-            if type(row_vmid) is not int or not (1 <= row_vmid <= MAX_VMID):
-                raise _invalid()
-            if row["node"] == node and row_vmid == vmid:
-                matches.append(row)
-        if not matches:
-            raise ProviderResourceNotFound(f"Proxmox VMID {vmid} was not found on node {node}.")
-        if len(matches) != 1 or matches[0]["type"] not in {"qemu", "lxc"}:
-            raise _invalid()
-        row = matches[0]
+        row = self._inventory_guest(node, vmid)
         live = self._get(f"/nodes/{node}/{row['type']}/{vmid}/status/current")
         if not isinstance(live, dict):
             raise _invalid()

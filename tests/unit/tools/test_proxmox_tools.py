@@ -13,7 +13,7 @@ def test_each_proxmox_read_is_registered_with_read_only_semantics_and_one_provid
         "proxmox_cluster_status", "proxmox_nodes", "proxmox_guests",
         "proxmox_guest_status", "proxmox_guest_config",
         "proxmox_node_storage", "proxmox_recent_tasks", "proxmox_database_inventory",
-        "proxmox_backups", "proxmox_node_disks",
+        "proxmox_backups", "proxmox_node_disks", "proxmox_guest_snapshots",
     }
     assert set(PROXMOX_TOOLS) == reads | POWER_TOOLS
     assert set(PROXMOX_TOOLS) <= set(TOOLS)
@@ -162,6 +162,65 @@ def test_backups_and_disks_are_reads_in_the_specialist():
     for name in ("proxmox_backups", "proxmox_node_disks"):
         assert f"  - {name}\n" in definition
         assert TOOLS[name]["synthesis_evidence"] == "answer"
+
+
+def test_guest_snapshots_is_a_grounded_read_in_the_specialist_that_says_it_changes_nothing():
+    from pathlib import Path
+
+    definition = Path("subagents/agents/proxmox-specialist.md").read_text(encoding="utf-8")
+    tool = TOOLS["proxmox_guest_snapshots"]
+    assert (tool["effect"], tool["requires_approval"], tool["grounded_arguments"]) == ("read", False, ["node", "vmid"])
+    assert tool["synthesis_evidence"] == "answer"
+    assert "  - proxmox_guest_snapshots\n" in definition
+    assert "never creates, deletes or rolls back" in tool["description"]
+
+
+def test_guest_snapshots_read_in_words():
+    formatter = TOOLS["proxmox_guest_snapshots"]["result_formatter"]
+    data = {"schema": "proxmox-guest-snapshots.v1", "node": "pve-a", "vmid": 101, "type": "qemu",
+            "name": "orders-db", "count": 3, "truncated": False, "current_parent": "after-upgrade",
+            "oldest_age_days": 40.0,
+            "snapshots": [
+                {"name": "after-upgrade", "time": 2, "age_days": 3.0, "parent": "before-upgrade",
+                 "includes_ram": False},
+                {"name": "before-upgrade", "time": 1, "age_days": 40.0, "parent": None, "includes_ram": True},
+                {"name": "legacy", "time": None, "age_days": None, "parent": None, "includes_ram": None}]}
+    result = {"ok": True, "status": "success", "provider": "proxmox", "observed_at": "2026-11-16T06:00:00+00:00",
+              "data": data}
+    assert formatter(result).splitlines() == [
+        "orders-db (VM 101 on node pve-a) has 3 snapshot(s); the current state follows snapshot after-upgrade.",
+        "after-upgrade: taken 3.0 days ago, parent before-upgrade, disk only.",
+        "before-upgrade: taken 40.0 days ago, with RAM.",
+        "legacy: time not recorded.",
+    ]
+    empty = dict(data, count=0, current_parent=None, oldest_age_days=None, snapshots=[], type="lxc", vmid=990,
+                 name="janus-lab")
+    assert formatter(dict(result, data=empty)) == "janus-lab (LXC 990 on node pve-a) has no snapshots."
+    assert formatter({"ok": False}) == "The Proxmox read did not succeed."
+
+
+def test_guest_snapshots_is_served_over_mcp_and_reports_missing_setup():
+    class Server:
+        def __init__(self):
+            self.tools = {}
+
+        def tool(self):
+            def register(function):
+                self.tools[function.__name__] = function
+                return function
+            return register
+
+    class Service:
+        def guest_snapshots(self, node, vmid):
+            return {"ok": True, "status": "success", "provider": "proxmox", "observed_at": "now",
+                    "data": {"node": node, "vmid": vmid}}
+
+    server = Server()
+    register_proxmox_tools(server, Service(), missing_settings=())
+    assert server.tools["proxmox_guest_snapshots"]("pve-a", 101).data == {"node": "pve-a", "vmid": 101}
+    unconfigured = Server()
+    register_proxmox_tools(unconfigured, None, missing_settings=("PROXMOX_BASE_URL",))
+    assert unconfigured.tools["proxmox_guest_snapshots"]("pve-a", 101).error_code == "not_configured"
 
 
 def backups_result(**changes):

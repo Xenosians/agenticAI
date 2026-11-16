@@ -67,7 +67,7 @@ def format_database_inventory(result: dict) -> str:
     return "\n".join(lines)
 
 
-def _backup_guest(row: dict) -> str:
+def _guest_on_node(row: dict) -> str:
     kind = "VM" if row["type"] == "qemu" else "LXC"
     return f"{row['name'] or 'unnamed'} ({kind} {row['vmid']} on node {row['node']})"
 
@@ -104,7 +104,7 @@ def format_backups(result: dict) -> str:
     for row in data["guests"]:
         latest = row["latest"]
         if latest is None:
-            text = f"{_backup_guest(row)}: " + ("never backed up" if "never_backed_up" in row["issues"]
+            text = f"{_guest_on_node(row)}: " + ("never backed up" if "never_backed_up" in row["issues"]
                                                else "no backup found in the storages read")
         else:
             facts = [_bytes(latest["size_bytes"])] if latest["size_bytes"] is not None else []
@@ -112,7 +112,7 @@ def format_backups(result: dict) -> str:
                                                  ("encrypted", latest["encrypted"])) if present]
             if latest["verified"]:
                 facts.append(f"verified {latest['verified']}")
-            text = (f"{_backup_guest(row)}: newest backup {latest['age_days']:.1f} days ago on storage "
+            text = (f"{_guest_on_node(row)}: newest backup {latest['age_days']:.1f} days ago on storage "
                     f"{latest['storage']}"
                     + (f" ({', '.join(facts)})" if facts else ""))
             if row["backups"] > 1:
@@ -125,6 +125,27 @@ def format_backups(result: dict) -> str:
         lines.append("Backup storage: " + "; ".join(
             f"{row['storage']} on node {row['node']} ({row['type']}{', shared' if row['shared'] else ''}) holds "
             f"{row['backups']} backup(s)" for row in data["storages"]) + ".")
+    return "\n".join(lines)
+
+
+def format_guest_snapshots(result: dict) -> str:
+    if not result.get("ok"):
+        return "The Proxmox read did not succeed."
+    data = result["data"]
+    if not data["snapshots"]:
+        return f"{_guest_on_node(data)} has no snapshots."
+    head = f"{_guest_on_node(data)} has {data['count']} snapshot(s)"
+    head += (f"; the current state follows snapshot {data['current_parent']}." if data["current_parent"] else ".")
+    lines = [head]
+    for row in data["snapshots"]:
+        facts = ["time not recorded" if row["age_days"] is None else f"taken {row['age_days']:.1f} days ago"]
+        if row["parent"]:
+            facts.append(f"parent {row['parent']}")
+        if row["includes_ram"] is not None:
+            facts.append("with RAM" if row["includes_ram"] else "disk only")
+        lines.append(f"{row['name']}: " + ", ".join(facts) + ".")
+    if data["truncated"]:
+        lines.append("More snapshots exist than were listed.")
     return "\n".join(lines)
 
 
@@ -344,6 +365,17 @@ PROXMOX_TOOLS = {
             "which no backup job covers. Read only; it never starts, deletes or restores a backup.",
             "proxmox.backup", "proxmox.backup.list"),
         "result_formatter": format_backups,
+        "synthesis_evidence": "answer",
+    },
+    "proxmox_guest_snapshots": {
+        **_read(
+            "List the snapshots of one exact Proxmox VM or container: each snapshot's name, when it was taken, "
+            "its parent and whether it saved the guest's RAM, and which snapshot the current state follows. Ground "
+            "the node and VMID in proxmox_guests. Read only; it never creates, deletes or rolls back a snapshot.",
+            "proxmox.snapshot", "proxmox.snapshot.list", ("node", "vmid"),
+            {"node": {"type": "str", "description": "Exact node name returned by proxmox_guests."},
+             "vmid": {"type": "int", "description": "Exact VMID returned by proxmox_guests."}}),
+        "result_formatter": format_guest_snapshots,
         "synthesis_evidence": "answer",
     },
     "proxmox_node_disks": {

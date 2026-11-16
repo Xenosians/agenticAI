@@ -48,7 +48,10 @@
     {"tool_name": "proxmox_backups", "user_request": "Are the Proxmox backups encrypted and verified?", "arguments": {}, "tags": ["read", "backup"]},
     {"tool_name": "proxmox_node_disks", "user_request": "Show the physical disks of Proxmox node pve1 and their SMART health.", "arguments": {"node": "pve1"}, "tags": ["read", "disk"]},
     {"tool_name": "proxmox_node_disks", "user_request": "Is any disk failing or worn out on node pve-lab?", "arguments": {"node": "pve-lab"}, "tags": ["read", "disk"]},
-    {"tool_name": "proxmox_node_disks", "user_request": "How much life is left on the SSDs in Proxmox node spare-pc?", "arguments": {"node": "spare-pc"}, "tags": ["read", "disk"]}
+    {"tool_name": "proxmox_node_disks", "user_request": "How much life is left on the SSDs in Proxmox node spare-pc?", "arguments": {"node": "spare-pc"}, "tags": ["read", "disk"]},
+    {"tool_name": "proxmox_guest_snapshots", "user_request": "List the snapshots of VMID 104 on node pve2.", "arguments": {"node": "pve2", "vmid": 104}, "tags": ["read", "snapshot"]},
+    {"tool_name": "proxmox_guest_snapshots", "user_request": "Does container 215 on pve-lab have any snapshot older than a month?", "arguments": {"node": "pve-lab", "vmid": 215}, "tags": ["read", "snapshot"]},
+    {"tool_name": "proxmox_guest_snapshots", "user_request": "Which snapshot is guest 3001 on edge01 running from, and did it save RAM?", "arguments": {"node": "edge01", "vmid": 3001}, "tags": ["read", "snapshot"]}
   ],
   "eval_cases": [
     {"name": "cluster-membership", "user": "Give me the membership and online state of the Proxmox VE cluster.", "allowed_tools": ["proxmox_cluster_status"], "allowed_arguments": {}, "expected_tool": "proxmox_cluster_status", "expected_arguments": {}},
@@ -64,6 +67,7 @@
     {"name": "node-tasks", "user": "List the latest tasks recorded on Proxmox node pve2.", "allowed_tools": ["proxmox_recent_tasks"], "allowed_arguments": {"node": ["pve2"]}, "expected_tool": "proxmox_recent_tasks", "expected_arguments": {"node": "pve2"}},
     {"name": "database-inventory", "user": "Give me the database hosts on Proxmox and whether backups cover them.", "allowed_tools": ["proxmox_database_inventory"], "allowed_arguments": {}, "expected_tool": "proxmox_database_inventory", "expected_arguments": {}},
     {"name": "backup-ages", "user": "List the newest backup of every Proxmox guest and flag the overdue ones.", "allowed_tools": ["proxmox_backups"], "allowed_arguments": {}, "expected_tool": "proxmox_backups", "expected_arguments": {}},
-    {"name": "node-disks", "user": "Check the SMART health of the disks in Proxmox node pve2.", "allowed_tools": ["proxmox_node_disks"], "allowed_arguments": {"node": ["pve2"]}, "expected_tool": "proxmox_node_disks", "expected_arguments": {"node": "pve2"}}
+    {"name": "node-disks", "user": "Check the SMART health of the disks in Proxmox node pve2.", "allowed_tools": ["proxmox_node_disks"], "allowed_arguments": {"node": ["pve2"]}, "expected_tool": "proxmox_node_disks", "expected_arguments": {"node": "pve2"}},
+    {"name": "guest-snapshots", "user": "Show me the snapshots of guest 812 on node hv-west.", "allowed_tools": ["proxmox_guest_snapshots"], "allowed_arguments": {"node": ["hv-west"], "vmid": ["812"]}, "expected_tool": "proxmox_guest_snapshots", "expected_arguments": {"node": "hv-west", "vmid": 812}}
   ]
 }
