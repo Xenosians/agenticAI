@@ -106,6 +106,23 @@ last parsed, so it can lag the real link (Proxmox bug 8148); the reading says
 "Proxmox reports it active/inactive", and an interface without a report is
 unknown, never down. It cannot change the network.
 
+## High availability
+
+`proxmox_ha_status` reads `GET /cluster/ha/status/current` (`Sys.Audit` on
+`/`): whether the cluster has quorum, whether HA is in use (any manager,
+node or resource entry), the fencing state, the node running the HA manager,
+each node's HA state and each HA resource (`vm:<vmid>` or `ct:<vmid>`) with
+its state and the state the operator requested. Proxmox reports the
+manager's and nodes' state only inside a status text that also carries the
+node's local time ("pve-a (active, watchdog active, Mon …)"); the service
+maps the state word to a fixed one (`active`, `idle`, `maintenance`,
+`disarmed`, `not_responding`, `clock_drift`, `waiting_for_lock`,
+`lost_lock`, `restarting`, `shutting_down`, `unreadable`) and never passes
+the text on. A word it does not know is `unknown`, which counts as a
+problem; so do a resource in `error`, `fence`, `recovery`, `freeze`,
+`deleting` or `not found`. Resource comments are operator free text and
+stay in the service. It cannot change HA, migrate or fence anything.
+
 The live tool matrix can exercise the guest detail and power calls when the
 disposable acceptance profile provides `ACCEPTANCE_PROXMOX_NODE` and
 `ACCEPTANCE_PROXMOX_VMID`. Without both values those cases remain skipped for

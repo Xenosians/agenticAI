@@ -14,6 +14,7 @@ def test_each_proxmox_read_is_registered_with_read_only_semantics_and_one_provid
         "proxmox_guest_status", "proxmox_guest_config",
         "proxmox_node_storage", "proxmox_recent_tasks", "proxmox_database_inventory",
         "proxmox_backups", "proxmox_node_disks", "proxmox_guest_snapshots", "proxmox_node_network",
+        "proxmox_ha_status",
     }
     assert set(PROXMOX_TOOLS) == reads | POWER_TOOLS
     assert set(PROXMOX_TOOLS) <= set(TOOLS)
@@ -265,6 +266,55 @@ def test_node_network_reads_in_words():
         "Proxmox reports an interface's state from its last read of the network configuration, so it can lag "
         "the link; an interface without a report is not known to be down.",
     ]
+    assert formatter({"ok": False}) == "The Proxmox read did not succeed."
+
+
+def test_ha_status_is_a_read_in_the_specialist_that_never_changes_ha():
+    from pathlib import Path
+
+    definition = Path("subagents/agents/proxmox-specialist.md").read_text(encoding="utf-8")
+    tool = TOOLS["proxmox_ha_status"]
+    assert (tool["effect"], tool["requires_approval"], tool["grounded_arguments"]) == ("read", False, [])
+    assert tool["synthesis_evidence"] == "answer"
+    assert "  - proxmox_ha_status\n" in definition
+    assert "never changes" in tool["description"]
+
+
+def ha_result(**changes):
+    data = {"schema": "proxmox-ha-status.v1", "quorate": True, "fencing": "armed", "in_use": True,
+            "manager": {"node": "pve-a", "state": "active", "problem": False},
+            "nodes": [{"node": "pve-a", "state": "active", "problem": False},
+                      {"node": "pve-b", "state": "not_responding", "problem": True}],
+            "count": 2, "truncated": False,
+            "resources": [{"sid": "ct:101", "type": "lxc", "vmid": 101, "node": "pve-b", "state": "error",
+                           "requested": "started", "problem": True},
+                          {"sid": "vm:100", "type": "qemu", "vmid": 100, "node": "pve-a", "state": "started",
+                           "requested": "started", "problem": False}],
+            "summary": {"nodes": 2, "nodes_with_problems": 1, "resources": 2, "resources_with_problems": 1}}
+    data.update(changes)
+    return {"ok": True, "status": "success", "provider": "proxmox", "observed_at": "2026-11-16T06:00:00+00:00",
+            "data": data}
+
+
+def test_ha_status_reads_in_words():
+    formatter = TOOLS["proxmox_ha_status"]["result_formatter"]
+    assert formatter(ha_result()).splitlines() == [
+        "High availability is in use; the cluster has quorum. HA manager on pve-a: active. Fencing: armed.",
+        "2 node(s) in HA, 1 with a problem: pve-a active; pve-b not responding.",
+        "2 HA resource(s), 1 with a problem:",
+        "LXC 101 on pve-b: error (requested started).",
+        "VM 100 on pve-a: started.",
+    ]
+
+
+def test_ha_that_is_not_in_use_or_without_quorum_reads_plainly():
+    formatter = TOOLS["proxmox_ha_status"]["result_formatter"]
+    unused = ha_result(in_use=False, manager=None, nodes=[], resources=[], count=0, fencing="standby",
+                       summary={"nodes": 0, "nodes_with_problems": 0, "resources": 0, "resources_with_problems": 0})
+    assert formatter(unused) == ("High availability is not in use: no VM or container is an HA resource. "
+                                 "The cluster has quorum.")
+    assert formatter(ha_result(quorate=False)).splitlines()[0] == (
+        "High availability is in use; the cluster has NO quorum. HA manager on pve-a: active. Fencing: armed.")
     assert formatter({"ok": False}) == "The Proxmox read did not succeed."
 
 

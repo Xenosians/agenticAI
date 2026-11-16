@@ -16,6 +16,7 @@ import math
 import re
 import time
 from pathlib import Path
+from typing import Literal, overload
 from urllib.parse import quote, urlsplit
 
 import httpx
@@ -95,6 +96,10 @@ class ProxmoxRefused(RuntimeError):
         super().__init__(f"Proxmox refused the read (HTTP {status_code}).")
 
 
+@overload
+def _text(item: dict, field: str, *, required: Literal[True], limit: int = 160) -> str: ...
+@overload
+def _text(item: dict, field: str, *, required: bool = False, limit: int = 160) -> str | None: ...
 def _text(item: dict, field: str, *, required: bool = False, limit: int = 160) -> str | None:
     value = item.get(field)
     if value is None and not required:
@@ -159,6 +164,29 @@ BACKUP_STALE_DAYS = 8
 BACKUP_ISSUES = ("never_backed_up", "backup_stale", "no_backup_job")
 MAX_BACKUP_STORAGES = 20
 MAX_BACKUP_VOLUMES = 5000
+# HA: a resource id is vm:<vmid> or ct:<vmid>; a state word is lower case,
+# with the spaces Proxmox uses ("not found", "clearing error flag").
+HA_SID = re.compile(r"(vm|ct):([0-9]{1,9})")
+HA_WORD = re.compile(r"[a-z][a-z_ ]{0,31}")
+# The state word in a manager or node status text ("pve-a (active, ...)"),
+# as pve-ha-manager's status handler writes it, mapped to one fixed word.
+HA_STATES = {"active": "active", "idle": "idle", "old timestamp - dead?": "not_responding",
+             "detected time drift!": "clock_drift", "wait_for_agent_lock": "waiting_for_lock",
+             "lost_agent_lock": "lost_lock", "maintenance": "maintenance", "maintenance mode": "maintenance",
+             "disarm mode": "disarmed", "restart mode": "restarting", "shutdown mode": "shutting_down"}
+# Deliberate or steady: anything else (in transition, unreadable, unknown) is a problem.
+HA_STEADY_STATES = frozenset({"active", "idle", "maintenance", "disarmed"})
+HA_RESOURCE_PROBLEMS = frozenset({"error", "fence", "recovery", "not found", "freeze", "deleting"})
+
+
+def _ha_state(status: str, node: str) -> str:
+    """The fixed state word in a status text such as "pve-a (active, watchdog active, <local time>)"."""
+    prefix = node + " ("
+    if status == f"{node} (unable to read lrm status)":
+        return "unreadable"
+    if not status.startswith(prefix):
+        return "unknown"
+    return HA_STATES.get(status[len(prefix):].split(",", 1)[0].split(")", 1)[0].strip(), "unknown")
 
 
 def _disk_health(value) -> str:
@@ -456,6 +484,61 @@ class ProxmoxService:
                  for row in rows]
         return self._result({"node": node, "count": len(tasks), "truncated": len(tasks) > MAX_TASKS,
                              "tasks": tasks[:MAX_TASKS]})
+
+    def _ha_rows(self, rows: list) -> dict:
+        quorate, fencing, manager, nodes, resources = None, None, None, [], []
+        for row in rows:
+            if not isinstance(row, dict):
+                raise _invalid()
+            kind = _text(row, "type", required=True)
+            if kind == "quorum":
+                quorate = _boolean(row, "quorate")
+            elif kind == "fencing":
+                fencing = _text(row, "armed-state", limit=32)
+                if fencing is not None and not HA_WORD.fullmatch(fencing):
+                    raise _invalid()
+            elif kind in ("master", "lrm"):
+                node = _text(row, "node", required=True)
+                if not NODE_ID.fullmatch(node):
+                    raise _invalid()
+                state = _ha_state(_text(row, "status", limit=512) or "", node)
+                entry = {"node": node, "state": state, "problem": state not in HA_STEADY_STATES}
+                if kind == "master":
+                    manager = entry
+                else:
+                    nodes.append(entry)
+            elif kind == "service":
+                match = HA_SID.fullmatch(_text(row, "sid", required=True, limit=32))
+                node, state = _text(row, "node"), _text(row, "state", required=True, limit=32)
+                requested = _text(row, "request_state", limit=32)
+                if (match is None or not 1 <= int(match.group(2)) <= MAX_VMID
+                        or (node is not None and not NODE_ID.fullmatch(node))
+                        or not HA_WORD.fullmatch(state) or (requested is not None and not HA_WORD.fullmatch(requested))):
+                    raise _invalid()
+                resources.append({"sid": match.group(0), "type": "qemu" if match.group(1) == "vm" else "lxc",
+                                  "vmid": int(match.group(2)), "node": node, "state": state,
+                                  "requested": requested, "problem": state in HA_RESOURCE_PROBLEMS})
+        nodes.sort(key=lambda row: row["node"].lower())
+        resources.sort(key=lambda row: (not row["problem"], row["vmid"]))
+        return {
+            "schema": "proxmox-ha-status.v1", "quorate": quorate, "fencing": fencing,
+            "in_use": manager is not None or bool(nodes) or bool(resources),
+            "manager": manager, "nodes": nodes[:MAX_ROWS], "count": len(resources),
+            "truncated": len(resources) > MAX_ROWS, "resources": resources[:MAX_ROWS],
+            "summary": {"nodes": len(nodes), "nodes_with_problems": sum(row["problem"] for row in nodes),
+                        "resources": len(resources),
+                        "resources_with_problems": sum(row["problem"] for row in resources)}}
+
+    def ha_status(self) -> dict:
+        """High availability: quorum, the HA manager, each node's HA state and each HA resource, in fixed words.
+
+        Proxmox puts the manager's and nodes' state inside a status text that
+        also carries the node's local time; only the mapped state word leaves
+        the service. Resource comments are operator free text and stay here.
+        """
+        if not isinstance(rows := self._get("/cluster/ha/status/current"), list):
+            raise _invalid()
+        return self._result(self._ha_rows(rows))
 
     def node_network(self, node: str) -> dict:
         """One node's network interfaces: name, type, reported state, IP methods and bridge/bond ports.

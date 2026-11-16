@@ -54,7 +54,10 @@
     {"tool_name": "proxmox_guest_snapshots", "user_request": "Which snapshot is guest 3001 on edge01 running from, and did it save RAM?", "arguments": {"node": "edge01", "vmid": 3001}, "tags": ["read", "snapshot"]},
     {"tool_name": "proxmox_node_network", "user_request": "Show the network interfaces and bridges on Proxmox node pve1.", "arguments": {"node": "pve1"}, "tags": ["read", "network"]},
     {"tool_name": "proxmox_node_network", "user_request": "Which physical port is the uplink of vmbr0 on node pve-lab?", "arguments": {"node": "pve-lab"}, "tags": ["read", "network"]},
-    {"tool_name": "proxmox_node_network", "user_request": "Is the bond on node spare-pc active, and which NICs are in it?", "arguments": {"node": "spare-pc"}, "tags": ["read", "network"]}
+    {"tool_name": "proxmox_node_network", "user_request": "Is the bond on node spare-pc active, and which NICs are in it?", "arguments": {"node": "spare-pc"}, "tags": ["read", "network"]},
+    {"tool_name": "proxmox_ha_status", "user_request": "Is high availability healthy on our Proxmox cluster?", "arguments": {}, "tags": ["read", "ha"]},
+    {"tool_name": "proxmox_ha_status", "user_request": "Which HA resources are in error or being recovered?", "arguments": {}, "tags": ["read", "ha"]},
+    {"tool_name": "proxmox_ha_status", "user_request": "Does the Proxmox cluster have quorum, and which node runs the HA manager?", "arguments": {}, "tags": ["read", "ha"]}
   ],
   "eval_cases": [
     {"name": "cluster-membership", "user": "Give me the membership and online state of the Proxmox VE cluster.", "allowed_tools": ["proxmox_cluster_status"], "allowed_arguments": {}, "expected_tool": "proxmox_cluster_status", "expected_arguments": {}},
@@ -72,6 +75,7 @@
     {"name": "backup-ages", "user": "List the newest backup of every Proxmox guest and flag the overdue ones.", "allowed_tools": ["proxmox_backups"], "allowed_arguments": {}, "expected_tool": "proxmox_backups", "expected_arguments": {}},
     {"name": "node-disks", "user": "Check the SMART health of the disks in Proxmox node pve2.", "allowed_tools": ["proxmox_node_disks"], "allowed_arguments": {"node": ["pve2"]}, "expected_tool": "proxmox_node_disks", "expected_arguments": {"node": "pve2"}},
     {"name": "guest-snapshots", "user": "Show me the snapshots of guest 812 on node hv-west.", "allowed_tools": ["proxmox_guest_snapshots"], "allowed_arguments": {"node": ["hv-west"], "vmid": ["812"]}, "expected_tool": "proxmox_guest_snapshots", "expected_arguments": {"node": "hv-west", "vmid": 812}},
-    {"name": "node-network", "user": "List the bridges and network ports configured on Proxmox node pve2.", "allowed_tools": ["proxmox_node_network"], "allowed_arguments": {"node": ["pve2"]}, "expected_tool": "proxmox_node_network", "expected_arguments": {"node": "pve2"}}
+    {"name": "node-network", "user": "List the bridges and network ports configured on Proxmox node pve2.", "allowed_tools": ["proxmox_node_network"], "allowed_arguments": {"node": ["pve2"]}, "expected_tool": "proxmox_node_network", "expected_arguments": {"node": "pve2"}},
+    {"name": "ha-status", "user": "Show the HA state of every node and resource in the Proxmox cluster.", "allowed_tools": ["proxmox_ha_status"], "allowed_arguments": {}, "expected_tool": "proxmox_ha_status", "expected_arguments": {}}
   ]
 }

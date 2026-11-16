@@ -149,6 +149,42 @@ def format_guest_snapshots(result: dict) -> str:
     return "\n".join(lines)
 
 
+HA_STATE_WORDS = {"not_responding": "not responding", "clock_drift": "clock drift", "lost_lock": "lost its lock",
+                  "waiting_for_lock": "waiting for its lock", "shutting_down": "shutting down"}
+
+
+def format_ha_status(result: dict) -> str:
+    if not result.get("ok"):
+        return "The Proxmox read did not succeed."
+    data = result["data"]
+    quorum = {True: "the cluster has quorum", False: "the cluster has NO quorum", None: "quorum was not reported"}
+    if not data["in_use"]:
+        return ("High availability is not in use: no VM or container is an HA resource. "
+                + quorum[data["quorate"]].capitalize() + ".")
+    head = f"High availability is in use; {quorum[data['quorate']]}."
+    if data["manager"]:
+        manager = data["manager"]
+        head += f" HA manager on {manager['node']}: {HA_STATE_WORDS.get(manager['state'], manager['state'])}."
+    if data["fencing"]:
+        head += f" Fencing: {data['fencing']}."
+    lines = [head]
+    summary = data["summary"]
+    if data["nodes"]:
+        lines.append(f"{summary['nodes']} node(s) in HA, {summary['nodes_with_problems']} with a problem: "
+                     + "; ".join(f"{row['node']} {HA_STATE_WORDS.get(row['state'], row['state'])}"
+                                 for row in data["nodes"]) + ".")
+    if data["resources"]:
+        lines.append(f"{summary['resources']} HA resource(s), {summary['resources_with_problems']} with a problem:")
+        for row in data["resources"]:
+            line = f"{'VM' if row['type'] == 'qemu' else 'LXC'} {row['vmid']} on {row['node'] or 'no node'}: {row['state']}"
+            if row["requested"] and row["requested"] != row["state"]:
+                line += f" (requested {row['requested']})"
+            lines.append(line + ".")
+    if data["truncated"]:
+        lines.append("More HA resources exist than were listed.")
+    return "\n".join(lines)
+
+
 def format_node_network(result: dict) -> str:
     if not result.get("ok"):
         return "The Proxmox read did not succeed."
@@ -414,6 +450,16 @@ PROXMOX_TOOLS = {
             {"node": {"type": "str", "description": "Exact node name returned by proxmox_guests."},
              "vmid": {"type": "int", "description": "Exact VMID returned by proxmox_guests."}}),
         "result_formatter": format_guest_snapshots,
+        "synthesis_evidence": "answer",
+    },
+    "proxmox_ha_status": {
+        **_read(
+            "Show Proxmox high availability (HA) state: whether HA is in use, whether the cluster has quorum, "
+            "which node runs the HA manager and its state, each node's HA state (active, idle, maintenance, not "
+            "responding) and each HA resource (VM or container) with its state, such as error, fence or recovery, "
+            "and the state the operator requested. Read only; it never changes HA, migrates or fences anything.",
+            "proxmox.ha", "proxmox.ha.status"),
+        "result_formatter": format_ha_status,
         "synthesis_evidence": "answer",
     },
     "proxmox_node_network": {

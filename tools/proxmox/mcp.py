@@ -115,6 +115,11 @@ def register_proxmox_tools(server, service: ProxmoxService | None, missing_setti
         return proxmox(lambda: service.guest_snapshots(node, vmid))
 
     @server.tool()
+    def proxmox_ha_status() -> ProxmoxReadResult:
+        """Show HA quorum, manager, node and resource states in fixed words."""
+        return proxmox(lambda: service.ha_status())
+
+    @server.tool()
     def proxmox_node_network(node: str) -> ProxmoxReadResult:
         """Show one exact node's bridges, bonds and ports; never addresses."""
         return proxmox(lambda: service.node_network(node))
