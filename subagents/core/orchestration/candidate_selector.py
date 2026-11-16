@@ -171,6 +171,9 @@ _STOP_WORDS = frozenset("a an and are as at be by can could do does for from how
 
 
 def _terms(text: str) -> set[str]:
+    # Acronym plurals ("VMs", "SSDs", "CPUs") are their singular; the general
+    # rule below skips words this short. An all-capital word ("DNS") is not.
+    text = re.sub(r"\b([A-Z]{2,5})s\b", r"\1", text)
     words = re.findall(r"[^\W_]+", text.casefold(), flags=re.UNICODE)
     result = set()
     for word in words:

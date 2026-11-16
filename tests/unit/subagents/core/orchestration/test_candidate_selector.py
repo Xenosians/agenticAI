@@ -97,6 +97,27 @@ def test_database_host_questions_reach_the_database_inventory(production_registr
                                             for name in candidate.capability_names}
 
 
+@pytest.mark.parametrize("user_request,expected", [
+    ("When was each Proxmox guest last backed up?", "proxmox_backups"),
+    ("Which VMs are overdue for a backup?", "proxmox_backups"),
+    ("Is any disk failing on Proxmox node pve1?", "proxmox_node_disks"),
+    ("Show the SMART health of the disks in node pve1", "proxmox_node_disks"),
+])
+def test_backup_and_physical_disk_questions_reach_their_reads(production_registry, user_request, expected):
+    selection = DeterministicCandidateSelector().select(user_request, production_registry)
+    assert not selection.fallback_required, selection.reason
+    assert expected in {name for candidate in selection.candidates for name in candidate.capability_names}
+
+
+def test_an_acronym_plural_matches_its_singular():
+    # "VMs", "SSDs" or "CPUs" name the same things as "VM", "SSD" and "CPU"
+    # (short words escape the general plural rule); an all-capital word such
+    # as "DNS" is not a plural.
+    assert module._terms("Which VMs and SSDs") == {"vm", "ssd"}
+    assert module._terms("DNS and dns") == {"dns"}
+    assert module._terms("CPUs, IPs") == {"cpu", "ip"}
+
+
 @pytest.mark.parametrize("user_request", [
     "Is alice disabled?",
     "Is bob unlocked?",

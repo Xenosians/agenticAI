@@ -119,3 +119,38 @@ def proxmox_overview(request: Request):
     return JSONResponse(status_code=502, content={"error": "proxmox_read_failed",
                                                   "reason": result.get("error_code") or "provider_error",
                                                   "message": result.get("error") or "Proxmox VE could not be read."})
+
+
+@router.get("/internal/v1/proxmox/health")
+def proxmox_health(request: Request):
+    """Return backups and every node's physical disks to the authenticated backend.
+
+    Read separately from the overview (it lists backup storages and runs SMART
+    on each node), so the dashboard refreshes it less often. Each part is a
+    typed read result: one unreadable node's disks never hide the rest.
+    """
+    from services.proxmox import build_proxmox_service
+    from tools.provider_reads import provider_read
+
+    require_internal(request)
+    runtime = require_ready_runtime(request)
+    try:
+        service = build_proxmox_service(runtime.settings)
+    except ValueError:
+        return JSONResponse(status_code=503, content={"error": "proxmox_configuration_invalid"})
+    if service is None:
+        return JSONResponse(status_code=503, content={"error": "proxmox_not_configured"})
+    try:
+        nodes = provider_read("proxmox", "Proxmox VE", service.nodes)
+        backups = provider_read("proxmox", "Proxmox VE", service.backups)
+        names = [row["node"] for row in nodes["data"]["nodes"]] if nodes.get("ok") else []
+        disks = [{"node": name, "result": provider_read("proxmox", "Proxmox VE",
+                                                        lambda name=name: service.node_disks(name))}
+                 for name in names]
+    finally:
+        service.close()
+    if not nodes.get("ok"):
+        return JSONResponse(status_code=502, content={"error": "proxmox_read_failed",
+                                                      "reason": nodes.get("error_code") or "provider_error",
+                                                      "message": nodes.get("error") or "Proxmox VE could not be read."})
+    return {"schema": "proxmox-health.v1", "backups": backups, "disks": disks}

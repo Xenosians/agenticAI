@@ -10,9 +10,9 @@ def format_read(result: dict) -> str:
 
 
 def _bytes(value) -> str:
-    for unit, size in (("GiB", 1024 ** 3), ("MiB", 1024 ** 2), ("KiB", 1024)):
+    for unit, size in (("TiB", 1024 ** 4), ("GiB", 1024 ** 3), ("MiB", 1024 ** 2), ("KiB", 1024)):
         if value >= size:
-            return f"{value / size:.1f} {unit}" if unit == "GiB" else f"{value / size:.0f} {unit}"
+            return f"{value / size:.1f} {unit}" if unit in ("TiB", "GiB") else f"{value / size:.0f} {unit}"
     return f"{value:.0f} B"
 
 
@@ -64,6 +64,83 @@ def format_database_inventory(result: dict) -> str:
             + (f" {_used_share(pool['used_bytes'], pool['total_bytes'])}"
                if pool["used_bytes"] is not None and pool["total_bytes"] else "")
             for pool in data["storage"]) + ".")
+    return "\n".join(lines)
+
+
+def _backup_guest(row: dict) -> str:
+    return f"{row['name'] or 'unnamed'} ({'VM' if row['type'] == 'qemu' else 'LXC'} {row['vmid']} on {row['node']})"
+
+
+def format_backups(result: dict) -> str:
+    if not result.get("ok"):
+        return "The Proxmox read did not succeed."
+    data = result["data"]
+    summary, jobs = data["summary"], data["jobs"]
+    head = f"{data['count']} guest(s); "
+    if jobs is None or not data["coverage_known"]:
+        head += f"backup jobs unknown ({data['coverage_note'] or 'Proxmox did not report them'}). "
+    else:
+        head += f"{jobs['count']} backup job{'s' if jobs['count'] != 1 else ''} ({jobs['enabled']} enabled). "
+    head += (f"{summary['with_recent_backup']} with a recent backup, {summary['stale']} overdue (newest older than "
+             f"{data['stale_after_days']} days), {summary['never']} never backed up")
+    head += (f", {summary['without_backup_job']} without a backup job." if summary["without_backup_job"] is not None
+             else ".")
+    lines = [head]
+    if not data["listing_complete"]:
+        lines.append("Not every backup storage could be read (" + "; ".join(
+            f"{row['storage']} on {row['node']}: {row['reason']}" for row in data["unreadable_storages"])
+            + "), so missing or old backups cannot be confirmed.")
+    for row in data["guests"]:
+        latest = row["latest"]
+        if latest is None:
+            text = f"{_backup_guest(row)}: " + ("never backed up" if "never_backed_up" in row["issues"]
+                                               else "no backup found in the storages read")
+        else:
+            facts = [_bytes(latest["size_bytes"])] if latest["size_bytes"] is not None else []
+            facts += [word for word, present in (("protected", latest["protected"]),
+                                                 ("encrypted", latest["encrypted"])) if present]
+            if latest["verified"]:
+                facts.append(f"verified {latest['verified']}")
+            text = (f"{_backup_guest(row)}: newest backup {latest['age_days']:.1f} days ago on {latest['storage']}"
+                    + (f" ({', '.join(facts)})" if facts else ""))
+            if row["backups"] > 1:
+                text += f"; {row['backups']} backups"
+        text += "; no backup job." if "no_backup_job" in row["issues"] else "."
+        if "backup_stale" in row["issues"]:
+            text += " Overdue."
+        lines.append(text)
+    if data["storages"]:
+        lines.append("Backup storage: " + "; ".join(
+            f"{row['storage']} on {row['node']} ({row['type']}{', shared' if row['shared'] else ''}) holds "
+            f"{row['backups']} backup(s)" for row in data["storages"]) + ".")
+    return "\n".join(lines)
+
+
+def format_node_disks(result: dict) -> str:
+    if not result.get("ok"):
+        return "The Proxmox read did not succeed."
+    data = result["data"]
+    summary = data["summary"]
+    problems = [f"{count} {text}" for count, text in ((summary["failing"], "failing SMART"),
+                                                      (summary["worn"], "worn out"),
+                                                      (summary["health_unknown"], "with unknown health")) if count]
+    lines = [f"{data['count']} physical disk(s) on {data['node']}: "
+             + (", ".join(problems) if problems else "none failing or worn out") + "."]
+    for disk in data["disks"]:
+        about = ", ".join(part for part in (disk["type"], disk["model"],
+                                            _bytes(disk["size_bytes"]) if disk["size_bytes"] is not None else None,
+                                            f"used by {disk['used_by']}" if disk["used_by"] else "unused") if part)
+        health = {"passed": "SMART passed", "failed": "SMART failed", "smart_disabled": "SMART disabled",
+                  "unknown": "SMART health unknown"}[disk["health"]]
+        text = f"{disk['device']} ({about}): {health}"
+        if disk["wear_used_percent"] is not None:
+            text += f"; {disk['wear_used_percent']}% of rated life used"
+        text += "."
+        if "smart_failed" in disk["issues"]:
+            text += " Replace it."
+        elif "worn_out" in disk["issues"]:
+            text += " Plan a replacement."
+        lines.append(text)
     return "\n".join(lines)
 
 
@@ -244,6 +321,26 @@ PROXMOX_TOOLS = {
         "result_formatter": format_database_inventory,
         # The formatter states every fact in words (including unknown coverage
         # and the tagging hint); synthesis works from that, not the raw flags.
+        "synthesis_evidence": "answer",
+    },
+    "proxmox_backups": {
+        **_read(
+            "Show the backups of every Proxmox VM and container: when each guest was last backed up, on which "
+            "backup storage, its size, whether it is protected, encrypted and verified, which guests are overdue "
+            "(newest backup older than 8 days) or never backed up, and which no backup job covers. Read only; it "
+            "never starts, deletes or restores a backup.",
+            "proxmox.backup", "proxmox.backup.list"),
+        "result_formatter": format_backups,
+        "synthesis_evidence": "answer",
+    },
+    "proxmox_node_disks": {
+        **_read(
+            "Show the physical disks of one exact Proxmox node: type, model, size, SMART health and how much of "
+            "an SSD's rated life is used, naming failing or worn-out disks. Requires the node name exactly as "
+            "listed by Proxmox. Read only; serial numbers are never shown.",
+            "proxmox.disk", "proxmox.disk.list", ("node",),
+            {"node": {"type": "str", "description": "Exact node name returned by proxmox_nodes."}}),
+        "result_formatter": format_node_disks,
         "synthesis_evidence": "answer",
     },
     "proxmox_guest_start": _power(

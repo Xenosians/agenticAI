@@ -149,6 +149,32 @@ DISK_NEARLY_FULL = 0.9
 DATABASE_LABEL_HINT = ('Tag a VM or container "db" or "db-<engine>" (for example "db-postgres") '
                        'in Proxmox to list it here.')
 GUEST_DISK_CONTENT = frozenset({"images", "rootdir"})
+# An SSD that has used this much of its rated life is named (Proxmox shows
+# the same figure as 100 - wearout).
+DISK_WORN = 90
+# A guest whose newest backup is older than this is named: a daily or weekly
+# job has missed at least one run.
+BACKUP_STALE_DAYS = 8
+# Most urgent first: no backup at all, an overdue one, then no job to make the next.
+BACKUP_ISSUES = ("never_backed_up", "backup_stale", "no_backup_job")
+MAX_BACKUP_STORAGES = 20
+MAX_BACKUP_VOLUMES = 5000
+
+
+def _disk_health(value) -> str:
+    """SMART health as one fixed word: ATA says PASSED, SAS/NVMe say OK."""
+    if value in (None, ""):
+        return "unknown"
+    if not isinstance(value, str) or len(value) > 64:
+        raise _invalid()
+    word = value.strip().upper()
+    if word in ("PASSED", "OK"):
+        return "passed"
+    if word.startswith("FAILED"):
+        return "failed"
+    if word == "SMART DISABLED":
+        return "smart_disabled"
+    return "unknown"
 
 
 def database_tags(tags: str | None) -> tuple[bool, str | None]:
@@ -394,6 +420,43 @@ class ProxmoxService:
         return self._result({"node": node, "count": len(tasks), "truncated": len(tasks) > MAX_TASKS,
                              "tasks": tasks[:MAX_TASKS]})
 
+    def node_disks(self, node: str) -> dict:
+        """Physical disks of one node: health and wear, never serials, WWNs or by-id links."""
+        if not isinstance(node, str) or not NODE_ID.fullmatch(node):
+            raise ValueError("Enter one exact Proxmox node name.")
+        disks = []
+        for row in self._rows(self._get(f"/nodes/{node}/disks/list"), required=("devpath", "type")):
+            device = _text(row, "devpath", required=True) or ""
+            if not device.startswith("/dev/"):
+                raise _invalid()
+            size = _number(row, "size")
+            wearout = row.get("wearout")
+            # Proxmox's wearout is the life remaining in percent ("N/A" when unknown).
+            if isinstance(wearout, (int, float)) and not isinstance(wearout, bool):
+                if not 0 <= wearout <= 100:
+                    raise _invalid()
+                wear_used = round(100 - wearout)
+            elif wearout in (None, "N/A"):
+                wear_used = None
+            else:
+                raise _invalid()
+            health = _disk_health(row.get("health"))
+            issues = [issue for issue, present in (("smart_failed", health == "failed"),
+                                                    ("worn_out", wear_used is not None and wear_used >= DISK_WORN))
+                      if present]
+            disks.append({"device": device, "type": _text(row, "type", required=True), "model": _text(row, "model"),
+                          "size_bytes": size, "health": health, "wear_used_percent": wear_used,
+                          "used_by": _text(row, "used"), "issues": issues})
+        disks.sort(key=lambda row: (0 if "smart_failed" in row["issues"] else 1 if row["issues"] else 2,
+                                    row["device"]))
+        return self._result({
+            "node": node, "count": len(disks), "truncated": len(disks) > MAX_ROWS,
+            "summary": {"disks": len(disks),
+                        "failing": sum("smart_failed" in row["issues"] for row in disks),
+                        "worn": sum("worn_out" in row["issues"] for row in disks),
+                        "health_unknown": sum(row["health"] == "unknown" for row in disks)},
+            "disks": disks[:MAX_ROWS]})
+
     def overview(self) -> dict:
         """One bounded dashboard snapshot from three provider reads.
 
@@ -508,6 +571,116 @@ class ProxmoxService:
         """Database hosts from operator tags, with observed state, capacity and backup coverage (two reads)."""
         rows = self._rows(self._get("/cluster/resources"), required=("type",))
         return self._result(self._database_rows(rows))
+
+    def _backup_volumes(self, node: str, storage: str) -> list[dict]:
+        rows = self._rows(self._get(f"/nodes/{node}/storage/{quote(storage, safe='')}/content",
+                                    {"content": "backup"}))
+        if len(rows) > MAX_BACKUP_VOLUMES:
+            raise _invalid()
+        volumes = []
+        for row in rows:
+            vmid, created = row.get("vmid"), row.get("ctime")
+            if type(vmid) is not int or not (1 <= vmid <= MAX_VMID):
+                raise _invalid()
+            if type(created) is not int or created < 0:
+                raise _invalid()
+            verification = row.get("verification")
+            if verification is not None and not (isinstance(verification, dict)
+                                                 and isinstance(verification.get("state"), str)):
+                raise _invalid()
+            volumes.append({"vmid": vmid, "time": created, "size_bytes": _number(row, "size"),
+                            "protected": bool(row.get("protected")), "encrypted": bool(row.get("encrypted")),
+                            "verified": verification["state"][:16] if verification else None})
+        return volumes
+
+    def backups(self) -> dict:
+        """The newest backup of each guest across the backup storages, with job coverage and what is overdue.
+
+        Volume ids, notes and paths stay inside the service. A shared storage is
+        read once. A storage that cannot be read makes the listing incomplete,
+        so no guest is then called never backed up or stale.
+        """
+        rows = self._rows(self._get("/cluster/resources"), required=("type",))
+        guests = {}
+        for row in rows:
+            if row["type"] not in ("qemu", "lxc") or _boolean(row, "template"):
+                continue
+            vmid = row.get("vmid")
+            if type(vmid) is not int or not (1 <= vmid <= MAX_VMID):
+                raise _invalid()
+            guests[vmid] = {"vmid": vmid, "node": _text(row, "node", required=True), "type": row["type"],
+                            "name": _text(row, "name")}
+        try:
+            jobs_rows = self._rows(self._get("/cluster/backup"))
+            jobs = {"count": len(jobs_rows),
+                    "enabled": sum(row.get("enabled", 1) not in (0, False, "0") for row in jobs_rows)}
+        except (ProxmoxRefused, ProviderResourceNotFound, httpx.TransportError):
+            jobs = None
+        uncovered, coverage_note = self._backup_coverage()
+        nodes = sorted({_text(row, "node", required=True) or "" for row in rows if row["type"] == "node"})
+        storages, unreadable, volumes, seen_shared = [], [], [], set()
+        for node in nodes:
+            if not NODE_ID.fullmatch(node):
+                raise _invalid()
+            for row in self._rows(self._get(f"/nodes/{node}/storage", {"content": "backup", "enabled": 1}),
+                                  required=("storage", "type")):
+                name = _text(row, "storage", required=True) or ""
+                shared = bool(row.get("shared"))
+                if shared and name in seen_shared:
+                    continue
+                if shared:
+                    seen_shared.add(name)
+                if len(storages) + len(unreadable) >= MAX_BACKUP_STORAGES:
+                    raise _invalid()
+                try:
+                    found = self._backup_volumes(node, name)
+                except (ProxmoxRefused, ProviderResourceNotFound, httpx.TransportError) as error:
+                    reason = (str(error) if isinstance(error, ProxmoxRefused)
+                              else "Proxmox did not answer the read." if isinstance(error, httpx.TransportError)
+                              else "Proxmox did not find the storage.")
+                    unreadable.append({"node": node, "storage": name, "reason": reason})
+                    continue
+                volumes.extend(dict(volume, storage=name) for volume in found)
+                storages.append({"node": node, "storage": name, "type": _text(row, "type", required=True),
+                                 "shared": shared, "backups": len(found)})
+        complete = not unreadable
+        now = time.time()
+        result = []
+        for vmid, guest in guests.items():
+            own = [volume for volume in volumes if volume["vmid"] == vmid]
+            newest = max(own, key=lambda volume: volume["time"], default=None)
+            latest = None if newest is None else {
+                "storage": newest["storage"], "time": newest["time"],
+                "age_days": round(max(0.0, now - newest["time"]) / 86_400, 1),
+                "size_bytes": newest["size_bytes"], "protected": newest["protected"],
+                "encrypted": newest["encrypted"], "verified": newest["verified"]}
+            backup_job = None if uncovered is None else vmid not in uncovered
+            found = {"no_backup_job": backup_job is False,
+                     "never_backed_up": complete and latest is None,
+                     "backup_stale": complete and latest is not None and latest["age_days"] > BACKUP_STALE_DAYS}
+            result.append(dict(guest, backup_job=backup_job, backups=len(own), latest=latest,
+                               issues=[issue for issue in BACKUP_ISSUES if found[issue]]))
+        result.sort(key=lambda row: (BACKUP_ISSUES.index(row["issues"][0]) if row["issues"] else len(BACKUP_ISSUES),
+                                     row["node"].lower(), row["vmid"]))
+        return self._result({
+            "schema": "proxmox-backups.v1",
+            "jobs": jobs,
+            "coverage_known": uncovered is not None,
+            "coverage_note": coverage_note,
+            "listing_complete": complete,
+            "stale_after_days": BACKUP_STALE_DAYS,
+            "unreadable_storages": unreadable,
+            "summary": {"guests": len(result),
+                        "with_recent_backup": sum(row["latest"] is not None and not row["issues"]
+                                                  for row in result),
+                        "stale": sum("backup_stale" in row["issues"] for row in result),
+                        "never": sum("never_backed_up" in row["issues"] for row in result),
+                        "without_backup_job": None if uncovered is None else sum(row["backup_job"] is False
+                                                                                 for row in result)},
+            "storages": storages,
+            "count": len(result), "truncated": len(result) > MAX_ROWS,
+            "guests": result[:MAX_ROWS],
+        })
 
     # ------------------------------------------------------------------
     # Governed guest power actions

@@ -30,6 +30,7 @@ def client_for(settings, monkeypatch, service_factory):
     monkeypatch.setattr("services.proxmox.build_proxmox_service", service_factory)
     application = FastAPI()
     application.add_api_route("/internal/v1/proxmox/overview", proxmox_actions.proxmox_overview, methods=["GET"])
+    application.add_api_route("/internal/v1/proxmox/health", proxmox_actions.proxmox_health, methods=["GET"])
     return TestClient(application)
 
 
@@ -92,3 +93,57 @@ def test_a_lua_refusal_is_not_reported_as_an_invalid_configuration(monkeypatch):
     response = client.get("/internal/v1/proxmox/overview", headers={"x-internal-token": "test-internal-token"})
     assert response.status_code == 502
     assert response.json()["reason"] == "lua_adapter_time_limit"
+
+
+class ProviderHealth:
+    """Backups (one cluster-wide read set) and each node's disks."""
+
+    def __init__(self, fail_disks_on=()):
+        self.fail_disks_on = fail_disks_on
+        self.closed = False
+
+    def nodes(self):
+        return {"ok": True, "status": "success", "provider": "proxmox", "observed_at": "2026-11-16T08:00:00+00:00",
+                "data": {"count": 2, "truncated": False, "nodes": [{"node": "pve-a"}, {"node": "pve-b"}]}}
+
+    def backups(self):
+        return {"ok": True, "status": "success", "provider": "proxmox", "observed_at": "2026-11-16T08:00:01+00:00",
+                "data": {"schema": "proxmox-backups.v1", "guests": [], "count": 0}}
+
+    def node_disks(self, node):
+        if node in self.fail_disks_on:
+            raise RuntimeError("Proxmox refused the read (HTTP 403).")
+        return {"ok": True, "status": "success", "provider": "proxmox", "observed_at": "2026-11-16T08:00:02+00:00",
+                "data": {"node": node, "count": 0, "disks": []}}
+
+    def close(self):
+        self.closed = True
+
+
+def test_health_returns_backups_and_every_nodes_disks_and_closes_its_client(monkeypatch):
+    provider = ProviderHealth()
+    client = client_for(Settings(_env_file=None), monkeypatch, lambda settings: provider)
+    assert client.get("/internal/v1/proxmox/health").status_code == 401
+    response = client.get("/internal/v1/proxmox/health", headers={"x-internal-token": "test-internal-token"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["schema"] == "proxmox-health.v1"
+    assert body["backups"]["data"]["schema"] == "proxmox-backups.v1"
+    assert [entry["node"] for entry in body["disks"]] == ["pve-a", "pve-b"]
+    assert all(entry["result"]["ok"] for entry in body["disks"])
+    assert provider.closed
+
+
+def test_one_nodes_unreadable_disks_are_named_while_the_rest_still_show(monkeypatch):
+    client = client_for(Settings(_env_file=None), monkeypatch, lambda settings: ProviderHealth(fail_disks_on=("pve-b",)))
+    body = client.get("/internal/v1/proxmox/health", headers={"x-internal-token": "test-internal-token"}).json()
+    disks = {entry["node"]: entry["result"] for entry in body["disks"]}
+    assert disks["pve-a"]["ok"] is True
+    assert disks["pve-b"] == {"ok": False, "status": "error", "provider": "proxmox", "error_code": "provider_error",
+                              "error": "Proxmox refused the read (HTTP 403)."}
+
+
+def test_health_reports_unconfigured_provider_without_fabricating_data(monkeypatch):
+    client = client_for(Settings(_env_file=None), monkeypatch, lambda settings: None)
+    response = client.get("/internal/v1/proxmox/health", headers={"x-internal-token": "test-internal-token"})
+    assert response.status_code == 503 and response.json() == {"error": "proxmox_not_configured"}

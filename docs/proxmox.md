@@ -32,8 +32,9 @@ are set in the Proxmox web UI (guest → Summary → tags) or with
 
 Each tagged guest shows its engine, state, lock, memory, disk size and (for a
 running container) disk use, and whether a backup job covers it. What needs
-attention is named in a fixed order: `not_running`, `locked`, `no_backup_job`
-and `disk_nearly_full` (90 % or more of a measured disk). The storage pools
+attention is named most urgent first: `not_running`, `disk_nearly_full` (90 %
+or more of a measured disk), `no_backup_job` and `locked` (mildest, since
+every backup run locks its guest). The storage pools
 that hold guest disks on the same nodes are listed with how full they are.
 Two reads serve the whole inventory: `GET /cluster/resources` and
 `GET /cluster/backup-info/not-backed-up`.
@@ -47,6 +48,34 @@ be restored.
 The inventory never connects to a database: it has no database credentials,
 runs no SQL and cannot back up, restore or change one. A database contract
 of that kind needs its own owner-approved design.
+
+## Backups and physical disks
+
+`proxmox_backups` lists every guest's newest backup across the storages that
+hold backups (`GET /nodes/{node}/storage?content=backup&enabled=1`, then each
+storage's `content?content=backup`; a shared storage is read once). Each guest
+shows the age, size and storage of its newest copy, whether that copy is
+protected, encrypted and verified, its backup count and whether a backup job
+covers it. What needs attention, most urgent first: `never_backed_up`,
+`backup_stale` (the newest copy is older than `stale_after_days`, 8: a daily
+or weekly job has missed a run) and `no_backup_job`. When a backup storage
+cannot be read the listing is marked incomplete with the reason, and no guest
+is then called never backed up or overdue. Volume ids, notes and paths never
+leave the AI service. Listing backups needs `Datastore.Audit` on each backup
+storage; it cannot start, delete or restore a backup.
+
+`proxmox_node_disks` lists one node's physical disks
+(`GET /nodes/{node}/disks/list`): device, type, model, size, SMART health
+(`passed`, `failed`, `smart_disabled` or `unknown`), the share of rated life
+used (100 − Proxmox's wearout) and what uses the disk. A failed SMART check is
+`smart_failed`; 90 % or more of rated life used is `worn_out`. Serial numbers,
+WWNs and by-id links are never returned. The read needs `Sys.Audit` on the node.
+
+The Operations dashboard reads both through
+`GET /internal/v1/proxmox/health` (`proxmox-health.v1`): the backups and each
+node's disks, every part a typed read result so one node's refused disk read
+never hides the rest. It is read once a minute while the page is open, apart
+from the ten-second overview.
 
 The live tool matrix can exercise the guest detail and power calls when the
 disposable acceptance profile provides `ACCEPTANCE_PROXMOX_NODE` and

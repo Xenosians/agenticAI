@@ -104,6 +104,16 @@ def register_proxmox_tools(server, service: ProxmoxService | None, missing_setti
         """List guests tagged as database hosts with their state, capacity and backup coverage."""
         return proxmox(lambda: service.database_inventory())
 
+    @server.tool()
+    def proxmox_backups() -> ProxmoxReadResult:
+        """Show each guest's newest backup, the backup jobs and which guests are overdue."""
+        return proxmox(lambda: service.backups())
+
+    @server.tool()
+    def proxmox_node_disks(node: str) -> ProxmoxReadResult:
+        """Show one exact node's physical disks with SMART health and SSD wear."""
+        return proxmox(lambda: service.node_disks(node))
+
     # The expected_* values are trusted policy arguments frozen at approval;
     # they are never model-facing parameters.
 
