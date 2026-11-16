@@ -70,6 +70,21 @@ authority or execution capability. SemanticGuard and ToolGateway remain in place
 The router permits one fresh repair after a strict contract rejection; an invalid
 plan is not executed.
 
+Before validation, trusted code repairs only format slips that have exactly one
+possible result (`subagents/core/orchestration/plan_format.py`): closing
+brackets at the very end written in the wrong order, when there are enough of
+each kind (fewer could mean a cut-off plan, which is never completed), and an
+intent's omitted `max_tool_calls` (always 1) or omitted `clarification_required`
+when the intent names exactly one capability with a read or mutation effect,
+and one non-empty string argument value written without its list (it becomes
+that one-element list; the value is still checked against the user's message).
+Present values are never replaced, and no agent, capability, argument value or
+effect is ever changed. The routing trace keeps the model's raw output and names every
+repair (`format_repairs`); the log prints `[ROUTER] Repaired plan format`.
+An intent that lists several capabilities is still rejected; the repair
+feedback names the trusted capabilities it listed so the one repair can keep
+the single capability that performs the requested operation.
+
 ## Explicit inference stages
 
 Trusted callers supply a stage; a model name does not determine policy.

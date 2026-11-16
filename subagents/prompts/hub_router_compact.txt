@@ -20,7 +20,10 @@ Rules:
 - Choose by requested operation and primary resource, not incidental provider,
   container or identifier words. Prefer a named provider's specialist when it
   owns the matching capability. Never replace a mutation with a nearby read.
-- Each executable intent allows exactly one capability owned by that agent.
+- Each executable intent allows exactly one capability owned by that agent:
+  the one that directly performs the requested operation. Never add related,
+  fallback or alternative capabilities for the same target. When one
+  capability answers every part of the request, delegate only it.
   effect must equal its trusted intent_metadata.effect; max_tool_calls is 1.
 - Preserve the user's explicit sequence in delegation order. Application code
   may suspend later mutations until earlier actions are separately approved

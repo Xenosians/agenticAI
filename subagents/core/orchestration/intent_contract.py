@@ -979,12 +979,13 @@ def _normalize_argument_map(
         if (
             isinstance(
                 values,
-                list,
+                (list, dict),
             )
             and not values
         ):
-            # Empty model-side semantic bindings are absence, not a
-            # requirement that the worker must emit an empty value.
+            # Empty model-side semantic bindings ([] or {}) are absence,
+            # not a requirement that the worker must emit an empty value.
+            # A non-empty object is still rejected below.
             continue
 
         if not isinstance(
@@ -1485,20 +1486,6 @@ def parse_semantic_intent(
         )
     )
 
-    if (
-        not clarification_required
-        and len(
-            allowed_tools
-        )
-        != 1
-    ):
-
-        raise ValueError(
-            "A non-clarification intent must contain "
-            "exactly one allowed tool for the current "
-            "exactly-one-call specialist runtime."
-        )
-
     trusted_agent_tools = {
         tool_name.strip()
 
@@ -1507,6 +1494,42 @@ def parse_semantic_intent(
 
         if tool_name.strip()
     }
+
+    if (
+        not clarification_required
+        and len(
+            allowed_tools
+        )
+        != 1
+    ):
+
+        # Name only capabilities this agent owns: model text never enters
+        # the trusted feedback. The repair then knows exactly what to drop.
+        owned = [name for name in allowed_tools if name in trusted_agent_tools]
+        if not allowed_tools:
+            listed = (
+                "it listed none. Name the one capability that directly "
+                "performs the requested operation; if none does, return "
+                "an empty delegations list."
+            )
+        else:
+            other = len(allowed_tools) - len(owned)
+            listed = (
+                f"it listed {len(allowed_tools)}"
+                + (f": {', '.join(owned)}" if owned else "")
+                + (f" and {other} not available to this agent" if other and owned else "")
+                + (" not available to this agent" if not owned else "")
+                + ". Keep only the one capability that directly performs "
+                "the requested operation; trusted code runs one call per "
+                "delegation."
+            )
+
+        raise ValueError(
+            "A non-clarification intent must contain "
+            "exactly one allowed tool for the current "
+            "exactly-one-call specialist runtime; "
+            + listed
+        )
 
     for tool_name in (
         allowed_tools

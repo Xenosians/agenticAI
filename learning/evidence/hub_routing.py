@@ -138,6 +138,9 @@ class HubRoutingAttemptEvidence(BaseModel):
     raw_response_exact: bool
 
     parsed_output: dict[str, Any] | None = None
+    # Format repairs trusted code made before validation (parse_routing_plan);
+    # raw_response is still the model's own output.
+    format_repairs: list[str] = Field(default_factory=list)
 
     validation_status: HubRoutingValidation = "pending"
     validation_error: str | None = None
@@ -437,6 +440,8 @@ async def capture_hub_routing_generation_async(
 
 def set_current_hub_routing_parsed_output(
     parsed_output: dict[str, Any],
+    *,
+    format_repairs: tuple[str, ...] | list[str] = (),
 ) -> None:
     active = _ACTIVE.get()
 
@@ -450,6 +455,7 @@ def set_current_hub_routing_parsed_output(
 
     updated = dict(active)
     updated["parsed_output"] = sanitized
+    updated["format_repairs"] = list(format_repairs)
     _ACTIVE.set(updated)
 
 

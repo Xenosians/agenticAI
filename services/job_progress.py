@@ -17,6 +17,11 @@ from urllib.parse import urlsplit, urlunsplit
 
 
 STAGES = frozenset({"routing", "planning", "executing", "synthesizing", "waiting_provider"})
+# An agent identifier ("hub" or e.g. "proxmox-specialist"): lower-case words
+# joined by single hyphens. Display only; Phoenix checks the same shape.
+_AGENT_NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+MAX_AGENT_NAME_CHARS = 64
+HUB_AGENT = "hub"
 # How long a lease renewal waits for the socket before the HTTP heartbeat is used.
 LEASE_REPLY_TIMEOUT_SECONDS = 10.0
 _current: ContextVar["JobProgress | None"] = ContextVar("job_progress", default=None)
@@ -51,12 +56,25 @@ async def renew_lease(job_id: str, attempt: int) -> dict | None:
     return None if channel is None else await channel.renew_lease()
 
 
-def report_progress(stage: str) -> None:
-    """An observer failure must never change tool execution or cancellation."""
+def _plain_agent(agent: object) -> str | None:
+    if isinstance(agent, str) and len(agent) <= MAX_AGENT_NAME_CHARS and _AGENT_NAME.fullmatch(agent):
+        return agent
+    return None
+
+
+def report_progress(stage: str, agent: str | None = None) -> None:
+    """An observer failure must never change tool execution or cancellation.
+
+    ``agent`` names the agent doing the step: the specialist whose role is
+    active, else the hub. It is display only and grants nothing.
+    """
     publisher = _current.get()
     if publisher is not None and stage in STAGES:
+        if agent is None:
+            from services.extensions.context import active_role
+            agent = active_role.get() or HUB_AGENT
         try:
-            publisher.publish(stage)
+            publisher.publish(stage, agent=agent)
         except Exception:
             pass
 
@@ -124,23 +142,29 @@ class JobProgress:
         self.token = token
         self.topic = "ai_jobs:" + job_id
         self.attempt = attempt
-        self.queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
+        self.queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=1)
         self.answers: asyncio.Queue[dict] = asyncio.Queue(maxsize=self.MAX_PENDING_ANSWER_FRAMES)
         self.answer_sequence = 0
         self.lease_requests: asyncio.Queue[asyncio.Future] = asyncio.Queue()
-        self.latest: str | None = None
+        self.latest: dict | None = None
         self.joined = False
         self._lease_in_flight: asyncio.Future | None = None
         self.connect = connect
         self.heartbeat_interval = heartbeat_interval
+        # False once Phoenix refuses agent names (it predates them).
+        self.names_agents = True
 
-    def publish(self, stage: str) -> None:
+    def publish(self, stage: str, *, agent: str | None = None) -> None:
+        """Queue the current stage; a name that is not a plain agent name is dropped."""
         if stage not in STAGES:
             raise ValueError("Unsupported progress stage")
-        self.latest = stage
+        payload = {"stage": stage}
+        if self.names_agents and (name := _plain_agent(agent)) is not None:
+            payload["agent"] = name
+        self.latest = payload
         if self.queue.full():
             self.queue.get_nowait()
-        self.queue.put_nowait(stage)
+        self.queue.put_nowait(payload)
 
     def publish_answer(self, text: str) -> None:
         """Queue answer text for the job's viewers, split into bounded, numbered frames."""
@@ -223,7 +247,7 @@ class JobProgress:
         self.joined = True
         try:
             if self.latest is not None:
-                self.publish(self.latest)
+                self.publish(self.latest["stage"], agent=self.latest.get("agent"))
             sequence = 1
             while True:
                 items = await self._next_items()
@@ -241,8 +265,20 @@ class JobProgress:
                     sequence += 1
                     ref = str(sequence)
                     if kind == "progress":
-                        await socket.send(json.dumps([join_ref, ref, self.topic, "progress", {"stage": value}]))
-                        await self._reply(socket, ref, join_ref)
+                        await socket.send(json.dumps([join_ref, ref, self.topic, "progress", value]))
+                        reply = await self._reply(socket, ref, join_ref, accept_error="agent" in value)
+                        if reply.get("status") != "ok":
+                            response = reply.get("response")
+                            if not (isinstance(response, dict) and response.get("reason") == "invalid_request"):
+                                raise ConnectionError("Progress channel rejected")
+                            # A Phoenix that predates agent names accepts only
+                            # {stage}: keep the stage hint, stop naming agents.
+                            self.names_agents = False
+                            sequence += 1
+                            ref = str(sequence)
+                            await socket.send(json.dumps(
+                                [join_ref, ref, self.topic, "progress", {"stage": value["stage"]}]))
+                            await self._reply(socket, ref, join_ref)
                     elif kind == "answer":
                         # A preview only: Phoenix relays it to the job's viewers and keeps nothing.
                         await socket.send(json.dumps([join_ref, ref, self.topic, "answer_text", value]))
@@ -318,7 +354,7 @@ async def _socket_job_progress(settings, job_id: str, attempt: int):
             publisher = JobProgress(settings.require_phoenix_base_url(), settings.require_internal_job_token(), job_id, attempt)
             token = _current.set(publisher)
             _channels[key] = publisher
-            publisher.publish("routing")
+            publisher.publish("routing", agent=HUB_AGENT)
             task = asyncio.create_task(publisher.run())
     except Exception:
         pass

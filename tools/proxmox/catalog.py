@@ -677,9 +677,10 @@ PROXMOX_TOOLS = {
     },
     "proxmox_node_maintenance": {
         **_read(
-            "Show the maintenance state of one exact Proxmox node: Proxmox VE version, running kernel and whether "
-            "a newer installed kernel waits for a reboot, boot mode and Secure Boot, which Proxmox services are "
-            "not running, when its certificates expire, the subscription and which update repositories are on. "
+            "Show the maintenance state of one exact Proxmox node: whether it needs a reboot (a newer installed "
+            "kernel waits), which Proxmox services are down (not running), its Proxmox VE version and kernel, "
+            "boot mode and Secure Boot, when its certificates expire, the subscription and which update "
+            "repositories are on. "
             "Requires the node name exactly as listed by Proxmox. Read only; it never shows certificate names, "
             "fingerprints or the subscription key, and never installs updates.",
             "proxmox.node.maintenance", "proxmox.node.maintenance", ("node",),

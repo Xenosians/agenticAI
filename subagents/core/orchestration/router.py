@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from contextvars import ContextVar
 from typing import Any
 from agent.requested_workflow import (
     RequestedWorkflowContract, admit_requested_workflow,
@@ -61,6 +62,10 @@ from subagents.core.orchestration.intent_contract import (
     parse_semantic_intent,
 )
 
+from subagents.core.orchestration.plan_format import (
+    parse_routing_plan,
+)
+
 from subagents.llm.runtime.inference import (
     InferenceEngine,
 )
@@ -80,6 +85,15 @@ def selected_request_budget(profile: dict | None) -> int:
 
     default = default_external_request_budget(profile, backend=profile["backend"])
     return prepare_external_request(profile, [], 1, default_request_budget=default).request_token_budget
+
+
+# For this task's last validated plan: (position, names) of intents that the
+# contract turned into a clarification because the model left those required
+# values out entirely, without asking. A value the model bound but the contract
+# refused (not grounded in the request) is a question for the owner and is not
+# listed. Task-local: concurrent jobs share one router.
+_CONTRACT_CLARIFIED: ContextVar[tuple[tuple[int, tuple[str, ...]], ...]] = ContextVar(
+    "hub_contract_clarified", default=())
 
 
 class RoutingContractError(
@@ -397,6 +411,16 @@ class LLMRouter:
                     )
                 except ValueError as exc:
                     raise RoutingContractError(str(exc)) from exc
+            unbound = self._unasked_missing_values(plan)
+            if unbound:
+                # The plan asked nothing, yet left a required value unbound: a
+                # generation slip, not a question for the owner. Spend the one
+                # repair on it; if the repair still leaves it unbound, this
+                # first plan's clarification stands.
+                return await self._repair_unbound(
+                    user_request, context=context, options=options, workflow_contract=workflow_contract,
+                    unbound=unbound, fallback=plan,
+                )
             return plan
 
         except RoutingContractError as exc:
@@ -447,6 +471,42 @@ class LLMRouter:
             return plan
 
 
+    @staticmethod
+    def _unasked_missing_values(plan: list[SpecialistRequest]) -> list[str]:
+        """Trusted names of required values the last plan neither bound nor asked for."""
+        unbound = []
+        for position, names in _CONTRACT_CLARIFIED.get():
+            intent = plan[position].semantic_intent if position < len(plan) else None
+            if intent is not None and names and len(intent.allowed_tools) == 1:
+                unbound.extend(f"required argument {name} of {intent.allowed_tools[0]}" for name in names)
+        return unbound
+
+    async def _repair_unbound(self, user_request, *, context, options, workflow_contract, unbound, fallback):
+        """Spend the one repair on required values the plan neither bound nor asked for.
+
+        The repaired plan passes the same contract. Only a non-empty valid plan
+        replaces the first one; otherwise the first plan's clarification stands.
+        """
+        feedback = (
+            "The plan asked no clarification, but these values were not copied from the final user "
+            "message: " + ", ".join(unbound) + ". Bind each exactly as the user wrote it; if the user "
+            "did not give it, set clarification_required=true."
+        )
+        print(f"[ROUTER] Required value neither bound nor asked; one bounded repair count={len(unbound)}")
+        try:
+            plan = await self.route(
+                user_request, context=context, repair_mode=True, include_workflow_protocol=False,
+                repair_error=feedback, **options,
+            )
+            if workflow_contract is not None:
+                validate_requested_plan(
+                    workflow_contract, plan, admit_requested_workflow(workflow_contract, self.registry),
+                )
+        except Exception as exc:  # CancelledError is not an Exception and still propagates.
+            print(f"[ROUTER] Unbound-value repair not used; the clarification stands error_type={type(exc).__name__}")
+            return fallback
+        return plan or fallback
+
     async def route(
         self,
         user_request: str,
@@ -466,6 +526,9 @@ class LLMRouter:
         if not repair_mode:
 
             reset_hub_routing_trace()
+
+        _CONTRACT_CLARIFIED.set(())
+        contract_clarified_positions: list[tuple[int, tuple[str, ...]]] = []
 
         # Routing must answer in JSON: earlier turns are quoted evidence, so a
         # prior prose answer cannot set this generation's reply format.
@@ -639,11 +702,9 @@ class LLMRouter:
 
         try:
 
-            parsed = (
-                json.loads(
-                    response
-                )
-            )
+            # Only repairs with one possible result (closer order, omitted
+            # constants); each is named in the trace and the log.
+            parsed, format_repairs = parse_routing_plan(response)
 
         except json.JSONDecodeError as exc:
 
@@ -659,13 +720,16 @@ class LLMRouter:
 
             return []
 
+        if format_repairs:
+            print(f"[ROUTER] Repaired plan format repairs={','.join(format_repairs)}")
+
         if isinstance(
             parsed,
             dict,
         ):
 
             set_current_hub_routing_parsed_output(
-                parsed
+                parsed, format_repairs=format_repairs,
             )
 
         if not isinstance(
@@ -877,6 +941,19 @@ class LLMRouter:
                     f"contract for specialist '{agent_name}'."
                 )
 
+            raw_intent = delegation.get("intent")
+            # Required values the model neither bound nor asked for: the
+            # contract, not the model, turned this into a question.
+            left_out: tuple[str, ...] = ()
+            if (semantic_intent is not None and semantic_intent.clarification_required
+                    and isinstance(raw_intent, dict) and raw_intent.get("clarification_required") is not True):
+                raw_arguments = raw_intent.get("allowed_arguments")
+                raw_arguments = raw_arguments if isinstance(raw_arguments, dict) else {}
+                left_out = tuple(
+                    name for name in semantic_intent.missing_required_arguments
+                    if raw_arguments.get(name) in (None, [], {}, "")
+                )
+
             try:
 
                 condition = (
@@ -962,6 +1039,9 @@ class LLMRouter:
                 self._contract_error(f"Invalid mutation continuation: {exc}")
                 continue
 
+            if left_out:
+                contract_clarified_positions.append((len(validated), left_out))
+
             validated.append(
                 SpecialistRequest(
                     agent_name=(
@@ -1008,5 +1088,7 @@ class LLMRouter:
                 )
             ),
         )
+
+        _CONTRACT_CLARIFIED.set(tuple(contract_clarified_positions))
 
         return validated

@@ -1142,7 +1142,9 @@ class ToolGateway:
         # ========================================================
 
         from services.job_progress import report_progress
-        report_progress("executing")
+        # Name the agent whose tool runs (display only), also when an
+        # approved action runs outside his inference role.
+        report_progress("executing", agent.name)
 
         result = (
             await self.mcp.call_tool(

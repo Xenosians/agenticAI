@@ -28,7 +28,7 @@ def test_tls_origin_and_bounded_content_free_queue():
     for stage in ["routing", "planning", "synthesizing"]:
         publisher.publish(stage)
     assert publisher.queue.qsize() == 1
-    assert publisher.queue.get_nowait() == "synthesizing"
+    assert publisher.queue.get_nowait() == {"stage": "synthesizing"}
     with pytest.raises(ValueError):
         publisher.publish("arbitrary model text or a password")
 
@@ -84,13 +84,13 @@ async def test_progress_scope_isolated_and_unavailable_server_does_not_fail_job(
         report_progress("planning")
         async with job_progress(settings, "c" * 32, 1) as inner:
             report_progress("executing")
-            assert inner.latest == "executing" and outer.latest == "planning"
+            assert inner.latest["stage"] == "executing" and outer.latest["stage"] == "planning"
         report_progress("synthesizing")
-        assert outer.latest == "synthesizing"
+        assert outer.latest["stage"] == "synthesizing"
         # Yield by awaiting a task, without timing assumptions.
         await asyncio.create_task(asyncio.sleep(0))
     report_progress("routing")
-    assert outer.latest == "synthesizing"
+    assert outer.latest["stage"] == "synthesizing"
 
 
 @run_async
