@@ -99,6 +99,11 @@ def register_proxmox_tools(server, service: ProxmoxService | None, missing_setti
         """Read recent tasks for one exact Proxmox node name."""
         return proxmox(lambda: service.recent_tasks(node))
 
+    @server.tool()
+    def proxmox_database_inventory() -> ProxmoxReadResult:
+        """List guests tagged as database hosts with their state, capacity and backup coverage."""
+        return proxmox(lambda: service.database_inventory())
+
     # The expected_* values are trusted policy arguments frozen at approval;
     # they are never model-facing parameters.
 

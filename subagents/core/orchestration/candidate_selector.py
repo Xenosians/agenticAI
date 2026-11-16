@@ -163,8 +163,11 @@ def build_candidate_agent_specs(selection: CandidateSet, registry: AgentRegistry
 # table. All domain/operation evidence comes from the current trusted registry.
 # Pronouns and auxiliaries name no operation or resource; counted as request
 # terms, "our" or "they" left clear requests uncovered and widened routing.
+# Quantifiers likewise: "Is any database VM down?" left "any" as unmatched
+# required evidence and fell back to the whole catalog.
 _STOP_WORDS = frozenset("a an and are as at be by can could do does for from how i if in is it its me my of on or please the then this to was what when where which with would you your".split()
-                        + "we our ours us they them their theirs he him his she her hers these those that there been being has have had having were should might must".split())
+                        + "we our ours us they them their theirs he him his she her hers these those that there been being has have had having were should might must".split()
+                        + "any some every each all".split())
 
 
 def _terms(text: str) -> set[str]:

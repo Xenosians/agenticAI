@@ -6,15 +6,47 @@ REST API and the shared Lua-gated HTTP client. Provider hosts and credentials
 are machine configuration, not model arguments or source constants.
 
 The read capabilities cover cluster membership, node resource counters,
-QEMU/LXC inventory and exact-guest status/config reads, per-node storage and
-recent per-node task history. Guest details require the exact node and VMID
-from the live inventory. Configuration output is an allow-list and omits
-credentials, SSH keys and private network settings. Results are schema
-checked, bounded and reduced to fields needed for operations. A missing
-provider configuration or non-200/malformed API response is reported as
-unavailable or failed with a stable reason (`provider_unreachable`,
-`provider_timeout`, `provider_refused`, `provider_error`); no success data is
-synthesized and the provider's own answer is never echoed.
+QEMU/LXC inventory and exact-guest status/config reads, per-node storage,
+recent per-node task history and the database host inventory. Guest details
+require the exact node and VMID from the live inventory. Configuration output
+is an allow-list and omits credentials, SSH keys and private network settings.
+Results are schema checked, bounded and reduced to fields needed for
+operations. A missing provider configuration or non-200/malformed API response
+is reported as unavailable or failed with a stable reason
+(`provider_unreachable`, `provider_timeout`, `provider_refused`,
+`provider_error`); no success data is synthesized and the provider's own answer
+is never echoed.
+
+Proxmox does not measure the used disk of a QEMU VM (it reports 0 for "no
+information"), and measures a container's only while it runs. Janus reports
+those values as unknown, never as an empty disk; the disk size is always shown.
+
+## Database host inventory
+
+`proxmox_database_inventory` lists the guests the operator tagged as database
+hosts in Proxmox: tag a VM or container `db`, or `db-<engine>` to name the
+engine (for example `db-postgres` or `db-redis`). Janus never decides from a
+guest's name that it hosts a database, and a template is never listed. Tags
+are set in the Proxmox web UI (guest → Summary → tags) or with
+`qm set <vmid> --tags db-postgres` / `pct set <vmid> --tags db-postgres`.
+
+Each tagged guest shows its engine, state, lock, memory, disk size and (for a
+running container) disk use, and whether a backup job covers it. What needs
+attention is named in a fixed order: `not_running`, `locked`, `no_backup_job`
+and `disk_nearly_full` (90 % or more of a measured disk). The storage pools
+that hold guest disks on the same nodes are listed with how full they are.
+Two reads serve the whole inventory: `GET /cluster/resources` and
+`GET /cluster/backup-info/not-backed-up`.
+
+Backup coverage needs `Sys.Audit` on `/` (part of `PVEAuditor`). When the
+token cannot read it, or Proxmox does not answer that read, coverage is
+reported as unknown with the reason; no guest is shown as unprotected. Coverage
+means a backup job includes the guest; it does not prove a backup ran or can
+be restored.
+
+The inventory never connects to a database: it has no database credentials,
+runs no SQL and cannot back up, restore or change one. A database contract
+of that kind needs its own owner-approved design.
 
 The live tool matrix can exercise the guest detail and power calls when the
 disposable acceptance profile provides `ACCEPTANCE_PROXMOX_NODE` and
@@ -125,7 +157,8 @@ tailnet-only. Serve is tailnet-only and honours access-control rules.
    with **no** privilege separation. Keep the printed secret in the AI host's
    protected link-secrets file only. Grant only:
    - `PVEAuditor` on `/` for the reads: `GET /cluster/status`,
-     `GET /cluster/resources`, `GET /nodes/{node}/storage`,
+     `GET /cluster/resources`, `GET /cluster/backup-info/not-backed-up`,
+     `GET /nodes/{node}/storage`,
      `GET /nodes/{node}/tasks[/{upid}/status]` and the exact-guest
      `status/current` and `config` reads;
    - a custom role holding only `VM.PowerMgmt` (and `VM.Audit`) on `/vms`

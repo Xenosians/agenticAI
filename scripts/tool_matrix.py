@@ -169,6 +169,7 @@ def build_cases(run: str, project: str) -> list[tuple[str, str, str, object]]:
         ("proxmox-guest-config", "proxmox_guest_config", "Read the non-secret configuration for VMID {proxmox_vmid} on node {proxmox_node}.", None),
         ("proxmox-storage", "proxmox_node_storage", "Show the storage pools of Proxmox node {proxmox_node}.", None),
         ("proxmox-tasks", "proxmox_recent_tasks", "Show recent tasks on Proxmox node {proxmox_node}.", None),
+        ("proxmox-databases", "proxmox_database_inventory", "Which Proxmox guests host databases, and does a backup job cover them?", None),
         # Power actions run on the lab guest (ACCEPTANCE_PROXMOX_VMID) in an order
         # that leaves it as found: start, reboot, shutdown, then start and force stop.
         ("proxmox-guest-start", "proxmox_guest_start", "Start container {proxmox_vmid} on node {proxmox_node}.", True),

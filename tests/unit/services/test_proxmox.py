@@ -65,7 +65,9 @@ def test_overview_aggregates_live_provider_reads_under_one_typed_schema():
             "/api2/json/cluster/status": [{"id": "cluster", "type": "cluster"}],
             "/api2/json/cluster/resources": [
                 {"id": "node/pve-a", "type": "node", "node": "pve-a", "status": "online"},
-                {"id": "lxc/201", "type": "lxc", "vmid": 201, "node": "pve-a", "status": "running"}],
+                {"id": "lxc/201", "type": "lxc", "vmid": 201, "node": "pve-a", "status": "running",
+                 "tags": "db-postgres"}],
+            "/api2/json/cluster/backup-info/not-backed-up": [{"vmid": 201, "type": "lxc"}],
         }
         return response(request, payloads[request.url.path])
 
@@ -78,9 +80,15 @@ def test_overview_aggregates_live_provider_reads_under_one_typed_schema():
         assert overview["data"]["schema"] == "proxmox-overview.v1"
         assert overview["data"]["nodes"]["nodes"][0]["status"] == "online"
         assert overview["data"]["guests"]["guests"][0]["vmid"] == 201
+        # The database section comes from the same inventory read plus the coverage read.
+        databases = overview["data"]["databases"]
+        assert databases["schema"] == "proxmox-database-inventory.v1"
+        assert [(row["vmid"], row["engine"], row["backup_job"]) for row in databases["databases"]] == [
+            (201, "postgres", False)]
         assert paths == [
             ("GET", "/api2/json/cluster/status", {}),
             ("GET", "/api2/json/cluster/resources", {}),
+            ("GET", "/api2/json/cluster/backup-info/not-backed-up", {}),
         ]
     finally:
         client.close()
@@ -311,6 +319,33 @@ def test_guest_config_refuses_unreadable_memory_text():
         client.close()
 
 
+def test_a_vm_disk_usage_proxmox_does_not_track_is_unknown_not_zero():
+    # Proxmox reports a QEMU guest's used disk as 0 ("no info available"); only
+    # its size is known. A container's used disk is measured only while it runs;
+    # a stopped one reports 0 as well.
+    resources = [{"id": "qemu/101", "type": "qemu", "vmid": 101, "node": "pve-a", "name": "db", "status": "running",
+                  "disk": 0, "maxdisk": 34359738368},
+                 {"id": "lxc/990", "type": "lxc", "vmid": 990, "node": "pve-a", "name": "lab", "status": "running",
+                  "disk": 11993088, "maxdisk": 1073741824},
+                 {"id": "lxc/991", "type": "lxc", "vmid": 991, "node": "pve-a", "name": "off", "status": "stopped",
+                  "disk": 0, "maxdisk": 1073741824}]
+    details = {"/api2/json/nodes/pve-a/qemu/101/status/current": {"vmid": 101, "status": "running", "disk": 0,
+                                                                  "maxdisk": 34359738368},
+               "/api2/json/nodes/pve-a/lxc/991/status/current": {"vmid": 991, "status": "stopped", "disk": 0,
+                                                                 "maxdisk": 1073741824}}
+    client_service, client = service(guest_handler(resources, details))
+    try:
+        rows = {row["vmid"]: row for row in client_service.guests()["data"]["guests"]}
+        assert (rows[101]["disk_bytes"], rows[101]["disk_total_bytes"]) == (None, 34359738368)
+        assert rows[990]["disk_bytes"] == 11993088
+        assert (rows[991]["disk_bytes"], rows[991]["disk_total_bytes"]) == (None, 1073741824)
+        status = client_service.guest_status("pve-a", 101)["data"]
+        assert (status["disk_bytes"], status["disk_total_bytes"]) == (None, 34359738368)
+        assert client_service.guest_status("pve-a", 991)["data"]["disk_bytes"] is None
+    finally:
+        client.close()
+
+
 def test_overview_reads_nodes_and_guests_from_one_cluster_resources_call():
     calls = []
     resources = [
@@ -325,13 +360,16 @@ def test_overview_reads_nodes_and_guests_from_one_cluster_resources_call():
         calls.append(request.url.path)
         payloads = {"/api2/json/cluster/status": [{"id": "node/pve-a", "type": "node", "name": "pve-a",
                                                    "online": 1}],
-                    "/api2/json/cluster/resources": resources}
+                    "/api2/json/cluster/resources": resources,
+                    "/api2/json/cluster/backup-info/not-backed-up": [{"vmid": 990, "type": "lxc"}]}
         return response(request, payloads[request.url.path])
 
     client_service, client = service(handler)
     try:
         data = client_service.overview()["data"]
-        assert sorted(calls) == ["/api2/json/cluster/resources", "/api2/json/cluster/status"]
+        # Nodes, guests and database hosts share one resources read; coverage is the only extra read.
+        assert sorted(calls) == ["/api2/json/cluster/backup-info/not-backed-up", "/api2/json/cluster/resources",
+                                 "/api2/json/cluster/status"]
         assert data["nodes"]["nodes"] == [{"node": "pve-a", "status": "online", "uptime_seconds": 3600,
                                            "cpu_fraction": 0.25, "cpu_count": 8, "memory_bytes": 512,
                                            "memory_total_bytes": 1024, "disk_bytes": 10, "disk_total_bytes": 100}]

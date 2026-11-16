@@ -9,6 +9,64 @@ def format_read(result: dict) -> str:
     return "Observed Proxmox data: " + json.dumps(result.get("data"), ensure_ascii=False)
 
 
+def _bytes(value) -> str:
+    for unit, size in (("GiB", 1024 ** 3), ("MiB", 1024 ** 2), ("KiB", 1024)):
+        if value >= size:
+            return f"{value / size:.1f} {unit}" if unit == "GiB" else f"{value / size:.0f} {unit}"
+    return f"{value:.0f} B"
+
+
+def _share(used, total) -> str:
+    return f"{_bytes(used)} of {_bytes(total)}" + (f" ({used / total:.0%})" if total else "")
+
+
+def _used_share(used, total) -> str:
+    return f"{_bytes(used)} of {_bytes(total)} used" + (f" ({used / total:.0%})" if total else "")
+
+
+DATABASE_ISSUE_WORDS = {"not_running": "not running", "disk_nearly_full": "disk nearly full",
+                        "no_backup_job": "no backup job", "locked": "locked"}
+
+
+def format_database_inventory(result: dict) -> str:
+    if not result.get("ok"):
+        return "The Proxmox read did not succeed."
+    data = result["data"]
+    if not data["databases"]:
+        return "No Proxmox guest is tagged as a database host. " + (data.get("label_hint") or "")
+    summary = data["summary"]
+    head = (f"{data['count']} database host(s) tagged in Proxmox"
+            + (" (list cut to the first 200)" if data["truncated"] else "")
+            + f": {summary['running']} running, {summary['not_running']} not running; ")
+    if data["backup_coverage_known"]:
+        head += f"{summary['without_backup_job']} without a backup job."
+    else:
+        head += f"backup coverage unknown ({data['backup_coverage_note']})"
+    lines = [head]
+    for row in data["databases"]:
+        about = f"{'VM' if row['type'] == 'qemu' else 'LXC'} {row['vmid']} on {row['node']}"
+        name = row["name"] or "unnamed"
+        text = f"{name} ({about}" + (f", {row['engine']}" if row["engine"] else "") + f"): {row['status']}"
+        if row["lock"]:
+            text += f" (locked: {row['lock']})"
+        if row["memory_bytes"] is not None and row["memory_total_bytes"]:
+            text += f"; memory {_bytes(row['memory_bytes'])} of {_bytes(row['memory_total_bytes'])}"
+        if row["disk_total_bytes"]:
+            text += ("; disk " + (_share(row["disk_bytes"], row["disk_total_bytes"]) if row["disk_bytes"] is not None
+                                  else f"{_bytes(row['disk_total_bytes'])} (usage not measured)"))
+        text += "; backup job: " + {True: "yes", False: "no", None: "unknown"}[row["backup_job"]] + "."
+        if row["issues"]:
+            text += " Needs attention: " + ", ".join(DATABASE_ISSUE_WORDS[issue] for issue in row["issues"]) + "."
+        lines.append(text)
+    if data["storage"]:
+        lines.append("Guest disk storage: " + "; ".join(
+            f"{pool['storage']} on {pool['node']}" + (f" ({pool['type']})" if pool["type"] else "")
+            + (f" {_used_share(pool['used_bytes'], pool['total_bytes'])}"
+               if pool["used_bytes"] is not None and pool["total_bytes"] else "")
+            for pool in data["storage"]) + ".")
+    return "\n".join(lines)
+
+
 def _read(description: str, resource_type: str, permission: str, grounded=(), parameters=None) -> dict:
     return {"description": description, "resource_type": resource_type, "operation_kind": "read",
             "effect": "read", "permission": permission, "risk": "read", "requires_approval": False,
@@ -175,6 +233,16 @@ PROXMOX_TOOLS = {
         "Read up to 50 recent Proxmox tasks for one exact node. Requires the node name exactly as listed by Proxmox. Read only.",
         "proxmox.task", "proxmox.task.list", ("node",),
         {"node": {"type": "str", "description": "Exact node name returned by proxmox_nodes."}}),
+    "proxmox_database_inventory": {
+        **_read(
+            "List the Proxmox VMs and containers the operator tagged as database hosts (tag db or db-<engine>, for "
+            "example db-postgres): engine, whether each database VM or container is running or down, memory, disk "
+            "use and size (a VM's disk use is not measured), whether its disk is running out of space, whether a "
+            "backup job covers it, and the storage their disks live on. Use this for database servers, their "
+            "backups and capacity. Read only; it never connects to a database or runs queries.",
+            "proxmox.database", "proxmox.database.inventory"),
+        "result_formatter": format_database_inventory,
+    },
     "proxmox_guest_start": _power(
         "start",
         "Start (power on) one stopped Proxmox VM or container, identified by the exact node and VMID the user "

@@ -84,6 +84,20 @@ def test_pronouns_and_auxiliaries_are_not_request_evidence(production_registry, 
 
 
 @pytest.mark.parametrize("user_request", [
+    "Which of our Proxmox guests host databases?",
+    "Do our database servers have a backup job?",
+    "Is any database VM down or running out of disk?",
+])
+def test_database_host_questions_reach_the_database_inventory(production_registry, user_request):
+    # The inventory is the only tool that knows which guests host databases;
+    # a question that never says "Proxmox" must still find it.
+    selection = DeterministicCandidateSelector().select(user_request, production_registry)
+    assert not selection.fallback_required, selection.reason
+    assert "proxmox_database_inventory" in {name for candidate in selection.candidates
+                                            for name in candidate.capability_names}
+
+
+@pytest.mark.parametrize("user_request", [
     "Is alice disabled?",
     "Is bob unlocked?",
     "Is charlie enabled?",

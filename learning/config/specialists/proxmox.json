@@ -39,7 +39,10 @@
     {"tool_name": "proxmox_node_storage", "user_request": "Which storage backends are configured on Proxmox node spare-pc?", "arguments": {"node": "spare-pc"}, "tags": ["read", "storage"]},
     {"tool_name": "proxmox_recent_tasks", "user_request": "Show the recent Proxmox tasks on node pve1.", "arguments": {"node": "pve1"}, "tags": ["read", "task"]},
     {"tool_name": "proxmox_recent_tasks", "user_request": "Did any backup or migration task fail recently on node pve-lab?", "arguments": {"node": "pve-lab"}, "tags": ["read", "task"]},
-    {"tool_name": "proxmox_recent_tasks", "user_request": "What has Proxmox node spare-pc been doing lately?", "arguments": {"node": "spare-pc"}, "tags": ["read", "task"]}
+    {"tool_name": "proxmox_recent_tasks", "user_request": "What has Proxmox node spare-pc been doing lately?", "arguments": {"node": "spare-pc"}, "tags": ["read", "task"]},
+    {"tool_name": "proxmox_database_inventory", "user_request": "Which of our Proxmox guests host databases?", "arguments": {}, "tags": ["read", "database"]},
+    {"tool_name": "proxmox_database_inventory", "user_request": "Do all the database servers on Proxmox have a backup job?", "arguments": {}, "tags": ["read", "database"]},
+    {"tool_name": "proxmox_database_inventory", "user_request": "Is any of our database VMs or containers down or running out of disk?", "arguments": {}, "tags": ["read", "database"]}
   ],
   "eval_cases": [
     {"name": "cluster-membership", "user": "Give me the membership and online state of the Proxmox VE cluster.", "allowed_tools": ["proxmox_cluster_status"], "allowed_arguments": {}, "expected_tool": "proxmox_cluster_status", "expected_arguments": {}},
@@ -52,6 +55,7 @@
     {"name": "guest-power-reboot", "user": "Restart guest 812 on hv-west.", "allowed_tools": ["proxmox_guest_reboot"], "allowed_arguments": {"node": ["hv-west"], "vmid": ["812"]}, "expected_tool": "proxmox_guest_reboot", "expected_arguments": {"node": "hv-west", "vmid": 812}},
     {"name": "guest-power-force-stop", "user": "Guest 812 on node hv-west hangs; force stop it.", "allowed_tools": ["proxmox_guest_force_stop"], "allowed_arguments": {"node": ["hv-west"], "vmid": ["812"]}, "expected_tool": "proxmox_guest_force_stop", "expected_arguments": {"node": "hv-west", "vmid": 812}},
     {"name": "node-storage", "user": "Read the storage pools of Proxmox node pve2.", "allowed_tools": ["proxmox_node_storage"], "allowed_arguments": {"node": ["pve2"]}, "expected_tool": "proxmox_node_storage", "expected_arguments": {"node": "pve2"}},
-    {"name": "node-tasks", "user": "List the latest tasks recorded on Proxmox node pve2.", "allowed_tools": ["proxmox_recent_tasks"], "allowed_arguments": {"node": ["pve2"]}, "expected_tool": "proxmox_recent_tasks", "expected_arguments": {"node": "pve2"}}
+    {"name": "node-tasks", "user": "List the latest tasks recorded on Proxmox node pve2.", "allowed_tools": ["proxmox_recent_tasks"], "allowed_arguments": {"node": ["pve2"]}, "expected_tool": "proxmox_recent_tasks", "expected_arguments": {"node": "pve2"}},
+    {"name": "database-inventory", "user": "Give me the database hosts on Proxmox and whether backups cover them.", "allowed_tools": ["proxmox_database_inventory"], "allowed_arguments": {}, "expected_tool": "proxmox_database_inventory", "expected_arguments": {}}
   ]
 }

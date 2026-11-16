@@ -87,6 +87,14 @@ def _invalid() -> RuntimeError:
     return RuntimeError("Proxmox returned an invalid answer.")
 
 
+class ProxmoxRefused(RuntimeError):
+    """Proxmox answered a read with an error status other than 404."""
+
+    def __init__(self, status_code: int):
+        self.status_code = status_code
+        super().__init__(f"Proxmox refused the read (HTTP {status_code}).")
+
+
 def _text(item: dict, field: str, *, required: bool = False, limit: int = 160) -> str | None:
     value = item.get(field)
     if value is None and not required:
@@ -105,6 +113,18 @@ def _number(item: dict, field: str) -> int | float | None:
     return value
 
 
+def _guest_disk_used(item: dict, guest_type: str) -> int | float | None:
+    """Used disk of a guest, or None when Proxmox did not measure it.
+
+    Proxmox does not track it for QEMU VMs and sends 0 ("no info available");
+    a container's is measured only while it runs, and a stopped one sends 0 too.
+    """
+    used = _number(item, "disk")
+    if guest_type == "qemu" or item.get("status") != "running":
+        return None
+    return used
+
+
 def _boolean(item: dict, field: str) -> bool | None:
     """A Proxmox flag: a JSON boolean, or the 0/1 integer Proxmox VE 9 sends."""
     value = item.get(field)
@@ -118,6 +138,36 @@ def _boolean(item: dict, field: str) -> bool | None:
 
 
 QEMU_MEMORY = re.compile(r"(?:current=)?([0-9]{1,9})")
+
+# Operator metadata: a guest hosts a database when its Proxmox tags include
+# `db` or `db-<engine>` (for example db-postgres). Names are never guessed from.
+DATABASE_ENGINE = re.compile(r"[a-z0-9][a-z0-9_.+-]{0,31}")
+# Fixed order, most urgent first. A lock comes last: every backup run locks
+# its guest while the guest keeps serving.
+DATABASE_ISSUES = ("not_running", "disk_nearly_full", "no_backup_job", "locked")
+DISK_NEARLY_FULL = 0.9
+DATABASE_LABEL_HINT = ('Tag a VM or container "db" or "db-<engine>" (for example "db-postgres") '
+                       'in Proxmox to list it here.')
+GUEST_DISK_CONTENT = frozenset({"images", "rootdir"})
+
+
+def database_tags(tags: str | None) -> tuple[bool, str | None]:
+    """Whether Proxmox tags mark a database host, and its engine when one is named."""
+    found, engine = False, None
+    for tag in re.split(r"[;,\s]+", (tags or "").lower()):
+        if tag == "db":
+            found = True
+        elif tag.startswith("db-") and DATABASE_ENGINE.fullmatch(tag[3:]):
+            found = True
+            engine = engine or tag[3:]
+    return found, engine
+
+
+def _tags(item: dict) -> str | None:
+    """A guest's Proxmox tags; an empty value means none."""
+    if item.get("tags") in (None, ""):
+        return None
+    return _text(item, "tags", limit=2048)
 
 
 def _memory_mib(item: dict, guest_type: str) -> int | float | None:
@@ -162,7 +212,7 @@ class ProxmoxService:
             if response.status_code == 404:
                 raise ProviderResourceNotFound("Proxmox did not find the requested resource.")
             if response.status_code != 200:
-                raise RuntimeError(f"Proxmox refused the read (HTTP {response.status_code}).")
+                raise ProxmoxRefused(response.status_code)
             payload = bytearray()
             for chunk in response.iter_bytes(chunk_size=65536):
                 payload.extend(chunk)
@@ -220,7 +270,7 @@ class ProxmoxService:
                            "type": _text(row, "type", required=True), "name": _text(row, "name"),
                            "status": _text(row, "status", required=True), "cpu_fraction": _number(row, "cpu"),
                            "memory_bytes": _number(row, "mem"), "memory_total_bytes": _number(row, "maxmem"),
-                           "disk_bytes": _number(row, "disk"), "disk_total_bytes": _number(row, "maxdisk"),
+                           "disk_bytes": _guest_disk_used(row, row["type"]), "disk_total_bytes": _number(row, "maxdisk"),
                            "uptime_seconds": _number(row, "uptime")})
         guests.sort(key=lambda row: (row["node"].lower(), row["vmid"]))
         return {"count": len(guests), "truncated": len(guests) > MAX_ROWS, "guests": guests[:MAX_ROWS]}
@@ -279,7 +329,7 @@ class ProxmoxService:
             "cpu_count": _number(data, "cpus"),
             "memory_bytes": _number(data, "mem"),
             "memory_total_bytes": _number(data, "maxmem"),
-            "disk_bytes": _number(data, "disk"),
+            "disk_bytes": _guest_disk_used(data, guest_type),
             "disk_total_bytes": _number(data, "maxdisk"),
             "disk_read_bytes": _number(data, "diskread"),
             "disk_write_bytes": _number(data, "diskwrite"),
@@ -345,11 +395,11 @@ class ProxmoxService:
                              "tasks": tasks[:MAX_TASKS]})
 
     def overview(self) -> dict:
-        """One bounded dashboard snapshot from two provider reads.
+        """One bounded dashboard snapshot from three provider reads.
 
-        /cluster/resources without a type filter returns the node rows and the
-        guest rows together, so nodes and guests come from the same read (one
-        round trip fewer than /nodes plus a filtered resources read).
+        /cluster/resources without a type filter returns the node rows, the
+        guest rows and the storage rows together, so nodes, guests and the
+        database hosts come from the same read; backup coverage is the third.
         """
         cluster = self.cluster_status()["data"]
         rows = self._rows(self._get("/cluster/resources"), required=("type",))
@@ -361,7 +411,103 @@ class ProxmoxService:
             "cluster": cluster,
             "nodes": self._node_rows(node_rows),
             "guests": self._guest_rows([row for row in rows if row["type"] in {"qemu", "lxc"}]),
+            "databases": self._database_rows(rows),
         })
+
+    def _backup_coverage(self) -> tuple[set[int] | None, str | None]:
+        """VMIDs no backup job covers, or None with why coverage is unknown.
+
+        The list needs Sys.Audit on /; a refusal or no answer leaves coverage
+        unknown instead of failing the inventory. A malformed answer is refused.
+        """
+        try:
+            rows = self._get("/cluster/backup-info/not-backed-up")
+        except ProxmoxRefused as error:
+            return None, (f"Proxmox refused the backup coverage read (HTTP {error.status_code}); "
+                          "the token needs Sys.Audit on / to see backup jobs.")
+        except ProviderResourceNotFound:
+            return None, "This Proxmox version does not report backup coverage."
+        except httpx.TransportError:
+            return None, "Proxmox did not answer the backup coverage read."
+        uncovered = set()
+        for row in self._rows(rows):
+            vmid = row.get("vmid")
+            if type(vmid) is not int or not (1 <= vmid <= MAX_VMID):
+                raise _invalid()
+            uncovered.add(vmid)
+        return uncovered, None
+
+    def _database_rows(self, rows: list[dict]) -> dict:
+        """Guests tagged as database hosts, their backup coverage, issues and guest-disk storage."""
+        databases = []
+        for row in rows:
+            if row["type"] not in ("qemu", "lxc"):
+                continue
+            vmid = row.get("vmid")
+            if type(vmid) is not int or not (1 <= vmid <= MAX_VMID):
+                raise _invalid()
+            node, status = _text(row, "node", required=True), _text(row, "status", required=True)
+            is_database, engine = database_tags(_tags(row))
+            # A template cannot run, so it hosts nothing.
+            if not is_database or _boolean(row, "template"):
+                continue
+            databases.append({
+                "vmid": vmid, "node": node, "type": row["type"], "name": _text(row, "name"), "engine": engine,
+                "status": status, "lock": _text(row, "lock"),
+                "memory_bytes": _number(row, "mem"), "memory_total_bytes": _number(row, "maxmem"),
+                "disk_bytes": _guest_disk_used(row, row["type"]), "disk_total_bytes": _number(row, "maxdisk"),
+                "uptime_seconds": _number(row, "uptime"), "backup_job": None, "issues": [],
+            })
+        uncovered, coverage_note = self._backup_coverage()
+        for database in databases:
+            if uncovered is not None:
+                database["backup_job"] = database["vmid"] not in uncovered
+            used, total = database["disk_bytes"], database["disk_total_bytes"]
+            found = {"not_running" if database["status"] != "running" else "",
+                     "locked" if database["lock"] else "",
+                     "no_backup_job" if database["backup_job"] is False else "",
+                     "disk_nearly_full" if used is not None and total and used / total >= DISK_NEARLY_FULL else ""}
+            database["issues"] = [issue for issue in DATABASE_ISSUES if issue in found]
+        # A stopped host first, then hosts with any other issue, then healthy ones.
+        databases.sort(key=lambda row: (0 if "not_running" in row["issues"] else 1 if row["issues"] else 2,
+                                        DATABASE_ISSUES.index(row["issues"][0]) if row["issues"] else 0,
+                                        row["node"].lower(), row["vmid"]))
+        hosting = {database["node"] for database in databases}
+        storage = []
+        for row in rows:
+            if row["type"] != "storage":
+                continue
+            node = _text(row, "node", required=True)
+            content = set((_text(row, "content", limit=512) or "").split(","))
+            if node not in hosting or not GUEST_DISK_CONTENT & content:
+                continue
+            storage.append({"node": node, "storage": _text(row, "storage", required=True),
+                            "type": _text(row, "plugintype"), "shared": _boolean(row, "shared"),
+                            "status": _text(row, "status"), "used_bytes": _number(row, "disk"),
+                            "total_bytes": _number(row, "maxdisk")})
+        storage.sort(key=lambda row: (row["node"].lower(), row["storage"].lower()))
+        return {
+            "schema": "proxmox-database-inventory.v1",
+            "count": len(databases),
+            "truncated": len(databases) > MAX_ROWS,
+            "summary": {
+                "running": sum(row["status"] == "running" for row in databases),
+                "not_running": sum(row["status"] != "running" for row in databases),
+                "without_backup_job": None if uncovered is None else sum(row["backup_job"] is False
+                                                                         for row in databases),
+                "with_issues": sum(bool(row["issues"]) for row in databases),
+            },
+            "backup_coverage_known": uncovered is not None,
+            "backup_coverage_note": coverage_note,
+            "databases": databases[:MAX_ROWS],
+            "storage": storage[:MAX_ROWS],
+            "label_hint": None if databases else DATABASE_LABEL_HINT,
+        }
+
+    def database_inventory(self) -> dict:
+        """Database hosts from operator tags, with observed state, capacity and backup coverage (two reads)."""
+        rows = self._rows(self._get("/cluster/resources"), required=("type",))
+        return self._result(self._database_rows(rows))
 
     # ------------------------------------------------------------------
     # Governed guest power actions

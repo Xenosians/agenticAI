@@ -43,6 +43,7 @@ CAPABILITY_SEMANTICS: dict[str, dict[str, str]] = {
     "knowledge_search": {"resource_type": "knowledge", "operation_kind": "search", "effect": "read", "permission": "knowledge.search"},
     "process_exec": {"resource_type": "workspace.process", "operation_kind": "action", "effect": "mutation", "permission": "workspace.process.execute"},
     "proxmox_cluster_status": {"resource_type": "proxmox.cluster", "operation_kind": "read", "effect": "read", "permission": "proxmox.cluster.read"},
+    "proxmox_database_inventory": {"resource_type": "proxmox.database", "operation_kind": "read", "effect": "read", "permission": "proxmox.database.inventory"},
     "proxmox_guest_config": {"resource_type": "proxmox.guest", "operation_kind": "read", "effect": "read", "permission": "proxmox.guest.config"},
     "proxmox_guest_force_stop": {"resource_type": "proxmox.guest", "operation_kind": "action", "effect": "mutation", "permission": "proxmox.guest.force_stop"},
     "proxmox_guest_reboot": {"resource_type": "proxmox.guest", "operation_kind": "action", "effect": "mutation", "permission": "proxmox.guest.reboot"},
