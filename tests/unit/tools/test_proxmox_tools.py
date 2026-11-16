@@ -186,6 +186,18 @@ def backups_result(**changes):
             "data": data}
 
 
+def test_the_database_inventory_leaves_backup_questions_to_the_backups_read():
+    # Live, "Which of our Proxmox guests are overdue for a backup or have never
+    # been backed up?" was routed to the database inventory, whose description
+    # claimed "database servers, their backups and capacity"; it lists only
+    # tagged hosts, so the answer invented "backup tracking relies on VM tags".
+    inventory = TOOLS["proxmox_database_inventory"]["description"]
+    backups = TOOLS["proxmox_backups"]["description"]
+    assert "their backups" not in inventory
+    assert "Use this only for database hosts" in inventory and "proxmox_backups" in inventory
+    assert backups.startswith("Use this for any question about Proxmox backups")
+
+
 def test_backups_read_in_words():
     formatter = TOOLS["proxmox_backups"]["result_formatter"]
     assert formatter(backups_result()).splitlines() == [

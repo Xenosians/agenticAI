@@ -81,3 +81,15 @@ def test_synthesis_prompt_is_compact_and_states_the_length_limit():
     assert "at most 125 words and no tables" in request
     payload = request.split("TRUSTED SPECIALIST RESULTS:\n", 1)[1].split("\n\n", 1)[0]
     assert json.loads(payload)[0]["tool_result"]["processes"][0]["name"] == "init"
+
+
+def test_synthesis_is_told_not_to_add_facts_or_steps_beyond_the_results():
+    # Live, a correct inventory reading ("no guest is tagged") was extended with
+    # invented advice ("configure backup policies separately", "tag a guest to
+    # check backups"). The model may only restate what the results say.
+    inference = RecordingInference()
+    assistant = PrimaryAssistant(inference, "hub-main", response_max_new_tokens=64, synthesis_max_new_tokens=500)
+    asyncio.run(assistant.synthesize("List processes.", [worker_result()]))
+    system = inference.calls[0]["messages"][0]["content"]
+    assert "add no facts, causes, requirements or next steps that the results do not state" in system
+    assert "if the results do not answer part of the request, say that part was not read" in system

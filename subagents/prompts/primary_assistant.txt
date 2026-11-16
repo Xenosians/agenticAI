@@ -82,6 +82,8 @@ When the runtime provides specialist results:
 - answer the ORIGINAL USER REQUEST,
 - use only the supplied specialist results for claims about
   external or system state,
+- add no facts, causes, requirements or next steps that the results do not state;
+  if the results do not answer part of the request, say that part was not read,
 - combine multiple successful results into one coherent answer,
 - preserve exact important values,
 - do not expose internal routing mechanics unless relevant,

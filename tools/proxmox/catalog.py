@@ -315,8 +315,9 @@ PROXMOX_TOOLS = {
             "List the Proxmox VMs and containers the operator tagged as database hosts (tag db or db-<engine>, for "
             "example db-postgres): engine, whether each database VM or container is running or down, memory, disk "
             "use and size (a VM's disk use is not measured), whether its disk is running out of space, whether a "
-            "backup job covers it, and the storage their disks live on. Use this for database servers, their "
-            "backups and capacity. Read only; it never connects to a database or runs queries.",
+            "backup job covers it, and the storage their disks live on. Use this only for database hosts and their "
+            "capacity; for when guests were last backed up, overdue or missing backups, use proxmox_backups. Read "
+            "only; it never connects to a database or runs queries.",
             "proxmox.database", "proxmox.database.inventory"),
         "result_formatter": format_database_inventory,
         # The formatter states every fact in words (including unknown coverage
@@ -325,10 +326,10 @@ PROXMOX_TOOLS = {
     },
     "proxmox_backups": {
         **_read(
-            "Show the backups of every Proxmox VM and container: when each guest was last backed up, on which "
-            "backup storage, its size, whether it is protected, encrypted and verified, which guests are overdue "
-            "(newest backup older than 8 days) or never backed up, and which no backup job covers. Read only; it "
-            "never starts, deletes or restores a backup.",
+            "Use this for any question about Proxmox backups, for every VM and container, tagged or not: when "
+            "each guest was last backed up, on which backup storage, its size, whether it is protected, encrypted "
+            "and verified, which guests are overdue (newest backup older than 8 days) or never backed up, and "
+            "which no backup job covers. Read only; it never starts, deletes or restores a backup.",
             "proxmox.backup", "proxmox.backup.list"),
         "result_formatter": format_backups,
         "synthesis_evidence": "answer",
