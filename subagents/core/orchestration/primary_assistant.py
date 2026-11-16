@@ -70,6 +70,25 @@ def synthesis_evidence(result: AgentResult) -> dict:
     return evidence
 
 
+def complete_reading(results: list[AgentResult]) -> str | None:
+    """The answer itself when one successful read's tool declares its reading complete and it is one line.
+
+    Such a reading is already a direct statement; a synthesis model can only
+    restate it or add to it, and live it added a wrong definition and a next
+    step. A multi-line reading is a listing that synthesis narrows to the
+    question, so it still goes through the model.
+    """
+    if len(results) != 1:
+        return None
+    result = results[0]
+    tool = get_tool(result.proposed_tool) if result.proposed_tool else None
+    answer = (result.answer or "").strip()
+    if (result.status != "success" or (tool or {}).get("synthesis_evidence") != "answer"
+            or not answer or "\n" in answer):
+        return None
+    return answer
+
+
 class PrimaryAssistant:
     """
     Main conversational model.
@@ -252,6 +271,10 @@ class PrimaryAssistant:
         Structured results remain authoritative. The Main model
         is responsible only for user-facing synthesis.
         """
+
+        reading = complete_reading(results)
+        if reading is not None:
+            return reading
 
         specialist_payload = [
             synthesis_evidence(

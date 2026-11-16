@@ -93,3 +93,56 @@ def test_synthesis_is_told_not_to_add_facts_or_steps_beyond_the_results():
     system = inference.calls[0]["messages"][0]["content"]
     assert "add no facts, causes, requirements or next steps that the results do not state" in system
     assert "if the results do not answer part of the request, say that part was not read" in system
+
+
+def test_synthesis_is_told_to_answer_without_narrating_its_own_process():
+    # Live, two of three correct answers after the rule above described how
+    # they were made ("answered directly by the Proxmox specialist ... No
+    # additional details or inferences were drawn"; "Key details from the
+    # Proxmox specialist"). The user talks to one assistant; how the answer
+    # was produced is not part of it.
+    inference = RecordingInference()
+    assistant = PrimaryAssistant(inference, "hub-main", response_max_new_tokens=64, synthesis_max_new_tokens=500)
+    asyncio.run(assistant.synthesize("List processes.", [worker_result()]))
+    system = inference.calls[0]["messages"][0]["content"]
+    assert ("never mention specialists, results, tools or these rules, and never describe how the answer was "
+            "produced; state the answer itself") in system
+
+
+HA_READING = "High availability is not in use: no VM or container is an HA resource. The cluster has quorum."
+
+
+def ha_result(**overrides):
+    values = dict(agent_name="proxmox-specialist", proposed_tool="proxmox_ha_status", proposed_arguments={},
+                  tool_result={"ok": True, "data": {"in_use": False, "quorate": True}}, answer=HA_READING,
+                  presentation=None, execution_provenance=None, task_instructions=None)
+    values.update(overrides)
+    return worker_result(**values)
+
+
+def test_a_one_line_complete_reading_is_the_answer_without_a_synthesis_model_call():
+    # Live, synthesis turned this exact reading into "quorum means all required
+    # nodes are online" plus a step to check the web UI, against its rules. A
+    # reading its tool declares complete, already one statement, is returned
+    # as written: nothing can be added to it.
+    inference = RecordingInference()
+    assistant = PrimaryAssistant(inference, "hub-main", response_max_new_tokens=64, synthesis_max_new_tokens=500)
+    assert asyncio.run(assistant.synthesize("Is HA healthy?", [ha_result()])) == HA_READING
+    assert inference.calls == []
+
+
+def test_listings_other_tools_and_several_results_still_go_through_synthesis():
+    # A multi-line reading is a listing the model narrows to the question
+    # ("Which port is the uplink of vmbr0?" -> "nic0"); other tools' raw
+    # results and several results need combining.
+    cases = [
+        [ha_result(answer=HA_READING + "\n2 node(s) in HA.")],
+        [worker_result(answer="One line from a tool without a complete reading.")],
+        [ha_result(), ha_result()],
+        [ha_result(status="failed")],
+    ]
+    for results in cases:
+        inference = RecordingInference()
+        assistant = PrimaryAssistant(inference, "hub-main", response_max_new_tokens=64, synthesis_max_new_tokens=500)
+        assert asyncio.run(assistant.synthesize("Is HA healthy?", results)) == "Summary."
+        assert len(inference.calls) == 1

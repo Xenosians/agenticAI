@@ -31,6 +31,8 @@ def format_router_health(result: dict) -> str:
 def format_interfaces(result: dict) -> str:
     if not result.get("ok"):
         return "Network provider read did not succeed."
+    if not result["data"]["interfaces"]:
+        return "The router reports no logical interfaces."
     lines = [f"{result['data']['count']} interface(s):"]
     for item in result["data"]["interfaces"]:
         how = ", ".join(value for value in (item["protocol"], item["device"]) if value)
@@ -50,6 +52,8 @@ def format_known_hosts(result: dict) -> str:
     if not result.get("ok"):
         return "Network provider read did not succeed."
     data = result["data"]
+    if not data["hosts"]:
+        return "The router knows no hosts."
     lines = [f"{data['count']} known host(s)" + (" (list cut to the first 200)" if data["truncated"] else "") + ":"]
     for host in data["hosts"]:
         lines.append(f"{host['name'] or 'unnamed'} ({host['mac']}) " + ", ".join(host["ipv4"] + host["ipv6"]))
@@ -104,6 +108,8 @@ def format_tailnet_devices(result: dict) -> str:
     if not result.get("ok"):
         return "Tailscale read did not succeed."
     data = result["data"]
+    if not data["devices"]:
+        return "No device is on the tailnet."
     head = f"{data['count']} device(s) on the tailnet" + (" (list cut to the first 200)" if data["truncated"] else "")
     summary = data.get("summary")
     if summary:

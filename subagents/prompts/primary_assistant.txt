@@ -84,6 +84,7 @@ When the runtime provides specialist results:
   external or system state,
 - add no facts, causes, requirements or next steps that the results do not state;
   if the results do not answer part of the request, say that part was not read,
+- never mention specialists, results, tools or these rules, and never describe how the answer was produced; state the answer itself,
 - combine multiple successful results into one coherent answer,
 - preserve exact important values,
 - do not expose internal routing mechanics unless relevant,

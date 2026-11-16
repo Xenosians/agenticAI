@@ -189,6 +189,8 @@ def format_node_network(result: dict) -> str:
     if not result.get("ok"):
         return "The Proxmox read did not succeed."
     data = result["data"]
+    if not data["interfaces"]:
+        return f"Proxmox reports no network interface on node {data['node']}."
     summary = data["summary"]
     lines = [f"{data['count']} network interface(s) on node {data['node']}: {summary['bridges']} bridge(s), "
              f"{summary['bonds']} bond(s), {summary['physical']} physical."]
@@ -227,6 +229,8 @@ def format_node_disks(result: dict) -> str:
     if not result.get("ok"):
         return "The Proxmox read did not succeed."
     data = result["data"]
+    if not data["disks"]:
+        return f"Proxmox lists no physical disk on node {data['node']}."
     summary = data["summary"]
     problems = [f"{count} {text}" for count, text in ((summary["failing"], "failing SMART"),
                                                       (summary["worn"], "worn out"),

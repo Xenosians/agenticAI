@@ -269,6 +269,22 @@ def test_node_network_reads_in_words():
     assert formatter({"ok": False}) == "The Proxmox read did not succeed."
 
 
+def test_empty_proxmox_readings_say_they_are_empty():
+    def read(tool, data):
+        return TOOLS[tool]["result_formatter"]({"ok": True, "status": "success", "provider": "proxmox",
+                                                "observed_at": "2026-11-16T06:00:00+00:00", "data": data})
+
+    assert read("proxmox_node_network", {
+        "schema": "proxmox-node-network.v1", "node": "pve-a", "count": 0, "truncated": False,
+        "summary": {"interfaces": 0, "bridges": 0, "bonds": 0, "physical": 0, "reported_active": 0,
+                    "reported_inactive": 0, "not_reported": 0},
+        "missing_ports": [], "interfaces": []}) == "Proxmox reports no network interface on node pve-a."
+    assert read("proxmox_node_disks", {
+        "node": "pve-a", "count": 0, "truncated": False,
+        "summary": {"disks": 0, "failing": 0, "worn": 0, "health_unknown": 0},
+        "disks": []}) == "Proxmox lists no physical disk on node pve-a."
+
+
 def test_ha_status_is_a_read_in_the_specialist_that_never_changes_ha():
     from pathlib import Path
 

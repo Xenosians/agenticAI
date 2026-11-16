@@ -122,6 +122,21 @@ def test_tailnet_devices_read_in_words():
     ]
 
 
+def test_an_empty_listing_says_it_is_empty_instead_of_ending_on_a_colon():
+    # A reading is synthesis evidence: "0 known host(s):" invites a model to
+    # fill the list. An empty result states that nothing was found.
+    def read(tool, data):
+        return TOOLS[tool]["result_formatter"]({"ok": True, "data": data})
+
+    assert read("network_known_hosts", {"count": 0, "truncated": False, "hosts": []}) == (
+        "The router knows no hosts.")
+    assert read("network_interfaces", {"count": 0, "interfaces": []}) == (
+        "The router reports no logical interfaces.")
+    assert read("network_tailnet_devices", {"count": 0, "truncated": False,
+                                            "summary": {"online": 0, "offline": 0, "with_issues": 0},
+                                            "devices": []}) == "No device is on the tailnet."
+
+
 def _health_device(**changes):
     device = {"name": "hummingbird", "dns_name": "hummingbird.tail1234.ts.net", "os": "linux",
               "client_version": "1.104.4", "update_available": False, "online": True, "last_seen": None,
