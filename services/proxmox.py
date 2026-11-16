@@ -457,6 +457,54 @@ class ProxmoxService:
         return self._result({"node": node, "count": len(tasks), "truncated": len(tasks) > MAX_TASKS,
                              "tasks": tasks[:MAX_TASKS]})
 
+    def node_network(self, node: str) -> dict:
+        """One node's network interfaces: name, type, reported state, IP methods and bridge/bond ports.
+
+        Addresses, netmasks, gateways, comments and alternative names (which
+        can embed a MAC) never leave the service. Proxmox's `active` comes
+        from the interfaces file it last parsed and can lag the link, so it is
+        "reported", and an interface it says nothing about is None, not down.
+        """
+        if not isinstance(node, str) or not NODE_ID.fullmatch(node):
+            raise ValueError("Enter one exact Proxmox node name.")
+        rows = self._rows(self._get(f"/nodes/{node}/network"), required=("iface", "type"))
+        interfaces = []
+        for row in rows:
+            ports_field = "slaves" if row["type"] in ("bond", "OVSBond") else "bridge_ports"
+            ports_text = _text(row, ports_field, limit=1024)
+            ports = [port for port in (ports_text or "").split() if port != "none"]
+            if any(not NODE_ID.fullmatch(port) for port in ports):
+                raise _invalid()
+            mtu = row.get("mtu")
+            if mtu is not None and (type(mtu) is not int or not 576 <= mtu <= 65_520):
+                raise _invalid()
+            interfaces.append({
+                "name": _text(row, "iface", required=True), "type": _text(row, "type", required=True),
+                "active": _boolean(row, "active"), "autostart": _boolean(row, "autostart"),
+                "ipv4": _text(row, "method"), "ipv6": _text(row, "method6"),
+                "has_ipv4_address": bool(row.get("address") or row.get("cidr")),
+                "ports": ports, "bond_mode": _text(row, "bond_mode"), "mtu": mtu,
+                "vlan_aware": _boolean(row, "bridge_vlan_aware"),
+            })
+        groups = {"bridge": 0, "OVSBridge": 0, "bond": 1, "OVSBond": 1}
+        interfaces.sort(key=lambda row: (groups.get(row["type"], 2), row["name"]))
+        names = {row["name"] for row in interfaces}
+        for row in interfaces:
+            row["member_of"] = [parent["name"] for parent in interfaces if row["name"] in parent["ports"]]
+        missing = sorted({port for row in interfaces for port in row["ports"]} - names)
+        return self._result({
+            "schema": "proxmox-node-network.v1", "node": node, "count": len(interfaces),
+            "truncated": len(interfaces) > MAX_ROWS,
+            "summary": {"interfaces": len(interfaces),
+                        "bridges": sum(groups.get(row["type"]) == 0 for row in interfaces),
+                        "bonds": sum(groups.get(row["type"]) == 1 for row in interfaces),
+                        "physical": sum(row["type"] == "eth" for row in interfaces),
+                        "reported_active": sum(row["active"] is True for row in interfaces),
+                        "reported_inactive": sum(row["active"] is False for row in interfaces),
+                        "not_reported": sum(row["active"] is None for row in interfaces)},
+            "missing_ports": missing,
+            "interfaces": interfaces[:MAX_ROWS]})
+
     def node_disks(self, node: str) -> dict:
         """Physical disks of one node: health and wear, never serials, WWNs or by-id links."""
         if not isinstance(node, str) or not NODE_ID.fullmatch(node):

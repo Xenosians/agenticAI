@@ -90,6 +90,22 @@ snapshot. A snapshot whose time Proxmox did not record has an unknown age, not
 service. It cannot create, delete or roll back a snapshot. A snapshot lives on
 the guest's own storage and is not a backup.
 
+## Node network interfaces
+
+`proxmox_node_network` lists one node's interfaces (`GET /nodes/{node}/network`;
+the loopback is never listed): bridges and bonds first, then physical ports,
+with each bridge's or bond's ports, which bridge or bond each port belongs to,
+the bond mode, MTU, VLAN awareness, whether it starts at boot and how IPv4 is
+configured (and only whether an address is set, never the address). A port a
+bridge names that is not configured on the node is called out. Addresses,
+netmasks, gateways, comments and alternative names never leave the AI service;
+an alternative name can embed the adapter's MAC address.
+
+Proxmox fills an interface's `active` flag from the network configuration it
+last parsed, so it can lag the real link (Proxmox bug 8148); the reading says
+"Proxmox reports it active/inactive", and an interface without a report is
+unknown, never down. It cannot change the network.
+
 The live tool matrix can exercise the guest detail and power calls when the
 disposable acceptance profile provides `ACCEPTANCE_PROXMOX_NODE` and
 `ACCEPTANCE_PROXMOX_VMID`. Without both values those cases remain skipped for

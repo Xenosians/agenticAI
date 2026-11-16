@@ -149,6 +149,44 @@ def format_guest_snapshots(result: dict) -> str:
     return "\n".join(lines)
 
 
+def format_node_network(result: dict) -> str:
+    if not result.get("ok"):
+        return "The Proxmox read did not succeed."
+    data = result["data"]
+    summary = data["summary"]
+    lines = [f"{data['count']} network interface(s) on node {data['node']}: {summary['bridges']} bridge(s), "
+             f"{summary['bonds']} bond(s), {summary['physical']} physical."]
+    kinds = {"bridge": "bridge", "OVSBridge": "OVS bridge", "bond": "bond", "OVSBond": "OVS bond",
+             "eth": "physical", "vlan": "VLAN"}
+    for row in data["interfaces"]:
+        kind = kinds.get(row["type"], row["type"])
+        if row["bond_mode"]:
+            kind += f", {row['bond_mode']}"
+        facts = []
+        if row["ports"]:
+            facts.append("ports " + ", ".join(row["ports"]))
+        if row["member_of"]:
+            facts.append("port of " + ", ".join(row["member_of"]))
+        if row["ipv4"] == "static" or row["ipv4"] == "dhcp":
+            facts.append(f"IPv4 {row['ipv4']}" + (" with an address" if row["has_ipv4_address"] else ""))
+        if row["vlan_aware"]:
+            facts.append("VLAN aware")
+        if row["mtu"]:
+            facts.append(f"MTU {row['mtu']}")
+        if row["autostart"]:
+            facts.append("starts at boot")
+        if row["active"] is not None:
+            facts.append("Proxmox reports it " + ("active" if row["active"] else "inactive"))
+        lines.append(f"{row['name']} ({kind})" + (": " + "; ".join(facts) if facts else "") + ".")
+    for port in data["missing_ports"]:
+        lines.append(f"{port} is named as a port but is not configured on this node.")
+    if data["truncated"]:
+        lines.append("More interfaces exist than were listed.")
+    lines.append("Proxmox reports an interface's state from its last read of the network configuration, so it can "
+                 "lag the link; an interface without a report is not known to be down.")
+    return "\n".join(lines)
+
+
 def format_node_disks(result: dict) -> str:
     if not result.get("ok"):
         return "The Proxmox read did not succeed."
@@ -376,6 +414,18 @@ PROXMOX_TOOLS = {
             {"node": {"type": "str", "description": "Exact node name returned by proxmox_guests."},
              "vmid": {"type": "int", "description": "Exact VMID returned by proxmox_guests."}}),
         "result_formatter": format_guest_snapshots,
+        "synthesis_evidence": "answer",
+    },
+    "proxmox_node_network": {
+        **_read(
+            "Show the network interfaces of one exact Proxmox node: each bridge (such as vmbr0), bond and "
+            "physical NIC, which NIC is the uplink port of which bridge or bond, whether Proxmox reports each "
+            "interface active, whether it starts at boot, how IPv4 is configured, MTU and bond mode. Requires the "
+            "node name exactly as listed by Proxmox. Read only; it never shows IP addresses, gateways or MAC "
+            "addresses and never changes the network.",
+            "proxmox.network", "proxmox.network.list", ("node",),
+            {"node": {"type": "str", "description": "Exact node name returned by proxmox_nodes."}}),
+        "result_formatter": format_node_network,
         "synthesis_evidence": "answer",
     },
     "proxmox_node_disks": {

@@ -13,7 +13,7 @@ def test_each_proxmox_read_is_registered_with_read_only_semantics_and_one_provid
         "proxmox_cluster_status", "proxmox_nodes", "proxmox_guests",
         "proxmox_guest_status", "proxmox_guest_config",
         "proxmox_node_storage", "proxmox_recent_tasks", "proxmox_database_inventory",
-        "proxmox_backups", "proxmox_node_disks", "proxmox_guest_snapshots",
+        "proxmox_backups", "proxmox_node_disks", "proxmox_guest_snapshots", "proxmox_node_network",
     }
     assert set(PROXMOX_TOOLS) == reads | POWER_TOOLS
     assert set(PROXMOX_TOOLS) <= set(TOOLS)
@@ -221,6 +221,51 @@ def test_guest_snapshots_is_served_over_mcp_and_reports_missing_setup():
     unconfigured = Server()
     register_proxmox_tools(unconfigured, None, missing_settings=("PROXMOX_BASE_URL",))
     assert unconfigured.tools["proxmox_guest_snapshots"]("pve-a", 101).error_code == "not_configured"
+
+
+def test_node_network_is_a_grounded_read_in_the_specialist_that_never_shows_addresses():
+    from pathlib import Path
+
+    definition = Path("subagents/agents/proxmox-specialist.md").read_text(encoding="utf-8")
+    tool = TOOLS["proxmox_node_network"]
+    assert (tool["effect"], tool["requires_approval"], tool["grounded_arguments"]) == ("read", False, ["node"])
+    assert tool["synthesis_evidence"] == "answer"
+    assert "  - proxmox_node_network\n" in definition
+    assert "never shows IP addresses" in tool["description"]
+
+
+def test_node_network_reads_in_words():
+    formatter = TOOLS["proxmox_node_network"]["result_formatter"]
+    interfaces = [
+        {"name": "vmbr0", "type": "bridge", "active": None, "autostart": True, "ipv4": "static", "ipv6": "manual",
+         "has_ipv4_address": True, "ports": ["nic0"], "bond_mode": None, "mtu": None, "vlan_aware": None,
+         "member_of": []},
+        {"name": "bond0", "type": "bond", "active": False, "autostart": True, "ipv4": "manual", "ipv6": "manual",
+         "has_ipv4_address": False, "ports": ["nic1", "nic2"], "bond_mode": "active-backup", "mtu": 9000,
+         "vlan_aware": None, "member_of": []},
+        {"name": "nic0", "type": "eth", "active": None, "autostart": None, "ipv4": "manual", "ipv6": "manual",
+         "has_ipv4_address": False, "ports": [], "bond_mode": None, "mtu": None, "vlan_aware": None,
+         "member_of": ["vmbr0"]},
+        {"name": "wlp1s0", "type": "eth", "active": True, "autostart": None, "ipv4": "manual", "ipv6": "manual",
+         "has_ipv4_address": False, "ports": [], "bond_mode": None, "mtu": None, "vlan_aware": None,
+         "member_of": []}]
+    data = {"schema": "proxmox-node-network.v1", "node": "pve-a", "count": 4, "truncated": False,
+            "summary": {"interfaces": 4, "bridges": 1, "bonds": 1, "physical": 2, "reported_active": 1,
+                        "reported_inactive": 1, "not_reported": 2},
+            "missing_ports": ["nic2"], "interfaces": interfaces}
+    result = {"ok": True, "status": "success", "provider": "proxmox", "observed_at": "2026-11-16T06:00:00+00:00",
+              "data": data}
+    assert formatter(result).splitlines() == [
+        "4 network interface(s) on node pve-a: 1 bridge(s), 1 bond(s), 2 physical.",
+        "vmbr0 (bridge): ports nic0; IPv4 static with an address; starts at boot.",
+        "bond0 (bond, active-backup): ports nic1, nic2; MTU 9000; starts at boot; Proxmox reports it inactive.",
+        "nic0 (physical): port of vmbr0.",
+        "wlp1s0 (physical): Proxmox reports it active.",
+        "nic2 is named as a port but is not configured on this node.",
+        "Proxmox reports an interface's state from its last read of the network configuration, so it can lag "
+        "the link; an interface without a report is not known to be down.",
+    ]
+    assert formatter({"ok": False}) == "The Proxmox read did not succeed."
 
 
 def backups_result(**changes):
