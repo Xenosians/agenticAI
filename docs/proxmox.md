@@ -57,10 +57,20 @@ storage's `content?content=backup`; a shared storage is read once). Each guest
 shows the age, size and storage of its newest copy, whether that copy is
 protected, encrypted and verified, its backup count and whether a backup job
 covers it. What needs attention, most urgent first: `never_backed_up`,
-`backup_stale` (the newest copy is older than `stale_after_days`, 8: a daily
-or weekly job has missed a run) and `no_backup_job`. When a backup storage
+`missed_run`, `backup_stale` and `no_backup_job`. A guest in an enabled,
+scheduled backup job is judged against that job: Proxmox lists the guests a
+job includes (`GET /cluster/backup/{id}/included_volumes`, `Sys.Audit`) and
+computes when its schedule fires (`GET /cluster/jobs/schedule-analyze`, any
+user; nothing is parsed by Janus), and `missed_run` means the newest copy is
+older than the job's last run that was due at least
+`missed_run_grace_hours` (12) ago, so a run still in progress is not judged.
+Each guest carries that time as `last_scheduled_run`. A guest without such a
+job (none, disabled, unschedulable, or guests the token cannot list) is
+judged by age: `backup_stale` means the newest copy is older than
+`stale_after_days` (8). A guest in two jobs is judged by the more recent due
+run. When a backup storage
 cannot be read the listing is marked incomplete with the reason, and no guest
-is then called never backed up or overdue. Volume ids, notes and paths never
+is then called never backed up, overdue or late. Volume ids, notes and paths never
 leave the AI service. Listing backups needs `Datastore.Audit` on each backup
 storage; it cannot start, delete or restore a backup.
 
@@ -76,6 +86,18 @@ The Operations dashboard reads both through
 node's disks, every part a typed read result so one node's refused disk read
 never hides the rest. It is read once a minute while the page is open, apart
 from the ten-second overview.
+
+`proxmox_disk_smart` reads one listed disk's SMART data
+(`GET /nodes/{node}/disks/smart?disk=<devpath>`, `Sys.Audit`; smartctl runs
+on the node, so chat asks for one disk at a time and the dashboard never
+does). The device must be one `/nodes/{node}/disks/list` reports on that
+node; a bare name such as `sda` means `/dev/sda`. Only fixed numbers leave
+the AI service: temperature, power-on hours, power cycles, unsafe shutdowns,
+media errors, reallocated, pending and offline-uncorrectable sectors, spare
+capacity and its threshold, and wear. Serial numbers, WWNs, vendor rows and
+the raw smartctl text never do. Media errors, moved or unreadable sectors
+and spare capacity below its threshold are named: they are early signs of
+failure even while SMART reports passed. It never runs a self-test.
 
 ## Guest snapshots
 

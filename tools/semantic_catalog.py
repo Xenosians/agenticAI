@@ -54,6 +54,7 @@ CAPABILITY_SEMANTICS: dict[str, dict[str, str]] = {
     "proxmox_guest_status": {"resource_type": "proxmox.guest", "operation_kind": "read", "effect": "read", "permission": "proxmox.guest.status"},
     "proxmox_guests": {"resource_type": "proxmox.guest", "operation_kind": "read", "effect": "read", "permission": "proxmox.guest.list"},
     "proxmox_node_storage": {"resource_type": "proxmox.storage", "operation_kind": "read", "effect": "read", "permission": "proxmox.storage.read"},
+    "proxmox_disk_smart": {"resource_type": "proxmox.disk.smart", "operation_kind": "read", "effect": "read", "permission": "proxmox.disk.smart"},
     "proxmox_node_disks": {"resource_type": "proxmox.disk", "operation_kind": "read", "effect": "read", "permission": "proxmox.disk.list"},
     "proxmox_ha_status": {"resource_type": "proxmox.ha", "operation_kind": "read", "effect": "read", "permission": "proxmox.ha.status"},
     "proxmox_node_network": {"resource_type": "proxmox.network", "operation_kind": "read", "effect": "read", "permission": "proxmox.network.list"},

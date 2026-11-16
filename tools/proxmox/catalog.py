@@ -91,11 +91,18 @@ def format_backups(result: dict) -> str:
     elif not sum(row["backups"] for row in data["storages"]):
         head += "No backup exists on any backup storage that was read."
     else:
-        head += (f"{summary['with_recent_backup']} with a recent backup, {summary['stale']} overdue, "
-                 f"{summary['never']} never backed up")
+        missed = summary.get("missed_run", 0)
+        head += (f"{summary['with_recent_backup']} with a recent backup, "
+                 + (f"{missed} missed {'its' if missed == 1 else 'their'} last scheduled run, " if missed else "")
+                 + f"{summary['stale']} overdue, {summary['never']} never backed up")
         head += (f", {summary['without_backup_job']} without a backup job."
                  if summary["without_backup_job"] is not None else ".")
-        head += f" A backup is overdue when the newest copy is more than {data['stale_after_days']} days old."
+        if missed:
+            head += (f" A guest in a backup job missed a run when its newest copy is older than the job's last run "
+                     f"due at least {data['missed_run_grace_hours']} hours ago; other guests are overdue when the "
+                     f"newest copy is more than {data['stale_after_days']} days old.")
+        else:
+            head += f" A backup is overdue when the newest copy is more than {data['stale_after_days']} days old."
     lines = [head]
     if not data["listing_complete"]:
         lines.append("Not every backup storage could be read (" + "; ".join(
@@ -118,6 +125,8 @@ def format_backups(result: dict) -> str:
             if row["backups"] > 1:
                 text += f"; {row['backups']} backups"
         text += "; no backup job." if "no_backup_job" in row["issues"] else "."
+        if "missed_run" in row["issues"]:
+            text += " Missed its last scheduled run."
         if "backup_stale" in row["issues"]:
             text += " Overdue."
         lines.append(text)
@@ -125,6 +134,10 @@ def format_backups(result: dict) -> str:
         lines.append("Backup storage: " + "; ".join(
             f"{row['storage']} on node {row['node']} ({row['type']}{', shared' if row['shared'] else ''}) holds "
             f"{row['backups']} backup(s)" for row in data["storages"]) + ".")
+    holding = [row for row in data["storages"] if row["backups"]]
+    if holding and all(row["type"] != "pbs" for row in holding):
+        lines.append("Every backup sits on storage that cannot verify backups (only Proxmox Backup Server storage "
+                     "verifies them), so no copy can show as verified.")
     return "\n".join(lines)
 
 
@@ -252,6 +265,50 @@ def format_node_disks(result: dict) -> str:
         elif "worn_out" in disk["issues"]:
             text += " Plan a replacement."
         lines.append(text)
+    return "\n".join(lines)
+
+
+SMART_ISSUE_WORDS = {"media_errors": "media errors", "reallocated_sectors": "reallocated sectors",
+                     "pending_sectors": "pending sectors", "offline_uncorrectable": "offline uncorrectable sectors",
+                     "spare_below_threshold": "spare capacity below its threshold"}
+
+
+def format_disk_smart(result: dict) -> str:
+    if not result.get("ok"):
+        return "The Proxmox read did not succeed."
+    data = result["data"]
+    about = ", ".join(part for part in (data["type"], data["model"]) if part)
+    health = {"passed": "SMART passed", "failed": "SMART failed", "smart_disabled": "SMART disabled",
+              "unknown": "SMART health unknown"}[data["health"]]
+    head = f"{data['device']} on node {data['node']} ({about}): {health}"
+    if data["wear_used_percent"] is not None:
+        head += f"; {data['wear_used_percent']}% of rated life used"
+    lines = [head + "."]
+    measures = data["measures"]
+    facts = []
+    if measures["temperature_celsius"] is not None:
+        facts.append(f"Temperature {measures['temperature_celsius']} °C")
+    if measures["power_on_hours"] is not None:
+        facts.append(f"powered on {measures['power_on_hours']} hours ({measures['power_on_hours'] // 24} days)")
+    for key, words in (("power_cycles", "power cycles"), ("unsafe_shutdowns", "unsafe shutdowns"),
+                       ("media_errors", "media errors"), ("reallocated_sectors", "reallocated sectors"),
+                       ("pending_sectors", "pending sectors"),
+                       ("offline_uncorrectable", "offline uncorrectable sectors")):
+        if measures[key] is not None:
+            facts.append(f"{measures[key]} {words}")
+    if measures["available_spare_percent"] is not None:
+        spare = f"spare capacity {measures['available_spare_percent']}%"
+        if measures["available_spare_threshold_percent"] is not None:
+            spare += f" (threshold {measures['available_spare_threshold_percent']}%)"
+        facts.append(spare)
+    if facts:
+        lines.append("; ".join(facts) + ".")
+    else:
+        lines.append("Proxmox reported no SMART measurements for this disk.")
+    if data["issues"]:
+        named = ", ".join(SMART_ISSUE_WORDS[issue] for issue in data["issues"])
+        lines.append(f"Early signs of failure, even though SMART reports passed: {named}."
+                     if data["health"] == "passed" else f"Needs attention: {named}.")
     return "\n".join(lines)
 
 
@@ -439,8 +496,9 @@ PROXMOX_TOOLS = {
         **_read(
             "Use this for any question about Proxmox backups, for every VM and container, tagged or not: when "
             "each guest was last backed up, on which backup storage, its size, whether it is protected, encrypted "
-            "and verified, which guests are overdue (newest backup older than 8 days) or never backed up, and "
-            "which no backup job covers. Read only; it never starts, deletes or restores a backup.",
+            "and verified, which guests missed their backup job's last scheduled run, are overdue (newest backup "
+            "older than 8 days, for guests without a scheduled job) or were never backed up, and which no backup "
+            "job covers. Read only; it never starts, deletes or restores a backup.",
             "proxmox.backup", "proxmox.backup.list"),
         "result_formatter": format_backups,
         "synthesis_evidence": "answer",
@@ -476,6 +534,18 @@ PROXMOX_TOOLS = {
             "proxmox.network", "proxmox.network.list", ("node",),
             {"node": {"type": "str", "description": "Exact node name returned by proxmox_nodes."}}),
         "result_formatter": format_node_network,
+        "synthesis_evidence": "answer",
+    },
+    "proxmox_disk_smart": {
+        **_read(
+            "Show the SMART details of one physical disk on one Proxmox node: temperature, power-on hours, power "
+            "cycles, unsafe shutdowns, media errors, reallocated and pending sectors, spare capacity and wear. "
+            "Requires the node name and the disk device exactly as proxmox_node_disks lists them (for example "
+            "/dev/sda). Read only; it never shows serial numbers and never runs a self-test.",
+            "proxmox.disk.smart", "proxmox.disk.smart", ("node", "disk"),
+            {"node": {"type": "str", "description": "Exact node name returned by proxmox_nodes."},
+             "disk": {"type": "str", "description": "Exact disk device listed by proxmox_node_disks, e.g. /dev/sda."}}),
+        "result_formatter": format_disk_smart,
         "synthesis_evidence": "answer",
     },
     "proxmox_node_disks": {

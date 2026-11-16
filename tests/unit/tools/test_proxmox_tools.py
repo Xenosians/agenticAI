@@ -14,7 +14,7 @@ def test_each_proxmox_read_is_registered_with_read_only_semantics_and_one_provid
         "proxmox_guest_status", "proxmox_guest_config",
         "proxmox_node_storage", "proxmox_recent_tasks", "proxmox_database_inventory",
         "proxmox_backups", "proxmox_node_disks", "proxmox_guest_snapshots", "proxmox_node_network",
-        "proxmox_ha_status",
+        "proxmox_ha_status", "proxmox_disk_smart",
     }
     assert set(PROXMOX_TOOLS) == reads | POWER_TOOLS
     assert set(PROXMOX_TOOLS) <= set(TOOLS)
@@ -269,6 +269,94 @@ def test_node_network_reads_in_words():
     assert formatter({"ok": False}) == "The Proxmox read did not succeed."
 
 
+def test_a_missed_scheduled_run_reads_in_words_with_its_rule_apart():
+    formatter = TOOLS["proxmox_backups"]["result_formatter"]
+    missed = {"vmid": 104, "node": "pve-a", "type": "qemu", "name": "web", "backup_job": True, "backups": 3,
+              "last_scheduled_run": 1_794_728_000,
+              "latest": {"storage": "pbs", "time": 1, "age_days": 2.0, "size_bytes": None, "protected": False,
+                         "encrypted": False, "verified": None},
+              "issues": ["missed_run"]}
+    text = formatter(backups_result(
+        count=1, guests=[missed],
+        summary={"guests": 1, "with_recent_backup": 0, "stale": 0, "missed_run": 1, "never": 0,
+                 "without_backup_job": 0}))
+    lines = text.splitlines()
+    assert lines[0] == ("1 guest(s); 1 backup job (1 enabled). 0 with a recent backup, 1 missed its last scheduled "
+                        "run, 0 overdue, 0 never backed up, 0 without a backup job. A guest in a backup job missed a "
+                        "run when its newest copy is older than the job's last run due at least 12 hours ago; other "
+                        "guests are overdue when the newest copy is more than 8 days old.")
+    assert lines[1] == ("web (VM 104 on node pve-a): newest backup 2.0 days ago on storage pbs; 3 backups. "
+                        "Missed its last scheduled run.")
+    two = formatter(backups_result(
+        count=2, guests=[missed, dict(missed, vmid=105, name="api")],
+        summary={"guests": 2, "with_recent_backup": 0, "stale": 0, "missed_run": 2, "never": 0,
+                 "without_backup_job": 0}))
+    assert "0 with a recent backup, 2 missed their last scheduled run, 0 overdue" in two.splitlines()[0]
+
+
+def test_copies_only_on_storage_that_cannot_verify_get_one_plain_hint():
+    # Proxmox verifies backups only on Proxmox Backup Server storage; a copy on a
+    # directory, NFS or CIFS storage is never verified, so "not verified" there
+    # is not a failure and the reading says why once.
+    formatter = TOOLS["proxmox_backups"]["result_formatter"]
+    local_only = backups_result(storages=[{"node": "pve-a", "storage": "local", "type": "dir", "shared": False,
+                                           "backups": 3}])
+    hint = ("Every backup sits on storage that cannot verify backups (only Proxmox Backup Server storage "
+            "verifies them), so no copy can show as verified.")
+    assert formatter(local_only).splitlines()[-1] == hint
+    assert hint not in formatter(backups_result())  # PBS holds the copies there
+    empty = backups_result(storages=[{"node": "pve-a", "storage": "local", "type": "dir", "shared": False,
+                                      "backups": 0}])
+    assert hint not in formatter(empty)  # nothing to verify
+
+
+def test_disk_smart_is_a_grounded_read_in_the_specialist():
+    from pathlib import Path
+
+    definition = Path("subagents/agents/proxmox-specialist.md").read_text(encoding="utf-8")
+    tool = TOOLS["proxmox_disk_smart"]
+    assert (tool["effect"], tool["requires_approval"], tool["grounded_arguments"]) == ("read", False, ["node", "disk"])
+    assert tool["synthesis_evidence"] == "answer"
+    assert "  - proxmox_disk_smart\n" in definition
+
+
+def test_disk_smart_reads_in_words():
+    formatter = TOOLS["proxmox_disk_smart"]["result_formatter"]
+    measures = {"temperature_celsius": 30, "power_on_hours": 7686, "power_cycles": 2712, "unsafe_shutdowns": 95,
+                "media_errors": 0, "available_spare_percent": 100, "available_spare_threshold_percent": 10,
+                "reallocated_sectors": None, "pending_sectors": None, "offline_uncorrectable": None}
+    data = {"schema": "proxmox-disk-smart.v1", "node": "hummingbird", "device": "/dev/nvme0n1", "type": "nvme",
+            "model": "INTEL SSDPEKNW512G8", "health": "passed", "wear_used_percent": 12, "measures": measures,
+            "issues": []}
+    result = {"ok": True, "status": "success", "provider": "proxmox", "observed_at": "2026-11-16T06:00:00+00:00",
+              "data": data}
+    assert formatter(result).splitlines() == [
+        "/dev/nvme0n1 on node hummingbird (nvme, INTEL SSDPEKNW512G8): SMART passed; 12% of rated life used.",
+        "Temperature 30 °C; powered on 7686 hours (320 days); 2712 power cycles; 95 unsafe shutdowns; "
+        "0 media errors; spare capacity 100% (threshold 10%).",
+    ]
+    failing = dict(data, device="/dev/sda", type="hdd", model=None, wear_used_percent=None,
+                   measures=dict(measures, reallocated_sectors=8, pending_sectors=2, unsafe_shutdowns=None,
+                                 media_errors=None, available_spare_percent=None,
+                                 available_spare_threshold_percent=None, offline_uncorrectable=0),
+                   issues=["reallocated_sectors", "pending_sectors"])
+    lines = formatter(dict(result, data=failing)).splitlines()
+    assert lines[0] == "/dev/sda on node hummingbird (hdd): SMART passed."
+    assert lines[1] == ("Temperature 30 °C; powered on 7686 hours (320 days); 2712 power cycles; "
+                        "8 reallocated sectors; 2 pending sectors; 0 offline uncorrectable sectors.")
+    assert lines[2] == ("Early signs of failure, even though SMART reports passed: reallocated sectors, "
+                        "pending sectors.")
+    # Media errors and low spare capacity are named as what they are, not as moved sectors.
+    nvme_failing = dict(data, measures=dict(measures, media_errors=3, available_spare_percent=8),
+                        issues=["media_errors", "spare_below_threshold"])
+    assert formatter(dict(result, data=nvme_failing)).splitlines()[-1] == (
+        "Early signs of failure, even though SMART reports passed: media errors, spare capacity below its "
+        "threshold.")
+    assert formatter(dict(result, data=dict(nvme_failing, health="failed"))).splitlines()[-1] == (
+        "Needs attention: media errors, spare capacity below its threshold.")
+    assert formatter({"ok": False}) == "The Proxmox read did not succeed."
+
+
 def test_empty_proxmox_readings_say_they_are_empty():
     def read(tool, data):
         return TOOLS[tool]["result_formatter"]({"ok": True, "status": "success", "provider": "proxmox",
@@ -336,19 +424,23 @@ def test_ha_that_is_not_in_use_or_without_quorum_reads_plainly():
 
 def backups_result(**changes):
     data = {"schema": "proxmox-backups.v1", "jobs": {"count": 1, "enabled": 1}, "coverage_known": True,
-            "coverage_note": None, "listing_complete": True, "stale_after_days": 8, "unreadable_storages": [],
-            "summary": {"guests": 3, "with_recent_backup": 1, "stale": 1, "never": 1, "without_backup_job": 1},
+            "coverage_note": None, "listing_complete": True, "stale_after_days": 8, "missed_run_grace_hours": 12,
+            "unreadable_storages": [],
+            "summary": {"guests": 3, "with_recent_backup": 1, "stale": 1, "missed_run": 0, "never": 1,
+                        "without_backup_job": 1},
             "storages": [{"node": "pve-a", "storage": "pbs", "type": "pbs", "shared": True, "backups": 3}],
             "count": 3, "truncated": False,
             "guests": [
                 {"vmid": 103, "node": "pve-a", "type": "lxc", "name": "old", "backup_job": False, "backups": 0,
-                 "latest": None, "issues": ["never_backed_up", "no_backup_job"]},
+                 "last_scheduled_run": None, "latest": None, "issues": ["never_backed_up", "no_backup_job"]},
                 {"vmid": 102, "node": "pve-a", "type": "lxc", "name": "cache", "backup_job": True, "backups": 1,
+                 "last_scheduled_run": None,
                  "latest": {"storage": "pbs", "time": 1, "age_days": 12.0, "size_bytes": 536870912,
                             "protected": False, "encrypted": False, "verified": None},
                  "issues": ["backup_stale"]},
                 {"vmid": 101, "node": "pve-a", "type": "qemu", "name": "orders-db", "backup_job": True,
-                 "backups": 2, "latest": {"storage": "pbs", "time": 2, "age_days": 0.5, "size_bytes": 2147483648,
+                 "backups": 2, "last_scheduled_run": None,
+                 "latest": {"storage": "pbs", "time": 2, "age_days": 0.5, "size_bytes": 2147483648,
                                           "protected": True, "encrypted": True, "verified": "ok"},
                  "issues": []}]}
     data.update(changes)

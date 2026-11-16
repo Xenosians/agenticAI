@@ -108,6 +108,8 @@ def test_database_host_questions_reach_the_database_inventory(production_registr
     ("Which NIC is the uplink of vmbr0 on node hummingbird?", "proxmox_node_network"),
     ("Is high availability healthy on our Proxmox cluster?", "proxmox_ha_status"),
     ("Which HA resources are in error?", "proxmox_ha_status"),
+    ("Show the SMART details of /dev/sda on node pve1", "proxmox_disk_smart"),
+    ("How many reallocated sectors does disk sdb on node pve1 have?", "proxmox_disk_smart"),
 ])
 def test_proxmox_node_and_guest_questions_reach_their_reads(production_registry, user_request, expected):
     selection = DeterministicCandidateSelector().select(user_request, production_registry)

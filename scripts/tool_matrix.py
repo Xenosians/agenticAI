@@ -175,6 +175,7 @@ def build_cases(run: str, project: str) -> list[tuple[str, str, str, object]]:
         ("proxmox-snapshots", "proxmox_guest_snapshots", "List the snapshots of VMID {proxmox_vmid} on node {proxmox_node}.", None),
         ("proxmox-network", "proxmox_node_network", "Show the network interfaces and bridges of Proxmox node {proxmox_node}.", None),
         ("proxmox-ha", "proxmox_ha_status", "Is high availability healthy on the Proxmox cluster?", None),
+        ("proxmox-disk-smart", "proxmox_disk_smart", "Show the SMART details of disk nvme0n1 on Proxmox node {proxmox_node}.", None),
         # Power actions run on the lab guest (ACCEPTANCE_PROXMOX_VMID) in an order
         # that leaves it as found: start, reboot, shutdown, then start and force stop.
         ("proxmox-guest-start", "proxmox_guest_start", "Start container {proxmox_vmid} on node {proxmox_node}.", True),

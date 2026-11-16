@@ -136,8 +136,11 @@ def volume(storage, vmid, age_days, **changes):
 
 def backup_routes(local=(), pbs=(), jobs=(200, [{"id": "backup-1", "enabled": 1, "schedule": "02:00"}]),
                   uncovered=(200, [{"vmid": 103, "type": "lxc"}])):
+    # The job's guests cannot be read here (403), so these tests keep the fixed
+    # age rule; test_proxmox_backup_schedules covers judging by each job.
     return {"/api2/json/cluster/resources": (200, RESOURCES),
             "/api2/json/cluster/backup": jobs,
+            "/api2/json/cluster/backup/backup-1/included_volumes": (403, None),
             "/api2/json/cluster/backup-info/not-backed-up": uncovered,
             "/api2/json/nodes/pve-a/storage": (200, BACKUP_STORAGES),
             "/api2/json/nodes/pve-a/storage/local/content": (200, list(local)),
@@ -165,7 +168,8 @@ def test_backups_show_the_newest_backup_of_each_guest_and_what_is_overdue(monkey
     assert set(rows) == {101, 102, 103}
     # The newest copy wins, from whichever storage holds it.
     assert rows[101] == {"vmid": 101, "node": "pve-a", "type": "qemu", "name": "orders-db", "backup_job": True,
-                         "backups": 2, "latest": {"storage": "pbs", "time": NOW - DAY // 2, "age_days": 0.5,
+                         "backups": 2, "last_scheduled_run": None,
+                         "latest": {"storage": "pbs", "time": NOW - DAY // 2, "age_days": 0.5,
                                                   "size_bytes": 2147483648, "protected": True, "encrypted": True,
                                                   "verified": "ok"},
                          "issues": []}
@@ -176,7 +180,7 @@ def test_backups_show_the_newest_backup_of_each_guest_and_what_is_overdue(monkey
     assert rows[103]["issues"] == ["never_backed_up", "no_backup_job"]
     # Most urgent first.
     assert [row["vmid"] for row in data["guests"]] == [103, 102, 101]
-    assert data["summary"] == {"guests": 3, "with_recent_backup": 1, "stale": 1, "never": 1,
+    assert data["summary"] == {"guests": 3, "with_recent_backup": 1, "stale": 1, "missed_run": 0, "never": 1,
                                "without_backup_job": 1}
     assert data["storages"] == [{"node": "pve-a", "storage": "local", "type": "dir", "shared": False, "backups": 2},
                                 {"node": "pve-a", "storage": "pbs", "type": "pbs", "shared": True, "backups": 1}]

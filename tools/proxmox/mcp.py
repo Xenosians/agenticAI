@@ -125,6 +125,11 @@ def register_proxmox_tools(server, service: ProxmoxService | None, missing_setti
         return proxmox(lambda: service.node_network(node))
 
     @server.tool()
+    def proxmox_disk_smart(node: str, disk: str) -> ProxmoxReadResult:
+        """Show one listed disk's SMART numbers; never serials."""
+        return proxmox(lambda: service.disk_smart(node, disk))
+
+    @server.tool()
     def proxmox_node_disks(node: str) -> ProxmoxReadResult:
         """Show one exact node's physical disks with SMART health and SSD wear."""
         return proxmox(lambda: service.node_disks(node))

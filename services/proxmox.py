@@ -157,13 +157,38 @@ GUEST_DISK_CONTENT = frozenset({"images", "rootdir"})
 # An SSD that has used this much of its rated life is named (Proxmox shows
 # the same figure as 100 - wearout).
 DISK_WORN = 90
+# A disk device path as Proxmox lists it: /dev/<name>, no traversal or shell text.
+DISK_DEVICE = re.compile(r"/dev/[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
+# The fixed SMART numbers that may leave the service, from NVMe/SAS text lines
+# and from ATA attribute names (the raw value's leading integer).
+SMART_TEXT_MEASURES = {"Temperature": "temperature_celsius", "Power On Hours": "power_on_hours",
+                       "Power Cycles": "power_cycles", "Unsafe Shutdowns": "unsafe_shutdowns",
+                       "Media and Data Integrity Errors": "media_errors",
+                       "Available Spare": "available_spare_percent",
+                       "Available Spare Threshold": "available_spare_threshold_percent"}
+SMART_ATA_MEASURES = {"Temperature_Celsius": "temperature_celsius", "Power_On_Hours": "power_on_hours",
+                      "Power_Cycle_Count": "power_cycles", "Reallocated_Sector_Ct": "reallocated_sectors",
+                      "Current_Pending_Sector": "pending_sectors", "Offline_Uncorrectable": "offline_uncorrectable"}
+SMART_MEASURES = ("temperature_celsius", "power_on_hours", "power_cycles", "unsafe_shutdowns", "media_errors",
+                  "available_spare_percent", "available_spare_threshold_percent", "reallocated_sectors",
+                  "pending_sectors", "offline_uncorrectable")
+SMART_LEADING_INTEGER = re.compile(r"\s*([0-9][0-9,]{0,24})")
 # A guest whose newest backup is older than this is named: a daily or weekly
 # job has missed at least one run.
 BACKUP_STALE_DAYS = 8
-# Most urgent first: no backup at all, an overdue one, then no job to make the next.
-BACKUP_ISSUES = ("never_backed_up", "backup_stale", "no_backup_job")
+# Most urgent first: no backup at all, a scheduled run that left no copy, an
+# overdue one (guests without a judged job), then no job to make the next.
+BACKUP_ISSUES = ("never_backed_up", "missed_run", "backup_stale", "no_backup_job")
 MAX_BACKUP_STORAGES = 20
 MAX_BACKUP_VOLUMES = 5000
+# A guest in an enabled, scheduled backup job is judged against that job: its
+# newest copy must be newer than the job's last run that was due at least this
+# long ago (a run can take hours). Proxmox computes the schedule's events itself.
+MISSED_RUN_GRACE_HOURS = 12
+MAX_BACKUP_JOBS = 50
+MAX_SCHEDULE_EVENTS = 100
+BACKUP_JOB_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
+DAY_SECONDS = 86_400
 # HA: a resource id is vm:<vmid> or ct:<vmid>; a state word is lower case,
 # with the spaces Proxmox uses ("not found", "clearing error flag").
 HA_SID = re.compile(r"(vm|ct):([0-9]{1,9})")
@@ -625,6 +650,65 @@ class ProxmoxService:
                         "health_unknown": sum(row["health"] == "unknown" for row in disks)},
             "disks": disks[:MAX_ROWS]})
 
+    def disk_smart(self, node: str, device: str) -> dict:
+        """One listed disk's SMART health and a fixed set of its numbers; never serials or the raw text.
+
+        smartctl runs on the node for this read, so it is asked for one disk at a
+        time. The device must be one the node's disk list reports.
+        """
+        if not isinstance(node, str) or not NODE_ID.fullmatch(node):
+            raise ValueError("Enter one exact Proxmox node name.")
+        if isinstance(device, str) and not device.startswith("/"):
+            device = "/dev/" + device
+        if not isinstance(device, str) or not DISK_DEVICE.fullmatch(device):
+            raise ValueError("Enter one exact disk device path, for example /dev/sda.")
+        listed = {(_text(row, "devpath", required=True)): row
+                  for row in self._rows(self._get(f"/nodes/{node}/disks/list"), required=("devpath", "type"))}
+        if device not in listed:
+            raise ValueError(f"{device} is not a disk Proxmox lists on node {node}.")
+        answer = self._get(f"/nodes/{node}/disks/smart", {"disk": device})
+        if not isinstance(answer, dict):
+            raise _invalid()
+        measures: dict[str, int | None] = dict.fromkeys(SMART_MEASURES)
+        text, attributes = answer.get("text"), answer.get("attributes")
+        if text is not None:
+            if not isinstance(text, str) or len(text) > 65_536:
+                raise _invalid()
+            for line in text.splitlines():
+                label, _, value = line.partition(":")
+                key = SMART_TEXT_MEASURES.get(label.strip())
+                if key is not None and (match := SMART_LEADING_INTEGER.match(value)):
+                    measures[key] = int(match.group(1).replace(",", ""))
+        wear_used = None
+        if text is not None:
+            match = re.search(r"Percentage Used(?: endurance indicator)?:\s*([0-9]{1,3})%", text)
+            wear_used = int(match.group(1)) if match else None
+        if attributes is not None:
+            if not isinstance(attributes, list) or len(attributes) > 256:
+                raise _invalid()
+            for row in attributes:
+                if not isinstance(row, dict) or not isinstance(row.get("name"), str) or not isinstance(row.get("raw"), str):
+                    raise _invalid()
+                key = SMART_ATA_MEASURES.get(row["name"])
+                if key is not None and (match := SMART_LEADING_INTEGER.match(row["raw"])):
+                    measures[key] = int(match.group(1).replace(",", ""))
+        listed_row = listed[device]
+        wearout = listed_row.get("wearout")
+        if wear_used is None and isinstance(wearout, (int, float)) and not isinstance(wearout, bool) and 0 <= wearout <= 100:
+            wear_used = round(100 - wearout)
+        spare, threshold = measures["available_spare_percent"], measures["available_spare_threshold_percent"]
+        issues = [issue for issue, present in (
+            ("media_errors", bool(measures["media_errors"])),
+            ("reallocated_sectors", bool(measures["reallocated_sectors"])),
+            ("pending_sectors", bool(measures["pending_sectors"])),
+            ("offline_uncorrectable", bool(measures["offline_uncorrectable"])),
+            ("spare_below_threshold", spare is not None and threshold is not None and spare < threshold)) if present]
+        return self._result({
+            "schema": "proxmox-disk-smart.v1", "node": node, "device": device,
+            "type": _text(listed_row, "type", required=True), "model": _text(listed_row, "model"),
+            "health": _disk_health(answer.get("health")), "wear_used_percent": wear_used,
+            "measures": measures, "issues": issues})
+
     def overview(self) -> dict:
         """One bounded dashboard snapshot from three provider reads.
 
@@ -761,6 +845,88 @@ class ProxmoxService:
                             "verified": verification["state"][:16] if verification else None})
         return volumes
 
+    @staticmethod
+    def _included_guests(answer) -> set[int]:
+        """VMIDs a backup job includes, from Proxmox's own answer (a tree whose children are guests)."""
+        children = answer.get("children") if isinstance(answer, dict) else None
+        if not isinstance(children, list) or len(children) > MAX_BACKUP_VOLUMES:
+            raise _invalid()
+        vmids = set()
+        for child in children:
+            vmid = child.get("id") if isinstance(child, dict) else None
+            if type(vmid) is not int or not (1 <= vmid <= MAX_VMID):
+                raise _invalid()
+            vmids.add(vmid)
+        return vmids
+
+    def _last_run_before(self, schedule: str, cutoff: int) -> int | None:
+        """The latest run of a backup schedule at or before cutoff, as Proxmox computes it.
+
+        Proxmox computes calendar events only forward from a start time. The
+        search starts 32 days back (one read for daily, weekly and monthly
+        jobs), narrows when one page of events cannot reach the cutoff and
+        widens to a year for a rarer schedule. A page that never reaches the
+        cutoff gives its latest event: an earlier due time flags fewer guests,
+        never more. None: no run within a year, or Proxmox cannot analyze it.
+        """
+        window, best = 32 * DAY_SECONDS, None
+        for _ in range(4):
+            try:
+                rows = self._get("/cluster/jobs/schedule-analyze", {
+                    "schedule": schedule, "starttime": cutoff - window, "iterations": MAX_SCHEDULE_EVENTS})
+            except (ProxmoxRefused, ProviderResourceNotFound, httpx.TransportError):
+                return None
+            if not isinstance(rows, list) or len(rows) > MAX_SCHEDULE_EVENTS:
+                raise _invalid()
+            stamps = [row.get("timestamp") if isinstance(row, dict) else None for row in rows]
+            if any(type(stamp) is not int or stamp < 0 for stamp in stamps):
+                raise _invalid()
+            before = [stamp for stamp in stamps if stamp <= cutoff]
+            best = max([*before, *([best] if best is not None else [])], default=None)
+            if len(stamps) < MAX_SCHEDULE_EVENTS or max(stamps) > cutoff:
+                if before or window >= 366 * DAY_SECONDS:
+                    return best
+                window = 366 * DAY_SECONDS
+            elif window > DAY_SECONDS:
+                window = DAY_SECONDS
+            elif window > 3600:
+                window = 3600
+            else:
+                return best
+        return best
+
+    def _last_scheduled_runs(self, jobs: list[dict], vmids: set[int], now: float) -> dict[int, int]:
+        """Each guest's most recent backup run that was due at least MISSED_RUN_GRACE_HOURS ago.
+
+        Only enabled jobs with a schedule count. Proxmox says which guests a job
+        includes and when its schedule fires; a job whose guests or schedule
+        cannot be read is left out, and its guests are judged by age instead.
+        """
+        if len(jobs) > MAX_BACKUP_JOBS:
+            raise _invalid()
+        cutoff = int(now) - MISSED_RUN_GRACE_HOURS * 3600
+        due_by_schedule: dict[str, int | None] = {}
+        result: dict[int, int] = {}
+        for job in jobs:
+            job_id, schedule = job.get("id"), job.get("schedule")
+            if (job.get("enabled", 1) in (0, False, "0") or not isinstance(schedule, str) or not schedule
+                    or len(schedule) > 128 or not isinstance(job_id, str) or not BACKUP_JOB_ID.fullmatch(job_id)):
+                continue
+            try:
+                members = self._included_guests(self._get(f"/cluster/backup/{job_id}/included_volumes")) & vmids
+            except (ProxmoxRefused, ProviderResourceNotFound, httpx.TransportError):
+                continue
+            if not members:
+                continue
+            if schedule not in due_by_schedule:
+                due_by_schedule[schedule] = self._last_run_before(schedule, cutoff)
+            due = due_by_schedule[schedule]
+            if due is None:
+                continue
+            for vmid in members:
+                result[vmid] = max(result.get(vmid, 0), due)
+        return result
+
     def backups(self) -> dict:
         """The newest backup of each guest across the backup storages, with job coverage and what is overdue.
 
@@ -780,10 +946,12 @@ class ProxmoxService:
                             "name": _text(row, "name")}
         try:
             jobs_rows = self._rows(self._get("/cluster/backup"))
-            jobs = {"count": len(jobs_rows),
-                    "enabled": sum(row.get("enabled", 1) not in (0, False, "0") for row in jobs_rows)}
         except (ProxmoxRefused, ProviderResourceNotFound, httpx.TransportError):
-            jobs = None
+            jobs_rows = None
+        jobs = None if jobs_rows is None else {
+            "count": len(jobs_rows), "enabled": sum(row.get("enabled", 1) not in (0, False, "0") for row in jobs_rows)}
+        now = time.time()
+        last_runs = self._last_scheduled_runs(jobs_rows or [], set(guests), now)
         uncovered, coverage_note = self._backup_coverage()
         nodes = sorted({_text(row, "node", required=True) or "" for row in rows if row["type"] == "node"})
         storages, unreadable, volumes, seen_shared = [], [], [], set()
@@ -812,7 +980,6 @@ class ProxmoxService:
                 storages.append({"node": node, "storage": name, "type": _text(row, "type", required=True),
                                  "shared": shared, "backups": len(found)})
         complete = not unreadable
-        now = time.time()
         result = []
         for vmid, guest in guests.items():
             own = [volume for volume in volumes if volume["vmid"] == vmid]
@@ -823,11 +990,16 @@ class ProxmoxService:
                 "size_bytes": newest["size_bytes"], "protected": newest["protected"],
                 "encrypted": newest["encrypted"], "verified": newest["verified"]}
             backup_job = None if uncovered is None else vmid not in uncovered
+            last_run = last_runs.get(vmid)
+            # A guest its own job judges is never also judged by the fixed age.
             found = {"no_backup_job": backup_job is False,
                      "never_backed_up": complete and latest is None,
-                     "backup_stale": complete and latest is not None and latest["age_days"] > BACKUP_STALE_DAYS}
-            result.append(dict(guest, backup_job=backup_job, backups=len(own), latest=latest,
-                               issues=[issue for issue in BACKUP_ISSUES if found[issue]]))
+                     "missed_run": complete and latest is not None and last_run is not None
+                     and latest["time"] < last_run,
+                     "backup_stale": complete and latest is not None and last_run is None
+                     and latest["age_days"] > BACKUP_STALE_DAYS}
+            result.append(dict(guest, backup_job=backup_job, backups=len(own), last_scheduled_run=last_run,
+                               latest=latest, issues=[issue for issue in BACKUP_ISSUES if found[issue]]))
         result.sort(key=lambda row: (BACKUP_ISSUES.index(row["issues"][0]) if row["issues"] else len(BACKUP_ISSUES),
                                      row["node"].lower(), row["vmid"]))
         return self._result({
@@ -837,11 +1009,13 @@ class ProxmoxService:
             "coverage_note": coverage_note,
             "listing_complete": complete,
             "stale_after_days": BACKUP_STALE_DAYS,
+            "missed_run_grace_hours": MISSED_RUN_GRACE_HOURS,
             "unreadable_storages": unreadable,
             "summary": {"guests": len(result),
                         "with_recent_backup": sum(row["latest"] is not None and not row["issues"]
                                                   for row in result),
                         "stale": sum("backup_stale" in row["issues"] for row in result),
+                        "missed_run": sum("missed_run" in row["issues"] for row in result),
                         "never": sum("never_backed_up" in row["issues"] for row in result),
                         "without_backup_job": None if uncovered is None else sum(row["backup_job"] is False
                                                                                  for row in result)},
