@@ -276,6 +276,67 @@ def format_node_maintenance(result: dict) -> str:
     return "\n".join(lines)
 
 
+LOAD_ISSUE_WORDS = {
+    "memory_low": "available memory fell under 10% of the total",
+    "memory_stalls": "tasks stalled waiting for memory",
+    "io_stalls": "all tasks stalled on disk IO 10% of the time or more",
+    "cpu_busy": "CPU use reached 90% or more",
+    "swapping": "swap use reached 10% or more",
+}
+LOAD_WINDOWS = {"hour": "hour", "day": "day", "week": "week", "month": "month"}
+
+
+def _rate(value) -> str:
+    return _bytes(value) + "/s"
+
+
+def _step(seconds) -> str:
+    if not seconds:
+        return "samples"
+    if seconds % 3600 == 0:
+        hours = seconds // 3600
+        return "one sample an hour" if hours == 1 else f"one sample every {hours} hours"
+    if seconds % 60 == 0:
+        minutes = seconds // 60
+        return "one sample a minute" if minutes == 1 else f"one sample every {minutes} minutes"
+    return f"one sample every {seconds} seconds"
+
+
+def format_node_load(result: dict) -> str:
+    if not result.get("ok"):
+        return "The Proxmox read did not succeed."
+    data = result["data"]
+    window = LOAD_WINDOWS.get(data["timeframe"], data["timeframe"])
+    if not data["samples"]:
+        return (f"Proxmox has no load samples for node {data['node']} over the last {window} "
+                f"({data['expected_samples']} expected), so its load is unknown.")
+    verdict = ("needs attention: " + "; ".join(LOAD_ISSUE_WORDS[issue] for issue in data["issues"])
+               if data["issues"] else "nothing needs attention")
+    lines = [f"Load of node {data['node']} over the last {window} ({_step(data['step_seconds'])}, "
+             f"{data['samples']} of {data['expected_samples']} present): {verdict}."]
+    cpu, wait, load = data["cpu"], data["io_wait"], data["load"]
+    lines.append(f"CPU ({cpu['cores']:g} cores): {cpu['average_percent']}% on average, peak {cpu['peak_percent']}%; "
+                 f"IO wait {wait['average_percent']}% on average, peak {wait['peak_percent']}%; "
+                 f"load average {load['average']}, peak {load['peak']}.")
+    memory, swap = data["memory"], data["swap"]
+    lines.append(f"Memory: {_bytes(memory['average_used_bytes'])} of {_bytes(memory['total_bytes'])} used on "
+                 f"average, peak {_bytes(memory['peak_used_bytes'])}; at least "
+                 f"{_bytes(memory['lowest_available_bytes'])} stayed available; swap peak "
+                 f"{_bytes(swap['peak_used_bytes'] or 0)} of {_bytes(swap['total_bytes'] or 0)}.")
+    pressure = data["pressure"]
+    lines.append(f"Stalls (share of time tasks waited): CPU {pressure['cpu_some']:g}%, IO {pressure['io_some']:g}% "
+                 f"(all tasks {pressure['io_full']:g}%), memory {pressure['memory_some']:g}% "
+                 f"(all tasks {pressure['memory_full']:g}%).")
+    network = data["network"]
+    lines.append(f"Network: in {_rate(network['average_in_bytes_per_second'])} on average, peak "
+                 f"{_rate(network['peak_in_bytes_per_second'])}; out {_rate(network['average_out_bytes_per_second'])} "
+                 f"on average, peak {_rate(network['peak_out_bytes_per_second'])}.")
+    disk = data["root_disk"]
+    if disk["used_bytes"] is not None and disk["total_bytes"]:
+        lines.append(f"Root disk: {_used_share(disk['used_bytes'], disk['total_bytes'])}.")
+    return "\n".join(lines)
+
+
 def format_node_network(result: dict) -> str:
     if not result.get("ok"):
         return "The Proxmox read did not succeed."
@@ -624,6 +685,19 @@ PROXMOX_TOOLS = {
             "proxmox.node.maintenance", "proxmox.node.maintenance", ("node",),
             {"node": {"type": "str", "description": "Exact node name returned by proxmox_nodes."}}),
         "result_formatter": format_node_maintenance,
+        "synthesis_evidence": "answer",
+    },
+    "proxmox_node_load": {
+        **_read(
+            "Show how loaded one exact Proxmox node was over the last hour, day, week or month from Proxmox's own "
+            "history: average and peak CPU, IO wait, load average, memory used and the least memory left "
+            "available, swap, stalls (pressure), network rates and root disk use, naming low memory, stalls, a "
+            "busy CPU or swapping. Requires the node name exactly as listed by Proxmox. Read only.",
+            "proxmox.node.load", "proxmox.node.load", ("node",),
+            {"node": {"type": "str", "description": "Exact node name returned by proxmox_nodes."},
+             "timeframe": {"type": "str", "default": "day",
+                           "description": "Window: hour, day, week or month (day if the user names none)."}}),
+        "result_formatter": format_node_load,
         "synthesis_evidence": "answer",
     },
     "proxmox_disk_smart": {

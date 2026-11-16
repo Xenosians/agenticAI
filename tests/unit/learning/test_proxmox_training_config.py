@@ -48,6 +48,37 @@ def test_training_context_grounds_an_integer_vmid_as_its_decimal_text():
     assert semantic_context_for("proxmox_guest_status", {"vmid": True})["allowed_arguments"] == {}
 
 
+def test_training_context_binds_only_grounded_arguments_as_the_runtime_router_does():
+    # The runtime intent parser rejects a bound argument the capability does not ground ("untrusted or
+    # irrelevant grounded argument 'timeframe'"). Training must show the context the router can produce:
+    # an optional, service-bounded window stays in the call, not in allowed_arguments.
+    context = semantic_context_for("proxmox_node_load", {"node": "pve1", "timeframe": "week"})
+    assert context["allowed_arguments"] == {"node": ["pve1"]}
+
+
+def test_every_reviewed_example_gives_a_context_the_runtime_intent_parser_accepts():
+    from subagents.core.orchestration.intent_contract import parse_semantic_intent
+
+    contracts, agents = load_inventory()
+    owner = {tool: name for name, agent in agents.items() for tool in agent.tools}
+    rejected = []
+    for path in sorted(Path("learning/config/specialists").glob("*.json")):
+        for example in json.loads(path.read_text(encoding="utf-8")).get("examples", []):
+            tool = example["tool_name"]
+            if tool not in owner:
+                continue
+            context = semantic_context_for(tool, example["arguments"])
+            try:
+                parse_semantic_intent({"summary": example["user_request"], "effect": contracts[tool].effect,
+                                       "allowed_tools": [tool], "allowed_arguments": context["allowed_arguments"],
+                                       "forbidden_tools": [], "forbidden_arguments": {}, "max_tool_calls": 1,
+                                       "clarification_required": False},
+                                      agent=agents[owner[tool]], user_request=example["user_request"])
+            except ValueError as error:
+                rejected.append((path.stem, tool, str(error)[:80]))
+    assert rejected == []
+
+
 def test_held_out_guest_cases_pass_the_semantic_guard_with_their_gold_call():
     contracts, agents = load_inventory()
     cases = [case for case in load_proposal_cases() if case.case_id.startswith("proxmox:")]

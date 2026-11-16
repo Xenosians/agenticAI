@@ -180,6 +180,7 @@ def build_cases(run: str, project: str) -> list[tuple[str, str, str, object]]:
         ("proxmox-ha", "proxmox_ha_status", "Is high availability healthy on the Proxmox cluster?", None),
         ("proxmox-disk-smart", "proxmox_disk_smart", "Show the SMART details of disk nvme0n1 on Proxmox node {proxmox_node}.", None),
         ("proxmox-node-maintenance", "proxmox_node_maintenance", "Does Proxmox node {proxmox_node} need a reboot or have a service down?", None),
+        ("proxmox-node-load", "proxmox_node_load", "How busy was Proxmox node {proxmox_node} over the last day?", None),
         # Power actions run on the lab guest (ACCEPTANCE_PROXMOX_VMID) in an order
         # that leaves it as found: start, reboot, shutdown, then start and force stop.
         ("proxmox-guest-start", "proxmox_guest_start", "Start container {proxmox_vmid} on node {proxmox_node}.", True),

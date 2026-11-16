@@ -63,7 +63,10 @@
     {"tool_name": "proxmox_disk_smart", "user_request": "Does /dev/sdb on node spare-pc have reallocated or pending sectors?", "arguments": {"node": "spare-pc", "disk": "/dev/sdb"}, "tags": ["read", "disk"]},
     {"tool_name": "proxmox_node_maintenance", "user_request": "Does Proxmox node pve1 need a reboot for a new kernel?", "arguments": {"node": "pve1"}, "tags": ["read", "maintenance"]},
     {"tool_name": "proxmox_node_maintenance", "user_request": "When do the certificates on node pve-lab expire, and are all Proxmox services running?", "arguments": {"node": "pve-lab"}, "tags": ["read", "maintenance"]},
-    {"tool_name": "proxmox_node_maintenance", "user_request": "Which Proxmox VE version and update repositories does node spare-pc use?", "arguments": {"node": "spare-pc"}, "tags": ["read", "maintenance"]}
+    {"tool_name": "proxmox_node_maintenance", "user_request": "Which Proxmox VE version and update repositories does node spare-pc use?", "arguments": {"node": "spare-pc"}, "tags": ["read", "maintenance"]},
+    {"tool_name": "proxmox_node_load", "user_request": "How busy was Proxmox node pve1 over the last day?", "arguments": {"node": "pve1", "timeframe": "day"}, "tags": ["read", "load"]},
+    {"tool_name": "proxmox_node_load", "user_request": "Did node pve-lab run low on memory or swap this week?", "arguments": {"node": "pve-lab", "timeframe": "week"}, "tags": ["read", "load"]},
+    {"tool_name": "proxmox_node_load", "user_request": "Show the CPU and IO wait peaks of node spare-pc in the last hour.", "arguments": {"node": "spare-pc", "timeframe": "hour"}, "tags": ["read", "load"]}
   ],
   "eval_cases": [
     {"name": "cluster-membership", "user": "Give me the membership and online state of the Proxmox VE cluster.", "allowed_tools": ["proxmox_cluster_status"], "allowed_arguments": {}, "expected_tool": "proxmox_cluster_status", "expected_arguments": {}},
@@ -84,6 +87,7 @@
     {"name": "node-network", "user": "List the bridges and network ports configured on Proxmox node pve2.", "allowed_tools": ["proxmox_node_network"], "allowed_arguments": {"node": ["pve2"]}, "expected_tool": "proxmox_node_network", "expected_arguments": {"node": "pve2"}},
     {"name": "ha-status", "user": "Show the HA state of every node and resource in the Proxmox cluster.", "allowed_tools": ["proxmox_ha_status"], "allowed_arguments": {}, "expected_tool": "proxmox_ha_status", "expected_arguments": {}},
     {"name": "disk-smart", "user": "Read the SMART temperature and error counts of /dev/sdc on node hv-west.", "allowed_tools": ["proxmox_disk_smart"], "allowed_arguments": {"node": ["hv-west"], "disk": ["/dev/sdc"]}, "expected_tool": "proxmox_disk_smart", "expected_arguments": {"node": "hv-west", "disk": "/dev/sdc"}},
-    {"name": "node-maintenance", "user": "Is node hv-west running its newest kernel, and is any Proxmox service down?", "allowed_tools": ["proxmox_node_maintenance"], "allowed_arguments": {"node": ["hv-west"]}, "expected_tool": "proxmox_node_maintenance", "expected_arguments": {"node": "hv-west"}}
+    {"name": "node-maintenance", "user": "Is node hv-west running its newest kernel, and is any Proxmox service down?", "allowed_tools": ["proxmox_node_maintenance"], "allowed_arguments": {"node": ["hv-west"]}, "expected_tool": "proxmox_node_maintenance", "expected_arguments": {"node": "hv-west"}},
+    {"name": "node-load", "user": "Was node hv-west overloaded during the last month?", "allowed_tools": ["proxmox_node_load"], "allowed_arguments": {"node": ["hv-west"]}, "expected_tool": "proxmox_node_load", "expected_arguments": {"node": "hv-west"}, "allowed_extra_arguments": ["timeframe"]}
   ]
 }

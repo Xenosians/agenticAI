@@ -130,6 +130,11 @@ def register_proxmox_tools(server, service: ProxmoxService | None, missing_setti
         return proxmox(lambda: service.node_maintenance(node))
 
     @server.tool()
+    def proxmox_node_load(node: str, timeframe: str = "day") -> ProxmoxReadResult:
+        """Show one exact node's average and peak load over the last hour, day, week or month."""
+        return proxmox(lambda: service.node_load(node, timeframe))
+
+    @server.tool()
     def proxmox_disk_smart(node: str, disk: str) -> ProxmoxReadResult:
         """Show one listed disk's SMART numbers; never serials."""
         return proxmox(lambda: service.disk_smart(node, disk))

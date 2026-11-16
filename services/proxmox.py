@@ -211,6 +211,18 @@ KEY_TYPES = {"rsaEncryption": "RSA", "id-ecPublicKey": "EC", "ED25519": "Ed25519
 SUBSCRIPTION_STATES = {"active": "active", "notfound": "none", "new": "not_checked", "expired": "expired",
                        "invalid": "invalid", "suspended": "suspended"}
 
+# One node's load over a window (node_load): Proxmox RRD timeframes and thresholds; most urgent issue first.
+LOAD_TIMEFRAMES = ("hour", "day", "week", "month")
+LOAD_ISSUES = ("memory_low", "memory_stalls", "io_stalls", "cpu_busy", "swapping")
+LOAD_CPU_BUSY = 0.9
+LOAD_MEMORY_LOW = 0.1
+LOAD_IO_STALL_PERCENT = 10.0
+LOAD_SWAPPING = 0.1
+MAX_LOAD_SAMPLES = 2000
+LOAD_FIELDS = ("maxcpu", "cpu", "iowait", "loadavg", "memtotal", "memused", "memavailable", "swaptotal",
+               "swapused", "pressurecpusome", "pressureiosome", "pressureiofull", "pressurememorysome",
+               "pressurememoryfull", "netin", "netout", "rootused", "roottotal")
+
 HA_SID = re.compile(r"(vm|ct):([0-9]{1,9})")
 HA_WORD = re.compile(r"[a-z][a-z_ ]{0,31}")
 # The state word in a manager or node status text ("pve-a (active, ...)"),
@@ -802,6 +814,96 @@ class ProxmoxService:
             "issues": [issue for issue in MAINTENANCE_ISSUES if found[issue]],
             "unreadable": unreadable,
         })
+
+    def _load_series(self, node: str, timeframe: str, cf: str) -> list[dict]:
+        rows = self._rows(self._get(f"/nodes/{node}/rrddata", {"timeframe": timeframe, "cf": cf}))
+        if len(rows) > MAX_LOAD_SAMPLES:
+            raise _invalid()
+        for row in rows:
+            if type(row.get("time")) is not int:
+                raise _invalid()
+            for field in LOAD_FIELDS:
+                _number(row, field)
+        return rows
+
+    def node_load(self, node: str, timeframe: str) -> dict:
+        """One node's typical and peak load over a window, from Proxmox's own history (RRD).
+
+        The AVERAGE series gives typical values and the MAX series peaks.
+        Minutes without a sample are gaps, never zero; a window without any
+        sample reports no load at all.
+        """
+        if not isinstance(node, str) or not NODE_ID.fullmatch(node):
+            raise ValueError("Enter one exact Proxmox node name.")
+        if timeframe not in LOAD_TIMEFRAMES:
+            raise ValueError("Choose a window of hour, day, week or month.")
+        average = self._load_series(node, timeframe, "AVERAGE")
+        peak = self._load_series(node, timeframe, "MAX")
+
+        def values(rows: list[dict], field: str) -> list:
+            return [row[field] for row in rows if row.get(field) is not None]
+
+        def mean(rows: list[dict], field: str):
+            found = values(rows, field)
+            return sum(found) / len(found) if found else None
+
+        def highest(rows: list[dict], field: str):
+            found = values(rows, field)
+            return max(found) if found else None
+
+        def percent(value):
+            return None if value is None else round(value * 100, 1)
+
+        def rounded(value, digits=2):
+            # Proxmox sends RRD values as long fractions (0.516333333333333).
+            return None if value is None else round(value, digits)
+
+        sampled = [row for row in average if row.get("cpu") is not None or row.get("memused") is not None]
+        times = [row["time"] for row in average]
+        step = min((b - a for a, b in zip(times, times[1:]) if b > a), default=None)
+        data = {"schema": "proxmox-node-load.v1", "node": node, "timeframe": timeframe, "step_seconds": step,
+                "samples": len(sampled), "expected_samples": len(average),
+                "from": datetime.fromtimestamp(times[0], timezone.utc).isoformat() if times else None,
+                "to": datetime.fromtimestamp(times[-1], timezone.utc).isoformat() if times else None,
+                "cpu": None, "io_wait": None, "load": None, "memory": None, "swap": None, "pressure": None,
+                "network": None, "root_disk": None, "issues": []}
+        if not sampled:
+            return self._result(data)
+        last = sampled[-1]
+        memory_total = highest(average, "memtotal")
+        swap_total = highest(average, "swaptotal")
+        lowest_available = min(values(average, "memavailable") + values(peak, "memavailable"), default=None)
+        data.update({
+            "cpu": {"cores": highest(average, "maxcpu"), "average_percent": percent(mean(average, "cpu")),
+                    "peak_percent": percent(highest(peak, "cpu"))},
+            "io_wait": {"average_percent": percent(mean(average, "iowait")),
+                        "peak_percent": percent(highest(peak, "iowait"))},
+            "load": {"average": rounded(mean(average, "loadavg")), "peak": rounded(highest(peak, "loadavg"))},
+            "memory": {"total_bytes": memory_total, "average_used_bytes": mean(average, "memused"),
+                       "peak_used_bytes": highest(peak, "memused"), "lowest_available_bytes": lowest_available},
+            "swap": {"total_bytes": swap_total, "peak_used_bytes": highest(peak, "swapused")},
+            "pressure": {"cpu_some": rounded(highest(peak, "pressurecpusome")),
+                         "io_some": rounded(highest(peak, "pressureiosome")),
+                         "io_full": rounded(highest(peak, "pressureiofull")),
+                         "memory_some": rounded(highest(peak, "pressurememorysome")),
+                         "memory_full": rounded(highest(peak, "pressurememoryfull"))},
+            "network": {"average_in_bytes_per_second": mean(average, "netin"),
+                        "peak_in_bytes_per_second": highest(peak, "netin"),
+                        "average_out_bytes_per_second": mean(average, "netout"),
+                        "peak_out_bytes_per_second": highest(peak, "netout")},
+            "root_disk": {"used_bytes": last.get("rootused"), "total_bytes": last.get("roottotal")},
+        })
+        pressure, swap_peak, cpu_peak = data["pressure"], data["swap"]["peak_used_bytes"], highest(peak, "cpu")
+        found = {
+            "memory_low": bool(memory_total and lowest_available is not None
+                               and lowest_available < LOAD_MEMORY_LOW * memory_total),
+            "memory_stalls": bool(pressure["memory_full"]),
+            "io_stalls": (pressure["io_full"] or 0) >= LOAD_IO_STALL_PERCENT,
+            "cpu_busy": (cpu_peak or 0) >= LOAD_CPU_BUSY,
+            "swapping": bool(swap_total and swap_peak and swap_peak >= LOAD_SWAPPING * swap_total),
+        }
+        data["issues"] = [issue for issue in LOAD_ISSUES if found[issue]]
+        return self._result(data)
 
     def node_disks(self, node: str) -> dict:
         """Physical disks of one node: health and wear, never serials, WWNs or by-id links."""

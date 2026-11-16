@@ -356,9 +356,22 @@ def semantic_context_for(
     tool_name: str,
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
+    """The semantic context the runtime router can produce for this call.
+
+    Only the capability's grounded arguments are bound, exactly as the runtime
+    intent parser requires; an optional bounded argument (a time window, a
+    line count, a working directory) stays in the call and is checked by the
+    executable, never bound as a semantic target.
+    """
+    from subagents.core.orchestration.intent_contract import trusted_grounded_arguments
+    from tools.registry import get_tool
+
+    grounded = set(trusted_grounded_arguments(tool_name=tool_name, tool=get_tool(tool_name)))
     allowed_arguments: dict[str, list[str]] = {}
 
     for key, value in arguments.items():
+        if key not in grounded:
+            continue
         if isinstance(value, str):
             allowed_arguments[key] = [value]
 

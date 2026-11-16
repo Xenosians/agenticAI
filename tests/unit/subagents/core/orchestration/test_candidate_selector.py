@@ -115,6 +115,8 @@ def test_database_host_questions_reach_the_database_inventory(production_registr
     ("How many reallocated sectors does disk sdb on node pve1 have?", "proxmox_disk_smart"),
     ("Does Proxmox node pve1 need a reboot for its new kernel?", "proxmox_node_maintenance"),
     ("When does the certificate on node hummingbird expire?", "proxmox_node_maintenance"),
+    ("How busy was Proxmox node pve1 over the last day?", "proxmox_node_load"),
+    ("Was Proxmox node hummingbird low on memory this week?", "proxmox_node_load"),
 ])
 def test_proxmox_node_and_guest_questions_reach_their_reads(production_registry, user_request, expected):
     selection = DeterministicCandidateSelector().select(user_request, production_registry)

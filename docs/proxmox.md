@@ -167,6 +167,22 @@ subscription key and server id, and repository file paths never leave the
 service. Pending package updates need `Sys.Modify` (`GET apt/update`), which
 Janus does not hold, so they are not read; nothing is installed or rebooted.
 
+## Node load history
+
+`proxmox_node_load` reads one exact node's own history from Proxmox
+(`GET /nodes/{node}/rrddata`, `Sys.Audit`) over the last hour, day, week or
+month (a day when the user names none): the `AVERAGE` series for typical
+values and the `MAX` series for peaks. It reports average and peak CPU, IO
+wait and load average; memory used on average and at peak and the least
+memory left available; peak swap; the highest PSI stall shares (CPU, IO and
+memory, "some" and "full"); network rates; root disk use. Minutes Proxmox has
+no sample for are gaps, never zero, and the reading says how many samples
+were present. Issues, most urgent first: `memory_low` (available memory
+under 10 % of the total), `memory_stalls` (any full memory stall),
+`io_stalls` (full IO stall 10 % or more), `cpu_busy` (peak CPU 90 % or more)
+and `swapping` (swap use 10 % or more of the swap space). It is history, not
+a forecast.
+
 The live tool matrix can exercise the guest detail and power calls when the
 disposable acceptance profile provides `ACCEPTANCE_PROXMOX_NODE` and
 `ACCEPTANCE_PROXMOX_VMID`. Without both values those cases remain skipped for

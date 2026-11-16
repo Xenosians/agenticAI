@@ -14,7 +14,7 @@ def test_each_proxmox_read_is_registered_with_read_only_semantics_and_one_provid
         "proxmox_guest_status", "proxmox_guest_config",
         "proxmox_node_storage", "proxmox_recent_tasks", "proxmox_database_inventory",
         "proxmox_backups", "proxmox_node_disks", "proxmox_guest_snapshots", "proxmox_node_network",
-        "proxmox_ha_status", "proxmox_disk_smart", "proxmox_node_maintenance",
+        "proxmox_ha_status", "proxmox_disk_smart", "proxmox_node_maintenance", "proxmox_node_load",
     }
     assert set(PROXMOX_TOOLS) == reads | POWER_TOOLS
     assert set(PROXMOX_TOOLS) <= set(TOOLS)
@@ -419,6 +419,63 @@ def test_node_maintenance_reads_in_words():
     assert lines[5] == "Not readable with Janus's access: subscription."
     nothing = dict(MAINTENANCE, issues=[], kernel=dict(MAINTENANCE["kernel"], newest_installed="7.0.14-28-pve"))
     assert formatter(dict(result, data=nothing)).splitlines()[1] == "Nothing needs attention."
+    assert formatter({"ok": False}) == "The Proxmox read did not succeed."
+
+
+def test_node_load_is_a_grounded_read_with_a_fixed_window():
+    from pathlib import Path
+
+    definition = Path("subagents/agents/proxmox-specialist.md").read_text(encoding="utf-8")
+    tool = TOOLS["proxmox_node_load"]
+    assert (tool["effect"], tool["requires_approval"], tool["grounded_arguments"]) == ("read", False, ["node"])
+    # The window is optional and bounded by the service (hour, day, week, month); a day by default.
+    assert tool["required_arguments"] == ["node"]
+    assert tool["parameters"]["timeframe"]["default"] == "day"
+    assert tool["synthesis_evidence"] == "answer"
+    assert "  - proxmox_node_load\n" in definition
+    assert provider_for_capability("proxmox_node_load") == "proxmox"
+
+
+GIB = 2 ** 30
+LOAD = {
+    "schema": "proxmox-node-load.v1", "node": "hummingbird", "timeframe": "day", "step_seconds": 60,
+    "samples": 1440, "expected_samples": 1440, "from": "2026-11-15T10:00:00+00:00", "to": "2026-11-16T10:00:00+00:00",
+    "cpu": {"cores": 8, "average_percent": 0.6, "peak_percent": 1.5},
+    "io_wait": {"average_percent": 0.1, "peak_percent": 1.7},
+    "load": {"average": 0.07, "peak": 0.52},
+    "memory": {"total_bytes": 5.73 * GIB, "average_used_bytes": 2.11 * GIB, "peak_used_bytes": 2.43 * GIB,
+               "lowest_available_bytes": 3.3 * GIB},
+    "swap": {"total_bytes": 5.73 * GIB, "peak_used_bytes": 0},
+    "pressure": {"cpu_some": 0.04, "io_some": 6.4, "io_full": 6.3, "memory_some": 0, "memory_full": 0},
+    "network": {"average_in_bytes_per_second": 615.5, "peak_in_bytes_per_second": 725800.0,
+                "average_out_bytes_per_second": 302.0, "peak_out_bytes_per_second": 79050.0},
+    "root_disk": {"used_bytes": 9.7 * GIB, "total_bytes": 94.0 * GIB},
+    "issues": [],
+}
+
+
+def test_node_load_reads_in_words():
+    formatter = TOOLS["proxmox_node_load"]["result_formatter"]
+    result = {"ok": True, "status": "success", "provider": "proxmox", "data": LOAD}
+    assert formatter(result).splitlines() == [
+        "Load of node hummingbird over the last day (one sample a minute, 1440 of 1440 present): "
+        "nothing needs attention.",
+        "CPU (8 cores): 0.6% on average, peak 1.5%; IO wait 0.1% on average, peak 1.7%; load average 0.07, peak 0.52.",
+        "Memory: 2.1 GiB of 5.7 GiB used on average, peak 2.4 GiB; at least 3.3 GiB stayed available; "
+        "swap peak 0 B of 5.7 GiB.",
+        "Stalls (share of time tasks waited): CPU 0.04%, IO 6.4% (all tasks 6.3%), memory 0% (all tasks 0%).",
+        "Network: in 616 B/s on average, peak 709 KiB/s; out 302 B/s on average, peak 77 KiB/s.",
+        "Root disk: 9.7 GiB of 94.0 GiB used (10%).",
+    ]
+    busy = dict(LOAD, timeframe="week", step_seconds=1800, samples=68, expected_samples=336,
+                issues=["memory_low", "swapping"])
+    lines = formatter(dict(result, data=busy)).splitlines()
+    assert lines[0] == ("Load of node hummingbird over the last week (one sample every 30 minutes, 68 of 336 present): "
+                        "needs attention: available memory fell under 10% of the total; swap use reached 10% or more.")
+    empty = dict(LOAD, samples=0, cpu=None, io_wait=None, load=None, memory=None, swap=None, pressure=None,
+                 network=None, root_disk=None)
+    assert formatter(dict(result, data=empty)) == ("Proxmox has no load samples for node hummingbird over the last "
+                                                   "day (1440 expected), so its load is unknown.")
     assert formatter({"ok": False}) == "The Proxmox read did not succeed."
 
 
