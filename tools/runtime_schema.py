@@ -116,3 +116,27 @@ class ContractAwareMCPServer(MCPServer):
             return parent_decorator(adapt_tool_callable(fn))
 
         return decorator
+
+    async def call_tool(self, name, arguments, context=None):
+        """Run one tool as the account the trusted host named in the request metadata.
+
+        The owner is set for exactly this call: a sync tool's worker thread
+        copies the context, and the value is reset afterwards, so it never
+        leaks into the next call. A call without the key runs with no owner.
+        """
+        from agent.mcp_client import OWNER_META_KEY
+        from services.extensions.context import request_owner
+
+        owner = None
+        if context is not None:
+            try:
+                meta = context.request_context.meta
+            except ValueError:
+                meta = None
+            value = meta.get(OWNER_META_KEY) if isinstance(meta, dict) else None
+            owner = value if isinstance(value, str) and 0 < len(value) <= 200 else None
+        token = request_owner.set(owner)
+        try:
+            return await super().call_tool(name, arguments, context)
+        finally:
+            request_owner.reset(token)

@@ -6,7 +6,7 @@ keys, endpoints or user details) and changes nothing on the tailnet.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 
 from api.extensions import require_internal
@@ -22,14 +22,15 @@ def require_ready_runtime(request: Request):
 
 
 @router.get("/internal/v1/tailnet/overview")
-def tailnet_overview(request: Request):
-    """Devices decide whether the overview succeeds; a failed DNS read is named beside them."""
-    from services.tailnet import build_tailnet_service
+def tailnet_overview(request: Request, owner: str | None = Query(default=None, min_length=1, max_length=200)):
+    """The signed-in account's tailnet: devices decide whether the overview succeeds; a failed DNS read is named."""
+    from services.provider_links import as_owner, owner_tailnet_service
     from tools.provider_reads import provider_read
 
     require_internal(request)
     runtime = require_ready_runtime(request)
-    service = build_tailnet_service(runtime.settings)
+    with as_owner(owner):
+        service = owner_tailnet_service(runtime.settings)
     if service is None:
         return JSONResponse(status_code=503, content={"error": "tailnet_not_configured"})
     try:

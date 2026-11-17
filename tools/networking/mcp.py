@@ -1,4 +1,5 @@
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import AbstractContextManager
 from typing import Any
 
 from pydantic import BaseModel
@@ -24,15 +25,29 @@ class NetworkReadResult(BaseModel):
 
 def register_networking_tools(server, service: OpenWrtService | None, tailnet: TailnetService | None = None,
                               dns_check: DnsIntegrityService | None = None,
-                              missing_settings: Mapping[str, Sequence[str]] | None = None, proxmox=None):
+                              missing_settings: Mapping[str, Sequence[str]] | None = None, proxmox=None, *,
+                              tailnet_for_request: Callable[[], AbstractContextManager] | None = None,
+                              proxmox_for_request: Callable[[], AbstractContextManager] | None = None):
     """Each read returns observed data, or a typed failure naming the cause (see tools.provider_reads).
 
     ``missing_settings`` maps a provider family (openwrt, tailscale, dns_check,
     proxmox) to the setting names it still needs, so an unconfigured read can
     name them. ``proxmox`` (a ProxmoxService) is read only by the tailnet
-    coverage join.
+    coverage join. The ``*_for_request`` resolvers yield the Tailscale or
+    Proxmox service of the account each call serves (owner decision, 17
+    November); without them every call gets the fixed ``tailnet``/``proxmox``.
     """
-    missing = missing_settings or {}
+    from services.provider_links import PROXMOX_LINK_MISSING, TAILSCALE_LINK_MISSING
+    from tools.proxmox.mcp import fixed_service
+
+    missing = dict(missing_settings or {})
+    # Resolved per account, the fix is that account's own link, not a server setting.
+    if tailnet_for_request is not None:
+        missing["tailscale"] = TAILSCALE_LINK_MISSING
+    if proxmox_for_request is not None:
+        missing["proxmox"] = PROXMOX_LINK_MISSING
+    tailnet_resolve = tailnet_for_request or fixed_service(tailnet)
+    proxmox_resolve = proxmox_for_request or fixed_service(proxmox)
 
     def read(source, family: str, provider: str, label: str, call) -> NetworkReadResult:
         if source is None:
@@ -43,7 +58,8 @@ def register_networking_tools(server, service: OpenWrtService | None, tailnet: T
         return read(service, "openwrt", "openwrt", "The OpenWrt router", call)
 
     def tailnet_read(call):
-        return read(tailnet, "tailscale", "tailscale", "The Tailscale network", call)
+        with tailnet_resolve() as current:
+            return read(current, "tailscale", "tailscale", "The Tailscale network", lambda: call(current))
 
     @server.tool()
     def network_system_info() -> NetworkReadResult:
@@ -83,38 +99,40 @@ def register_networking_tools(server, service: OpenWrtService | None, tailnet: T
 
     @server.tool()
     def network_tailnet_devices() -> NetworkReadResult:
-        return tailnet_read(lambda: tailnet.devices())
+        return tailnet_read(lambda current: current.devices())
 
     @server.tool()
     def network_tailnet_dns() -> NetworkReadResult:
-        return tailnet_read(lambda: tailnet.dns_settings())
+        return tailnet_read(lambda current: current.dns_settings())
 
     @server.tool()
     def network_tailnet_policy() -> NetworkReadResult:
         """Who may reach what under the tailnet policy; users and addresses masked."""
-        return tailnet_read(lambda: tailnet.policy())
+        return tailnet_read(lambda current: current.policy())
 
     @server.tool()
     def network_tailnet_posture() -> NetworkReadResult:
         """Each tailnet device's fixed posture attributes."""
-        return tailnet_read(lambda: tailnet.device_posture())
+        return tailnet_read(lambda current: current.device_posture())
 
     @server.tool()
     def network_tailnet_coverage() -> NetworkReadResult:
         """Which Proxmox nodes and guests have a tailnet device, matched by name; each side's failure is named."""
-        if tailnet is None:
-            return NetworkReadResult(**not_configured("tailscale", "The Tailscale network", missing.get("tailscale", ())))
-        if proxmox is None:
-            return NetworkReadResult(**not_configured("proxmox", "Proxmox VE", missing.get("proxmox", ())))
-        machines = provider_read("proxmox", "Proxmox VE", lambda: proxmox.machines())
-        if not machines.get("ok"):
-            return NetworkReadResult(**machines)
-        devices = provider_read("tailscale", "The Tailscale network", lambda: tailnet.devices())
-        if not devices.get("ok"):
-            return NetworkReadResult(**devices)
-        return NetworkReadResult(ok=True, status="success", provider="tailscale",
-                                 observed_at=devices.get("observed_at"),
-                                 data=tailnet_coverage(machines["data"], devices["data"]))
+        with tailnet_resolve() as tailnet_now, proxmox_resolve() as proxmox_now:
+            if tailnet_now is None:
+                return NetworkReadResult(**not_configured("tailscale", "The Tailscale network",
+                                                          missing.get("tailscale", ())))
+            if proxmox_now is None:
+                return NetworkReadResult(**not_configured("proxmox", "Proxmox VE", missing.get("proxmox", ())))
+            machines = provider_read("proxmox", "Proxmox VE", lambda: proxmox_now.machines())
+            if not machines.get("ok"):
+                return NetworkReadResult(**machines)
+            devices = provider_read("tailscale", "The Tailscale network", lambda: tailnet_now.devices())
+            if not devices.get("ok"):
+                return NetworkReadResult(**devices)
+            return NetworkReadResult(ok=True, status="success", provider="tailscale",
+                                     observed_at=devices.get("observed_at"),
+                                     data=tailnet_coverage(machines["data"], devices["data"]))
 
     @server.tool()
     def network_dns_integrity_check(names: list[str] | None = None) -> NetworkReadResult:

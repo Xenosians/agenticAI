@@ -236,6 +236,24 @@ the server's description of the exact target. Phoenix records each action
 once per submission, lets only its owner decide it, and never re-sends an
 approval whose outcome was not confirmed.
 
+## Whose Proxmox and Tailscale
+
+Each Janus account connects its own Proxmox and Tailscale in **Plugins >
+Servers** (owner decision, 17 November: "user dependant not machine
+dependant"). The AI service stores the link in the account's extension store
+with its secret encrypted, lists it without the secret, and uses it for that
+account's chat, tools, dashboards and pre-approval checks
+(`services/provider_links.py`). An account without a link uses this machine's
+profile link as its default; with neither, the read says to add a link in
+Connections.
+
+The account crosses every hop as data the browser cannot choose: Phoenix
+takes it from the session and passes `owner` to the dashboard reads; the AI
+sends it to the MCP subprocess as request metadata (`janus.itsm/owner`, never
+a model argument), where each tool call builds that account's client and
+closes it afterwards; an approval records the proposing account, and the
+approved action runs with that account's link, whichever request decides it.
+
 ## Deployment shapes
 
 Reads and actions work over either a tailnet name or a lab LAN address. Both

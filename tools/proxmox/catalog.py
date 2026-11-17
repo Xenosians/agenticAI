@@ -485,11 +485,12 @@ POWER_TRUSTED_ARGUMENTS = ["expected_type", "expected_name"]
 
 
 def _policy_service():
-    """The configured Proxmox service for trusted pre-approval reads, or None."""
+    """The proposing account's Proxmox (its own link, else the machine default) for trusted
+    pre-approval reads, or None."""
     from config import Settings
-    from services.proxmox import build_proxmox_service
+    from services.provider_links import owner_proxmox_service
 
-    return build_proxmox_service(Settings())
+    return owner_proxmox_service(Settings())
 
 
 def _power_policy(action: str):
@@ -507,7 +508,8 @@ def _power_policy(action: str):
         except ValueError:
             return refused("error", "Proxmox VE has an invalid configuration on this Janus host.")
         if service is None:
-            return refused("error", "Proxmox VE is not set up on this Janus host.")
+            return refused("error", "Proxmox VE is not connected for this account. Add a Proxmox link in "
+                                    "Connections.")
         try:
             try:
                 target = service.power_target(node, vmid, action)

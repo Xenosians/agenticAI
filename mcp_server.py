@@ -62,8 +62,7 @@ from services.process_runner import (
 
 from services.integration_readiness import integration_readiness
 from services.openwrt import build_openwrt_service
-from services.proxmox import build_proxmox_service
-from services.tailnet import build_tailnet_service
+from services.provider_links import owner_proxmox_service, owner_tailnet_service, service_for_request
 from services.dns_integrity import build_dns_integrity_service
 from services.mailbox import MaddyMailboxService
 from tools.networking.mcp import register_networking_tools
@@ -726,19 +725,22 @@ def create_mcp_server(
     # Setting names a provider still needs, so its reads can say what is missing.
     missing_settings = {row["id"]: row["missing"] for row in integration_readiness(runtime_settings)}
 
-    # One Proxmox client serves its own tools and the tailnet coverage join.
-    proxmox_service = build_proxmox_service(runtime_settings)
+    # Proxmox and Tailscale belong to the account a call serves (owner
+    # decision, 17 November): each call builds that account's client (its own
+    # link, else this machine's default) and closes it afterwards.
+    proxmox_for_request = service_for_request(lambda: owner_proxmox_service(runtime_settings))
+    tailnet_for_request = service_for_request(lambda: owner_tailnet_service(runtime_settings))
     register_networking_tools(server, build_openwrt_service(runtime_settings),
-                              build_tailnet_service(runtime_settings),
-                              build_dns_integrity_service(runtime_settings),
-                              missing_settings=missing_settings, proxmox=proxmox_service)
+                              dns_check=build_dns_integrity_service(runtime_settings),
+                              missing_settings=missing_settings,
+                              tailnet_for_request=tailnet_for_request,
+                              proxmox_for_request=proxmox_for_request)
 
     # ============================================================
     # PROXMOX VE (reads + approval-gated guest power actions)
     # ============================================================
 
-    register_proxmox_tools(server, proxmox_service,
-                           missing_settings=missing_settings.get("proxmox", ()))
+    register_proxmox_tools(server, for_request=proxmox_for_request)
 
     # ============================================================
     # DIRECTORY READS

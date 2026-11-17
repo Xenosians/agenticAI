@@ -45,6 +45,9 @@ def approval_to_dict(
 
         "result":
             approval.result,
+
+        "owner":
+            approval.owner,
     }
 
 
@@ -200,6 +203,10 @@ class ApprovalManager:
             .hex[:8]
         )
 
+        # The proposing account, set by the trusted host for its request; the
+        # approved action later runs with that account's own connections.
+        from services.extensions.context import current_owner
+
         approval = (
             self.store.create(
                 approval_id=(
@@ -214,6 +221,7 @@ class ApprovalManager:
                 risk=(
                     effective_risk
                 ),
+                owner=current_owner(),
             )
         )
 
@@ -401,11 +409,14 @@ class ApprovalManager:
         # ========================================================
 
         try:
+            # Run for the account that proposed it, never the deciding request's.
+            owner_argument = {"owner": approval.owner} if approval.owner else {}
             result = (
                 await
                 self.mcp.call_tool(
                     approval.tool,
                     approval.arguments,
+                    **owner_argument,
                 )
             )
 

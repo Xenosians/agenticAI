@@ -189,9 +189,14 @@ def legacy_database(path):
             )
 
 
+# The stored evidence of every approval. Later columns (owner) are added empty
+# and checked on their own; these values must survive any migration unchanged.
+EVIDENCE = "approval_id, tool, arguments, risk, status, result, created_at, updated_at"
+
+
 def raw_rows(path):
     with sqlite3.connect(path) as connection:
-        return connection.execute("SELECT * FROM approvals ORDER BY approval_id").fetchall()
+        return connection.execute(f"SELECT {EVIDENCE} FROM approvals ORDER BY approval_id").fetchall()
 
 
 def test_legacy_check_migration_preserves_every_row_and_schema_dependents(tmp_path):
@@ -202,6 +207,8 @@ def test_legacy_check_migration_preserves_every_row_and_schema_dependents(tmp_pa
     store.initialize()
     store.initialize()  # Repeated startup must not rebuild or alter evidence.
     assert raw_rows(path) == before
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("SELECT DISTINCT owner FROM approvals").fetchall() == [(None,)]
     assert store.reject_pending("pending")
     assert store.get("executing").status == "executing"
     with sqlite3.connect(path) as connection:

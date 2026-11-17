@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
@@ -26,6 +26,9 @@ ACTION_TOOLS = {
 }
 ACTION_WORDS = {"start": "Start", "shutdown": "Shut down", "reboot": "Reboot", "force_stop": "Force stop"}
 SPECIALIST = "proxmox-specialist"
+# The signed-in account, sent by Phoenix from its session (never by the browser);
+# the read uses that account's own Proxmox link, else the machine default.
+OWNER = Query(default=None, min_length=1, max_length=200)
 
 
 def require_ready_runtime(request: Request):
@@ -93,19 +96,20 @@ async def propose_action(body: ActionProposal, request: Request):
 
 
 @router.get("/internal/v1/proxmox/overview")
-def proxmox_overview(request: Request):
-    """Return a live Proxmox snapshot to the authenticated backend.
+def proxmox_overview(request: Request, owner: str | None = OWNER):
+    """Return a live Proxmox snapshot of the signed-in account to the authenticated backend.
 
     A failed read names its cause (unreachable, timeout, refused, invalid
     answer, a Lua refusal) with a fixed message that never echoes the provider.
     """
-    from services.proxmox import build_proxmox_service
+    from services.provider_links import as_owner, owner_proxmox_service
     from tools.provider_reads import provider_read
 
     require_internal(request)
     runtime = require_ready_runtime(request)
     try:
-        service = build_proxmox_service(runtime.settings)
+        with as_owner(owner):
+            service = owner_proxmox_service(runtime.settings)
     except ValueError:
         return JSONResponse(status_code=503, content={"error": "proxmox_configuration_invalid"})
     if service is None:
@@ -122,20 +126,21 @@ def proxmox_overview(request: Request):
 
 
 @router.get("/internal/v1/proxmox/health")
-def proxmox_health(request: Request):
-    """Return backups and every node's physical disks to the authenticated backend.
+def proxmox_health(request: Request, owner: str | None = OWNER):
+    """Return the signed-in account's backups and every node's physical disks to the authenticated backend.
 
     Read separately from the overview (it lists backup storages and runs SMART
     on each node), so the dashboard refreshes it less often. Each part is a
     typed read result: one unreadable node's disks never hide the rest.
     """
-    from services.proxmox import build_proxmox_service
+    from services.provider_links import as_owner, owner_proxmox_service
     from tools.provider_reads import provider_read
 
     require_internal(request)
     runtime = require_ready_runtime(request)
     try:
-        service = build_proxmox_service(runtime.settings)
+        with as_owner(owner):
+            service = owner_proxmox_service(runtime.settings)
     except ValueError:
         return JSONResponse(status_code=503, content={"error": "proxmox_configuration_invalid"})
     if service is None:

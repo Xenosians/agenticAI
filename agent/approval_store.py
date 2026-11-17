@@ -26,6 +26,9 @@ class ApprovalEntry:
     result: dict[str, Any] | None
     created_at: str
     updated_at: str
+    # The Janus account that proposed the action; its own connections run it.
+    # None for an approval stored before owners were recorded.
+    owner: str | None = None
 
 
 class ApprovalStore:
@@ -77,6 +80,10 @@ class ApprovalStore:
                 self._create_table(connection, "approvals")
             elif "'rejected'" not in existing["sql"]:
                 self._migrate_rejection_constraint(connection)
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(approvals)")}
+            if "owner" not in columns:
+                # Added after the first release; existing rows keep no owner.
+                connection.execute("ALTER TABLE approvals ADD COLUMN owner TEXT")
 
     @staticmethod
     def _create_table(connection: sqlite3.Connection, name: str) -> None:
@@ -146,6 +153,7 @@ class ApprovalStore:
         tool: str,
         arguments: dict[str, Any],
         risk: str,
+        owner: str | None = None,
     ) -> ApprovalEntry:
         if not approval_id:
             raise ValueError(
@@ -185,15 +193,17 @@ class ApprovalStore:
                     arguments,
                     risk,
                     status,
-                    result
+                    result,
+                    owner
                 )
-                VALUES (?, ?, ?, ?, 'pending', NULL)
+                VALUES (?, ?, ?, ?, 'pending', NULL, ?)
                 """,
                 (
                     approval_id,
                     tool,
                     encoded_arguments,
                     risk,
+                    owner,
                 ),
             )
 
@@ -227,7 +237,8 @@ class ApprovalStore:
                     status,
                     result,
                     created_at,
-                    updated_at
+                    updated_at,
+                    owner
                 FROM approvals
                 WHERE approval_id = ?
                 """,
@@ -257,7 +268,8 @@ class ApprovalStore:
                     status,
                     result,
                     created_at,
-                    updated_at
+                    updated_at,
+                    owner
                 FROM approvals
                 WHERE status = 'pending'
                 ORDER BY created_at ASC
@@ -616,4 +628,5 @@ class ApprovalStore:
             updated_at=row[
                 "updated_at"
             ],
+            owner=row["owner"],
         )

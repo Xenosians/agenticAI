@@ -251,6 +251,8 @@ ACTIONS = frozenset({
     "upload_begin", "upload_chunk", "upload_finish",
     "skill_list", "skill_save", "skill_restore", "skill_enable", "skill_delete",
     "tool_enable", "tool_package_enable",
+    # The account's own Proxmox and Tailscale links (services/extensions/links.py).
+    "link_list", "link_save", "link_remove",
 })
 
 
@@ -313,6 +315,16 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
         # The owner turns one registered MCP tool on or off for their own account.
         from services.extensions.tool_switches import ToolSwitches
         return ToolSwitches(store).set_enabled(owner, payload.get("id"), payload.get("enabled"))
+    if action in ("link_list", "link_save", "link_remove"):
+        # Each account connects its own Proxmox and Tailscale; secrets are never listed.
+        from services.extensions.links import OwnerLinks
+        links = OwnerLinks(store)
+        if action == "link_list":
+            return {"links": links.list(owner)}
+        if action == "link_save":
+            return links.save(owner, payload.get("kind"), payload.get("link"))
+        if action == "link_remove":
+            return links.remove(owner, payload.get("kind"))
     if action == "tool_package_enable":
         # Every tool of one package (one provider) on or off for this owner.
         from services.extensions.tool_switches import ToolSwitches
@@ -323,6 +335,7 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
             provider_presets,
         )
         from services.extensions.transform import transforms_available
+        from services.extensions.links import OwnerLinks
         from services.knowledge.sites import CrawlSites
         from services.lua_adapters.plugins import plugin_catalog
         sites = CrawlSites(store)
@@ -345,6 +358,8 @@ async def _command(owner: str, action: str, payload: dict, settings) -> dict:
                 # Sites this owner may crawl into reference knowledge: the machine's, then their own.
                 "crawl_sites": [site.public() for site in sites.list(owner)],
                 "crawl_site_registration": sites.registration_open,
+                # The account's own Proxmox and Tailscale links, never their secrets.
+                "links": OwnerLinks(store).list(owner),
                 "connections": [{"id": "rag", "state": "ready", "contract": "owner-retrieval.v1"},
                                 {"id": "n8n", "state": "prepared", "contract": "governed-workflow.v1"}]}
     if action == "model":

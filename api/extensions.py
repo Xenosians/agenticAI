@@ -12,6 +12,7 @@ from services.extensions.transform import TransformError
 from services.knowledge.crawler import CrawlError
 from services.extensions.skills import SkillError
 from services.extensions.tool_switches import ToolSwitchError
+from services.extensions.links import LinkError
 from services.lua_adapters.runtime import LuaAdapterError
 
 
@@ -59,6 +60,10 @@ async def extensions(body: ExtensionCommand, request: Request):
 
     except ToolSwitchError as exc:
         # A tool switch refusal: a stable tool_* code and a fixed message.
+        raise HTTPException(422, exc.public_detail()) from None
+
+    except LinkError as exc:
+        # A refused Proxmox or Tailscale link: a stable link_* code; never the secret.
         raise HTTPException(422, exc.public_detail()) from None
 
     except DocumentIngestionError as exc:

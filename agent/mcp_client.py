@@ -20,6 +20,11 @@ DEFAULT_MCP_SERVER_PATH = (
     / "mcp_server.py"
 )
 
+# The Janus account a tool call serves, sent as request metadata (never as a
+# model argument). Each account connects its own Proxmox and Tailscale, so the
+# server's tools read the connection of exactly this owner.
+OWNER_META_KEY = "janus.itsm/owner"
+
 
 def _unconfirmed_result(code: str) -> dict:
     """A protocol failure after submission says nothing about a tool's effect.
@@ -185,7 +190,14 @@ class MCPRuntime:
         self,
         tool_name: str,
         arguments: dict,
+        *,
+        owner: str | None = None,
     ) -> dict:
+        """Call one tool for ``owner``, or for the owner of the executing request.
+
+        An approved action passes the owner stored with its approval, so it runs
+        with the connection of the account that proposed it.
+        """
         if (
             self._client
             is None
@@ -195,6 +207,12 @@ class MCPRuntime:
                 "been started."
             )
 
+        if owner is None:
+            from services.extensions.context import current_owner
+            owner = current_owner()
+        # No owner, no metadata: such a call is sent exactly as before.
+        owner_meta = {"meta": {OWNER_META_KEY: owner}} if owner else {}
+
         try:
             result = (
                 await
@@ -202,6 +220,7 @@ class MCPRuntime:
                 .call_tool(
                     tool_name,
                     arguments,
+                    **owner_meta,
                 )
             )
 

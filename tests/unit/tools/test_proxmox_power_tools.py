@@ -83,7 +83,9 @@ def test_policy_without_a_configured_proxmox_says_so(monkeypatch):
     monkeypatch.setattr(proxmox_catalog, "_policy_service", lambda: None)
     result = TOOLS["proxmox_guest_start"]["policy_resolver"](node="hummingbird", vmid=990)
     assert (result["ok"], result["status"]) == (False, "error")
-    assert "not set up" in result["error"]
+    # Proxmox belongs to the account (owner decision, 17 November): point at its connection.
+    assert result["error"] == ("Proxmox VE is not connected for this account. Add a Proxmox link in "
+                               "Connections.")
 
 
 def test_approval_text_names_the_exact_action_and_guest():
