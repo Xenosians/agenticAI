@@ -183,6 +183,19 @@ under 10 % of the total), `memory_stalls` (any full memory stall),
 and `swapping` (swap use 10 % or more of the swap space). It is history, not
 a forecast.
 
+### How answers show a reading
+
+Every read above declares its formatted reading complete
+(`synthesis_evidence: "answer"`), so the answer never reinterprets raw
+fields. A one-line reading is the answer as written. A reading of several
+lines with six or more figures (load, maintenance, backups and the like) is
+shown **exactly as the tool wrote it**, after one or two sentences from the
+model that contain no figures (no digits, no number words, no percent sign;
+owner's rule of 16 November, after a live answer gave a peak as an average).
+A summary that fails that check, or a failed model call, leaves the exact
+reading alone; nothing is retried. Other readings are narrowed to the
+question by synthesis as before.
+
 The live tool matrix can exercise the guest detail and power calls when the
 disposable acceptance profile provides `ACCEPTANCE_PROXMOX_NODE` and
 `ACCEPTANCE_PROXMOX_VMID`. Without both values those cases remain skipped for

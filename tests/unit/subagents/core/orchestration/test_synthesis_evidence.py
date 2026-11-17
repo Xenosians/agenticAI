@@ -2,7 +2,7 @@ import asyncio
 import json
 
 from subagents.core.definitions.types import AgentResult
-from subagents.core.orchestration.primary_assistant import PrimaryAssistant, synthesis_evidence
+from subagents.core.orchestration.primary_assistant import PrimaryAssistant, plain_summary, synthesis_evidence
 
 
 def worker_result(**overrides):
@@ -132,11 +132,10 @@ def test_a_one_line_complete_reading_is_the_answer_without_a_synthesis_model_cal
 
 
 def test_listings_other_tools_and_several_results_still_go_through_synthesis():
-    # A multi-line reading is a listing the model narrows to the question
-    # ("Which port is the uplink of vmbr0?" -> "nic0"); other tools' raw
-    # results and several results need combining.
+    # A multi-line reading without figures is a listing the model narrows to
+    # the question; other tools' raw results and several results need combining.
     cases = [
-        [ha_result(answer=HA_READING + "\n2 node(s) in HA.")],
+        [ha_result(answer=HA_READING + "\nHA manager: active.")],
         [worker_result(answer="One line from a tool without a complete reading.")],
         [ha_result(), ha_result()],
         [ha_result(status="failed")],
@@ -146,3 +145,82 @@ def test_listings_other_tools_and_several_results_still_go_through_synthesis():
         assistant = PrimaryAssistant(inference, "hub-main", response_max_new_tokens=64, synthesis_max_new_tokens=500)
         assert asyncio.run(assistant.synthesize("Is HA healthy?", results)) == "Summary."
         assert len(inference.calls) == 1
+
+
+LOAD_READING = (
+    "Node hummingbird over the last hour (60 samples, one a minute):\n"
+    "CPU: average 7.4 %, peak 31.0 % at 03:12.\n"
+    "Memory: average 3.1 GiB of 5.7 GiB used; least available 2.2 GiB at 03:12.\n"
+    "Network: in 13.0 KiB/s average, out 313 B/s average; peak in 77.0 KiB/s."
+)
+
+
+def load_result(**overrides):
+    values = dict(agent_name="proxmox-specialist", proposed_tool="proxmox_node_load",
+                  proposed_arguments={"node": "hummingbird", "timeframe": "hour"},
+                  tool_result={"ok": True, "data": {"samples": 60}}, answer=LOAD_READING,
+                  presentation=None, execution_provenance=None, task_instructions=None)
+    values.update(overrides)
+    return worker_result(**values)
+
+
+class SummaryInference(RecordingInference):
+    def __init__(self, summary):
+        super().__init__()
+        self.summary = summary
+
+    async def generate(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.summary
+
+
+def test_a_reading_with_many_figures_is_shown_exactly_after_a_summary_without_figures():
+    # Owner's rule (16 November): live, synthesis restated the node-load reading
+    # with a peak given as an average and the least available memory as an
+    # average. A reading full of figures is shown exactly as the tool wrote it;
+    # the model only adds one or two sentences that contain no figures.
+    inference = SummaryInference("The node was lightly loaded over the hour, with one short CPU peak.")
+    assistant = PrimaryAssistant(inference, "hub-main", response_max_new_tokens=64, synthesis_max_new_tokens=500)
+    answer = asyncio.run(assistant.synthesize("How busy was hummingbird in the last hour?", [load_result()]))
+    assert answer == ("The node was lightly loaded over the hour, with one short CPU peak.\n\n" + LOAD_READING)
+    request = inference.calls[0]["messages"][-1]["content"]
+    assert "one or two sentences" in request and "no numbers" in request
+    assert LOAD_READING in request
+
+
+def test_a_summary_that_states_a_figure_is_dropped_and_the_exact_reading_stands_alone():
+    for summary in ("CPU averaged 7.4 % with a peak of 31 %.", "Memory peaked at three GiB.", "", "   "):
+        inference = SummaryInference(summary)
+        assistant = PrimaryAssistant(inference, "hub-main", response_max_new_tokens=64, synthesis_max_new_tokens=500)
+        assert asyncio.run(assistant.synthesize("How busy was it?", [load_result()])) == LOAD_READING
+
+
+def test_a_failed_summary_call_still_gives_the_exact_reading():
+    class Failing(RecordingInference):
+        async def generate(self, **kwargs):
+            raise RuntimeError("provider down")
+
+    assistant = PrimaryAssistant(Failing(), "hub-main", response_max_new_tokens=64, synthesis_max_new_tokens=500)
+    assert asyncio.run(assistant.synthesize("How busy was it?", [load_result()])) == LOAD_READING
+
+
+def test_a_summary_is_one_or_two_plain_sentences_without_any_figure():
+    assert plain_summary("  The node was lightly loaded,\n with one short CPU peak. ") == (
+        "The node was lightly loaded, with one short CPU peak.")
+    assert plain_summary("Backups are overdue for every guest. Nothing else needs attention.") == (
+        "Backups are overdue for every guest. Nothing else needs attention.")
+    refused = ("Peak 31 %.", "About seven percent.", "Three of four devices.", "Twenty services run.",
+               "It used half the memory.", "A dozen guests.", "Its uplink is nic0.", "Zero errors.",
+               "One. Two sentences. Three sentences.", "x" * 400, "", "   ")
+    for text in refused:
+        assert plain_summary(text) is None, text
+
+
+def test_readings_with_few_figures_still_go_through_synthesis():
+    # Only a reading full of figures is shown exactly; a multi-line listing
+    # with a figure or two is still narrowed to the question by synthesis.
+    inference = RecordingInference()
+    assistant = PrimaryAssistant(inference, "hub-main", response_max_new_tokens=64, synthesis_max_new_tokens=500)
+    reading = HA_READING + "\n2 node(s) in HA; manager active."
+    assert asyncio.run(assistant.synthesize("Is HA healthy?", [ha_result(answer=reading)])) == "Summary."
+    assert "TRUSTED SPECIALIST RESULTS" in inference.calls[0]["messages"][-1]["content"]

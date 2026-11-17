@@ -1,4 +1,5 @@
 import json
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -87,6 +88,51 @@ def complete_reading(results: list[AgentResult]) -> str | None:
             or not answer or "\n" in answer):
         return None
     return answer
+
+
+# A standalone figure in a reading: a number not glued to a name (nic0 and vmbr0 are names).
+_FIGURE = re.compile(r"(?<![A-Za-z_])\d+(?:[.,:]\d+)*")
+# A complete reading with at least this many figures is shown exactly (owner's rule, 16 November).
+MANY_FIGURES = 6
+# Words that state a quantity. "one" stays allowed: it is mostly a determiner ("one short peak").
+_NUMBER_WORDS = re.compile(
+    r"\b(?:zero|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|"
+    r"sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundreds?|"
+    r"thousands?|millions?|billions?|half|halves|quarters?|dozens?|percent|percentage|twice|thrice)\b",
+    re.IGNORECASE,
+)
+SUMMARY_MAX_CHARACTERS = 280
+SUMMARY_MAX_NEW_TOKENS = 120
+
+
+def reading_with_many_figures(results: list[AgentResult]) -> str | None:
+    """The reading itself when one successful read's tool declares it complete and it is full of figures.
+
+    Live, synthesis restated the node-load reading with a peak given as an
+    average and the least available memory as an average. Such a reading is
+    shown exactly as the tool wrote it; the model adds only a figure-free
+    summary. One-line readings are already the answer (complete_reading).
+    """
+    if len(results) != 1:
+        return None
+    result = results[0]
+    tool = get_tool(result.proposed_tool) if result.proposed_tool else None
+    answer = (result.answer or "").strip()
+    if (result.status != "success" or (tool or {}).get("synthesis_evidence") != "answer"
+            or "\n" not in answer or len(_FIGURE.findall(answer)) < MANY_FIGURES):
+        return None
+    return answer
+
+
+def plain_summary(text: str) -> str | None:
+    """One or two sentences with no digit, no number word and no percent sign, or None."""
+    summary = " ".join((text or "").split())
+    if not summary or len(summary) > SUMMARY_MAX_CHARACTERS:
+        return None
+    if any(character.isdigit() for character in summary) or "%" in summary or _NUMBER_WORDS.search(summary):
+        return None
+    sentences = [part for part in re.split(r"(?<=[.!?])\s+", summary) if part]
+    return summary if len(sentences) <= 2 else None
 
 
 class PrimaryAssistant:
@@ -255,6 +301,53 @@ class PrimaryAssistant:
         except Exception:
             return []
 
+    async def _summarize_figures(
+        self,
+        user_request: str,
+        reading: str,
+        *,
+        context: list[dict[str, Any]] | None = None,
+    ) -> str:
+        """A figure-free summary, then the exact reading; the reading alone when no summary passes."""
+        max_new_tokens = min(
+            answer_token_limit(InferenceStage.SYNTHESIS, self.synthesis_max_new_tokens), SUMMARY_MAX_NEW_TOKENS,
+        )
+        messages = [
+            {"role": "system", "content": self.system_prompt},
+            *conversation_messages(context, max_turns=24),
+            {
+                "role": "user",
+                "content": (
+                    "ORIGINAL USER REQUEST:\n"
+                    f"{user_request}"
+                    "\n\n"
+                    "TOOL READING (shown to the user exactly as written, right after your sentences):\n"
+                    f"{reading}"
+                    "\n\n"
+                    "Write one or two sentences that answer the request in words. Use no numbers: no digits, "
+                    "no number words and no names or values that contain digits; the reading gives every "
+                    "figure. State nothing the reading does not state."
+                ),
+            },
+        ]
+        try:
+            response = await self.inference.generate(
+                stage=InferenceStage.SYNTHESIS,
+                model_key=self.model_key,
+                messages=messages,
+                max_new_tokens=max_new_tokens,
+                priority=InferencePriority.PRIMARY_RESPONSE,
+            )
+        except Exception as exc:
+            print(f"[HUB] Figure-free summary failed; the exact reading stands error_type={type(exc).__name__}")
+            return reading
+        summary = plain_summary(response)
+        if summary is None:
+            print("[HUB] Figure-free summary not used (a figure, too long or more than two sentences); "
+                  "the exact reading stands")
+            return reading
+        return f"{summary}\n\n{reading}"
+
     async def synthesize(
         self,
         user_request: str,
@@ -275,6 +368,10 @@ class PrimaryAssistant:
         reading = complete_reading(results)
         if reading is not None:
             return reading
+
+        reading = reading_with_many_figures(results)
+        if reading is not None:
+            return await self._summarize_figures(user_request, reading, context=context)
 
         specialist_payload = [
             synthesis_evidence(
