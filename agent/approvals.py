@@ -19,6 +19,38 @@ from tools.registry import (
 )
 
 
+def confirmation_text(
+    tool_name: str,
+    arguments: dict,
+) -> str | None:
+    """
+    The exact text the owner must type to approve a destructive action.
+
+    Trusted capability metadata names the execution argument that carries
+    the target's own name (for example the guest name frozen before
+    approval). It is checked here, by the authority that runs the action,
+    never by the page alone. Tools without it need no typed confirmation.
+    """
+
+    tool = get_tool(tool_name)
+
+    if not isinstance(tool, dict):
+        return None
+
+    argument = tool.get("confirmation_argument")
+
+    if not isinstance(argument, str) or not argument:
+        return None
+
+    value = arguments.get(argument)
+
+    if not isinstance(value, str) or not value.strip():
+        # A destructive tool without its target name cannot be approved.
+        return ""
+
+    return value
+
+
 def approval_to_dict(
     approval: ApprovalEntry,
 ) -> dict:
@@ -27,7 +59,7 @@ def approval_to_dict(
     ToolGateway, FastAPI, and integration tests.
     """
 
-    return {
+    result = {
         "id":
             approval.approval_id,
 
@@ -49,6 +81,14 @@ def approval_to_dict(
         "owner":
             approval.owner,
     }
+
+    confirmation = confirmation_text(approval.tool, approval.arguments)
+
+    if confirmation is not None:
+        # Only destructive approvals carry this; the page shows what to type.
+        result["confirmation_text"] = confirmation
+
+    return result
 
 
 def execution_unresolved_result(
@@ -261,6 +301,8 @@ class ApprovalManager:
     async def approve_approval(
         self,
         approval_id: str,
+        *,
+        confirm_name: str | None = None,
     ) -> dict:
         approval = (
             self.store.get(
@@ -278,6 +320,34 @@ class ApprovalManager:
                     "not found."
                 ),
             }
+
+        # A destructive action needs the exact target name typed by the
+        # owner. This check runs before the execution claim, so a missing or
+        # wrong name leaves the approval pending and nothing is sent. A
+        # durable decision already made is reported as it is (replay), never
+        # asked again.
+        required = confirmation_text(approval.tool, approval.arguments)
+        if approval.status == "pending" and required is not None:
+            if not isinstance(confirm_name, str) or not confirm_name:
+                return {
+                    "ok": False,
+                    "approval": approval_to_dict(approval),
+                    "error": (
+                        "This action destroys or replaces a guest. Type the "
+                        "guest's exact name to confirm it."
+                    ),
+                    "error_code": "confirmation_required",
+                }
+            if confirm_name != required or not required:
+                return {
+                    "ok": False,
+                    "approval": approval_to_dict(approval),
+                    "error": (
+                        "The typed name does not match the approved target. "
+                        "Nothing was changed; the approval is still pending."
+                    ),
+                    "error_code": "confirmation_mismatch",
+                }
 
         lock = (
             self._locks.setdefault(

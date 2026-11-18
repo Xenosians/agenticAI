@@ -132,9 +132,17 @@ class ExtensionStore:
         identity = identity or uuid.uuid4().hex
         stored = {**data, "id": identity, "kind": kind}
         encrypted = self.cipher.encrypt(secret.encode()) if secret else None
+        index_reference = (kind == "dataset" and stored.get("purpose") == "rag"
+                           and stored.get("state") == "ready")
         with self.connect() as db:
+            if index_reference:
+                # Publish the ready dataset and its searchable passages together.
+                # If indexing fails, neither side becomes visible to retrieval.
+                db.execute("BEGIN IMMEDIATE")
             db.execute("INSERT INTO resource VALUES (?,?,?,?,?)",
                        (owner, identity, kind, json.dumps(stored), encrypted))
+            if index_reference:
+                self._index_dataset(db, owner, self.passage_table(owner), stored)
         return {**stored, "credential_configured": bool(secret)}
 
     def get(self, owner: str, identity: str, *, secret=False) -> dict:
@@ -369,11 +377,11 @@ class ExtensionStore:
         try:
             saved = self.put(owner, "dataset", record, identity=identity)
         except sqlite3.IntegrityError:
-            # Another upload replaced the same version first.
-            raise ValueError(NEWER_VERSION_EXISTS) from None
-        if purpose == "rag":
-            # Indexed once at admission; searches then read the index only.
-            self._ensure_indexed(owner, {identity: saved})
+            # Only translate a uniqueness error when another writer actually
+            # published the next version; an FTS/index error must stay visible.
+            if previous and self._newer_version_exists(owner, previous):
+                raise ValueError(NEWER_VERSION_EXISTS) from None
+            raise
         return saved
 
     def corrections_dataset(self, owner: str) -> dict | None:
@@ -391,16 +399,18 @@ class ExtensionStore:
             raise ValueError("Resource not found")
         if previous.get("purpose") != purpose:
             raise ValueError("A new version must keep the dataset's purpose")
+        if self._newer_version_exists(owner, previous):
+            raise ValueError(NEWER_VERSION_EXISTS)
+        return previous
+
+    def _newer_version_exists(self, owner: str, previous: dict) -> bool:
+        """Whether a dataset already has a successor in its linear version history."""
         with self.connect() as db:
-            # Only the latest version of a history can be replaced, so history stays linear
-            # even after a middle version is deleted.
             newer = db.execute("SELECT 1 FROM resource WHERE owner=? AND kind='dataset' AND "
                                "(json_extract(data, '$.previous_id')=? OR "
                                "(json_extract(data, '$.lineage_id')=? AND json_extract(data, '$.version')>?))",
-                               (owner, identity, previous["lineage_id"], previous["version"])).fetchone()
-        if newer is not None:
-            raise ValueError(NEWER_VERSION_EXISTS)
-        return previous
+                               (owner, previous["id"], previous["lineage_id"], previous["version"])).fetchone()
+        return newer is not None
 
     def search(self, owner: str, identity: str, query: str, limit=5) -> list[dict]:
         """Passages of one of the owner's reference datasets (any version) that answer ``query``."""

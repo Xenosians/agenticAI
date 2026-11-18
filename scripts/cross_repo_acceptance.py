@@ -469,11 +469,14 @@ class BrowserPathClient:
     def approve_job(
         self,
         job_id: str,
+        confirm_name: str | None = None,
     ) -> dict[str, Any]:
+        # A destructive approval also carries the target's name, exactly as
+        # the proposal shows it; the approval authority checks it.
         response = self.client.post(
             f"/api/v{self.job_api_version}/jobs/{job_id}/approve",
             headers=self._mutation_headers(),
-            json={},
+            json={} if confirm_name is None else {"confirm_name": confirm_name},
         )
         response.raise_for_status()
         return self.contracts.validate_job(

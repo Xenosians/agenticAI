@@ -8,11 +8,11 @@ from fastapi.testclient import TestClient
 from api import extensions
 from api import proxmox_actions
 from subagents.core.definitions.types import AgentDefinition
+from tools.registry import get_tool
 
 HEADERS = {"x-internal-token": "test-internal-token"}
 SPECIALIST = AgentDefinition(name="proxmox-specialist", description="", model="hub-main",
-                             tools=["proxmox_guest_start", "proxmox_guest_shutdown", "proxmox_guest_reboot",
-                                    "proxmox_guest_force_stop"], max_steps=3, system_prompt="")
+                             tools=list(proxmox_actions.ACTION_TOOLS.values()), max_steps=3, system_prompt="")
 
 
 class Gateway:
@@ -93,14 +93,147 @@ def test_a_refused_proposal_says_why_and_creates_nothing(monkeypatch, result, st
 
 
 @pytest.mark.parametrize("payload", [
-    {"owner": "user-1", "node": "hummingbird", "vmid": 990, "action": "delete"},
+    {"owner": "user-1", "node": "hummingbird", "vmid": 990, "action": "migrate"},
     {"owner": "user-1", "node": "hummingbird", "vmid": "990", "action": "start"},
     {"owner": "user-1", "node": "../x", "vmid": 990, "action": "start"},
     {"owner": "user-1", "node": "hummingbird", "vmid": 990, "action": "start", "expected_type": "qemu"},
 ])
-def test_only_an_exact_node_vmid_and_one_of_four_actions_are_accepted(monkeypatch, payload):
+def test_only_an_exact_node_vmid_and_a_registered_action_are_accepted(monkeypatch, payload):
     gateway = Gateway(APPROVAL)
     client = client_for(monkeypatch, gateway)
     response = client.post("/internal/v1/proxmox/actions/propose", headers=HEADERS, json=payload)
+    assert response.status_code == 422
+    assert gateway.calls == []
+
+
+def test_every_dashboard_action_maps_to_a_registered_proxmox_capability():
+    assert len(proxmox_actions.ACTION_TOOLS) == len(set(proxmox_actions.ACTION_TOOLS.values()))
+    assert all(get_tool(tool_name) is not None for tool_name in proxmox_actions.ACTION_TOOLS.values())
+
+
+def test_dashboard_routes_a_guest_change_through_its_registered_capability(monkeypatch):
+    approval = {
+        **APPROVAL,
+        "tool": "proxmox_guest_set_options",
+        "approval_arguments": {"node": "hummingbird", "vmid": 990, "tags": "db, prod",
+                               "on_boot": True, "expected_type": "lxc", "expected_name": "janus-lab"},
+    }
+    gateway = Gateway(approval)
+    client = client_for(monkeypatch, gateway)
+    response = client.post(
+        "/internal/v1/proxmox/actions/propose",
+        headers=HEADERS,
+        json={"owner": "user-1", "node": "hummingbird", "vmid": 990, "action": "set_options",
+              "params": {"tags": "db, prod", "on_boot": True}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["tool"] == "proxmox_guest_set_options"
+    assert gateway.calls[0][2:4] == (
+        "proxmox_guest_set_options",
+        {"node": "hummingbird", "vmid": 990, "tags": "db, prod", "on_boot": True},
+    )
+    assert "tags=db, prod" in gateway.calls[0][1]
+    assert "vmid=990" in gateway.calls[0][1]
+
+
+def test_create_without_vmid_returns_the_value_allocated_by_the_approval_policy(monkeypatch):
+    approval = {
+        **APPROVAL,
+        "tool": "proxmox_guest_create",
+        "risk": "medium",
+        "approval_arguments": {"node": "hummingbird", "allocated_vmid": 134, "hostname": "lab-2",
+                               "template": "local:vztmpl/alpine.tar.xz", "cores": 1, "memory_mib": 128,
+                               "disk_gib": 2, "storage": "local-lvm"},
+    }
+    gateway = Gateway(approval)
+    client = client_for(monkeypatch, gateway)
+    response = client.post(
+        "/internal/v1/proxmox/actions/propose",
+        headers=HEADERS,
+        json={"owner": "user-1", "node": "hummingbird", "action": "create",
+              "params": {"hostname": "lab-2", "template": "local:vztmpl/alpine.tar.xz", "cores": 1,
+                         "memory_mib": 128, "disk_gib": 2, "storage": "local-lvm"}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["vmid"] == 134
+    assert response.json()["new_vmid"] == 134
+    assert response.json()["name"] == "lab-2"
+    assert gateway.calls[0][2:4] == (
+        "proxmox_guest_create",
+        {"node": "hummingbird", "hostname": "lab-2", "template": "local:vztmpl/alpine.tar.xz",
+         "cores": 1, "memory_mib": 128, "disk_gib": 2, "storage": "local-lvm"},
+    )
+    assert "leave the new VMID for Proxmox to allocate" in gateway.calls[0][1]
+
+
+def test_explicit_new_vmid_is_mapped_to_the_capability_argument(monkeypatch):
+    approval = {
+        **APPROVAL,
+        "tool": "proxmox_guest_create",
+        "approval_arguments": {"node": "hummingbird", "vmid": 135, "hostname": "lab-3",
+                               "template": "local:vztmpl/alpine.tar.xz", "cores": 1, "memory_mib": 128,
+                               "disk_gib": 2, "storage": "local-lvm"},
+    }
+    gateway = Gateway(approval)
+    client = client_for(monkeypatch, gateway)
+    response = client.post(
+        "/internal/v1/proxmox/actions/propose",
+        headers=HEADERS,
+        json={"owner": "user-1", "node": "hummingbird", "action": "create",
+              "params": {"newid": 135, "hostname": "lab-3", "template": "local:vztmpl/alpine.tar.xz",
+                         "cores": 1, "memory_mib": 128, "disk_gib": 2, "storage": "local-lvm"}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["vmid"] == 135
+    assert response.json()["new_vmid"] == 135
+    assert gateway.calls[0][3]["vmid"] == 135
+    assert "newid" not in gateway.calls[0][3]
+
+
+def test_clone_keeps_source_vmid_separate_from_the_new_vmid(monkeypatch):
+    approval = {
+        **APPROVAL,
+        "tool": "proxmox_guest_clone",
+        "approval_arguments": {"node": "hummingbird", "vmid": 990, "newid": 136, "name": "lab-copy",
+                               "full": True, "expected_type": "lxc", "expected_name": "janus-lab"},
+    }
+    gateway = Gateway(approval)
+    client = client_for(monkeypatch, gateway)
+    response = client.post(
+        "/internal/v1/proxmox/actions/propose",
+        headers=HEADERS,
+        json={"owner": "user-1", "node": "hummingbird", "vmid": 990, "action": "clone",
+              "params": {"newid": 136, "name": "lab-copy", "full": True}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["vmid"] == 990
+    assert response.json()["new_vmid"] == 136
+    assert gateway.calls[0][2:4] == (
+        "proxmox_guest_clone",
+        {"node": "hummingbird", "vmid": 990, "newid": 136, "name": "lab-copy", "full": True},
+    )
+
+
+@pytest.mark.parametrize("payload", [
+    {"owner": "user-1", "node": "hummingbird", "action": "create",
+     "params": {"hostname": "lab-2", "template": "local:vztmpl/alpine.tar.xz", "cores": True,
+                "memory_mib": 128, "disk_gib": 2, "storage": "local-lvm"}},
+    {"owner": "user-1", "node": "hummingbird", "vmid": 990, "action": "set_options",
+     "params": {"tags": "db", "unexpected": "value"}},
+    {"owner": "user-1", "node": "hummingbird", "vmid": 990, "action": "clone",
+     "params": {"newid": 135, "name": "lab-copy"}},
+    {"owner": "user-1", "node": "hummingbird", "vmid": 135, "action": "create",
+     "params": {"newid": 136, "hostname": "lab-2", "template": "local:vztmpl/alpine.tar.xz",
+                "cores": 1, "memory_mib": 128, "disk_gib": 2, "storage": "local-lvm"}},
+])
+def test_invalid_generalized_action_payloads_are_rejected_before_gateway(monkeypatch, payload):
+    gateway = Gateway(APPROVAL)
+    client = client_for(monkeypatch, gateway)
+    response = client.post("/internal/v1/proxmox/actions/propose", headers=HEADERS, json=payload)
+
     assert response.status_code == 422
     assert gateway.calls == []

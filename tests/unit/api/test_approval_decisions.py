@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 import pytest
 
+import agent.approvals as approvals_module
 from agent.approval_store import ApprovalStore
 from agent.approvals import ApprovalManager
 from api import extensions
@@ -121,6 +122,44 @@ def test_unknown_approval_is_a_protocol_failure(approval_api, decision):
     assert response.status_code == 409
     assert store.get("decision").status == "pending"
     assert mcp.calls == []
+
+
+def test_a_destructive_approval_needs_the_exact_guest_name_typed(approval_api, monkeypatch):
+    client, store, mcp = approval_api
+    monkeypatch.setattr(
+        approvals_module,
+        "get_tool",
+        lambda name: {"risk": "high", "requires_approval": True,
+                      "confirmation_argument": "expected_name"},
+    )
+    store.create(
+        "delete",
+        "proxmox_guest_delete",
+        {"node": "hummingbird", "vmid": 990, "expected_type": "lxc", "expected_name": "janus-lab"},
+        "high",
+    )
+
+    missing = client.post("/v1/approvals/delete/approve", headers=HEADERS)
+    assert missing.status_code == 409
+    assert missing.json()["detail"]["code"] == "confirmation_required"
+    assert store.get("delete").status == "pending"
+    assert mcp.calls == []
+
+    wrong = client.post("/v1/approvals/delete/approve", headers=HEADERS,
+                        json={"confirm_name": "another-guest"})
+    assert wrong.status_code == 409
+    assert wrong.json()["detail"]["code"] == "confirmation_mismatch"
+    assert store.get("delete").status == "pending"
+    assert mcp.calls == []
+
+    typed = client.post("/v1/approvals/delete/approve", headers=HEADERS,
+                        json={"confirm_name": "janus-lab"})
+    assert typed.status_code == 200
+    assert typed.json()["execution_status"] == "succeeded"
+    assert store.get("delete").status == "approved"
+    assert mcp.calls == [("proxmox_guest_delete",
+                          {"node": "hummingbird", "vmid": 990, "expected_type": "lxc",
+                           "expected_name": "janus-lab"})]
 
 
 def test_openapi_declares_rejection_as_a_processed_typed_outcome():

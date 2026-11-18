@@ -1,7 +1,7 @@
 """Catalog and setup-state coverage for the Proxmox tool family."""
 from config.settings import Settings
 from services.integration_readiness import integration_readiness, provider_for_capability
-from tools.proxmox.catalog import PROXMOX_TOOLS
+from tools.proxmox.catalog import PROXMOX_CHANGE_TOOLS, PROXMOX_TOOLS
 from tools.proxmox.mcp import register_proxmox_tools
 from tools.registry import TOOLS
 
@@ -16,14 +16,14 @@ def test_each_proxmox_read_is_registered_with_read_only_semantics_and_one_provid
         "proxmox_backups", "proxmox_node_disks", "proxmox_guest_snapshots", "proxmox_node_network",
         "proxmox_ha_status", "proxmox_disk_smart", "proxmox_node_maintenance", "proxmox_node_load",
     }
-    assert set(PROXMOX_TOOLS) == reads | POWER_TOOLS
+    assert set(PROXMOX_TOOLS) == reads | POWER_TOOLS | set(PROXMOX_CHANGE_TOOLS)
     assert set(PROXMOX_TOOLS) <= set(TOOLS)
     for name in PROXMOX_TOOLS:
         assert provider_for_capability(name) == "proxmox"
     for name in reads:
         assert TOOLS[name]["effect"] == "read"
         assert TOOLS[name]["requires_approval"] is False
-    for name in POWER_TOOLS:
+    for name in POWER_TOOLS | set(PROXMOX_CHANGE_TOOLS):
         assert TOOLS[name]["effect"] == "mutation"
         assert TOOLS[name]["requires_approval"] is True
 
@@ -77,6 +77,18 @@ def test_the_database_inventory_is_a_read_without_arguments_in_the_specialist():
     assert tool["parameters"] == {} and tool["grounded_arguments"] == []
     definition = Path("subagents/agents/proxmox-specialist.md").read_text(encoding="utf-8")
     assert "  - proxmox_database_inventory\n" in definition
+
+
+def test_guest_status_stays_read_only_and_agent_documents_database_filesystem_scope():
+    from pathlib import Path
+
+    tool = TOOLS["proxmox_guest_status"]
+    assert (tool["effect"], tool["risk"], tool["requires_approval"]) == ("read", "read", False)
+    assert tool["grounded_arguments"] == ["node", "vmid"]
+    assert tool["parameters"].keys() == {"node", "vmid"}
+    definition = Path("subagents/agents/proxmox-specialist.md").read_text(encoding="utf-8")
+    assert "Read live status and resource counters" in tool["description"]
+    assert "does not check database connectivity" in definition
 
 
 def database_result(**changes):
@@ -578,7 +590,8 @@ def test_the_database_inventory_leaves_backup_questions_to_the_backups_read():
     inventory = TOOLS["proxmox_database_inventory"]["description"]
     backups = TOOLS["proxmox_backups"]["description"]
     assert "their backups" not in inventory
-    assert "Use this only for database hosts" in inventory and "proxmox_backups" in inventory
+    assert "Use this only for tagged database hosts" in inventory
+    assert "scheduled backup-job coverage" in inventory
     assert backups.startswith("Use this for any question about Proxmox backups")
 
 

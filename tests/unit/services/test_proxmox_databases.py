@@ -35,6 +35,7 @@ RESOURCES = [
     {"id": "storage/pve-a/local", "type": "storage", "node": "pve-a", "storage": "local", "status": "available",
      "plugintype": "dir", "shared": 0, "content": "iso,vztmpl,backup", "disk": 1, "maxdisk": 2},
 ]
+GUEST_RESOURCES = [row for row in RESOURCES if row.get("vmid") is not None]
 NOT_BACKED_UP = [{"vmid": 102, "type": "lxc", "name": "cache"}, {"vmid": 104, "type": "lxc", "name": "mysql-test"}]
 
 
@@ -96,6 +97,187 @@ def test_the_inventory_lists_tagged_guests_with_their_observed_state_and_backup_
                                               "/api2/json/cluster/backup-info/not-backed-up"]
     assert all(method == "GET" for method, _, _ in calls)
     assert TOKEN_SECRET not in json.dumps(result)
+
+
+def test_database_vm_filesystem_read_uses_guest_agent_and_reports_real_mount_usage():
+    calls = []
+    fsinfo = [
+        {"mountpoint": "/var/lib/postgresql", "type": "ext4", "used-bytes": 95, "total-bytes": 100,
+         "disk": "/dev/sda1", "disk-uuid": "private-device-id"},
+        {"mountpoint": "/", "type": "xfs", "used-bytes": 25, "total-bytes": 100},
+    ]
+    client_service, client = service({
+        "/api2/json/cluster/resources": (200, GUEST_RESOURCES),
+        "/api2/json/nodes/pve-a/qemu/101/status/current": (200, {"vmid": 101, "node": "pve-a",
+                                                                    "name": "orders-db", "status": "running"}),
+        "/api2/json/nodes/pve-a/qemu/101/agent/get-fsinfo": (200, fsinfo),
+    }, calls)
+    try:
+        result = client_service.guest_status("pve-a", 101)
+    finally:
+        client.close()
+
+    data = result["data"]["database_filesystems"]
+    assert result["ok"] is True
+    assert data["schema"] == "proxmox-database-filesystems.v1"
+    assert (data["state"], data["near_full_count"]) == ("observed", 1)
+    assert data["filesystems"] == [
+        {"mountpoint": "/", "filesystem": "xfs", "used_bytes": 25, "total_bytes": 100,
+         "free_bytes": 75, "usage_percent": 25.0},
+        {"mountpoint": "/var/lib/postgresql", "filesystem": "ext4", "used_bytes": 95,
+         "total_bytes": 100, "free_bytes": 5, "usage_percent": 95.0},
+    ]
+    assert "private-device-id" not in json.dumps(data)
+    assert [path for _, path, _ in calls] == [
+        "/api2/json/cluster/resources",
+        "/api2/json/nodes/pve-a/qemu/101/status/current",
+        "/api2/json/nodes/pve-a/qemu/101/agent/get-fsinfo",
+    ]
+    assert all(method == "GET" for method, _, _ in calls)
+    assert TOKEN_SECRET not in json.dumps(result)
+
+
+def test_guest_status_reads_filesystems_only_for_tagged_qemu_database_guests():
+    calls = []
+    client_service, client = service({
+        "/api2/json/cluster/resources": (200, GUEST_RESOURCES),
+        "/api2/json/nodes/pve-a/lxc/104/status/current": (200, {"vmid": 104, "node": "pve-a",
+                                                                    "hostname": "mysql-test", "status": "running"}),
+        "/api2/json/nodes/pve-a/lxc/102/status/current": (200, {"vmid": 102, "node": "pve-a",
+                                                                    "hostname": "cache", "status": "running"}),
+    }, calls)
+    try:
+        untagged = client_service.guest_status("pve-a", 104)["data"]
+        container = client_service.guest_status("pve-a", 102)["data"]
+    finally:
+        client.close()
+    assert "database_filesystems" not in untagged
+    assert "database_filesystems" not in container
+    assert all("/agent/get-fsinfo" not in path for _, path, _ in calls)
+
+
+def test_database_filesystem_read_does_not_call_guest_agent_when_vm_is_stopped():
+    stopped = {"id": "qemu/107", "type": "qemu", "vmid": 107, "node": "pve-a", "name": "warehouse-db",
+              "status": "stopped", "tags": "db-postgres"}
+    calls = []
+    # The guest status and QEMU agent endpoints are distinct reads; a stopped
+    # VM should never reach the agent endpoint.
+    client_service, client = service({
+        "/api2/json/cluster/resources": (200, [stopped]),
+        "/api2/json/nodes/pve-a/qemu/107/status/current": (200, {"vmid": 107, "node": "pve-a",
+                                                                      "name": "warehouse-db", "status": "stopped"}),
+    }, calls)
+    try:
+        result = client_service.guest_status("pve-a", 107)["data"]["database_filesystems"]
+    finally:
+        client.close()
+    assert result["state"] == "guest_not_running"
+    assert result["filesystems"] == []
+    assert [path for _, path, _ in calls] == [
+        "/api2/json/cluster/resources", "/api2/json/nodes/pve-a/qemu/107/status/current"]
+
+
+@pytest.mark.parametrize("failure,expected_note", [
+    (403, "Proxmox refused the guest filesystem read (HTTP 403)."),
+    (404, "Proxmox did not find the guest filesystem read endpoint or guest."),
+    (httpx.ConnectError("connection refused"), "Proxmox did not answer the guest filesystem read."),
+    (httpx.ReadTimeout("read timed out"), "Proxmox did not answer the guest filesystem read."),
+])
+def test_guest_agent_failures_are_reported_as_unavailable(failure, expected_note):
+    calls = []
+
+    def handler(request):
+        calls.append((request.method, request.url.path))
+        if request.url.path.endswith("/agent/get-fsinfo"):
+            if isinstance(failure, Exception):
+                raise failure
+            return httpx.Response(failure, json={"data": None}, request=request)
+        if request.url.path.endswith("/cluster/resources"):
+            return httpx.Response(200, json={"data": GUEST_RESOURCES}, request=request)
+        return httpx.Response(200, json={"data": {"vmid": 101, "node": "pve-a",
+                                                   "name": "orders-db", "status": "running"}},
+                              request=request)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    client_service = ProxmoxService(ProxmoxConfig("https://pve.example.test:8006", TOKEN_ID, TOKEN_SECRET), client)
+    try:
+        result = client_service.guest_status("pve-a", 101)
+    finally:
+        client.close()
+
+    observation = result["data"]["database_filesystems"]
+    assert result["ok"] is True
+    assert observation["state"] == "unavailable"
+    assert observation["filesystems"] == []
+    assert observation["note"] == expected_note
+    assert calls[-1] == ("GET", "/api2/json/nodes/pve-a/qemu/101/agent/get-fsinfo")
+    assert TOKEN_SECRET not in json.dumps(result)
+
+
+def test_optional_guest_agent_counters_produce_a_truthful_partial_observation():
+    fsinfo = [
+        {"mountpoint": "/", "type": "ext4", "used-bytes": 40},
+        {"mountpoint": "/data", "type": "xfs", "total-bytes": 200},
+        {"mountpoint": "/logs", "type": "btrfs"},
+    ]
+    client_service, client = service({
+        "/api2/json/cluster/resources": (200, GUEST_RESOURCES),
+        "/api2/json/nodes/pve-a/qemu/101/status/current": (200, {"vmid": 101, "node": "pve-a",
+                                                                    "name": "orders-db", "status": "running"}),
+        "/api2/json/nodes/pve-a/qemu/101/agent/get-fsinfo": (200, fsinfo),
+    })
+    try:
+        observation = client_service.guest_status("pve-a", 101)["data"]["database_filesystems"]
+    finally:
+        client.close()
+
+    assert observation["state"] == "partial"
+    assert observation["note"] == "QEMU Guest Agent did not report all optional filesystem size counters."
+    assert observation["filesystems"] == [
+        {"mountpoint": "/", "filesystem": "ext4", "used_bytes": 40, "total_bytes": None,
+         "free_bytes": None, "usage_percent": None},
+        {"mountpoint": "/data", "filesystem": "xfs", "used_bytes": None, "total_bytes": 200,
+         "free_bytes": None, "usage_percent": None},
+        {"mountpoint": "/logs", "filesystem": "btrfs", "used_bytes": None, "total_bytes": None,
+         "free_bytes": None, "usage_percent": None},
+    ]
+    assert observation["near_full_count"] == 0
+
+
+@pytest.mark.parametrize("bad_mount", [
+    {"mountpoint": "/", "type": "ext4", "used-bytes": 101, "total-bytes": 100},
+    {"mountpoint": "/", "type": "ext4", "used-bytes": True, "total-bytes": 100},
+    {"mountpoint": "/", "type": "ext4", "used-bytes": 1, "total-bytes": 2 ** 64},
+    {"type": "ext4", "used-bytes": 1, "total-bytes": 2},
+])
+def test_malformed_guest_filesystem_receipts_are_rejected(bad_mount):
+    client_service, client = service({
+        "/api2/json/cluster/resources": (200, GUEST_RESOURCES),
+        "/api2/json/nodes/pve-a/qemu/101/status/current": (200, {"vmid": 101, "node": "pve-a",
+                                                                    "name": "orders-db", "status": "running"}),
+        "/api2/json/nodes/pve-a/qemu/101/agent/get-fsinfo": (200, [bad_mount]),
+    })
+    try:
+        with pytest.raises(RuntimeError, match="invalid answer"):
+            client_service.guest_status("pve-a", 101)
+    finally:
+        client.close()
+
+
+def test_guest_filesystem_list_is_bounded():
+    too_many = [{"mountpoint": f"/mount/{index}", "type": "ext4", "used-bytes": 1, "total-bytes": 2}
+                for index in range(129)]
+    client_service, client = service({
+        "/api2/json/cluster/resources": (200, GUEST_RESOURCES),
+        "/api2/json/nodes/pve-a/qemu/101/status/current": (200, {"vmid": 101, "node": "pve-a",
+                                                                    "name": "orders-db", "status": "running"}),
+        "/api2/json/nodes/pve-a/qemu/101/agent/get-fsinfo": (200, too_many),
+    })
+    try:
+        with pytest.raises(RuntimeError, match="invalid answer"):
+            client_service.guest_status("pve-a", 101)
+    finally:
+        client.close()
 
 
 def test_backup_coverage_the_token_cannot_read_stays_unknown_not_missing():

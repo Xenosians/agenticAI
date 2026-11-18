@@ -108,3 +108,20 @@ def test_results_without_an_approval_keep_their_proposed_arguments():
 
     assert job_proposal(read) == {"tool": "account_status", "arguments": {"user_id": "ghopper"},
                                   "approval_id": None}
+
+
+def test_a_destructive_proposal_names_the_exact_text_the_owner_must_type():
+    # The approval authority refuses a destructive action unless the owner
+    # types the target's name; the card can only ask for it if the proposal
+    # says what it is (from the policy-frozen arguments, never the model's).
+    frozen = {"node": "pve-a", "vmid": 990, "expected_type": "lxc", "expected_name": "janus-lab"}
+    delete = AgentResult(task_id="delete", agent_name="proxmox-specialist", status="approval_required",
+                         proposed_tool="proxmox_guest_delete", proposed_arguments={"node": "pve-a", "vmid": 990},
+                         approval_id="approval-1", approval_arguments=frozen)
+    assert job_proposal(delete) == {"tool": "proxmox_guest_delete", "arguments": frozen,
+                                    "approval_id": "approval-1", "confirmation_text": "janus-lab"}
+
+    snapshot = AgentResult(task_id="snap", agent_name="proxmox-specialist", status="approval_required",
+                           proposed_tool="proxmox_snapshot_create", proposed_arguments={},
+                           approval_id="approval-2", approval_arguments={**frozen, "snapshot": "s1"})
+    assert "confirmation_text" not in job_proposal(snapshot)

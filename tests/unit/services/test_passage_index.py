@@ -5,10 +5,12 @@ never affects which passages are found or how they rank.
 """
 import json
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 import pytest
 
-from services.extensions.store import ExtensionStore
+from services.extensions.store import NEWER_VERSION_EXISTS, ExtensionStore
 
 FREEZE = "Payroll cluster maintenance. The quarterly change freeze starts on the second Tuesday at 18:00 UTC."
 VPN = "VPN troubleshooting. Error code 809 usually means a home router is blocking the tunnel."
@@ -59,6 +61,94 @@ def test_a_deleted_dataset_is_never_found_again(tmp_path):
     row = add(store, FREEZE)
     store.delete("alice", row["id"])
     assert store.search_reference("alice", "payroll change freeze") == []
+
+
+def test_new_reference_and_index_are_committed_together(tmp_path, monkeypatch):
+    store = ExtensionStore(tmp_path)
+    index = store._index_dataset
+
+    def fail_after_index(*args, **kwargs):
+        index(*args, **kwargs)
+        raise sqlite3.OperationalError("simulated index write failure")
+
+    monkeypatch.setattr(store, "_index_dataset", fail_after_index)
+    with pytest.raises(sqlite3.OperationalError, match="simulated index write failure"):
+        add(store, FREEZE)
+
+    with store.connect() as db:
+        assert db.execute("SELECT 1 FROM resource WHERE owner='alice'").fetchone() is None
+        assert db.execute("SELECT 1 FROM passage_source WHERE owner='alice'").fetchone() is None
+        assert db.execute("SELECT 1 FROM sqlite_master WHERE name=?", (store.passage_table("alice"),)).fetchone() is None
+
+
+def test_replacement_and_its_index_are_committed_together(tmp_path, monkeypatch):
+    store = ExtensionStore(tmp_path)
+    old = add(store, "Old guide. The gateway uses the legacy route.")
+    index = store._index_dataset
+
+    def fail_after_index(*args, **kwargs):
+        index(*args, **kwargs)
+        raise sqlite3.OperationalError("simulated replacement index failure")
+
+    monkeypatch.setattr(store, "_index_dataset", fail_after_index)
+    with pytest.raises(sqlite3.OperationalError, match="simulated replacement index failure"):
+        add(store, "New guide. The gateway uses the current route.", replaces=old["id"])
+
+    assert len(store.list("alice")) == 1
+    assert contents(store.search_reference("alice", "gateway legacy route")) == [
+        "Old guide. The gateway uses the legacy route."]
+    assert contents(store.search_reference("alice", "gateway current route")) == [
+        "Old guide. The gateway uses the legacy route."]
+
+
+def test_concurrent_replacements_publish_only_one_version_and_index(tmp_path):
+    store = ExtensionStore(tmp_path)
+    old = add(store, "Runbook. The service uses the old gateway.")
+    start_together = Barrier(2)
+
+    def replace(text):
+        start_together.wait(timeout=5)
+        try:
+            add(store, text, replaces=old["id"])
+            return "saved"
+        except ValueError as error:
+            if str(error) == NEWER_VERSION_EXISTS:
+                return "conflict"
+            raise
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        outcomes = list(workers.map(replace, [
+            "Runbook. The service uses the east gateway.",
+            "Runbook. The service uses the west gateway.",
+        ]))
+
+    assert sorted(outcomes) == ["conflict", "saved"]
+    histories = store.list("alice")
+    assert len(histories) == 2
+    latest = next(item for item in histories if "superseded_by" not in item)
+    matches = contents(store.search_reference("alice", "service gateway"))
+    assert matches == [latest["content"]["text"]]
+
+
+def test_concurrent_cold_searches_build_one_correct_owner_index(tmp_path):
+    store = ExtensionStore(tmp_path)
+    add(store, FREEZE)
+    table = store.passage_table("alice")
+    with store.connect() as db:
+        db.execute(f'DROP TABLE "{table}"')
+        db.execute("DELETE FROM passage_source WHERE owner='alice'")
+
+    def search(_):
+        hits = store.search_reference("alice", "payroll change freeze")
+        return [(hit["dataset_id"], hit["chunk"], hit["sha256"], hit["content"]) for hit in hits]
+
+    with ThreadPoolExecutor(max_workers=8) as workers:
+        results = list(workers.map(search, range(16)))
+
+    assert results and all(result == results[0] for result in results)
+    assert results[0][0][3] == FREEZE
+    with store.connect() as db:
+        assert db.execute("SELECT COUNT(*) FROM passage_source WHERE owner='alice'").fetchone()[0] == 1
 
 
 def test_a_replaced_version_is_not_searched_for_requests_but_its_source_still_is(tmp_path):

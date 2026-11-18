@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from subagents.core.definitions.loader import load_agent_directory
 from subagents.core.orchestration.intent_contract import build_router_semantic_agent_spec
-from subagents.core.orchestration.router_catalog import compact_router_catalog
+from subagents.core.orchestration.router_catalog import METADATA_DEFAULTS, compact_router_catalog, render_router_catalog
 from learning.training.hub_training_contracts import build_hub_training_environment
 from subagents.core.orchestration.router import LLMRouter
 
@@ -27,6 +27,73 @@ def test_conflicting_shared_definitions_rejected():
     with pytest.raises(ValueError, match="Conflicting"):
         compact_router_catalog([{"name":"a", "capabilities":[{"name":"read", "description":"first"}]},
                                 {"name":"b", "capabilities":[{"name":"read", "description":"second"}]}])
+
+
+def _production_compact_specs():
+    from mcp_server import register_capability_signatures
+    from subagents.core.definitions.registry import AgentRegistry
+    from subagents.core.orchestration.candidate_selector import (
+        Candidate, CandidateSet, build_candidate_agent_specs)
+
+    register_capability_signatures()
+    registry = AgentRegistry()
+    registry.register_many(load_agent_directory(Path(__file__).resolve().parents[5] / "subagents/agents"))
+    everything = CandidateSet(tuple(Candidate(agent.name, tuple(agent.tools))
+                                    for agent in registry.list_agents() if agent.tools), confidence=1.0)
+    return build_candidate_agent_specs(everything, registry)
+
+
+def test_the_compact_catalog_states_shared_defaults_once_and_loses_no_constraint():
+    # The full catalog repeats the same empty lists and false flags for most of
+    # its capabilities. Stated once, they leave room for the whole catalog on a
+    # selected connection; every capability's metadata is still recoverable.
+    specs = _production_compact_specs()
+    full = compact_router_catalog(specs)
+    factored = compact_router_catalog(specs, factor_defaults=True)
+    defaults = factored["intent_metadata_defaults"]
+    assert defaults == METADATA_DEFAULTS
+    assert factored["specialists"] == full["specialists"]
+    assert factored["capabilities"].keys() == full["capabilities"].keys()
+    for name, capability in full["capabilities"].items():
+        stored = factored["capabilities"][name]
+        assert {key: value for key, value in stored.items() if key != "intent_metadata"} == \
+            {key: value for key, value in capability.items() if key != "intent_metadata"}
+        assert {**defaults, **stored["intent_metadata"]} == capability["intent_metadata"], name
+        for key, value in stored["intent_metadata"].items():
+            assert key not in defaults or value != defaults[key], (name, key)
+
+
+def test_a_default_is_never_applied_to_a_field_the_capability_lacks():
+    full = {"name": "x", "description": "d", "intent_metadata": dict(METADATA_DEFAULTS)}
+    factored = compact_router_catalog([{"name": "a", "capabilities": [full]}], factor_defaults=True)
+    assert factored["capabilities"]["x"]["intent_metadata"] == {}
+    # Absent means "the default"; a capability that lacks a defaulted field
+    # would silently claim it, so it is refused instead.
+    partial = {"name": "x", "description": "d", "intent_metadata": {"effect": "read"}}
+    with pytest.raises(ValueError, match="default"):
+        compact_router_catalog([{"name": "a", "capabilities": [partial]}], factor_defaults=True)
+
+
+def test_the_compact_prompt_explains_the_defaults_and_the_standard_prompt_is_unchanged():
+    specs = _production_compact_specs()
+    compact = render_router_catalog(specs, factor_defaults=True)
+    assert "intent_metadata_defaults" in compact
+    assert "absent" in compact.split("\n", 1)[0]
+    assert render_router_catalog(specs) == render_router_catalog(specs, factor_defaults=False)
+    assert "intent_metadata_defaults" not in render_router_catalog(specs)
+
+
+def test_the_whole_compact_catalog_fits_the_broad_routing_budget_with_room_to_grow():
+    from services.extensions.budget import estimate_text_tokens
+    from subagents.core.orchestration.router_prompt import build_compact_router_system_prompt
+    from subagents.llm.runtime.stages import InferenceStage, resolve_stage_policy
+
+    policy = resolve_stage_policy(InferenceStage.SEMANTIC_ROUTING_BROAD)
+    assert policy.request_token_ceiling is not None and policy.output_token_ceiling is not None
+    system = build_compact_router_system_prompt(_production_compact_specs())
+    # The output reserve plus room for about six more capabilities, so the
+    # next additions fail here, not as an unexplained routing fallback.
+    assert estimate_text_tokens(system) + policy.output_token_ceiling + 1000 <= policy.request_token_ceiling
 
 
 def test_training_and_runtime_share_identical_router_prompt():

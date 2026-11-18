@@ -1,4 +1,4 @@
-"""Proxmox VE capabilities: bounded reads and four approval-gated guest power actions."""
+"""Proxmox VE capabilities: bounded reads, approval-gated power actions and approval-gated guest changes."""
 import json
 from typing import Any
 
@@ -591,6 +591,543 @@ def _power(action: str, description: str) -> dict:
     }
 
 
+# ----------------------------------------------------------------------
+# Guest changes (owner decisions, 17 November)
+#
+# Every change names the exact guest the user asked for. Trusted policy
+# reads that guest on the proposing account's Proxmox, refuses what cannot
+# apply now and freezes the identity the owner will approve (type and name,
+# plus the configuration digest for configuration writes). The provider
+# re-reads the guest, refuses a different identity, sends exactly one
+# request, follows its Proxmox task and reads the expected state back. A
+# destructive change is also confirmed by the owner typing the guest's name.
+# ----------------------------------------------------------------------
+
+CHANGE_RISKS = {
+    "proxmox_guest_set_resources": "medium",
+    "proxmox_guest_resize_disk": "medium",
+    "proxmox_guest_set_options": "low",
+    "proxmox_snapshot_create": "low",
+    "proxmox_snapshot_delete": "high",
+    "proxmox_snapshot_rollback": "high",
+    "proxmox_backup_now": "low",
+    "proxmox_backup_restore": "high",
+    "proxmox_guest_clone": "medium",
+    "proxmox_guest_create": "medium",
+    "proxmox_guest_delete": "high",
+}
+# The owner must type the target's own name (the approval authority checks
+# it against the frozen arguments, not the page) for these.
+CONFIRMATION_ARGUMENTS = {
+    "proxmox_snapshot_delete": "expected_name",
+    "proxmox_snapshot_rollback": "expected_name",
+    "proxmox_guest_delete": "expected_name",
+    "proxmox_backup_restore": "name",
+}
+CHANGE_TAIL = ("Janus refuses the change if the guest no longer matches this approval, follows Proxmox's "
+               "task and reads the result back.")
+
+
+def _policy_for(risk: str, read):
+    """Run one trusted, read-only change check on the proposing account's Proxmox."""
+    def refused(status: str, error: str) -> dict[str, Any]:
+        return {"ok": False, "status": status, "risk": risk, "requires_approval": True, "error": error}
+
+    def evaluate(**arguments) -> dict[str, Any]:
+        from services.provider_errors import ProviderResourceNotFound
+        from services.proxmox import ProxmoxConflict
+        from tools.provider_reads import provider_read
+
+        try:
+            service = _policy_service()
+        except ValueError:
+            return refused("error", "Proxmox VE has an invalid configuration on this Janus host.")
+        if service is None:
+            return refused("error", "Proxmox VE is not connected for this account. Add a Proxmox link in "
+                                    "Connections.")
+        try:
+            try:
+                frozen = read(service, arguments)
+            except (ProviderResourceNotFound, ProxmoxConflict, ValueError) as error:
+                # Not there, not what was approved, or not a valid value: nothing to approve.
+                return refused("denied", str(error))
+            except Exception:
+                # A provider failure gets the same typed message a read gets.
+                result = provider_read("proxmox", "Proxmox VE",
+                                       lambda: {"ok": True, "data": read(service, arguments)})
+                if not result.get("ok"):
+                    return refused("error", result.get("error") or "Proxmox VE could not confirm the request.")
+                frozen = result["data"]
+        finally:
+            service.close()
+        return {"ok": True, "status": "ready", "risk": risk, "requires_approval": True,
+                "execution_arguments": {**arguments, **frozen}, "error": None}
+
+    return evaluate
+
+
+def _freeze_guest(service, arguments: dict, *, digest: bool = False, template_allowed: bool = True,
+                  running_allowed: bool = True) -> dict[str, Any]:
+    """Freeze the exact guest (and its config digest) or refuse what cannot apply now."""
+    from services.proxmox import ProxmoxConflict
+
+    data = service.guest_change_target(arguments["node"], arguments["vmid"])["data"]
+    label = f"{data['type'].upper()} {data['vmid']} ({data['name'] or 'unnamed'})"
+    if data["template"] and not template_allowed:
+        raise ProxmoxConflict(f"{label} is a template; changes apply to a real guest, not a template.")
+    if data["lock"]:
+        raise ProxmoxConflict(f"{label} is locked ({data['lock']}); wait until that operation finishes.")
+    if not running_allowed and data["status"] == "running":
+        raise ProxmoxConflict(f"{label} is running; shut it down before deleting it.")
+    frozen = {"expected_type": data["type"], "expected_name": data["name"]}
+    if digest:
+        frozen["expected_digest"] = data["digest"]
+    return frozen
+
+
+def _freeze_new_guest(service, arguments: dict, key: str = "newid") -> dict[str, Any]:
+    """Confirm the target node and a free VMID; when none was named, ask Proxmox for the next free one.
+
+    Nothing here assumes a numbering range, node or pool: the owner's Proxmox
+    answers with its own next free VMID, and the approval freezes that answer.
+    """
+    requested = arguments.get(key)
+    if requested is None:
+        allocated = service.next_vmid()
+        service.new_guest_target(arguments["node"], allocated)
+        return {"allocated_vmid": allocated}
+    service.new_guest_target(arguments["node"], requested)
+    return {}
+
+
+def _effective_vmid(arguments: dict) -> int | None:
+    return arguments.get("allocated_vmid") or arguments.get("newid") or arguments.get("vmid")
+
+
+def _read_set_resources(service, arguments: dict) -> dict[str, Any]:
+    from services.proxmox import MAX_CORES, MAX_MEMORY_MIB
+
+    if arguments.get("cores") is None and arguments.get("memory_mib") is None:
+        raise ValueError("Enter a core count or memory in MiB; one is required.")
+    if arguments.get("cores") is not None and (type(arguments["cores"]) is not int
+                                               or not (1 <= arguments["cores"] <= MAX_CORES)):
+        raise ValueError(f"Enter a core count (1-{MAX_CORES}).")
+    if arguments.get("memory_mib") is not None and (type(arguments["memory_mib"]) is not int
+                                                    or not (16 <= arguments["memory_mib"] <= MAX_MEMORY_MIB)):
+        raise ValueError(f"Enter memory in MiB (16-{MAX_MEMORY_MIB}).")
+    return _freeze_guest(service, arguments, digest=True, template_allowed=False)
+
+
+def _read_resize_disk(service, arguments: dict) -> dict[str, Any]:
+    from services.proxmox import DISK_ID, MAX_DISK_GIB
+
+    if not isinstance(arguments.get("disk"), str) or not DISK_ID.fullmatch(arguments["disk"]):
+        raise ValueError("Enter one disk of the guest exactly as its configuration lists it (for example scsi0).")
+    if type(arguments.get("grow_gib")) is not int or not (1 <= arguments["grow_gib"] <= MAX_DISK_GIB):
+        raise ValueError(f"Enter how many GiB to add (1-{MAX_DISK_GIB}).")
+    return _freeze_guest(service, arguments, digest=True, template_allowed=False)
+
+
+def _read_set_options(service, arguments: dict) -> dict[str, Any]:
+    if arguments.get("tags") is None and arguments.get("on_boot") is None:
+        raise ValueError("Enter tags or a start-at-boot choice.")
+    return _freeze_guest(service, arguments, digest=True, template_allowed=False)
+
+
+def _read_snapshot(service, arguments: dict) -> dict[str, Any]:
+    from services.proxmox import SNAPSHOT_NAME
+
+    snapshot = arguments.get("snapshot")
+    if not isinstance(snapshot, str) or not SNAPSHOT_NAME.fullmatch(snapshot) or snapshot == "current":
+        raise ValueError("Enter a snapshot name starting with a letter (letters, digits, '_' or '-').")
+    return _freeze_guest(service, arguments)
+
+
+def _read_backup_now(service, arguments: dict) -> dict[str, Any]:
+    from services.proxmox import STORAGE_ID
+
+    if not isinstance(arguments.get("storage"), str) or not STORAGE_ID.fullmatch(arguments["storage"]):
+        raise ValueError("Enter one exact backup storage name.")
+    if arguments.get("mode", "snapshot") not in {"snapshot", "suspend", "stop"}:
+        raise ValueError("The backup mode must be snapshot, suspend or stop.")
+    return _freeze_guest(service, arguments)
+
+
+def _read_clone(service, arguments: dict) -> dict[str, Any]:
+    from services.proxmox import GUEST_NAME
+
+    newid = arguments.get("newid")
+    if newid is not None and (type(newid) is not int or newid == arguments.get("vmid")):
+        raise ValueError("Enter a new, different Proxmox VMID.")
+    if not isinstance(arguments.get("name"), str) or not GUEST_NAME.fullmatch(arguments["name"]):
+        raise ValueError("Enter a guest name of letters, digits and hyphens, starting and ending with one.")
+    if type(arguments.get("full")) is not bool:
+        raise ValueError("Choose a full or linked clone.")
+    frozen = _freeze_guest(service, arguments)
+    frozen.update(_freeze_new_guest(service, arguments, "newid"))
+    return frozen
+
+
+def _read_create(service, arguments: dict) -> dict[str, Any]:
+    from services.proxmox import GUEST_NAME, MAX_CORES, MAX_DISK_GIB, MAX_MEMORY_MIB
+
+    if not isinstance(arguments.get("hostname"), str) or not GUEST_NAME.fullmatch(arguments["hostname"]):
+        raise ValueError("Enter a hostname of letters, digits and hyphens, starting and ending with one.")
+    if type(arguments.get("cores")) is not int or not (1 <= arguments["cores"] <= MAX_CORES):
+        raise ValueError(f"Enter a core count (1-{MAX_CORES}).")
+    if type(arguments.get("memory_mib")) is not int or not (16 <= arguments["memory_mib"] <= MAX_MEMORY_MIB):
+        raise ValueError(f"Enter memory in MiB (16-{MAX_MEMORY_MIB}).")
+    if type(arguments.get("disk_gib")) is not int or not (1 <= arguments["disk_gib"] <= MAX_DISK_GIB):
+        raise ValueError(f"Enter a disk size in GiB (1-{MAX_DISK_GIB}).")
+    return _freeze_new_guest(service, arguments, "vmid")
+
+
+def _read_restore(service, arguments: dict) -> dict[str, Any]:
+    return _freeze_new_guest(service, arguments, "newid")
+
+
+def _guest_label(arguments: dict) -> str:
+    kind = str(arguments.get("expected_type") or arguments.get("type") or "guest").upper()
+    name = arguments.get("expected_name") or arguments.get("name")
+    return f"{kind} {arguments.get('vmid')}" + (f" ({name})" if name else "")
+
+
+def _change_approval(text) -> Any:
+    def format_approval(arguments: dict[str, Any]) -> str:
+        return f"{text(arguments)} {CHANGE_TAIL}"
+    return format_approval
+
+
+def _change_result(done: str) -> Any:
+    def format_result(result: dict[str, Any]) -> str:
+        target = f"{_guest_label(result)} on node {result.get('node')}"
+        task = f" (Proxmox task {result['upid']})" if result.get("upid") else ""
+        if result.get("ok") and result.get("verification_ok"):
+            return f"{done} for {target}{task}. Janus read the guest back and confirmed it."
+        if result.get("status") == "outcome_unknown":
+            return (f"The change to {target} has an unknown outcome: {result.get('error')} "
+                    "Do not repeat it before checking the guest.")
+        return f"The change to {target} did not succeed: {result.get('error')}"
+
+    return format_result
+
+
+def _resources_approval(arguments: dict[str, Any]) -> str:
+    parts = []
+    if arguments.get("cores") is not None:
+        parts.append(f"{arguments['cores']} CPU core(s)")
+    if arguments.get("memory_mib") is not None:
+        parts.append(f"{arguments['memory_mib']} MiB of memory")
+    return f"Set {_guest_label(arguments)} on Proxmox node {arguments.get('node')} to {' and '.join(parts)}."
+
+
+def _resize_approval(arguments: dict[str, Any]) -> str:
+    return (f"Grow disk {arguments.get('disk')} of {_guest_label(arguments)} on Proxmox node "
+            f"{arguments.get('node')} by {arguments.get('grow_gib')} GiB.")
+
+
+def _options_approval(arguments: dict[str, Any]) -> str:
+    parts = []
+    if arguments.get("tags") is not None:
+        parts.append(f"tags '{arguments['tags']}'")
+    if arguments.get("on_boot") is not None:
+        parts.append("start at boot " + ("on" if arguments["on_boot"] else "off"))
+    return (f"Set {_guest_label(arguments)} on Proxmox node {arguments.get('node')} to "
+            + " and ".join(parts) + ".")
+
+
+def _snapshot_create_approval(arguments: dict[str, Any]) -> str:
+    description = f" with description '{arguments['description']}'" if arguments.get("description") else ""
+    return (f"Take snapshot '{arguments.get('snapshot')}' of {_guest_label(arguments)} on Proxmox node "
+            f"{arguments.get('node')}{description}.")
+
+
+def _snapshot_delete_approval(arguments: dict[str, Any]) -> str:
+    return (f"Delete snapshot '{arguments.get('snapshot')}' of {_guest_label(arguments)} on Proxmox node "
+            f"{arguments.get('node')}. The snapshot cannot be recovered.")
+
+
+def _snapshot_rollback_approval(arguments: dict[str, Any]) -> str:
+    return (f"Roll {_guest_label(arguments)} on Proxmox node {arguments.get('node')} back to snapshot "
+            f"'{arguments.get('snapshot')}'. Changes made since that snapshot are lost.")
+
+
+def _backup_approval(arguments: dict[str, Any]) -> str:
+    return (f"Back up {_guest_label(arguments)} on Proxmox node {arguments.get('node')} now to storage "
+            f"'{arguments.get('storage')}' ({arguments.get('mode', 'snapshot')} mode).")
+
+
+def _restore_approval(arguments: dict[str, Any]) -> str:
+    picked = (" Janus asked Proxmox for the next free VMID." if arguments.get("allocated_vmid") else "")
+    return (f"Restore backup volume '{arguments.get('volume')}' into a new guest {_effective_vmid(arguments)} "
+            f"({arguments.get('name')}) on Proxmox node {arguments.get('node')}.{picked} Janus refuses a VMID "
+            f"that is already used, so no existing guest is overwritten.")
+
+
+def _clone_approval(arguments: dict[str, Any]) -> str:
+    kind = "full" if arguments.get("full") else "linked"
+    picked = " Janus asked Proxmox for the next free VMID." if arguments.get("allocated_vmid") else ""
+    return (f"Clone {_guest_label(arguments)} on Proxmox node {arguments.get('node')} to new guest "
+            f"{_effective_vmid(arguments)} ({arguments.get('name')}) as a {kind} clone." + picked)
+
+
+def _create_approval(arguments: dict[str, Any]) -> str:
+    picked = " Janus asked Proxmox for the next free VMID." if arguments.get("allocated_vmid") else ""
+    return (f"Create LXC {_effective_vmid(arguments)} ({arguments.get('hostname')}) on Proxmox node "
+            f"{arguments.get('node')} from template {arguments.get('template')}: {arguments.get('cores')} "
+            f"core(s), {arguments.get('memory_mib')} MiB memory, {arguments.get('disk_gib')} GiB disk on "
+            f"storage {arguments.get('storage')}." + picked)
+
+
+def _delete_approval(arguments: dict[str, Any]) -> str:
+    return (f"Delete {_guest_label(arguments)} on Proxmox node {arguments.get('node')} and purge its disks. "
+            "The guest and its data cannot be recovered.")
+
+
+def _change_tool(*, name: str, description: str, permission: str, policy, trusted: list[str],
+                 required: list[str], parameters: dict, approval, done: str,
+                 grounded: list[str] | None = None, derived: list[str] | None = None,
+                 operation: str = "action") -> dict:
+    tool = {
+        "description": description,
+        "resource_type": "proxmox.guest",
+        "operation_kind": operation,
+        "effect": "mutation",
+        "permission": permission,
+        "risk": CHANGE_RISKS[name],
+        "requires_approval": True,
+        "policy_owns_preconditions": True,
+        "policy_resolver": policy,
+        "trusted_policy_arguments": trusted,
+        "grounded_arguments": grounded if grounded is not None else ["node", "vmid"],
+        "derived_arguments": derived or [],
+        "required_arguments": required,
+        "parameters": parameters,
+        "condition_fields": ["ok", "status", "verification_ok"],
+        "approval_formatter": _change_approval(approval),
+        "result_formatter": _change_result(done),
+    }
+    if name in CONFIRMATION_ARGUMENTS:
+        tool["confirmation_argument"] = CONFIRMATION_ARGUMENTS[name]
+    return tool
+
+
+GUEST_CHANGE_TRUSTED = ["expected_type", "expected_name"]
+CONFIG_CHANGE_TRUSTED = ["expected_type", "expected_name", "expected_digest"]
+GUEST_PAIR = {"node": {"type": "str", "description": "Exact Proxmox node name of the guest, as listed by "
+                                                       "proxmox_guests."},
+              "vmid": {"type": "int", "description": "Exact VMID of the guest, as listed by proxmox_guests."}}
+
+
+def _set_resources_policy(node: str, vmid: int, cores: int | None = None, memory_mib: int | None = None):
+    return _policy_for(CHANGE_RISKS["proxmox_guest_set_resources"], _read_set_resources)(
+        node=node, vmid=vmid, cores=cores, memory_mib=memory_mib)
+
+
+def _resize_disk_policy(node: str, vmid: int, disk: str, grow_gib: int):
+    return _policy_for(CHANGE_RISKS["proxmox_guest_resize_disk"], _read_resize_disk)(
+        node=node, vmid=vmid, disk=disk, grow_gib=grow_gib)
+
+
+def _set_options_policy(node: str, vmid: int, tags: str | None = None, on_boot: bool | None = None):
+    return _policy_for(CHANGE_RISKS["proxmox_guest_set_options"], _read_set_options)(
+        node=node, vmid=vmid, tags=tags, on_boot=on_boot)
+
+
+def _snapshot_create_policy(node: str, vmid: int, snapshot: str, description: str | None = None):
+    return _policy_for(CHANGE_RISKS["proxmox_snapshot_create"], _read_snapshot)(
+        node=node, vmid=vmid, snapshot=snapshot, description=description)
+
+
+def _snapshot_delete_policy(node: str, vmid: int, snapshot: str):
+    return _policy_for(CHANGE_RISKS["proxmox_snapshot_delete"], _read_snapshot)(
+        node=node, vmid=vmid, snapshot=snapshot)
+
+
+def _snapshot_rollback_policy(node: str, vmid: int, snapshot: str):
+    return _policy_for(CHANGE_RISKS["proxmox_snapshot_rollback"], _read_snapshot)(
+        node=node, vmid=vmid, snapshot=snapshot)
+
+
+def _backup_now_policy(node: str, vmid: int, storage: str, mode: str = "snapshot"):
+    return _policy_for(CHANGE_RISKS["proxmox_backup_now"], _read_backup_now)(
+        node=node, vmid=vmid, storage=storage, mode=mode)
+
+
+def _backup_restore_policy(node: str, volume: str, name: str, newid: int | None = None,
+                           storage: str | None = None, pool: str | None = None):
+    return _policy_for(CHANGE_RISKS["proxmox_backup_restore"], _read_restore)(
+        node=node, volume=volume, name=name, newid=newid, storage=storage, pool=pool)
+
+
+def _clone_policy(node: str, vmid: int, name: str, full: bool, newid: int | None = None,
+                  pool: str | None = None):
+    return _policy_for(CHANGE_RISKS["proxmox_guest_clone"], _read_clone)(
+        node=node, vmid=vmid, name=name, full=full, newid=newid, pool=pool)
+
+
+def _create_policy(node: str, hostname: str, template: str, cores: int, memory_mib: int, disk_gib: int,
+                   storage: str, vmid: int | None = None, pool: str | None = None,
+                   description: str | None = None):
+    return _policy_for(CHANGE_RISKS["proxmox_guest_create"], _read_create)(
+        node=node, hostname=hostname, template=template, cores=cores, memory_mib=memory_mib,
+        disk_gib=disk_gib, storage=storage, vmid=vmid, pool=pool, description=description)
+
+
+def _delete_policy(node: str, vmid: int):
+    def read(service, arguments: dict) -> dict[str, Any]:
+        return _freeze_guest(service, arguments, running_allowed=False)
+
+    return _policy_for(CHANGE_RISKS["proxmox_guest_delete"], read)(node=node, vmid=vmid)
+
+
+PROXMOX_CHANGE_TOOLS = {
+    "proxmox_guest_set_resources": _change_tool(
+        name="proxmox_guest_set_resources",
+        description="Set the CPU cores and/or memory (MiB) of one exact Proxmox VM or container named by the "
+                    "user. Requires approval; Janus refuses a concurrently changed configuration and reads the "
+                    "guest back.",
+        permission="proxmox.guest.set_resources", policy=_set_resources_policy,
+        trusted=CONFIG_CHANGE_TRUSTED, required=["node", "vmid"],
+        parameters={**GUEST_PAIR,
+                    "cores": {"type": "int", "description": "CPU cores to set (1-128); omit to leave unchanged."},
+                    "memory_mib": {"type": "int", "description": "Memory in MiB to set (16-1048576); omit to "
+                                                                "leave unchanged."}},
+        approval=_resources_approval, done="CPU and memory were set", operation="update"),
+    "proxmox_guest_resize_disk": _change_tool(
+        name="proxmox_guest_resize_disk",
+        description="Grow one disk of one exact Proxmox VM or container by a number of GiB (grow only; never "
+                    "shrinks). Requires approval and reads the disk size back.",
+        permission="proxmox.guest.resize_disk", policy=_resize_disk_policy,
+        trusted=CONFIG_CHANGE_TRUSTED, required=["node", "vmid", "disk", "grow_gib"],
+        derived=["disk", "grow_gib"],
+        parameters={**GUEST_PAIR,
+                    "disk": {"type": "str", "description": "Exact disk id from the guest's configuration, for "
+                                                          "example scsi0 or rootfs."},
+                    "grow_gib": {"type": "int", "description": "GiB to add (1-65536); the disk only grows."}},
+        approval=_resize_approval, done="The disk was grown", operation="update"),
+    "proxmox_guest_set_options": _change_tool(
+        name="proxmox_guest_set_options",
+        description="Set the tags and/or the start-at-boot flag of one exact Proxmox VM or container named by "
+                    "the user. Requires approval; Janus refuses a concurrently changed configuration and reads "
+                    "the guest back.",
+        permission="proxmox.guest.set_options", policy=_set_options_policy,
+        trusted=CONFIG_CHANGE_TRUSTED, required=["node", "vmid"],
+        parameters={**GUEST_PAIR,
+                    "tags": {"type": "str", "description": "Comma-separated tags to set; omit to leave unchanged."},
+                    "on_boot": {"type": "bool", "description": "Start at boot; omit to leave unchanged."}},
+        approval=_options_approval, done="Tags and start-at-boot were set", operation="update"),
+    "proxmox_snapshot_create": _change_tool(
+        name="proxmox_snapshot_create",
+        description="Take one named snapshot of one exact Proxmox VM or container named by the user. Requires "
+                    "approval; Janus follows the task and confirms the snapshot is listed.",
+        permission="proxmox.snapshot.create", policy=_snapshot_create_policy,
+        trusted=GUEST_CHANGE_TRUSTED, required=["node", "vmid", "snapshot"], derived=["snapshot"],
+        parameters={**GUEST_PAIR,
+                    "snapshot": {"type": "str", "description": "Snapshot name: a letter first, then letters, "
+                                                              "digits, '_' or '-'."},
+                    "description": {"type": "str", "description": "Optional one-line description (up to 256 "
+                                                                 "characters)."}},
+        approval=_snapshot_create_approval, done="The snapshot was taken", operation="create"),
+    "proxmox_snapshot_delete": _change_tool(
+        name="proxmox_snapshot_delete",
+        description="Delete one named snapshot of one exact Proxmox VM or container. Destructive: requires "
+                    "approval and the exact guest name typed by the owner; the snapshot cannot be recovered.",
+        permission="proxmox.snapshot.delete", policy=_snapshot_delete_policy,
+        trusted=GUEST_CHANGE_TRUSTED, required=["node", "vmid", "snapshot"], derived=["snapshot"],
+        parameters={**GUEST_PAIR,
+                    "snapshot": {"type": "str", "description": "Exact existing snapshot name."}},
+        approval=_snapshot_delete_approval, done="The snapshot was deleted", operation="delete"),
+    "proxmox_snapshot_rollback": _change_tool(
+        name="proxmox_snapshot_rollback",
+        description="Roll one exact Proxmox VM or container back to a named snapshot. Destructive: changes made "
+                    "since the snapshot are lost. Requires approval and the exact guest name typed by the owner.",
+        permission="proxmox.snapshot.rollback", policy=_snapshot_rollback_policy,
+        trusted=GUEST_CHANGE_TRUSTED, required=["node", "vmid", "snapshot"], derived=["snapshot"],
+        parameters={**GUEST_PAIR,
+                    "snapshot": {"type": "str", "description": "Exact existing snapshot name to roll back to."}},
+        approval=_snapshot_rollback_approval, done="The rollback finished"),
+    "proxmox_backup_now": _change_tool(
+        name="proxmox_backup_now",
+        description="Start one backup of one exact Proxmox VM or container named by the user to a backup "
+                    "storage. Requires approval; Janus follows the task and confirms a new backup volume.",
+        permission="proxmox.backup.now", policy=_backup_now_policy,
+        trusted=GUEST_CHANGE_TRUSTED, required=["node", "vmid", "storage"], derived=["storage"],
+        parameters={**GUEST_PAIR,
+                    "storage": {"type": "str", "description": "Exact backup storage name, as proxmox_node_storage "
+                                                             "lists it."},
+                    "mode": {"type": "str", "default": "snapshot",
+                             "description": "Backup mode: snapshot (default), suspend or stop."}},
+        approval=_backup_approval, done="The backup finished"),
+    "proxmox_backup_restore": _change_tool(
+        name="proxmox_backup_restore",
+        description="Restore one backup volume into a NEW guest. Destructive: requires approval and the new "
+                    "guest's name typed by the owner. Omit the VMID and Janus uses Proxmox's next free one; "
+                    "Janus refuses a used VMID, so no existing guest is overwritten.",
+        permission="proxmox.backup.restore", policy=_backup_restore_policy,
+        trusted=["allocated_vmid"], required=["node", "volume", "name"],
+        grounded=["node", "volume", "newid"],
+        derived=["name"],
+        parameters={"node": {"type": "str", "description": "Exact Proxmox node to restore onto, as listed by "
+                                                          "proxmox_nodes."},
+                    "volume": {"type": "str", "description": "Exact backup volume id from the storage's backup "
+                                                            "content, as listed by Proxmox."},
+                    "newid": {"type": "int", "description": "Optional free VMID; omit and Janus uses Proxmox's "
+                                                            "next free one."},
+                    "name": {"type": "str", "description": "Name for the new guest: letters, digits and hyphens."},
+                    "storage": {"type": "str", "description": "Optional exact target storage name."},
+                    "pool": {"type": "str", "description": "Optional exact pool name for the new guest."}},
+        approval=_restore_approval, done="The restore created the new guest"),
+    "proxmox_guest_clone": _change_tool(
+        name="proxmox_guest_clone",
+        description="Clone one exact Proxmox VM or container to a NEW guest with a new name. Requires approval. "
+                    "Omit the VMID and Janus uses Proxmox's next free one; a used VMID is refused. Janus follows "
+                    "the task and confirms the new guest exists.",
+        permission="proxmox.guest.clone", policy=_clone_policy,
+        trusted=GUEST_CHANGE_TRUSTED + ["allocated_vmid"], required=["node", "vmid", "name", "full"],
+        grounded=["node", "vmid", "newid"],
+        derived=["name", "full"],
+        parameters={**GUEST_PAIR,
+                    "newid": {"type": "int", "description": "Optional free VMID; omit and Janus uses Proxmox's "
+                                                            "next free one."},
+                    "name": {"type": "str", "description": "Name for the clone: letters, digits and hyphens."},
+                    "full": {"type": "bool", "description": "True for a full clone, False for a linked clone."},
+                    "pool": {"type": "str", "description": "Optional exact pool name for the clone."}},
+        approval=_clone_approval, done="The clone was created", operation="create"),
+    "proxmox_guest_create": _change_tool(
+        name="proxmox_guest_create",
+        description="Create one stopped LXC container from a template on one exact Proxmox node. Requires "
+                    "approval. Omit the VMID and Janus uses Proxmox's next free one; a used VMID is refused. "
+                    "Janus follows the task and confirms the new container exists.",
+        permission="proxmox.guest.create", policy=_create_policy,
+        trusted=["allocated_vmid"], required=["node", "hostname", "template", "cores", "memory_mib", "disk_gib",
+                                              "storage"], grounded=["node", "template", "vmid"],
+        derived=["hostname", "cores", "memory_mib", "disk_gib", "storage"],
+        parameters={"node": {"type": "str", "description": "Exact Proxmox node, as listed by proxmox_nodes."},
+                    "vmid": {"type": "int", "description": "Optional free VMID; omit and Janus uses Proxmox's "
+                                                           "next free one."},
+                    "hostname": {"type": "str", "description": "Hostname: letters, digits and hyphens."},
+                    "template": {"type": "str", "description": "Exact template volume from the node's storage "
+                                                               "content, ending in .tar.xz or similar."},
+                    "cores": {"type": "int", "description": "CPU cores (1-128)."},
+                    "memory_mib": {"type": "int", "description": "Memory in MiB (16-1048576)."},
+                    "disk_gib": {"type": "int", "description": "Root disk size in GiB (1-65536)."},
+                    "storage": {"type": "str", "description": "Exact storage name for the root disk."},
+                    "pool": {"type": "str", "description": "Optional exact pool name for the new container."},
+                    "description": {"type": "str", "description": "Optional one-line description (up to 256 "
+                                                                 "characters)."}},
+        approval=_create_approval, done="The container was created", operation="create"),
+    "proxmox_guest_delete": _change_tool(
+        name="proxmox_guest_delete",
+        description="Delete one exact stopped Proxmox VM or container and purge its disks. Destructive: requires "
+                    "approval and the exact guest name typed by the owner; the guest cannot be recovered.",
+        permission="proxmox.guest.delete", policy=_delete_policy,
+        trusted=GUEST_CHANGE_TRUSTED, required=["node", "vmid"],
+        parameters=GUEST_PAIR,
+        approval=_delete_approval, done="The guest was deleted", operation="delete"),
+}
+
+
 PROXMOX_TOOLS = {
     "proxmox_cluster_status": _read(
         "Read Proxmox VE cluster membership and reported online state. Read only.",
@@ -621,12 +1158,11 @@ PROXMOX_TOOLS = {
         {"node": {"type": "str", "description": "Exact node name returned by proxmox_nodes."}}),
     "proxmox_database_inventory": {
         **_read(
-            "List the Proxmox VMs and containers the operator tagged as database hosts (tag db or db-<engine>, for "
-            "example db-postgres): engine, whether each database VM or container is running or down, memory, disk "
-            "use and size (a VM's disk use is not measured), whether its disk is running out of space, whether a "
-            "backup job covers it, and the storage their disks live on. Use this only for database hosts and their "
-            "capacity; for when guests were last backed up, overdue or missing backups, use proxmox_backups. Read "
-            "only; it never connects to a database or runs queries.",
+            "List Proxmox guests (VMs and containers) the operator tagged as database hosts (tag db or db-<engine>, "
+            "for example db-postgres): engine, whether each database VM or container is running or down, memory, disk "
+            "capacity and allocated disk size, scheduled backup-job coverage, and the storage their disks live on. "
+            "Use this only for tagged database hosts and their capacity. Read only; it never connects to a database "
+            "or runs queries.",
             "proxmox.database", "proxmox.database.inventory"),
         "result_formatter": format_database_inventory,
         # The formatter states every fact in words (including unknown coverage
@@ -742,3 +1278,6 @@ PROXMOX_TOOLS = {
         "Force stop one running Proxmox VM or container immediately, like pulling its power (unsaved data is "
         "lost). Use only when the user explicitly asks to force stop or kill it. Requires approval."),
 }
+
+# Guest changes share the provider and the approval machinery; one catalog.
+PROXMOX_TOOLS.update(PROXMOX_CHANGE_TOOLS)

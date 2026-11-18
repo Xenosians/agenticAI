@@ -69,3 +69,36 @@ def test_binding_restores_the_bound_vmid_as_the_tool_integer():
     assert type(result.arguments["vmid"]) is int
     tool = get_tool("proxmox_guest_status")
     assert tool is not None and tool["parameters"]["vmid"]["type"] == "int"
+
+
+def test_optional_new_guest_vmids_are_grounded_when_supplied_and_omitted_when_unspecified():
+    targets = {
+        "proxmox_guest_create": "vmid",
+        "proxmox_guest_clone": "newid",
+        "proxmox_backup_restore": "newid",
+    }
+    for tool_name, argument in targets.items():
+        tool = get_tool(tool_name)
+        assert tool is not None
+        assert argument in tool["grounded_arguments"]
+        assert argument not in tool["required_arguments"]
+
+        # Omission lets the trusted Proxmox policy allocate its next free ID.
+        assert validate_grounded_arguments(
+            user_input="Create a new guest using the requested settings.",
+            arguments={},
+            grounded_arguments=tool["grounded_arguments"],
+        ) == (True, None)
+
+        # A model-supplied ID is accepted only when the owner named that exact ID.
+        assert validate_grounded_arguments(
+            user_input="Create the new guest with VMID 992.",
+            arguments={argument: 992},
+            grounded_arguments=tool["grounded_arguments"],
+        ) == (True, None)
+        valid, error = validate_grounded_arguments(
+            user_input="Create a new guest using the requested settings.",
+            arguments={argument: 992},
+            grounded_arguments=tool["grounded_arguments"],
+        )
+        assert valid is False and argument in str(error)

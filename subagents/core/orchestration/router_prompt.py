@@ -7,8 +7,10 @@ def build_compact_router_system_prompt(
     specialists: list[dict], *, include_workflow_protocol: bool = True,
 ) -> str:
     """Render trusted catalog metadata under the compact semantic contract."""
+    # The compact contract states shared intent_metadata values once; the
+    # standard prompt (bound to the Hub's trained adapters) is left unchanged.
     system = load_prompt("hub_router_compact.txt").replace(
-        "{{SPECIALISTS_JSON}}", render_router_catalog(specialists),
+        "{{SPECIALISTS_JSON}}", render_router_catalog(specialists, factor_defaults=True),
     ).replace(
         "{{WORKFLOW_PROTOCOL}}",
         load_prompt("hub_workflow_compact.txt") if include_workflow_protocol

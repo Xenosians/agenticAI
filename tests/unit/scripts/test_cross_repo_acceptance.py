@@ -99,6 +99,22 @@ def test_v2_read_and_approval_use_v2_but_creation_uses_v1():
     ]
 
 
+def test_a_destructive_approval_sends_the_typed_name_and_nothing_else_changes():
+    bodies = []
+
+    def handler(request):
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json=job_payload())
+
+    client = client_for(handler)
+    try:
+        client.approve_job("job-test")
+        client.approve_job("job-test", confirm_name="janus-lab")
+    finally:
+        client.close()
+    assert bodies == [{}, {"confirm_name": "janus-lab"}]
+
+
 @pytest.mark.parametrize("status", ["completed", "failed", "reconciliation_required"])
 def test_v1_compatibility_keeps_legacy_route_and_contract(status):
     def handler(request):

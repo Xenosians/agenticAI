@@ -1,9 +1,9 @@
-"""Register the fixed Proxmox reads and the four governed guest power actions with the MCP server."""
+"""Register the fixed Proxmox reads and the approval-gated guest power actions and changes with the MCP server."""
 from collections.abc import Callable, Iterable
 from contextlib import AbstractContextManager, contextmanager
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from services.proxmox import ProxmoxService
 from tools.provider_reads import not_configured, provider_read
@@ -35,6 +35,28 @@ class ProxmoxPowerResult(BaseModel):
     name: str | None = None
     expected_status: str | None = None
     observed_status: str | None = None
+    upid: str | None = None
+    task_exit_status: str | None = None
+    changed: bool = False
+    verification_ok: bool = False
+    retry_safe: bool = True
+    observed_at: str | None = None
+    error: str | None = None
+    error_code: str | None = None
+
+
+class ProxmoxChangeResult(BaseModel):
+    """The receipt of one approved guest change: its task, what changed and the read-back."""
+    model_config = ConfigDict(extra="allow")
+
+    ok: bool
+    status: str
+    provider: str = PROVIDER
+    operation: str | None = None
+    node: str | None = None
+    vmid: int | None = None
+    type: str | None = None
+    name: str | None = None
     upid: str | None = None
     task_exit_status: str | None = None
     changed: bool = False
@@ -83,6 +105,17 @@ def register_proxmox_tools(server, service: ProxmoxService | None = None, missin
             return ProxmoxPowerResult(**current.guest_power(node, vmid, action, expected_type=expected_type,
                                                             expected_name=expected_name))
 
+    def change(call) -> ProxmoxChangeResult:
+        """Run one approved change on the account's Proxmox; never retried here."""
+        with resolve() as current:
+            if current is None:
+                return ProxmoxChangeResult(**not_configured(PROVIDER, LABEL, missing))
+            return ProxmoxChangeResult(**call(current))
+
+    def effective_vmid(requested: int | None, allocated: int | None) -> int | None:
+        """The VMID the owner approved: the one they named, or Proxmox's next free one."""
+        return allocated if allocated is not None else requested
+
     @server.tool()
     def proxmox_cluster_status() -> ProxmoxReadResult:
         """Read Proxmox VE cluster membership and reported online state."""
@@ -100,7 +133,7 @@ def register_proxmox_tools(server, service: ProxmoxService | None = None, missin
 
     @server.tool()
     def proxmox_guest_status(node: str, vmid: int) -> ProxmoxReadResult:
-        """Read observed status and resource counters for one exact node and VMID."""
+        """Read one exact guest's status; tagged QEMU database VMs also report guest-agent filesystem use."""
         return proxmox(lambda current: current.guest_status(node, vmid))
 
     @server.tool()
@@ -189,3 +222,109 @@ def register_proxmox_tools(server, service: ProxmoxService | None = None, missin
                                  expected_name: str | None = None) -> ProxmoxPowerResult:
         """Force stop one approved, exact Proxmox guest and read it back."""
         return power(node, vmid, "force_stop", expected_type, expected_name)
+
+    # Approved guest changes. The expected_*/allocated_* values are trusted
+    # policy arguments frozen at approval; they are never model-facing.
+
+    @server.tool()
+    def proxmox_guest_set_resources(node: str, vmid: int, cores: int | None = None,
+                                    memory_mib: int | None = None, expected_type: str = "",
+                                    expected_name: str | None = None,
+                                    expected_digest: str | None = None) -> ProxmoxChangeResult:
+        """Set one approved guest's CPU cores and/or memory and read it back."""
+        return change(lambda current: current.guest_set_resources(
+            node, vmid, cores=cores, memory_mib=memory_mib, expected_type=expected_type,
+            expected_name=expected_name, expected_digest=expected_digest))
+
+    @server.tool()
+    def proxmox_guest_resize_disk(node: str, vmid: int, disk: str, grow_gib: int, expected_type: str = "",
+                                  expected_name: str | None = None,
+                                  expected_digest: str | None = None) -> ProxmoxChangeResult:
+        """Grow one approved guest disk and read its size back."""
+        return change(lambda current: current.guest_resize_disk(
+            node, vmid, disk=disk, grow_gib=grow_gib, expected_type=expected_type,
+            expected_name=expected_name, expected_digest=expected_digest))
+
+    @server.tool()
+    def proxmox_guest_set_options(node: str, vmid: int, tags: str | None = None, on_boot: bool | None = None,
+                                  expected_type: str = "", expected_name: str | None = None,
+                                  expected_digest: str | None = None) -> ProxmoxChangeResult:
+        """Set one approved guest's tags and/or start-at-boot and read it back."""
+        return change(lambda current: current.guest_set_options(
+            node, vmid, tags=tags, on_boot=on_boot, expected_type=expected_type,
+            expected_name=expected_name, expected_digest=expected_digest))
+
+    @server.tool()
+    def proxmox_snapshot_create(node: str, vmid: int, snapshot: str, description: str | None = None,
+                                expected_type: str = "", expected_name: str | None = None) -> ProxmoxChangeResult:
+        """Take one approved snapshot of an exact guest and confirm it is listed."""
+        return change(lambda current: current.guest_snapshot_create(
+            node, vmid, snapshot=snapshot, description=description, expected_type=expected_type,
+            expected_name=expected_name))
+
+    @server.tool()
+    def proxmox_snapshot_delete(node: str, vmid: int, snapshot: str, expected_type: str = "",
+                                expected_name: str | None = None) -> ProxmoxChangeResult:
+        """Delete one approved snapshot of an exact guest and confirm it is gone."""
+        return change(lambda current: current.guest_snapshot_delete(
+            node, vmid, snapshot=snapshot, expected_type=expected_type, expected_name=expected_name))
+
+    @server.tool()
+    def proxmox_snapshot_rollback(node: str, vmid: int, snapshot: str, expected_type: str = "",
+                                  expected_name: str | None = None) -> ProxmoxChangeResult:
+        """Roll one approved guest back to a snapshot and confirm the guest follows it."""
+        return change(lambda current: current.guest_snapshot_rollback(
+            node, vmid, snapshot=snapshot, expected_type=expected_type, expected_name=expected_name))
+
+    @server.tool()
+    def proxmox_backup_now(node: str, vmid: int, storage: str, mode: str = "snapshot", expected_type: str = "",
+                           expected_name: str | None = None) -> ProxmoxChangeResult:
+        """Back up one approved guest now and confirm a new backup volume."""
+        return change(lambda current: current.backup_now(
+            node, vmid, storage=storage, mode=mode, expected_type=expected_type, expected_name=expected_name))
+
+    @server.tool()
+    def proxmox_backup_restore(node: str, volume: str, name: str, newid: int | None = None,
+                               storage: str | None = None, pool: str | None = None,
+                               allocated_vmid: int | None = None) -> ProxmoxChangeResult:
+        """Restore one approved backup into a new guest at the approved free VMID."""
+        target = effective_vmid(newid, allocated_vmid)
+        if target is None:
+            return ProxmoxChangeResult(ok=False, status="error",
+                                       error="No VMID was approved for the restored guest.")
+        return change(lambda current: current.backup_restore(
+            node, volume=volume, newid=target, name=name, storage=storage, pool=pool))
+
+    @server.tool()
+    def proxmox_guest_clone(node: str, vmid: int, name: str, full: bool, newid: int | None = None,
+                            pool: str | None = None, expected_type: str = "", expected_name: str | None = None,
+                            allocated_vmid: int | None = None) -> ProxmoxChangeResult:
+        """Clone one approved guest to a new guest at the approved free VMID."""
+        target = effective_vmid(newid, allocated_vmid)
+        if target is None:
+            return ProxmoxChangeResult(ok=False, status="error", node=node, vmid=vmid,
+                                       error="No VMID was approved for the clone.")
+        return change(lambda current: current.guest_clone(
+            node, vmid, newid=target, name=name, full=full, pool=pool, expected_type=expected_type,
+            expected_name=expected_name))
+
+    @server.tool()
+    def proxmox_guest_create(node: str, hostname: str, template: str, cores: int, memory_mib: int,
+                             disk_gib: int, storage: str, vmid: int | None = None, pool: str | None = None,
+                             description: str | None = None,
+                             allocated_vmid: int | None = None) -> ProxmoxChangeResult:
+        """Create one approved LXC container at the approved free VMID."""
+        target = effective_vmid(vmid, allocated_vmid)
+        if target is None:
+            return ProxmoxChangeResult(ok=False, status="error", node=node,
+                                       error="No VMID was approved for the new container.")
+        return change(lambda current: current.guest_create_lxc(
+            node, target, hostname=hostname, template=template, cores=cores, memory_mib=memory_mib,
+            disk_gib=disk_gib, storage=storage, pool=pool, description=description))
+
+    @server.tool()
+    def proxmox_guest_delete(node: str, vmid: int, expected_type: str = "",
+                             expected_name: str | None = None) -> ProxmoxChangeResult:
+        """Delete one approved, stopped guest and confirm it is gone."""
+        return change(lambda current: current.guest_delete(
+            node, vmid, expected_type=expected_type, expected_name=expected_name))

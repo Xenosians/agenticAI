@@ -230,7 +230,12 @@ class DeterministicCandidateSelector:
             identity = " ".join((name, tool.get("resource_type", ""), tool.get("operation_kind", ""),
                                  tool.get("permission", "")))
             title = identity + " " + " ".join(agent.name for agent in agent_owners)
-            content = " ".join((tool.get("description", ""), *(agent.description for agent in agent_owners)))
+            # Specialist descriptions are useful once a capability is selected,
+            # but repeating the full description on every owned tool makes a
+            # single broad phrase (for example "database backups") look like
+            # evidence for every capability that specialist owns. Rank the
+            # capability from its own trusted identity and description only.
+            content = tool.get("description", "")
             terms[name] = _terms(title + " " + content)
             identity_terms[name] = _terms(identity)
             capability_terms[name] = _terms(identity + " " + tool.get("description", ""))
@@ -282,6 +287,13 @@ class DeterministicCandidateSelector:
             tied = (abs(scores[left] - scores[right]) < 1e-9
                     and query & identity_terms[left] == query & identity_terms[right])
             if not tied:
+                return False
+            # Equal candidates below the strongest match are a weak-tail tie,
+            # not an unresolved boundary. The request's rarer operation words
+            # already distinguish the leading capability from these shared-
+            # resource matches. A tie at the leading score still widens/falls
+            # back, and compound or uncovered requests are checked separately.
+            if scores[left] < scores[ranked[0]] - 1e-9:
                 return False
 
             def strictly_dominated(name: str) -> bool:

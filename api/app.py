@@ -35,6 +35,7 @@ from pydantic import (
 
 from agent.approvals import (
     ApprovalManager,
+    confirmation_text,
 )
 
 from agent.approval_store import (
@@ -357,7 +358,7 @@ def proposed_tool(
                 or {}
             )
 
-        return {
+        proposal = {
             "tool":
                 tool_name,
 
@@ -369,6 +370,25 @@ def proposed_tool(
                     "approval_id"
                 ),
         }
+
+        # A destructive action is approved only with its target's name typed
+        # by the owner; the card shows what to type, taken from the frozen
+        # approval arguments by the same rule the approval authority checks.
+        confirmation = (
+            confirmation_text(
+                tool_name,
+                arguments,
+            )
+            if result.get("approval_id")
+            else None
+        )
+
+        if confirmation:
+            proposal[
+                "confirmation_text"
+            ] = confirmation
+
+        return proposal
 
     return None
 
@@ -2016,11 +2036,35 @@ async def approve(
     require_internal(request)
     runtime = require_ready_runtime(request)
 
+    # A destructive approval carries the target name its owner typed. The
+    # approval authority compares it with the frozen name; a missing or
+    # different value never claims or executes the action.
+    confirm_name = None
+    media_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if media_type == "application/json":
+        try:
+            body = await request.json()
+        except (ValueError, UnicodeError):
+            body = None
+        if isinstance(body, dict) and "confirm_name" in body:
+            value = body["confirm_name"]
+            if not isinstance(value, str):
+                raise HTTPException(status_code=422, detail="confirm_name must be a string")
+            confirm_name = value
+
     approval_result = (
         await runtime.approvals.approve_approval(
-            approval_id
+            approval_id,
+            confirm_name=confirm_name,
         )
     )
+
+    confirmation_error = approval_result.get("error_code")
+    if confirmation_error in {"confirmation_required", "confirmation_mismatch"}:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": confirmation_error, "message": approval_result.get("error")},
+        )
 
     # Learning remains observational only.
     try:

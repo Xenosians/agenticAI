@@ -226,8 +226,7 @@ force-stop it, in an order that leaves it as found.
 
 A transport failure after the request was sent, an unrecognised task id, or a
 task that does not finish within 120 seconds is `outcome_unknown`: the action
-is never retried automatically, and the guest must be checked first. Deletion,
-disk, network, snapshot, backup and access changes are not available.
+is never retried automatically, and the guest must be checked first.
 
 The Operations dashboard offers the same four actions per guest (only those
 that fit its current state). A button only proposes the action through the
@@ -235,6 +234,49 @@ same governed path a chat request uses; nothing runs until the owner confirms
 the server's description of the exact target. Phoenix records each action
 once per submission, lets only its owner decide it, and never re-sends an
 approval whose outcome was not confirmed.
+
+## Guest changes
+
+Eleven governed tools change guests: `proxmox_guest_set_resources` (cores,
+memory), `proxmox_guest_resize_disk` (grow only), `proxmox_guest_set_options`
+(tags, start at boot), `proxmox_snapshot_create`, `proxmox_snapshot_delete`,
+`proxmox_snapshot_rollback`, `proxmox_backup_now`, `proxmox_backup_restore`
+(always into a NEW guest), `proxmox_guest_clone`, `proxmox_guest_create` (an
+LXC container from a template) and `proxmox_guest_delete` (a stopped guest,
+disks purged). They follow the power-action pattern:
+
+1. **Trusted policy freezes the target** (type, name and, for configuration
+   changes, the configuration digest) and refuses a locked guest, a template,
+   a running guest to delete, or a VMID that is not free. When the owner names
+   no VMID for a new guest, Proxmox's own next free VMID is frozen.
+2. **The owner approves the exact change.** Delete, snapshot delete, rollback
+   and restore are destructive: the approval also needs the frozen guest name
+   (for a restore, the new guest's name) typed by the owner. The proposal
+   carries that text as `confirmation_text`; the AI approval authority checks
+   the typed `confirm_name` before anything runs (dashboard actions are checked
+   by Phoenix too). A missing or wrong name leaves the approval pending.
+3. **One request, then receipts.** Janus re-reads the guest, refuses a changed
+   identity or configuration digest, sends exactly one request, follows the
+   Proxmox task and reads the result back (new values, snapshot listed or gone,
+   rollback parent, new backup volume, new guest listed).
+4. **Unknown is never retried.** Once Proxmox accepted the request,
+   `retry_safe` is false. A lost answer, a task that does not finish in time,
+   or a read-back that cannot be made is `outcome_unknown`, never `failed`:
+   check the guest before deciding again.
+
+Privileges: the token needs each action's own Proxmox privilege (for example
+`VM.Config.CPU`/`VM.Config.Memory`, `VM.Config.Disk`, `VM.Snapshot`,
+`VM.Snapshot.Rollback`, `VM.Backup`, `VM.Clone`, `VM.Allocate`,
+`Datastore.AllocateSpace` on the target storage); a refusal is reported as
+`denied` with nothing changed.
+
+The live tool matrix runs the change cases when the acceptance profile also
+provides `ACCEPTANCE_PROXMOX_TEMPLATE` (an existing container template
+volume), `ACCEPTANCE_PROXMOX_DISK_STORAGE` and
+`ACCEPTANCE_PROXMOX_BACKUP_STORAGE`. Reversible changes run on the lab guest
+and are undone in the same run; everything that makes a guest works on a
+disposable container the run creates, and every guest the run made is
+deleted again. Destructive approvals send the name the proposal shows.
 
 ## Whose Proxmox and Tailscale
 

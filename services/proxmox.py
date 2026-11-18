@@ -17,7 +17,7 @@ import re
 import time
 from pathlib import Path
 from typing import Literal, overload
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 import httpx
 
@@ -26,6 +26,7 @@ from services.provider_errors import ProviderResourceNotFound
 
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_ROWS = 200
+MAX_GUEST_FILESYSTEMS = 128
 MAX_TASKS = 50
 MAX_VMID = 999_999_999
 NODE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
@@ -42,6 +43,21 @@ POWER_ACTIONS = {
 }
 POWER_TASK_DEADLINE_SECONDS = 120.0
 POWER_POLL_SECONDS = (0.5, 1.0, 2.0)
+# Guest changes follow their Proxmox task to the end. A config write is
+# synchronous; snapshots, clones, creates and deletes finish as a task.
+CONFIG_TASK_DEADLINE_SECONDS = 120.0
+SNAPSHOT_TASK_DEADLINE_SECONDS = 300.0
+GUEST_TASK_DEADLINE_SECONDS = 600.0
+BACKUP_TASK_DEADLINE_SECONDS = 900.0
+CHANGE_POLL_SECONDS = (0.5, 1.0, 2.0, 5.0)
+MAX_CORES = 128
+MAX_MEMORY_MIB = 1_048_576
+MAX_DISK_GIB = 65_536
+GUEST_NAME = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
+SNAPSHOT_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,62}")
+STORAGE_ID = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,63}")
+TAG = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.:/-]{0,127}")
+DISK_ID = re.compile(r"(?:rootfs|mp[0-9]{1,3}|(?:scsi|virtio|sata|ide)[0-9]{1,3})")
 TOKEN_ID = re.compile(r"[A-Za-z0-9_.-]{1,64}@[A-Za-z0-9_.-]{1,64}![A-Za-z0-9_.-]{1,64}")
 TLS_SERVER_NAME = re.compile(
     r"(?=.{1,253}\Z)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*"
@@ -96,6 +112,10 @@ class ProxmoxRefused(RuntimeError):
         super().__init__(f"Proxmox refused the read (HTTP {status_code}).")
 
 
+class ProxmoxConflict(RuntimeError):
+    """The guest no longer matches what the owner approved; nothing was sent."""
+
+
 @overload
 def _text(item: dict, field: str, *, required: Literal[True], limit: int = 160) -> str: ...
 @overload
@@ -116,6 +136,21 @@ def _number(item: dict, field: str) -> int | float | None:
     if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
         raise _invalid()
     return value
+
+
+def _guest_byte_count(item: dict, field: str) -> int:
+    """A byte counter returned by QEMU Guest Agent, bounded to signed 64-bit."""
+    value = item.get(field)
+    if type(value) is not int or not 0 <= value <= (2 ** 63 - 1):
+        raise _invalid()
+    return value
+
+
+def _optional_guest_byte_count(item: dict, field: str) -> int | None:
+    """QEMU Guest Agent filesystem counters are optional in its wire schema."""
+    if field not in item:
+        return None
+    return _guest_byte_count(item, field)
 
 
 def _guest_disk_used(item: dict, guest_type: str) -> int | float | None:
@@ -293,6 +328,20 @@ def _memory_mib(item: dict, guest_type: str) -> int | float | None:
     return _number(item, "memory")
 
 
+DISK_SIZE = re.compile(r"(?:^|,)size=([0-9]{1,12})([KMGT]?)(?:,|$)")
+SIZE_UNITS = {"": 1, "K": 1024, "M": 1024 ** 2, "G": 1024 ** 3, "T": 1024 ** 4}
+
+
+def _disk_size_bytes(value) -> int | None:
+    """The size a Proxmox disk property string records, in bytes, or None."""
+    if not isinstance(value, str) or len(value) > 2048:
+        return None
+    match = DISK_SIZE.search(value)
+    if match is None:
+        return None
+    return int(match.group(1)) * SIZE_UNITS[match.group(2)]
+
+
 class ProxmoxService:
     def __init__(self, config: ProxmoxConfig, client: httpx.Client | None = None):
         self.config = config
@@ -447,7 +496,8 @@ class ProxmoxService:
             raise _invalid()
 
     def guest_status(self, node: str, vmid: int) -> dict:
-        guest_type = self._guest_type(node, vmid)
+        guest = self._inventory_guest(node, vmid)
+        guest_type = guest["type"]
         data = self._get(f"/nodes/{node}/{guest_type}/{vmid}/status/current")
         if not isinstance(data, dict):
             raise _invalid()
@@ -474,6 +524,10 @@ class ProxmoxService:
             # power actions until it clears.
             "lock": _text(data, "lock"),
         }
+        is_database, _ = database_tags(_tags(guest))
+        if guest_type == "qemu" and is_database:
+            status["database_filesystems"] = self._database_filesystem_observation(
+                node, vmid, status["status"])
         return self._result(status)
 
     def guest_config(self, node: str, vmid: int) -> dict:
@@ -1116,6 +1170,51 @@ class ProxmoxService:
         rows = self._rows(self._get("/cluster/resources"), required=("type",))
         return self._result(self._database_rows(rows))
 
+    def _database_filesystem_observation(self, node: str, vmid: int, guest_status: str) -> dict:
+        """Bounded filesystem-only observation for an already identified DB QEMU guest."""
+        base = {"schema": "proxmox-database-filesystems.v1", "scope": "guest_filesystem_capacity_only"}
+        if guest_status != "running":
+            return {**base, "state": "guest_not_running", "count": 0, "filesystems": [],
+                    "note": "Filesystem usage requires a running VM and an available guest agent."}
+        try:
+            rows = self._rows(self._get(f"/nodes/{node}/qemu/{vmid}/agent/get-fsinfo"))
+        except ProxmoxRefused as error:
+            note = f"Proxmox refused the guest filesystem read (HTTP {error.status_code})."
+        except ProviderResourceNotFound:
+            note = "Proxmox did not find the guest filesystem read endpoint or guest."
+        except httpx.TransportError:
+            note = "Proxmox did not answer the guest filesystem read."
+        else:
+            note = None
+        if note is not None:
+            return {**base, "state": "unavailable", "count": 0, "filesystems": [], "note": note}
+        if len(rows) > MAX_GUEST_FILESYSTEMS:
+            raise _invalid()
+        filesystems = []
+        for row in rows:
+            mountpoint = _text(row, "mountpoint", required=True, limit=512)
+            filesystem = _text(row, "type", required=True, limit=64)
+            used = _optional_guest_byte_count(row, "used-bytes")
+            total = _optional_guest_byte_count(row, "total-bytes")
+            if used is not None and total is not None and used > total:
+                raise _invalid()
+            filesystems.append({
+                "mountpoint": mountpoint, "filesystem": filesystem,
+                "used_bytes": used, "total_bytes": total,
+                "free_bytes": total - used if used is not None and total is not None else None,
+                "usage_percent": round(used / total * 100, 1)
+                if used is not None and total not in (None, 0) else None,
+            })
+        filesystems.sort(key=lambda row: (row["mountpoint"].casefold(), row["filesystem"].casefold()))
+        partial = any(row["used_bytes"] is None or row["total_bytes"] is None for row in filesystems)
+        return {**base, "state": "partial" if partial else "observed" if filesystems else "no_filesystems_reported",
+                "count": len(filesystems), "truncated": False, "filesystems": filesystems,
+                "note": "QEMU Guest Agent did not report all optional filesystem size counters."
+                if partial else None,
+                "near_full_count": sum(row["usage_percent"] is not None and
+                                       row["usage_percent"] >= DISK_NEARLY_FULL * 100
+                                       for row in filesystems)}
+
     def _backup_volumes(self, node: str, storage: str) -> list[dict]:
         rows = self._rows(self._get(f"/nodes/{node}/storage/{quote(storage, safe='')}/content",
                                     {"content": "backup"}))
@@ -1368,16 +1467,45 @@ class ProxmoxService:
         reason = self._power_refusal(guest, action)
         return self._result({**guest, "action": action, "allowed": reason is None, "reason": reason})
 
-    def _post(self, path: str, form: dict[str, str]) -> httpx.Response:
+    def guest_change_target(self, node: str, vmid: int) -> dict:
+        """Read-only: the exact guest a change would affect and its config digest.
+
+        The digest lets the approval freeze the configuration the owner saw, so
+        a concurrent edit before the change is refused instead of overwritten.
+        """
+        if not isinstance(node, str) or not NODE_ID.fullmatch(node):
+            raise ValueError("Enter one exact Proxmox node name.")
+        if type(vmid) is not int or not (1 <= vmid <= MAX_VMID):
+            raise ValueError("Enter one valid Proxmox VMID.")
+        guest = self._guest_row(node, vmid)
+        config = self._get(f"/nodes/{node}/{guest['type']}/{vmid}/config")
+        if not isinstance(config, dict):
+            raise _invalid()
+        self._validate_guest_identity(config, node, vmid)
+        digest = _text(config, "digest", limit=128)
+        return self._result({**guest, "digest": digest})
+
+    def _send(self, method: str, path: str, form: dict[str, str] | None = None) -> httpx.Response:
         headers = {"Authorization": f"PVEAPIToken={self.config.token_id}={self.config.token_secret}",
                    "Accept": "application/json"}
+        body = ""
         if form:
             headers["Content-Type"] = "application/x-www-form-urlencoded"
+            body = "&".join(f"{key}={quote(value, safe='')}" for key, value in form.items())
         extensions = {"sni_hostname": self.config.server_name} if self.config.server_name else {}
-        body = "&".join(f"{key}={quote(value, safe='')}" for key, value in form.items())
-        request = httpx.Request("POST", self.origin + "/api2/json" + path, headers=headers,
+        request = httpx.Request(method, self.origin + "/api2/json" + path, headers=headers,
                                 content=body.encode(), extensions=extensions)
         return self.client.send(request)
+
+    def _post(self, path: str, form: dict[str, str]) -> httpx.Response:
+        return self._send("POST", path, form)
+
+    def _put(self, path: str, form: dict[str, str]) -> httpx.Response:
+        return self._send("PUT", path, form)
+
+    def _delete(self, path: str, params: dict[str, str] | None = None) -> httpx.Response:
+        query = f"?{urlencode(params)}" if params else ""
+        return self._send("DELETE", path + query)
 
     @staticmethod
     def _post_refusal(response: httpx.Response) -> str:
@@ -1489,6 +1617,851 @@ class ProxmoxService:
             return outcome(False, "failed", f"The Proxmox task finished, but the guest is {observed}, "
                            f"not {spec['expect']}.")
         return outcome(True, "executed", None, verification_ok=True)
+
+    # ------------------------------------------------------------------
+    # Governed guest changes (owner decisions, 17 November)
+    #
+    # Every change runs on the exact guest frozen at approval, refuses a
+    # concurrent edit (config digest) or a different guest identity, sends
+    # one request, follows its task to the end and reads the expected state
+    # back. An answer that cannot be confirmed is reported as an unknown
+    # outcome and is never retried here.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _change_receipt(operation: str, node: str, vmid: int) -> dict:
+        return {"provider": "proxmox", "operation": operation, "node": node, "vmid": vmid,
+                "type": None, "name": None, "upid": None, "task_exit_status": None,
+                "changed": False, "verification_ok": False, "retry_safe": True,
+                "observed_at": None, "error": None}
+
+    @staticmethod
+    def _change_outcome(receipt: dict, ok: bool, status: str, error: str | None = None, **fields) -> dict:
+        return {**receipt, **fields, "ok": ok, "status": status, "error": error,
+                "observed_at": datetime.now(timezone.utc).isoformat()}
+
+    def _follow_task(self, node: str, upid: str, *, deadline_seconds: float,
+                     sleep=time.sleep, clock=time.monotonic) -> dict | None:
+        """Wait for one Proxmox task; None means it had not finished by the deadline."""
+        deadline = clock() + deadline_seconds
+        polls = 0
+        while True:
+            try:
+                task = self._get(f"/nodes/{node}/tasks/{quote(upid, safe='')}/status")
+            except (httpx.HTTPError, RuntimeError, ProviderResourceNotFound):
+                task = None
+            if isinstance(task, dict) and task.get("status") == "stopped":
+                return task
+            if clock() >= deadline:
+                return None
+            sleep(CHANGE_POLL_SECONDS[min(polls, len(CHANGE_POLL_SECONDS) - 1)])
+            polls += 1
+
+    def _task_response(self, response: httpx.Response, node: str, receipt: dict) -> tuple[str | None, dict | None]:
+        """The UPID of an accepted task, or the receipt of a request that did not start one."""
+        if response.status_code in (401, 403):
+            return None, self._change_outcome(receipt, False, "denied",
+                                             self._post_refusal(response) + " Nothing was changed.")
+        if response.status_code != 200:
+            return None, self._change_outcome(receipt, False, "failed",
+                                             self._post_refusal(response) + " Nothing was changed.")
+        try:
+            data = response.json().get("data")
+        except (ValueError, UnicodeError, AttributeError):
+            data = None
+        match = UPID.fullmatch(data) if isinstance(data, str) and len(data) <= 512 else None
+        if match is None or match.group(1) != node:
+            return None, self._change_outcome(receipt, False, "outcome_unknown",
+                                             "Proxmox accepted the change but did not return its task; "
+                                             "check the guest before trying again.", retry_safe=False)
+        receipt.update(upid=match.group(0), changed=True, retry_safe=False)
+        return match.group(0), None
+
+    def _match_guest(self, node: str, vmid: int, expected_type: str, expected_name: str | None) -> dict:
+        guest = self._guest_row(node, vmid)
+        if guest["type"] != expected_type or guest["name"] != (expected_name or None):
+            raise ProxmoxConflict(
+                f"The guest no longer matches the approved target "
+                f"({expected_type} {expected_name or 'unnamed'}); nothing was changed.")
+        return guest
+
+    def _config_for_change(self, node: str, guest: dict, expected_digest: str | None) -> tuple[dict, str | None]:
+        config = self._get(f"/nodes/{node}/{guest['type']}/{guest['vmid']}/config")
+        if not isinstance(config, dict):
+            raise _invalid()
+        self._validate_guest_identity(config, node, guest["vmid"])
+        digest = _text(config, "digest", limit=128)
+        if expected_digest is not None and digest != expected_digest:
+            raise ProxmoxConflict("The guest's configuration changed after approval; nothing was changed.")
+        return config, digest
+
+    def _guest_exists(self, node: str, vmid: int) -> dict | None:
+        """The guest using this VMID anywhere in the cluster, or None.
+
+        Proxmox VMIDs are unique across the cluster, so a VMID used on another
+        node blocks a new guest just as one on the chosen node does.
+        """
+        rows = self._rows(self._get("/cluster/resources", {"type": "vm"}))
+        for row in rows:
+            if row.get("vmid") == vmid and row.get("type") in {"qemu", "lxc"}:
+                return row
+        return None
+
+    def new_guest_target(self, node: str, newid: int) -> dict:
+        """Read-only: the exact node a new guest would land on, and that its VMID is free."""
+        if not isinstance(node, str) or not NODE_ID.fullmatch(node):
+            raise ValueError("Enter one exact Proxmox node name.")
+        if type(newid) is not int or not (1 <= newid <= MAX_VMID):
+            raise ValueError("Enter one valid, free Proxmox VMID for the new guest.")
+        existing = self._guest_exists(node, newid)
+        if existing is not None:
+            raise ProxmoxConflict(
+                f"VMID {newid} is already used on node {existing.get('node')}; choose a free VMID.")
+        rows = self._rows(self._get("/nodes"), required=("node", "status"))
+        for row in rows:
+            if row.get("node") == node:
+                return self._result({"node": node, "vmid": newid, "free": True})
+        raise ProviderResourceNotFound(f"Proxmox node {node} was not found.")
+
+    def next_vmid(self) -> int:
+        """Read-only: the next free VMID Proxmox itself offers for the whole cluster.
+
+        Proxmox owns the numbering (GET /cluster/nextid); Janus never invents a
+        range or assumes a lab convention, so the same code works on any cluster.
+        """
+        response = self._send("GET", "/cluster/nextid")
+        if response.status_code == 404:
+            raise ProviderResourceNotFound("Proxmox did not find the requested resource.")
+        if response.status_code != 200:
+            raise ProxmoxRefused(response.status_code)
+        try:
+            data = response.json().get("data")
+        except (ValueError, UnicodeError, AttributeError):
+            raise _invalid() from None
+        if type(data) is int:
+            vmid = data
+        elif isinstance(data, str) and data.isdigit():
+            vmid = int(data)
+        else:
+            raise _invalid()
+        if not (1 <= vmid <= MAX_VMID):
+            raise _invalid()
+        return vmid
+
+    def guest_set_resources(self, node: str, vmid: int, *, cores: int | None, memory_mib: int | None,
+                            expected_type: str, expected_name: str | None, expected_digest: str | None,
+                            sleep=time.sleep, clock=time.monotonic) -> dict:
+        """Set one guest's cores and/or memory on the exact approved guest."""
+        if (cores is not None and (type(cores) is not int or not (1 <= cores <= MAX_CORES))) or \
+                (memory_mib is not None and (type(memory_mib) is not int or not (16 <= memory_mib <= MAX_MEMORY_MIB))) or \
+                (cores is None and memory_mib is None):
+            raise ValueError("Enter a core count (1-128) or memory in MiB (16-1048576).")
+        receipt = self._change_receipt("guest_set_resources", node, vmid)
+        try:
+            guest = self._match_guest(node, vmid, expected_type, expected_name)
+        except ProviderResourceNotFound as error:
+            return self._change_outcome(receipt, False, "not_found", str(error))
+        except ProxmoxConflict as error:
+            return self._change_outcome(receipt, False, "conflict", str(error))
+        except (httpx.HTTPError, RuntimeError):
+            return self._change_outcome(receipt, False, "error",
+                                        "Proxmox could not confirm the guest's current state; nothing was sent.")
+        receipt.update(type=guest["type"], name=guest["name"])
+        if guest["lock"]:
+            return self._change_outcome(receipt, False, "conflict",
+                                        f"The guest is locked ({guest['lock']}); nothing was changed.")
+        try:
+            config, _ = self._config_for_change(node, guest, expected_digest)
+        except ProxmoxConflict as error:
+            return self._change_outcome(receipt, False, "conflict", str(error))
+        except (httpx.HTTPError, RuntimeError):
+            return self._change_outcome(receipt, False, "error",
+                                        "Proxmox could not read the guest's configuration; nothing was sent.")
+        previous = {"cores": _number(config, "cores"), "memory_mib": _memory_mib(config, guest["type"])}
+        form = {}
+        if cores is not None:
+            form["cores"] = str(cores)
+        if memory_mib is not None:
+            form["memory"] = str(memory_mib)
+        try:
+            response = self._put(f"/nodes/{node}/{guest['type']}/{vmid}/config", form)
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            return self._change_outcome(receipt, False, "error",
+                                        "Proxmox could not be reached; the change was not sent.")
+        except httpx.HTTPError:
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        "Proxmox did not answer the change request; it may have applied. "
+                                        "Check the guest before trying again.", retry_safe=False)
+        if response.status_code in (401, 403):
+            return self._change_outcome(receipt, False, "denied",
+                                        self._post_refusal(response) + " Nothing was changed.")
+        if response.status_code != 200:
+            return self._change_outcome(receipt, False, "failed",
+                                        self._post_refusal(response) + " Nothing was changed.")
+        receipt.update(changed=True, retry_safe=False)
+        try:
+            current = self._get(f"/nodes/{node}/{guest['type']}/{vmid}/config")
+            observed = {"cores": _number(current, "cores") if isinstance(current, dict) else None,
+                        "memory_mib": _memory_mib(current, guest["type"]) if isinstance(current, dict) else None}
+        except (httpx.HTTPError, RuntimeError, ProviderResourceNotFound):
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        "Proxmox accepted the change, but the guest could not be read back. "
+                                        "Check the guest before trying again.")
+        receipt.update(previous=previous, observed=observed,
+                       cores=cores if cores is not None else observed["cores"],
+                       memory_mib=memory_mib if memory_mib is not None else observed["memory_mib"])
+        expected = {"cores": cores, "memory_mib": memory_mib}
+        if any(value is not None and observed[key] != value for key, value in expected.items()):
+            return self._change_outcome(receipt, False, "failed",
+                                        "Proxmox accepted the change but the guest does not show it "
+                                        f"(cores {observed['cores']}, memory {observed['memory_mib']} MiB).")
+        return self._change_outcome(receipt, True, "executed", verification_ok=True)
+
+    def guest_set_options(self, node: str, vmid: int, *, tags: str | None, on_boot: bool | None,
+                          expected_type: str, expected_name: str | None, expected_digest: str | None,
+                          sleep=time.sleep, clock=time.monotonic) -> dict:
+        """Set one guest's tags and/or start-at-boot flag on the exact approved guest."""
+        normalized = None
+        if tags is not None:
+            parts = [part.strip() for part in re.split(r"[,;]", tags) if part.strip()]
+            if len(parts) > 32 or any(not TAG.fullmatch(part) for part in parts):
+                raise ValueError("Enter tags as a comma-separated list of letters, digits, '_', '.', ':', '/' or '-'.")
+            normalized = ",".join(dict.fromkeys(parts))
+        if normalized is None and on_boot is None:
+            raise ValueError("Enter tags or a start-at-boot choice.")
+        receipt = self._change_receipt("guest_set_options", node, vmid)
+        try:
+            guest = self._match_guest(node, vmid, expected_type, expected_name)
+        except ProviderResourceNotFound as error:
+            return self._change_outcome(receipt, False, "not_found", str(error))
+        except ProxmoxConflict as error:
+            return self._change_outcome(receipt, False, "conflict", str(error))
+        except (httpx.HTTPError, RuntimeError):
+            return self._change_outcome(receipt, False, "error",
+                                        "Proxmox could not confirm the guest's current state; nothing was sent.")
+        receipt.update(type=guest["type"], name=guest["name"])
+        try:
+            config, _ = self._config_for_change(node, guest, expected_digest)
+        except ProxmoxConflict as error:
+            return self._change_outcome(receipt, False, "conflict", str(error))
+        except (httpx.HTTPError, RuntimeError):
+            return self._change_outcome(receipt, False, "error",
+                                        "Proxmox could not read the guest's configuration; nothing was sent.")
+        previous = {"tags": _text(config, "tags", limit=2048), "on_boot": _boolean(config, "onboot")}
+        form = {}
+        if normalized is not None:
+            form["tags"] = normalized
+        if on_boot is not None:
+            form["onboot"] = "1" if on_boot else "0"
+        try:
+            response = self._put(f"/nodes/{node}/{guest['type']}/{vmid}/config", form)
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            return self._change_outcome(receipt, False, "error",
+                                        "Proxmox could not be reached; the change was not sent.")
+        except httpx.HTTPError:
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        "Proxmox did not answer the change request; it may have applied. "
+                                        "Check the guest before trying again.", retry_safe=False)
+        if response.status_code in (401, 403):
+            return self._change_outcome(receipt, False, "denied",
+                                        self._post_refusal(response) + " Nothing was changed.")
+        if response.status_code != 200:
+            return self._change_outcome(receipt, False, "failed",
+                                        self._post_refusal(response) + " Nothing was changed.")
+        receipt.update(changed=True, retry_safe=False)
+        try:
+            current = self._get(f"/nodes/{node}/{guest['type']}/{vmid}/config")
+            observed = {"tags": _text(current, "tags", limit=2048) if isinstance(current, dict) else None,
+                        "on_boot": _boolean(current, "onboot") if isinstance(current, dict) else None}
+        except (httpx.HTTPError, RuntimeError, ProviderResourceNotFound):
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        "Proxmox accepted the change, but the guest could not be read back. "
+                                        "Check the guest before trying again.")
+        receipt.update(previous=previous, observed=observed, tags=normalized if normalized is not None else observed["tags"],
+                       on_boot=on_boot if on_boot is not None else observed["on_boot"])
+        if (normalized is not None and observed["tags"] != normalized) or \
+                (on_boot is not None and observed["on_boot"] != on_boot):
+            return self._change_outcome(receipt, False, "failed",
+                                        "Proxmox accepted the change but the guest does not show it.")
+        return self._change_outcome(receipt, True, "executed", verification_ok=True)
+
+    def guest_resize_disk(self, node: str, vmid: int, *, disk: str, grow_gib: int,
+                          expected_type: str, expected_name: str | None, expected_digest: str | None,
+                          sleep=time.sleep, clock=time.monotonic) -> dict:
+        """Grow one disk of the exact approved guest and prove the new size (grow only)."""
+        if not isinstance(disk, str) or not DISK_ID.fullmatch(disk):
+            raise ValueError("Enter one disk of the guest exactly as its configuration lists it (for example scsi0).")
+        if type(grow_gib) is not int or not (1 <= grow_gib <= MAX_DISK_GIB):
+            raise ValueError(f"Enter how many GiB to add (1-{MAX_DISK_GIB}).")
+        receipt = self._change_receipt("guest_resize_disk", node, vmid)
+        try:
+            guest = self._match_guest(node, vmid, expected_type, expected_name)
+        except ProviderResourceNotFound as error:
+            return self._change_outcome(receipt, False, "not_found", str(error))
+        except ProxmoxConflict as error:
+            return self._change_outcome(receipt, False, "conflict", str(error))
+        except (httpx.HTTPError, RuntimeError):
+            return self._change_outcome(receipt, False, "error",
+                                        "Proxmox could not confirm the guest's current state; nothing was sent.")
+        receipt.update(type=guest["type"], name=guest["name"])
+        if guest["lock"]:
+            return self._change_outcome(receipt, False, "conflict",
+                                        f"The guest is locked ({guest['lock']}); nothing was changed.")
+        try:
+            config, _ = self._config_for_change(node, guest, expected_digest)
+        except ProxmoxConflict as error:
+            return self._change_outcome(receipt, False, "conflict", str(error))
+        except (httpx.HTTPError, RuntimeError):
+            return self._change_outcome(receipt, False, "error",
+                                        "Proxmox could not read the guest's configuration; nothing was sent.")
+        previous = _disk_size_bytes(config.get(disk))
+        if previous is None:
+            return self._change_outcome(receipt, False, "conflict",
+                                        f"Disk {disk} is not part of this guest or has no size to grow; "
+                                        "nothing was changed.")
+        try:
+            response = self._put(f"/nodes/{node}/{guest['type']}/{vmid}/resize",
+                                 {"disk": disk, "size": f"+{grow_gib}G"})
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            return self._change_outcome(receipt, False, "error",
+                                        "Proxmox could not be reached; the disk was not resized.")
+        except httpx.HTTPError:
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        "Proxmox did not answer the resize request; it may have applied. "
+                                        "Check the guest before trying again.", retry_safe=False)
+        if response.status_code in (401, 403):
+            return self._change_outcome(receipt, False, "denied",
+                                        self._post_refusal(response) + " Nothing was changed.")
+        if response.status_code != 200:
+            return self._change_outcome(receipt, False, "failed",
+                                        self._post_refusal(response) + " Nothing was changed.")
+        receipt.update(changed=True, retry_safe=False)
+        try:
+            current = self._get(f"/nodes/{node}/{guest['type']}/{vmid}/config")
+            observed = _disk_size_bytes(current.get(disk)) if isinstance(current, dict) else None
+        except (httpx.HTTPError, RuntimeError, ProviderResourceNotFound):
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        f"Proxmox accepted the resize, but disk {disk} could not be read back. "
+                                        "Check the guest before trying again.")
+        expected = previous + grow_gib * 1024 ** 3
+        receipt.update(disk=disk, grow_gib=grow_gib, previous_bytes=previous, new_bytes=observed)
+        if observed != expected:
+            return self._change_outcome(receipt, False, "failed",
+                                        f"Proxmox accepted the resize, but disk {disk} does not show "
+                                        f"{expected} bytes.")
+        return self._change_outcome(receipt, True, "executed", verification_ok=True)
+
+    def guest_snapshot_create(self, node: str, vmid: int, *, snapshot: str, description: str | None,
+                              expected_type: str, expected_name: str | None,
+                              sleep=time.sleep, clock=time.monotonic) -> dict:
+        """Take one named snapshot of the exact approved guest and prove it exists."""
+        if not isinstance(snapshot, str) or not SNAPSHOT_NAME.fullmatch(snapshot) or snapshot == "current":
+            raise ValueError("Enter a snapshot name starting with a letter (letters, digits, '_' or '-').")
+        if description is not None and (not isinstance(description, str) or len(description) > 256
+                                        or any(ord(char) < 32 for char in description)):
+            raise ValueError("Keep the snapshot description to one line of at most 256 characters.")
+        receipt = self._change_receipt("guest_snapshot_create", node, vmid)
+        try:
+            guest = self._match_guest(node, vmid, expected_type, expected_name)
+        except ProviderResourceNotFound as error:
+            return self._change_outcome(receipt, False, "not_found", str(error))
+        except ProxmoxConflict as error:
+            return self._change_outcome(receipt, False, "conflict", str(error))
+        except (httpx.HTTPError, RuntimeError):
+            return self._change_outcome(receipt, False, "error",
+                                        "Proxmox could not confirm the guest's current state; nothing was sent.")
+        receipt.update(type=guest["type"], name=guest["name"])
+        if guest["lock"]:
+            return self._change_outcome(receipt, False, "conflict",
+                                        f"The guest is locked ({guest['lock']}); nothing was changed.")
+        form = {"snapname": snapshot}
+        if description:
+            form["description"] = description
+        try:
+            response = self._post(f"/nodes/{node}/{guest['type']}/{vmid}/snapshot", form)
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            return self._change_outcome(receipt, False, "error",
+                                        "Proxmox could not be reached; no snapshot was requested.")
+        except httpx.HTTPError:
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        "Proxmox did not answer the snapshot request; it may have run. "
+                                        "Check the guest before trying again.", retry_safe=False)
+        upid, failure = self._task_response(response, node, receipt)
+        if failure is not None:
+            return failure
+        task = self._follow_task(node, upid, deadline_seconds=SNAPSHOT_TASK_DEADLINE_SECONDS,
+                                 sleep=sleep, clock=clock)
+        if task is None:
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        f"Proxmox task {upid} had not finished in time; check the guest "
+                                        "before trying again.")
+        exit_status = task.get("exitstatus") if isinstance(task.get("exitstatus"), str) else None
+        receipt["task_exit_status"] = exit_status[:300] if exit_status else exit_status
+        if exit_status != "OK":
+            return self._change_outcome(receipt, False, "failed",
+                                        f"Proxmox task {upid} ended with: {receipt['task_exit_status']}")
+        try:
+            rows = self._rows(self._get(f"/nodes/{node}/{guest['type']}/{vmid}/snapshot"))
+            names = {_text(row, "name", required=True) for row in rows}
+        except (httpx.HTTPError, RuntimeError, ProviderResourceNotFound):
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        "The Proxmox task finished, but the snapshots could not be read back.")
+        if snapshot not in names:
+            return self._change_outcome(receipt, False, "failed",
+                                        f"The Proxmox task finished, but snapshot '{snapshot}' is not listed.")
+        return self._change_outcome(receipt, True, "executed", snapshot=snapshot, verification_ok=True)
+
+    def guest_snapshot_delete(self, node: str, vmid: int, *, snapshot: str, expected_type: str,
+                              expected_name: str | None, sleep=time.sleep, clock=time.monotonic) -> dict:
+        """Delete one named snapshot of the exact approved guest and prove it is gone."""
+        if not isinstance(snapshot, str) or not SNAPSHOT_NAME.fullmatch(snapshot) or snapshot == "current":
+            raise ValueError("Enter one existing snapshot name.")
+        receipt = self._change_receipt("guest_snapshot_delete", node, vmid)
+        try:
+            guest = self._match_guest(node, vmid, expected_type, expected_name)
+        except ProviderResourceNotFound as error:
+            return self._change_outcome(receipt, False, "not_found", str(error))
+        except ProxmoxConflict as error:
+            return self._change_outcome(receipt, False, "conflict", str(error))
+        except (httpx.HTTPError, RuntimeError):
+            return self._change_outcome(receipt, False, "error",
+                                        "Proxmox could not confirm the guest's current state; nothing was sent.")
+        receipt.update(type=guest["type"], name=guest["name"])
+        if guest["lock"]:
+            return self._change_outcome(receipt, False, "conflict",
+                                        f"The guest is locked ({guest['lock']}); nothing was changed.")
+        try:
+            response = self._delete(f"/nodes/{node}/{guest['type']}/{vmid}/snapshot/"
+                                    f"{quote(snapshot, safe='')}")
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            return self._change_outcome(receipt, False, "error",
+                                        "Proxmox could not be reached; no snapshot was deleted.")
+        except httpx.HTTPError:
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        "Proxmox did not answer the deletion; it may have run. "
+                                        "Check the guest before trying again.", retry_safe=False)
+        upid, failure = self._task_response(response, node, receipt)
+        if failure is not None:
+            return failure
+        task = self._follow_task(node, upid, deadline_seconds=SNAPSHOT_TASK_DEADLINE_SECONDS,
+                                 sleep=sleep, clock=clock)
+        if task is None:
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        f"Proxmox task {upid} had not finished in time; check the guest "
+                                        "before trying again.")
+        exit_status = task.get("exitstatus") if isinstance(task.get("exitstatus"), str) else None
+        receipt["task_exit_status"] = exit_status[:300] if exit_status else exit_status
+        if exit_status != "OK":
+            return self._change_outcome(receipt, False, "failed",
+                                        f"Proxmox task {upid} ended with: {receipt['task_exit_status']}")
+        try:
+            rows = self._rows(self._get(f"/nodes/{node}/{guest['type']}/{vmid}/snapshot"))
+            names = {_text(row, "name", required=True) for row in rows}
+        except (httpx.HTTPError, RuntimeError, ProviderResourceNotFound):
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        "The Proxmox task finished, but the snapshots could not be read back.")
+        if snapshot in names:
+            return self._change_outcome(receipt, False, "failed",
+                                        f"The Proxmox task finished, but snapshot '{snapshot}' is still listed.")
+        return self._change_outcome(receipt, True, "executed", snapshot=snapshot, verification_ok=True)
+
+    def guest_snapshot_rollback(self, node: str, vmid: int, *, snapshot: str, expected_type: str,
+                                expected_name: str | None, sleep=time.sleep, clock=time.monotonic) -> dict:
+        """Roll the exact approved guest back to one snapshot and prove the current state follows it."""
+        if not isinstance(snapshot, str) or not SNAPSHOT_NAME.fullmatch(snapshot) or snapshot == "current":
+            raise ValueError("Enter one existing snapshot name.")
+        receipt = self._change_receipt("guest_snapshot_rollback", node, vmid)
+        try:
+            guest = self._match_guest(node, vmid, expected_type, expected_name)
+        except ProviderResourceNotFound as error:
+            return self._change_outcome(receipt, False, "not_found", str(error))
+        except ProxmoxConflict as error:
+            return self._change_outcome(receipt, False, "conflict", str(error))
+        except (httpx.HTTPError, RuntimeError):
+            return self._change_outcome(receipt, False, "error",
+                                        "Proxmox could not confirm the guest's current state; nothing was sent.")
+        receipt.update(type=guest["type"], name=guest["name"])
+        if guest["lock"]:
+            return self._change_outcome(receipt, False, "conflict",
+                                        f"The guest is locked ({guest['lock']}); nothing was changed.")
+        try:
+            response = self._post(f"/nodes/{node}/{guest['type']}/{vmid}/snapshot/"
+                                  f"{quote(snapshot, safe='')}/rollback", {})
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            return self._change_outcome(receipt, False, "error",
+                                        "Proxmox could not be reached; nothing was rolled back.")
+        except httpx.HTTPError:
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        "Proxmox did not answer the rollback; it may have run. "
+                                        "Check the guest before trying again.", retry_safe=False)
+        upid, failure = self._task_response(response, node, receipt)
+        if failure is not None:
+            return failure
+        task = self._follow_task(node, upid, deadline_seconds=SNAPSHOT_TASK_DEADLINE_SECONDS,
+                                 sleep=sleep, clock=clock)
+        if task is None:
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        f"Proxmox task {upid} had not finished in time; check the guest "
+                                        "before trying again.")
+        exit_status = task.get("exitstatus") if isinstance(task.get("exitstatus"), str) else None
+        receipt["task_exit_status"] = exit_status[:300] if exit_status else exit_status
+        if exit_status != "OK":
+            return self._change_outcome(receipt, False, "failed",
+                                        f"Proxmox task {upid} ended with: {receipt['task_exit_status']}")
+        try:
+            rows = self._rows(self._get(f"/nodes/{node}/{guest['type']}/{vmid}/snapshot"))
+            current = next((row for row in rows if row.get("name") == "current"), None)
+            parent = current.get("parent") if isinstance(current, dict) else None
+        except (httpx.HTTPError, RuntimeError, ProviderResourceNotFound):
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        "The Proxmox task finished, but the snapshots could not be read back. "
+                                        "Check the guest before trying again.")
+        receipt["current_parent"] = parent
+        if parent != snapshot:
+            return self._change_outcome(receipt, False, "failed",
+                                        f"The Proxmox task finished, but the guest does not follow snapshot "
+                                        f"'{snapshot}'.")
+        return self._change_outcome(receipt, True, "executed", snapshot=snapshot, verification_ok=True)
+
+    def guest_delete(self, node: str, vmid: int, *, expected_type: str, expected_name: str | None,
+                     sleep=time.sleep, clock=time.monotonic) -> dict:
+        """Delete the exact approved, stopped guest and prove it is gone."""
+        receipt = self._change_receipt("guest_delete", node, vmid)
+        try:
+            guest = self._match_guest(node, vmid, expected_type, expected_name)
+        except ProviderResourceNotFound as error:
+            return self._change_outcome(receipt, False, "not_found", str(error))
+        except ProxmoxConflict as error:
+            return self._change_outcome(receipt, False, "conflict", str(error))
+        except (httpx.HTTPError, RuntimeError):
+            return self._change_outcome(receipt, False, "error",
+                                        "Proxmox could not confirm the guest's current state; nothing was sent.")
+        receipt.update(type=guest["type"], name=guest["name"])
+        if guest["status"] == "running":
+            return self._change_outcome(receipt, False, "conflict",
+                                        "The guest is running; shut it down before deleting it.")
+        if guest["lock"]:
+            return self._change_outcome(receipt, False, "conflict",
+                                        f"The guest is locked ({guest['lock']}); nothing was changed.")
+        try:
+            response = self._delete(f"/nodes/{node}/{guest['type']}/{vmid}", {"purge": "1"})
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            return self._change_outcome(receipt, False, "error",
+                                        "Proxmox could not be reached; nothing was deleted.")
+        except httpx.HTTPError:
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        "Proxmox did not answer the deletion; it may have run. "
+                                        "Check the guest before trying again.", retry_safe=False)
+        upid, failure = self._task_response(response, node, receipt)
+        if failure is not None:
+            return failure
+        task = self._follow_task(node, upid, deadline_seconds=GUEST_TASK_DEADLINE_SECONDS,
+                                 sleep=sleep, clock=clock)
+        if task is None:
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        f"Proxmox task {upid} had not finished in time; check the guest "
+                                        "before trying again.")
+        exit_status = task.get("exitstatus") if isinstance(task.get("exitstatus"), str) else None
+        receipt["task_exit_status"] = exit_status[:300] if exit_status else exit_status
+        if exit_status != "OK":
+            return self._change_outcome(receipt, False, "failed",
+                                        f"Proxmox task {upid} ended with: {receipt['task_exit_status']}")
+        try:
+            remaining = self._guest_exists(node, vmid)
+        except (httpx.HTTPError, RuntimeError):
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        "The Proxmox task finished, but the guest list could not be read back.")
+        if remaining is not None:
+            return self._change_outcome(receipt, False, "failed",
+                                        f"The Proxmox task finished, but guest {vmid} is still listed.")
+        return self._change_outcome(receipt, True, "executed", deleted=True, verification_ok=True)
+
+    def guest_create_lxc(self, node: str, vmid: int, *, hostname: str, template: str, cores: int,
+                         memory_mib: int, disk_gib: int, storage: str, pool: str | None,
+                         description: str | None, sleep=time.sleep, clock=time.monotonic) -> dict:
+        """Create one stopped LXC container from a template on the exact node, then prove it exists."""
+        if type(vmid) is not int or not (1 <= vmid <= MAX_VMID):
+            raise ValueError("Enter one valid Proxmox VMID.")
+        if not isinstance(hostname, str) or not GUEST_NAME.fullmatch(hostname):
+            raise ValueError("Enter a hostname of letters, digits and hyphens, starting and ending with one.")
+        if not isinstance(template, str) or len(template) > 300 or \
+                not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]{0,63}:vztmpl/[A-Za-z0-9][A-Za-z0-9_.+-]{0,199}", template):
+            raise ValueError("Choose a template volume from the node's storage content.")
+        if type(cores) is not int or not (1 <= cores <= MAX_CORES):
+            raise ValueError("Enter a core count (1-128).")
+        if type(memory_mib) is not int or not (16 <= memory_mib <= MAX_MEMORY_MIB):
+            raise ValueError("Enter memory in MiB (16-1048576).")
+        if type(disk_gib) is not int or not (1 <= disk_gib <= MAX_DISK_GIB):
+            raise ValueError("Enter a disk size in GiB (1-65536).")
+        if not isinstance(storage, str) or not STORAGE_ID.fullmatch(storage):
+            raise ValueError("Enter one exact storage name.")
+        if pool is not None and (not isinstance(pool, str) or not STORAGE_ID.fullmatch(pool)):
+            raise ValueError("Enter one exact pool name.")
+        if description is not None and (not isinstance(description, str) or len(description) > 256
+                                        or any(ord(char) < 32 for char in description)):
+            raise ValueError("Keep the description to one line of at most 256 characters.")
+        receipt = self._change_receipt("guest_create_lxc", node, vmid)
+        receipt.update(name=hostname)
+        try:
+            existing = self._guest_exists(node, vmid)
+        except (httpx.HTTPError, RuntimeError):
+            return self._change_outcome(receipt, False, "error",
+                                        "Proxmox could not confirm the guest list; nothing was created.")
+        if existing is not None:
+            return self._change_outcome(receipt, False, "conflict",
+                                        f"VMID {vmid} is already used on node {existing.get('node')}; "
+                                        "nothing was created.")
+        form = {"vmid": str(vmid), "ostemplate": template, "hostname": hostname, "cores": str(cores),
+                "memory": str(memory_mib), "rootfs": f"{storage}:{disk_gib}", "unprivileged": "1"}
+        if pool:
+            form["pool"] = pool
+        if description:
+            form["description"] = description
+        try:
+            response = self._post(f"/nodes/{node}/lxc", form)
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            return self._change_outcome(receipt, False, "error",
+                                        "Proxmox could not be reached; nothing was created.")
+        except httpx.HTTPError:
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        "Proxmox did not answer the creation request; it may have run. "
+                                        "Check the node before trying again.", retry_safe=False)
+        upid, failure = self._task_response(response, node, receipt)
+        if failure is not None:
+            return failure
+        task = self._follow_task(node, upid, deadline_seconds=GUEST_TASK_DEADLINE_SECONDS,
+                                 sleep=sleep, clock=clock)
+        if task is None:
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        f"Proxmox task {upid} had not finished in time; check the node "
+                                        "before trying again.")
+        exit_status = task.get("exitstatus") if isinstance(task.get("exitstatus"), str) else None
+        receipt["task_exit_status"] = exit_status[:300] if exit_status else exit_status
+        if exit_status != "OK":
+            return self._change_outcome(receipt, False, "failed",
+                                        f"Proxmox task {upid} ended with: {receipt['task_exit_status']}")
+        try:
+            created = self._guest_exists(node, vmid)
+        except (httpx.HTTPError, RuntimeError):
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        "The Proxmox task finished, but the guest list could not be read back. "
+                                        "Check the node before trying again.")
+        if created is None:
+            return self._change_outcome(receipt, False, "failed",
+                                        f"The Proxmox task finished, but guest {vmid} is not listed.")
+        if created.get("type") != "lxc" or created.get("name") != hostname:
+            return self._change_outcome(receipt, False, "failed",
+                                        f"The Proxmox task finished, but guest {vmid} does not match the request.")
+        return self._change_outcome(receipt, True, "executed", type="lxc", name=hostname,
+                                    core_count=cores, memory_mib=memory_mib, verification_ok=True)
+
+    def guest_clone(self, node: str, vmid: int, *, newid: int, name: str, full: bool, pool: str | None,
+                    expected_type: str, expected_name: str | None,
+                    sleep=time.sleep, clock=time.monotonic) -> dict:
+        """Clone the exact approved guest to one new VMID and prove the new guest exists."""
+        if type(newid) is not int or not (1 <= newid <= MAX_VMID) or newid == vmid:
+            raise ValueError("Enter a new, different Proxmox VMID.")
+        if not isinstance(name, str) or not GUEST_NAME.fullmatch(name):
+            raise ValueError("Enter a guest name of letters, digits and hyphens, starting and ending with one.")
+        if not isinstance(full, bool):
+            raise ValueError("Choose a full or linked clone.")
+        if pool is not None and (not isinstance(pool, str) or not STORAGE_ID.fullmatch(pool)):
+            raise ValueError("Enter one exact pool name.")
+        receipt = self._change_receipt("guest_clone", node, newid)
+        receipt.update(source_vmid=vmid, name=name)
+        try:
+            guest = self._match_guest(node, vmid, expected_type, expected_name)
+        except ProviderResourceNotFound as error:
+            return self._change_outcome(receipt, False, "not_found", str(error))
+        except ProxmoxConflict as error:
+            return self._change_outcome(receipt, False, "conflict", str(error))
+        except (httpx.HTTPError, RuntimeError):
+            return self._change_outcome(receipt, False, "error",
+                                        "Proxmox could not confirm the source guest; nothing was sent.")
+        receipt.update(type=guest["type"], source_name=guest["name"])
+        try:
+            existing = self._guest_exists(node, newid)
+        except (httpx.HTTPError, RuntimeError):
+            return self._change_outcome(receipt, False, "error",
+                                        "Proxmox could not confirm the guest list; nothing was cloned.")
+        if existing is not None:
+            return self._change_outcome(receipt, False, "conflict",
+                                        f"VMID {newid} is already used on node {existing.get('node')}; "
+                                        "nothing was cloned.")
+        form = {"newid": str(newid), "full": "1" if full else "0"}
+        form["hostname" if guest["type"] == "lxc" else "name"] = name
+        if pool:
+            form["pool"] = pool
+        try:
+            response = self._post(f"/nodes/{node}/{guest['type']}/{vmid}/clone", form)
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            return self._change_outcome(receipt, False, "error",
+                                        "Proxmox could not be reached; nothing was cloned.")
+        except httpx.HTTPError:
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        "Proxmox did not answer the clone request; it may have run. "
+                                        "Check the node before trying again.", retry_safe=False)
+        upid, failure = self._task_response(response, node, receipt)
+        if failure is not None:
+            return failure
+        task = self._follow_task(node, upid, deadline_seconds=GUEST_TASK_DEADLINE_SECONDS,
+                                 sleep=sleep, clock=clock)
+        if task is None:
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        f"Proxmox task {upid} had not finished in time; check the node "
+                                        "before trying again.")
+        exit_status = task.get("exitstatus") if isinstance(task.get("exitstatus"), str) else None
+        receipt["task_exit_status"] = exit_status[:300] if exit_status else exit_status
+        if exit_status != "OK":
+            return self._change_outcome(receipt, False, "failed",
+                                        f"Proxmox task {upid} ended with: {receipt['task_exit_status']}")
+        try:
+            created = self._guest_exists(node, newid)
+        except (httpx.HTTPError, RuntimeError):
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        "The Proxmox task finished, but the guest list could not be read back. "
+                                        "Check the node before trying again.")
+        if created is None or created.get("name") != name:
+            return self._change_outcome(receipt, False, "failed",
+                                        f"The Proxmox task finished, but new guest {newid} is not listed as "
+                                        f"'{name}'.")
+        return self._change_outcome(receipt, True, "executed", new_vmid=newid,
+                                    new_name=name, verification_ok=True)
+
+    def backup_now(self, node: str, vmid: int, *, storage: str, mode: str = "snapshot",
+                   expected_type: str, expected_name: str | None,
+                   sleep=time.sleep, clock=time.monotonic) -> dict:
+        """Start one backup of the exact approved guest and prove a new volume exists."""
+        if not isinstance(storage, str) or not STORAGE_ID.fullmatch(storage):
+            raise ValueError("Enter one exact backup storage name.")
+        if mode not in {"snapshot", "suspend", "stop"}:
+            raise ValueError("The backup mode must be snapshot, suspend or stop.")
+        receipt = self._change_receipt("backup_now", node, vmid)
+        try:
+            guest = self._match_guest(node, vmid, expected_type, expected_name)
+        except ProviderResourceNotFound as error:
+            return self._change_outcome(receipt, False, "not_found", str(error))
+        except ProxmoxConflict as error:
+            return self._change_outcome(receipt, False, "conflict", str(error))
+        except (httpx.HTTPError, RuntimeError):
+            return self._change_outcome(receipt, False, "error",
+                                        "Proxmox could not confirm the guest's current state; nothing was sent.")
+        receipt.update(type=guest["type"], name=guest["name"])
+        if guest["lock"]:
+            return self._change_outcome(receipt, False, "conflict",
+                                        f"The guest is locked ({guest['lock']}); nothing was changed.")
+        started = int(time.time())
+        form = {"vmid": str(vmid), "storage": storage, "mode": mode, "compress": "zstd"}
+        try:
+            response = self._post(f"/nodes/{node}/vzdump", form)
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            return self._change_outcome(receipt, False, "error",
+                                        "Proxmox could not be reached; no backup was started.")
+        except httpx.HTTPError:
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        "Proxmox did not answer the backup request; it may have run. "
+                                        "Check the node before trying again.", retry_safe=False)
+        upid, failure = self._task_response(response, node, receipt)
+        if failure is not None:
+            return failure
+        task = self._follow_task(node, upid, deadline_seconds=BACKUP_TASK_DEADLINE_SECONDS,
+                                 sleep=sleep, clock=clock)
+        if task is None:
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        f"Proxmox task {upid} had not finished in time; check the storage "
+                                        "before trying again.")
+        exit_status = task.get("exitstatus") if isinstance(task.get("exitstatus"), str) else None
+        receipt["task_exit_status"] = exit_status[:300] if exit_status else exit_status
+        if exit_status != "OK":
+            return self._change_outcome(receipt, False, "failed",
+                                        f"Proxmox task {upid} ended with: {receipt['task_exit_status']}")
+        try:
+            rows = self._rows(self._get(f"/nodes/{node}/storage/{quote(storage, safe='')}/content",
+                                        {"content": "backup"}))
+            new = [row for row in rows if row.get("vmid") == vmid
+                   and isinstance(row.get("ctime"), int) and row["ctime"] >= started - 60]
+        except (httpx.HTTPError, RuntimeError):
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        "The Proxmox task finished, but the backup storage could not be read "
+                                        "back. Check the storage before trying again.")
+        receipt["new_backups"] = len(new)
+        if not new:
+            return self._change_outcome(receipt, False, "failed",
+                                        "The Proxmox task finished, but no new backup volume is listed.")
+        volumes = [row.get("volid") for row in new if isinstance(row.get("volid"), str)]
+        return self._change_outcome(receipt, True, "executed", storage=storage, volume=volumes[0] if volumes else None,
+                                    verification_ok=True)
+
+    def backup_restore(self, node: str, *, volume: str, newid: int, name: str, storage: str | None,
+                       pool: str | None, sleep=time.sleep, clock=time.monotonic) -> dict:
+        """Restore one backup volume into a NEW guest and prove the new guest exists."""
+        if type(newid) is not int or not (1 <= newid <= MAX_VMID):
+            raise ValueError("Enter one valid new Proxmox VMID.")
+        if not isinstance(name, str) or not GUEST_NAME.fullmatch(name):
+            raise ValueError("Enter a guest name of letters, digits and hyphens, starting and ending with one.")
+        if not isinstance(volume, str) or len(volume) > 400 or \
+                not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]{0,63}:backup/vzdump-(lxc|qemu)-[^\s]{1,300}", volume):
+            raise ValueError("Choose one backup volume from the storage content.")
+        match = re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]{0,63}:backup/vzdump-(lxc|qemu)-[^\s]{1,300}", volume)
+        guest_type = match.group(1)
+        if storage is not None and (not isinstance(storage, str) or not STORAGE_ID.fullmatch(storage)):
+            raise ValueError("Enter one exact target storage name.")
+        if pool is not None and (not isinstance(pool, str) or not STORAGE_ID.fullmatch(pool)):
+            raise ValueError("Enter one exact pool name.")
+        receipt = self._change_receipt("backup_restore", node, newid)
+        receipt.update(type=guest_type, name=name, volume=volume)
+        try:
+            existing = self._guest_exists(node, newid)
+        except (httpx.HTTPError, RuntimeError):
+            return self._change_outcome(receipt, False, "error",
+                                        "Proxmox could not confirm the guest list; nothing was restored.")
+        if existing is not None:
+            return self._change_outcome(receipt, False, "conflict",
+                                        f"VMID {newid} is already used on node {existing.get('node')}; "
+                                        "nothing was restored.")
+        if guest_type == "lxc":
+            path, form = f"/nodes/{node}/lxc", {"vmid": str(newid), "ostemplate": volume, "restore": "1",
+                                                "hostname": name}
+        else:
+            path, form = f"/nodes/{node}/qemu", {"vmid": str(newid), "archive": volume, "name": name}
+        if storage:
+            form["storage"] = storage
+        if pool:
+            form["pool"] = pool
+        try:
+            response = self._post(path, form)
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            return self._change_outcome(receipt, False, "error",
+                                        "Proxmox could not be reached; nothing was restored.")
+        except httpx.HTTPError:
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        "Proxmox did not answer the restore request; it may have run. "
+                                        "Check the node before trying again.", retry_safe=False)
+        upid, failure = self._task_response(response, node, receipt)
+        if failure is not None:
+            return failure
+        task = self._follow_task(node, upid, deadline_seconds=GUEST_TASK_DEADLINE_SECONDS,
+                                 sleep=sleep, clock=clock)
+        if task is None:
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        f"Proxmox task {upid} had not finished in time; check the node "
+                                        "before trying again.")
+        exit_status = task.get("exitstatus") if isinstance(task.get("exitstatus"), str) else None
+        receipt["task_exit_status"] = exit_status[:300] if exit_status else exit_status
+        if exit_status != "OK":
+            return self._change_outcome(receipt, False, "failed",
+                                        f"Proxmox task {upid} ended with: {receipt['task_exit_status']}")
+        try:
+            created = self._guest_exists(node, newid)
+        except (httpx.HTTPError, RuntimeError):
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        "The Proxmox task finished, but the guest list could not be read back. "
+                                        "Check the node before trying again.")
+        if created is None or created.get("type") != guest_type:
+            return self._change_outcome(receipt, False, "failed",
+                                        f"The Proxmox task finished, but new guest {newid} is not listed.")
+        return self._change_outcome(receipt, True, "executed", new_vmid=newid, new_name=name,
+                                    new_type=guest_type, verification_ok=True)
 
 
 def proxmox_integration_status(settings) -> dict:

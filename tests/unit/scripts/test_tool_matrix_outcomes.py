@@ -312,6 +312,44 @@ def test_every_registered_tool_has_a_live_matrix_case():
     assert sorted(set(TOOLS) - covered) == []
 
 
+def test_guest_change_cases_run_on_disposable_guests_and_leave_the_lab_guest_as_found():
+    cases = [case for case in matrix.build_cases("10191234", "FIX") if case[1].startswith("proxmox_")]
+    order = [case[0] for case in cases]
+    tools = {case[0]: case[1] for case in cases}
+    # A new container is created, cloned, backed up, restored, and every guest
+    # the run made is deleted again; the lab guest only gets reversible changes.
+    assert order.index("proxmox-guest-create") < order.index("proxmox-guest-clone") \
+        < order.index("proxmox-backup-now") < order.index("proxmox-backup-restore") \
+        < order.index("proxmox-delete-restored") < order.index("proxmox-delete-clone") \
+        < order.index("proxmox-delete-created")
+    for case_id in ("proxmox-delete-restored", "proxmox-delete-clone", "proxmox-delete-created"):
+        assert tools[case_id] == "proxmox_guest_delete"
+    prompts = {case[0]: case[2] for case in cases}
+    assert "{proxmox_created_vmid}" in prompts["proxmox-delete-created"]
+    assert "{proxmox_vmid}" not in prompts["proxmox-delete-created"]
+    assert "{proxmox_vmid}" in prompts["proxmox-snapshot-rollback"]
+
+
+def test_a_destructive_proposal_is_approved_with_the_name_it_shows():
+    assert matrix.confirmation_for({"proposed_tool": {"tool": "proxmox_guest_delete", "arguments": {},
+                                                      "confirmation_text": "lab-2"}}) == "lab-2"
+    assert matrix.confirmation_for({"proposed_tool": {"tool": "proxmox_guest_start", "arguments": {}}}) is None
+    assert matrix.confirmation_for({"proposed_tool": None}) is None
+
+
+def test_created_guests_are_remembered_for_their_cleanup_cases():
+    context = {}
+    matrix.record_created("proxmox_guest_create", {"ok": True, "new_vmid": None, "vmid": 993,
+                                                   "name": "matrix-a"}, context)
+    matrix.record_created("proxmox_guest_clone", {"ok": True, "new_vmid": 994, "new_name": "matrix-b"}, context)
+    matrix.record_created("proxmox_backup_now", {"ok": True, "volume": "local:backup/vzdump-lxc-993-x.tar.zst"},
+                          context)
+    matrix.record_created("proxmox_backup_restore", {"ok": True, "new_vmid": 995, "new_name": "matrix-c"}, context)
+    assert context == {"proxmox_created_vmid": 993, "proxmox_clone_vmid": 994,
+                       "proxmox_backup_volume": "local:backup/vzdump-lxc-993-x.tar.zst",
+                       "proxmox_restored_vmid": 995}
+
+
 def test_a_provider_that_is_not_set_up_is_reported_as_such_not_as_a_failure():
     message = "Proxmox VE is not set up on this Janus host. Missing settings: PROXMOX_BASE_URL."
     # Phoenix keeps only the error text of a failed job (no per-step result), so

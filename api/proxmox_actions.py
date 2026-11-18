@@ -1,4 +1,4 @@
-"""Phoenix-to-AI Proxmox dashboard: the live overview and governed power-action proposals.
+"""Phoenix-to-AI Proxmox dashboard: live reads and governed guest-change proposals.
 
 Phoenix authenticates the owner and calls these routes with the internal
 token. A dashboard button runs through exactly the gateway a chat request
@@ -8,11 +8,11 @@ approval is decided through the existing /v1/approvals routes.
 """
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 
 from api.extensions import require_internal
 
@@ -23,8 +23,20 @@ ACTION_TOOLS = {
     "shutdown": "proxmox_guest_shutdown",
     "reboot": "proxmox_guest_reboot",
     "force_stop": "proxmox_guest_force_stop",
+    "set_resources": "proxmox_guest_set_resources",
+    "resize_disk": "proxmox_guest_resize_disk",
+    "set_options": "proxmox_guest_set_options",
+    "snapshot_create": "proxmox_snapshot_create",
+    "snapshot_delete": "proxmox_snapshot_delete",
+    "snapshot_rollback": "proxmox_snapshot_rollback",
+    "backup_now": "proxmox_backup_now",
+    "backup_restore": "proxmox_backup_restore",
+    "clone": "proxmox_guest_clone",
+    "create": "proxmox_guest_create",
+    "delete": "proxmox_guest_delete",
 }
-ACTION_WORDS = {"start": "Start", "shutdown": "Shut down", "reboot": "Reboot", "force_stop": "Force stop"}
+NEW_GUEST_ACTIONS = frozenset({"create", "backup_restore"})
+POWER_ACTIONS = frozenset({"start", "shutdown", "reboot", "force_stop"})
 SPECIALIST = "proxmox-specialist"
 # The signed-in account, sent by Phoenix from its session (never by the browser);
 # the read uses that account's own Proxmox link, else the machine default.
@@ -48,8 +60,88 @@ class ActionProposal(BaseModel):
     model_config = ConfigDict(extra="forbid")
     owner: str = Field(min_length=1, max_length=200)
     node: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
-    vmid: StrictInt = Field(ge=1, le=999_999_999)
-    action: Literal["start", "shutdown", "reboot", "force_stop"]
+    vmid: StrictInt | None = Field(default=None, ge=1, le=999_999_999)
+    action: Literal[
+        "start", "shutdown", "reboot", "force_stop", "set_resources", "resize_disk", "set_options",
+        "snapshot_create", "snapshot_delete", "snapshot_rollback", "backup_now", "backup_restore", "clone",
+        "create", "delete",
+    ]
+    params: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_change_parameters(self):
+        _validate_action_parameters(self.action, self.vmid, self.params)
+        return self
+
+
+def _validate_action_parameters(action: str, vmid: int | None, params: dict[str, Any]) -> None:
+    from tools.registry import get_tool
+
+    if not isinstance(params, dict):
+        raise ValueError("Proxmox action parameters must be an object.")
+    if action not in NEW_GUEST_ACTIONS and vmid is None:
+        raise ValueError("This Proxmox action requires an exact guest VMID.")
+
+    tool = get_tool(ACTION_TOOLS[action])
+    if not isinstance(tool, dict):
+        raise ValueError("The Proxmox action has no registered capability.")
+
+    normalized = dict(params)
+    if action == "create" and "newid" in normalized:
+        requested = normalized.pop("newid")
+        if "vmid" in normalized and normalized["vmid"] != requested:
+            raise ValueError("The requested new VMID was supplied twice with different values.")
+        normalized["vmid"] = requested
+    if action in NEW_GUEST_ACTIONS and vmid is not None:
+        parameter_vmid = normalized.get("vmid" if action == "create" else "newid")
+        if parameter_vmid is not None and vmid != parameter_vmid:
+            raise ValueError("The requested new VMID was supplied twice with different values.")
+
+    schema = tool.get("parameters")
+    if not isinstance(schema, dict):
+        raise ValueError("The Proxmox capability has an invalid parameter schema.")
+    allowed = set(schema) - {"node"}
+    if set(normalized) - allowed:
+        raise ValueError("Proxmox action contains unsupported parameters.")
+    if any(not _matches_parameter_type(value, schema[key].get("type")) for key, value in normalized.items()):
+        raise ValueError("Proxmox action parameter types are invalid.")
+    required = set(tool.get("required_arguments", [])) - {"node", "vmid"}
+    if not required <= normalized.keys():
+        raise ValueError("Proxmox action is missing required parameters.")
+
+
+def _matches_parameter_type(value: Any, expected: str | None) -> bool:
+    if expected == "int":
+        return type(value) is int and 1 <= value <= 999_999_999
+    if expected == "bool":
+        return type(value) is bool
+    if expected == "str":
+        return isinstance(value, str) and len(value) <= 256
+    return False
+
+
+def _tool_arguments(body: ActionProposal) -> dict[str, Any]:
+    arguments: dict[str, Any] = {"node": body.node}
+    if body.action not in NEW_GUEST_ACTIONS and body.vmid is not None:
+        arguments["vmid"] = body.vmid
+    arguments.update(body.params)
+    if body.action in NEW_GUEST_ACTIONS:
+        requested_vmid = body.vmid if body.vmid is not None else body.params.get("newid")
+        if requested_vmid is not None:
+            target_argument = "vmid" if body.action == "create" else "newid"
+            arguments[target_argument] = requested_vmid
+        if body.action == "create":
+            arguments.pop("newid", None)
+    return arguments
+
+
+def _proposal_instruction(action: str, node: str, arguments: dict[str, Any]) -> str:
+    values = ", ".join(f"{key}={value}" for key, value in arguments.items() if key != "node")
+    target = f"guest VMID {arguments['vmid']}" if "vmid" in arguments else "a new guest"
+    if action in NEW_GUEST_ACTIONS and not ("vmid" in arguments or "newid" in arguments):
+        values = ", ".join(part for part in (values, "leave the new VMID for Proxmox to allocate") if part)
+    detail = f" Exact supplied values: {values}." if values else ""
+    return f"Owner requested {action.replace('_', ' ')} for {target} on Proxmox node {node}.{detail}"
 
 
 @router.post("/internal/v1/proxmox/actions/propose")
@@ -62,13 +154,15 @@ async def propose_action(body: ActionProposal, request: Request):
 
     tool = ACTION_TOOLS[body.action]
     agent = runtime.hub.runtime.agent_registry.get(SPECIALIST)
-    # The dashboard request is the owner's explicit, exact instruction; the
-    # gateway grounds node and VMID in this text like any chat request.
-    instruction = f"{ACTION_WORDS[body.action]} guest {body.vmid} on Proxmox node {body.node}."
+    # The authenticated backend forwards explicit form values. Include their
+    # exact text in the grounding request; the gateway still applies the same
+    # tool schema, owner switches, live policy and approval path used by chat.
+    arguments = _tool_arguments(body)
+    instruction = _proposal_instruction(body.action, body.node, arguments)
     owner_token = request_owner.set(body.owner)
     disabled_token = disabled_tools.set(owner_disabled_tools(body.owner))
     try:
-        result = await runtime.tool_gateway.execute(agent, instruction, tool, {"node": body.node, "vmid": body.vmid})
+        result = await runtime.tool_gateway.execute(agent, instruction, tool, arguments)
     finally:
         disabled_tools.reset(disabled_token)
         request_owner.reset(owner_token)
@@ -80,19 +174,50 @@ async def propose_action(body: ActionProposal, request: Request):
         if result.get("status") == "denied":
             raise HTTPException(409, {"code": "proxmox_action_refused", "message": message})
         raise HTTPException(503, {"code": "proxmox_action_unavailable", "message": message})
-    arguments = result["approval_arguments"]
-    return {
+    approval_arguments = result.get("approval_arguments")
+    if not isinstance(approval_arguments, dict):
+        raise HTTPException(503, {"code": "proxmox_action_unavailable",
+                                  "message": "The AI service returned an invalid approval proposal."})
+
+    allocated_vmid = approval_arguments.get("allocated_vmid")
+    new_vmid = allocated_vmid
+    if new_vmid is None:
+        new_vmid = approval_arguments.get("newid")
+    if new_vmid is None and body.action == "create":
+        new_vmid = approval_arguments.get("vmid")
+
+    if body.action == "clone":
+        target_vmid = approval_arguments.get("vmid")
+    elif body.action in NEW_GUEST_ACTIONS:
+        target_vmid = new_vmid
+    else:
+        target_vmid = approval_arguments.get("vmid")
+    if type(target_vmid) is not int or not (1 <= target_vmid <= 999_999_999):
+        raise HTTPException(503, {"code": "proxmox_action_unavailable",
+                                  "message": "The AI service did not return the exact approved VMID."})
+
+    response = {
         "status": "approval_required",
         "approval_id": result["approval_id"],
         "tool": tool,
         "action": body.action,
         "risk": result.get("risk"),
-        "node": arguments["node"],
-        "vmid": arguments["vmid"],
-        "type": arguments.get("expected_type"),
-        "name": arguments.get("expected_name"),
-        "approval_text": format_approval_required(tool, arguments, None),
+        "node": approval_arguments.get("node"),
+        "vmid": target_vmid,
+        "type": approval_arguments.get("expected_type") or approval_arguments.get("type"),
+        "name": (approval_arguments.get("expected_name") or approval_arguments.get("name")
+                 or approval_arguments.get("hostname")),
+        "approval_text": format_approval_required(tool, approval_arguments, None),
     }
+    if approval_arguments.get("node") != body.node:
+        raise HTTPException(503, {"code": "proxmox_action_unavailable",
+                                  "message": "The AI service returned a different Proxmox node."})
+    if body.action in {"clone", *NEW_GUEST_ACTIONS}:
+        if type(new_vmid) is not int or not (1 <= new_vmid <= 999_999_999):
+            raise HTTPException(503, {"code": "proxmox_action_unavailable",
+                                      "message": "The AI service did not return the exact approved new VMID."})
+        response["new_vmid"] = new_vmid
+    return response
 
 
 @router.get("/internal/v1/proxmox/overview")

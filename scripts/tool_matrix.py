@@ -188,6 +188,42 @@ def build_cases(run: str, project: str) -> list[tuple[str, str, str, object]]:
         ("proxmox-guest-shutdown", "proxmox_guest_shutdown", "Shut down guest {proxmox_vmid} on node {proxmox_node}.", True),
         ("proxmox-guest-restart", "proxmox_guest_start", "Start guest {proxmox_vmid} on node {proxmox_node} again.", True),
         ("proxmox-guest-force-stop", "proxmox_guest_force_stop", "Force stop guest {proxmox_vmid} on node {proxmox_node}.", True),
+        # Governed guest changes. Reversible ones run on the lab guest and are
+        # undone in the same run (snapshot taken, rolled back to, deleted; tags
+        # and start-at-boot set and restored). Everything that makes a guest
+        # works on a disposable container this run creates, and every guest the
+        # run makes is deleted again. Destructive approvals send the exact name
+        # the proposal shows (confirmation_for).
+        ("proxmox-snapshot-create", "proxmox_snapshot_create",
+         "Take a snapshot named matrix{run} of guest {proxmox_vmid} on node {proxmox_node}.", True),
+        ("proxmox-snapshot-rollback", "proxmox_snapshot_rollback",
+         "Roll guest {proxmox_vmid} on node {proxmox_node} back to snapshot matrix{run}.", True),
+        ("proxmox-snapshot-delete", "proxmox_snapshot_delete",
+         "Delete snapshot matrix{run} of guest {proxmox_vmid} on node {proxmox_node}.", True),
+        ("proxmox-set-options", "proxmox_guest_set_options",
+         "Set the tags of guest {proxmox_vmid} on node {proxmox_node} to lab,matrix.", True),
+        ("proxmox-restore-options", "proxmox_guest_set_options",
+         "Set the tags of guest {proxmox_vmid} on node {proxmox_node} to lab.", True),
+        ("proxmox-guest-create", "proxmox_guest_create",
+         "Create a container named matrix-{run} on node {proxmox_node} from template {proxmox_template} "
+         "with 1 core, 128 MiB memory and a 1 GiB disk on storage {proxmox_disk_storage}.", True),
+        ("proxmox-set-resources", "proxmox_guest_set_resources",
+         "Set guest {proxmox_created_vmid} on node {proxmox_node} to 160 MiB of memory.", True),
+        ("proxmox-resize-disk", "proxmox_guest_resize_disk",
+         "Grow the rootfs disk of guest {proxmox_created_vmid} on node {proxmox_node} by 1 GiB.", True),
+        ("proxmox-guest-clone", "proxmox_guest_clone",
+         "Make a full clone of guest {proxmox_created_vmid} on node {proxmox_node} named matrix-{run}-clone.", True),
+        ("proxmox-backup-now", "proxmox_backup_now",
+         "Back up guest {proxmox_created_vmid} on node {proxmox_node} to storage {proxmox_backup_storage}.", True),
+        ("proxmox-backup-restore", "proxmox_backup_restore",
+         "Restore backup {proxmox_backup_volume} on node {proxmox_node} as a new guest named matrix-{run}-restored.",
+         True),
+        ("proxmox-delete-restored", "proxmox_guest_delete",
+         "Delete guest {proxmox_restored_vmid} on node {proxmox_node}.", True),
+        ("proxmox-delete-clone", "proxmox_guest_delete",
+         "Delete guest {proxmox_clone_vmid} on node {proxmox_node}.", True),
+        ("proxmox-delete-created", "proxmox_guest_delete",
+         "Delete guest {proxmox_created_vmid} on node {proxmox_node}.", True),
     ]
 
 
@@ -299,6 +335,23 @@ def record_created(tool: str, tool_result: dict, context: dict) -> None:
     # --- service desk results ---
     if tool == "service_request_create" and tool_result.get("ticket_key"):
         context["request"] = tool_result["ticket_key"]
+    # --- Proxmox guests this run made (each is deleted again by a later case) ---
+    new_vmid = tool_result.get("new_vmid") if type(tool_result.get("new_vmid")) is int else None
+    if tool == "proxmox_guest_create" and type(tool_result.get("vmid")) is int:
+        context["proxmox_created_vmid"] = tool_result["vmid"]
+    if tool == "proxmox_guest_clone" and new_vmid is not None:
+        context["proxmox_clone_vmid"] = new_vmid
+    if tool == "proxmox_backup_restore" and new_vmid is not None:
+        context["proxmox_restored_vmid"] = new_vmid
+    if tool == "proxmox_backup_now" and isinstance(tool_result.get("volume"), str):
+        context["proxmox_backup_volume"] = tool_result["volume"]
+
+
+def confirmation_for(job: dict) -> str | None:
+    """The exact text a destructive proposal says must be typed to approve it."""
+    proposal = job.get("proposed_tool")
+    text = proposal.get("confirmation_text") if isinstance(proposal, dict) else None
+    return text if isinstance(text, str) and text else None
 
 
 def worker_evidence(job: dict) -> dict | None:
@@ -602,7 +655,12 @@ def main() -> int:
                        ("assignee", os.environ.get("ACCEPTANCE_JIRA_ASSIGNEE")),
                        ("status", os.environ.get("ACCEPTANCE_JIRA_STATUS")),
                        ("proxmox_node", os.environ.get("ACCEPTANCE_PROXMOX_NODE")),
-                       ("proxmox_vmid", os.environ.get("ACCEPTANCE_PROXMOX_VMID"))):
+                       ("proxmox_vmid", os.environ.get("ACCEPTANCE_PROXMOX_VMID")),
+                       # Guest-change cases: an existing container template, the
+                       # storage for a new root disk, and a backup storage.
+                       ("proxmox_template", os.environ.get("ACCEPTANCE_PROXMOX_TEMPLATE")),
+                       ("proxmox_disk_storage", os.environ.get("ACCEPTANCE_PROXMOX_DISK_STORAGE")),
+                       ("proxmox_backup_storage", os.environ.get("ACCEPTANCE_PROXMOX_BACKUP_STORAGE"))):
         if value and key not in context:
             context[key] = value
     # Notifications go to the signed-in lab user, a registered application user.
@@ -694,7 +752,7 @@ def main() -> int:
                     if approve == "reject":
                         terminal = client.reject_job(job["job_id"])
                     else:
-                        client.approve_job(job["job_id"])
+                        client.approve_job(job["job_id"], confirm_name=confirmation_for(terminal))
                     terminal = client.wait_for_terminal(job["job_id"], poll_seconds=2)
                     row["after_decision"] = summarize(terminal)
                 _assert_history_roundtrip(client.get_history(chat), terminal, chat_id=chat)
