@@ -1351,6 +1351,36 @@
           "443"
         ]
       }
+    },
+    {
+      "name": "tailnet-grant-remove-says-grant",
+      "user": "Remove the tailnet grant that lets tag:db reach tag:backup on port 5432.",
+      "allowed_tools": [
+        "network_tailnet_grant_remove"
+      ],
+      "allowed_arguments": {
+        "sources": [
+          "tag:db"
+        ],
+        "destinations": [
+          "tag:backup"
+        ],
+        "ports": [
+          "5432"
+        ]
+      },
+      "expected_tool": "network_tailnet_grant_remove",
+      "expected_arguments": {
+        "sources": [
+          "tag:db"
+        ],
+        "destinations": [
+          "tag:backup"
+        ],
+        "ports": [
+          "5432"
+        ]
+      }
     }
   ]
 }

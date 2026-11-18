@@ -42,6 +42,10 @@ def test_grant_examples_name_every_selector_and_port_exactly_and_never_a_user_or
 
 
 def test_the_agent_definition_says_how_grant_changes_are_governed():
-    text = Path("subagents/agents/networking-specialist.md").read_text(encoding="utf-8")
+    text = " ".join(Path("subagents/agents/networking-specialist.md").read_text(encoding="utf-8").split())
     assert "network_tailnet_grant_add" in text and "network_tailnet_grant_remove" in text
-    assert "approval" in text and "typed" in text
+    assert "approval" in text and "the owner types it when approving a removal" in text
+    # Live, a removal proposal that added the grant text itself was refused as an unknown argument:
+    # the model proposes only the three named lists; Janus writes the grant.
+    assert "only sources, destinations and ports" in text
+    assert "never add a grant, etag or digest yourself" in text

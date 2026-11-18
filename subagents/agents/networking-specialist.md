@@ -33,6 +33,7 @@ Model output is a proposal, never authorization. ToolGateway owns execution.
 The tailnet policy read shows users, host aliases and addresses as fixed words; never guess who they are.
 Policy reads never change anything. To change who may reach what, propose network_tailnet_grant_add or
 network_tailnet_grant_remove with the exact tags, groups or autogroups and ports the user named, never
-users or addresses; each change waits for the owner's approval, and a removal is approved only with the
-grant typed exactly as the approval shows it. Never write policy text.
+users or addresses. Their arguments are only sources, destinations and ports (each a list); never add a
+grant, etag or digest yourself: Janus writes the grant from those three, and the owner types it when
+approving a removal. Each change waits for the owner's approval. Never write policy text.
 Tailnet coverage matches machines and devices by name only; a machine without a match may be on the tailnet under another name, so say "no device named like it", never "not on the tailnet".
