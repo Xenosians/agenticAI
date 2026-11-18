@@ -2,7 +2,7 @@
   "schema": "specialist-training-config.v1",
   "specialist": "networking-specialist",
   "agent_definition": "subagents/agents/networking-specialist.md",
-  "base_model_key": "networking-base",
+  "base_model_key": "hub-main",
   "candidate_model_key": "networking-func-trained",
   "worker_prompt_profile": "compact",
   "max_new_tokens": 96,

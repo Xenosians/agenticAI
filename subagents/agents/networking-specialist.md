@@ -19,7 +19,7 @@ tools:
   - network_tailnet_grant_add
   - network_tailnet_grant_remove
   - network_dns_integrity_check
-model: networking-base
+model: hub-main
 max_steps: 2
 ---
 
