@@ -189,12 +189,25 @@ def test_production_http_and_local_loader_calls_have_no_direct_bypass():
                 continue
             # Acceptance/probe tools are independent observers, outside app dispatch.
             check_http = directory in {"services", "api"}
-            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            # The portable training worker cannot run the operator's Lua: the host admits every job
+            # input through Lua before dispatch, and the worker loads only inside admitted_load (an
+            # input with a receipt in the job) or own_output (weights the same job just trained).
+            # The wrappers count only inside learning/worker, so host code cannot use them to skip Lua.
+            admitted = set()
+            if path.is_relative_to(root / "learning" / "worker"):
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                            and node.func.id in {"admitted_load", "own_output"}:
+                        admitted.update(id(inner) for argument in node.args for inner in ast.walk(argument))
+            for node in ast.walk(tree):
                 if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
                     continue
                 direct_http = (check_http and isinstance(node.func.value, ast.Name)
                                and node.func.value.id == "httpx" and node.func.attr in {"Client", "AsyncClient"})
-                if direct_http or node.func.attr == "from_pretrained":
+                loader = node.func.attr == "from_pretrained" or (
+                    node.func.attr == "load_adapter" and path.is_relative_to(root / "learning" / "worker"))
+                if direct_http or (loader and id(node) not in admitted):
                     bypasses.append(f"{path.relative_to(root)}:{node.lineno}")
     assert bypasses == []
 

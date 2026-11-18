@@ -1,0 +1,17 @@
+# The training worker (learning/worker): what a Proxmox container, a GPU machine or a free notebook installs.
+# Pinned to the versions the AI service trains with today (qwen-infra), so a worker's adapter loads in serving.
+torch==2.13.0
+transformers==5.16.1
+peft==0.20.0
+trl==1.12.0
+datasets==5.0.1
+accelerate==1.14.0
+huggingface_hub==1.28.0
+safetensors==0.8.0
+tokenizers
+pydantic>=2.13,<3
+pyarrow
+# GGUF weights (Ollama models, *.gguf repositories) dequantize through the gguf reader.
+gguf
+# QLoRA (CUDA workers only; CPU workers train LoRA and say so in their result).
+bitsandbytes==0.50.2; platform_system == "Linux" and platform_machine == "x86_64"
