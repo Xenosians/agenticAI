@@ -74,6 +74,8 @@ def test_a_local_worker_runs_the_job_in_its_own_process(tmp_path):
     process = transport.start("access-20261119T000000Z")
     assert process.argv[1:3] == ["-m", "learning.worker.stages"]
     assert process.kwargs["env"]["X"] == "1"
+    # The child writes its log through its own handle; this process keeps none open per run.
+    assert process.kwargs["stdout"].closed
     assert (tmp_path / "local/jobs/access-20261119T000000Z/job.json").is_file()
 
 

@@ -118,11 +118,13 @@ class LocalTransport:
         job_id = _job_id(job_id)
         runs = self.root / "runs"
         runs.mkdir(parents=True, exist_ok=True)
-        log = (runs / f"{job_id}.log").open("ab")
-        process = self.launcher([self.python, "-m", "learning.worker.stages", str(self.root / "jobs" / job_id / "job.json"),
-                                 str(runs / job_id), "--stop-file", str(runs / f"{job_id}.stop")],
-                                cwd=str(self.code), env=self.environment, stdin=subprocess.DEVNULL, stdout=log,
-                                stderr=log, start_new_session=True)
+        # The child inherits the log; this process closes its own handle once the child has started.
+        with (runs / f"{job_id}.log").open("ab") as log:
+            process = self.launcher([self.python, "-m", "learning.worker.stages",
+                                     str(self.root / "jobs" / job_id / "job.json"), str(runs / job_id),
+                                     "--stop-file", str(runs / f"{job_id}.stop")],
+                                    cwd=str(self.code), env=self.environment, stdin=subprocess.DEVNULL, stdout=log,
+                                    stderr=log, start_new_session=True)
         self.processes[job_id] = process
         return process
 

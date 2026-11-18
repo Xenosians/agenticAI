@@ -60,17 +60,30 @@ specialist (`learning/continual/automation/specialists.py`):
 - A specialist is trained when its inputs changed since its last candidate:
   the reviewed examples and extra files, its tools and its worker prompt. An
   interrupted run is tried again; specialists take turns.
-- The run uses the specialist SFT recipe (QLoRA, 120 steps, 1,536 tokens)
-  under the same limits as above, and needs no queued learning events.
-- The candidate is checked on the specialist's held-out cases and next to the
-  specialist serving now. It is kept as `candidate` only when it passes every
-  case and does at least as well; otherwise as `rejected`. Either way it is
-  not registered: `scripts/specialist_sft_register_candidate.py` puts one into
-  service.
+- The one training worker (`learning/worker`), the same code that trains on
+  Proxmox and other machines, trains it in a child process and needs no
+  queued learning events: QLoRA SFT under the fit guard (4 epochs, 1,536
+  tokens), then DPO on the model's own wrong answers. A stage is kept only
+  when it beats the specialist it started from on the held-out cases; when
+  none does, the cycle ends `rejected` without a candidate.
+- The job carries the limits above: the worker pauses
+  `CONTINUAL_STEP_PAUSE_SECONDS` (at most 60) between optimizer steps and
+  holds at most `CONTINUAL_GPU_MEMORY_FRACTION` of GPU memory. For a request,
+  battery or shutdown the cycle asks the worker to stop; it stops at its next
+  step, held-out case or pause, and is killed if it has not stopped within two
+  minutes. A stopped run leaves nothing behind; a failed run keeps its log
+  (`runs/<job>.log`).
+- The worker gets no service secrets and downloads nothing: its job folder
+  links the base model's local weights and holds the training data.
+- Janus's own held-out gate then checks the candidate next to the specialist
+  serving now. It is kept as `candidate` only when it passes every case and
+  does at least as well; otherwise as `rejected`. Either way it is not
+  registered or served; putting one into service stays a separate decision.
 
 `CONTINUAL_HUB_TRAINING=false` leaves the Hub cycle off while specialists
-train. On a 6 GiB laptop GPU a 0.5B specialist run peaked at 3.3 GiB of GPU
-memory and about 2 GiB of RAM, at about 5 s per optimizer step.
+train. On a 6 GiB laptop GPU the worker took the access specialist from 0 to
+13 of 13 held-out cases in 219 s, peaking at 1.4 GiB of GPU memory and 3.5 GiB
+of RAM (SFT 88 s; DPO found no wrong answers to learn from).
 DPO and PPO default to a 12 GiB free-VRAM preflight in their new CLI entry points.
 These are conservative policies, not claims that every model needs that much memory.
 

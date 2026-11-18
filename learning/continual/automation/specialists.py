@@ -9,14 +9,19 @@ its last candidate:
 
 - targets are the reviewed configs in ``learning/config/specialists`` whose base
   model is small enough to train next to normal use of the machine;
+- the one training worker (``learning/worker``) trains it in a child process,
+  as it does on Proxmox and other machines: QLoRA SFT under the fit guard,
+  then DPO on the model's own wrong answers; a stage is kept only when it
+  beats the specialist it started from on the held-out cases;
 - the cycle runs under the same breathing-room limits as the Hub cycle
-  (limiter.py): it stops at the next optimizer step for a request, battery or
-  shutdown, and the specialist is tried again after the next idle window;
-- the candidate is checked on the specialist's held-out cases, next to the
-  specialist serving now, and kept where training wrote it.
+  (limiter.py): the job carries the step pause and GPU share, and the worker
+  stops at its next step, held-out case or pause for a request, battery or
+  shutdown; the specialist is tried again after the next idle window;
+- Janus's own held-out gate then checks the candidate next to the specialist
+  serving now, and the candidate stays where the worker wrote it.
 
 Nothing here registers or serves a candidate. Putting one into service stays an
-explicit decision (``scripts/specialist_sft_register_candidate.py``).
+explicit decision.
 """
 from __future__ import annotations
 
@@ -25,24 +30,32 @@ import hashlib
 import json
 import os
 import shutil
-import tempfile
+import subprocess
+import sys
 import time
 import uuid
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
-from learning.continual.automation.limiter import StepLimiter, TrainingYielded, gpu_budget
+from learning.continual.automation.limiter import TrainingYielded, gpu_budget
 from learning.paths import REPOSITORY_ROOT, RUNTIME_LEARNING_ROOT
+from learning.worker_jobs import build_specialist_job
+from learning.worker_transport import LocalTransport, collect_candidate
 
 SPECIALIST_CONFIG_DIRECTORY = REPOSITORY_ROOT / "learning" / "config" / "specialists"
 SPECIALIST_WORK_ROOT = RUNTIME_LEARNING_ROOT / "continuous" / "specialists"
 WEIGHT_SUFFIXES = (".safetensors", ".bin")
 
-# The same recipe the served small specialists were trained with.
-MAX_STEPS = 120
-MAX_LENGTH = 1536
+# What an idle cycle asks of the worker: the recipe with which the worker took the access specialist
+# from 0 to 13 of 13 held-out cases on a 6 GiB laptop GPU.
+WORKER_STAGES = ("sft", "dpo")
+WORKER_RECIPE = {"sft": {"epochs": 4, "max_length": 1536}, "dpo": {"max_length": 1536}}
+WORKER_POLL_SECONDS = 0.5
+# How long a worker asked to stop may take to reach its next step, case or pause before it is killed.
+WORKER_GRACE_SECONDS = 120.0
 
 
 @dataclass(frozen=True)
@@ -158,23 +171,100 @@ class SpecialistCycleResult:
     seconds: float = 0.0
 
 
-def build_corpus(target: SpecialistTarget, directory: Path) -> Path:
-    from learning.training.specialist_sft import build_specialist_sft_corpus
+def model_profiles() -> dict:
+    from config import Settings
 
-    build_specialist_sft_corpus(project_root=REPOSITORY_ROOT, config_path=target.config_path,
-                                output_directory=directory)
-    return directory
+    return Settings().model_profiles
 
 
-def train_candidate(*, target: SpecialistTarget, corpus_directory: Path, output_root: Path,
-                    between_steps: Callable[[], None]):
-    from learning.continual.automation.trainer import after_each_optimizer_step
-    from learning.training.specialist_sft import train_specialist_sft
+def worker_environment() -> dict[str, str]:
+    """The training process's environment: no service secrets, and no downloads (its inputs are local)."""
+    keep = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "CUDA_VISIBLE_DEVICES", "LD_LIBRARY_PATH",
+            "PYTORCH_CUDA_ALLOC_CONF", "JANUS_WORKER_CACHE")
+    environment = {key: os.environ[key] for key in keep if key in os.environ}
+    return environment | {"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1", "PYTHONDONTWRITEBYTECODE": "1",
+                          "TOKENIZERS_PARALLELISM": "false"}
 
-    with after_each_optimizer_step(between_steps):
-        return train_specialist_sft(project_root=REPOSITORY_ROOT, corpus_directory=corpus_directory,
-                                    output_root=output_root, allow_training=True, max_steps=MAX_STEPS,
-                                    max_length=MAX_LENGTH, external_sft_jsonl=list(target.external_sft_jsonl) or None)
+
+def local_transport(root: Path) -> LocalTransport:
+    return LocalTransport(root=root, python=sys.executable, environment=worker_environment())
+
+
+def candidate_manifest(target: SpecialistTarget, candidate: dict, run_directory: Path) -> SimpleNamespace:
+    """What Janus's held-out gate needs to load the worker's adapter on the specialist's base model."""
+    from config import Settings
+    from learning.training.specialist_sft import load_training_config, resolve_worker_prompt_profile
+
+    base = Settings().require_model_profile(target.base_model_key)
+    profile = resolve_worker_prompt_profile(config=load_training_config(target.config_path), base_profile=base)
+    return SimpleNamespace(base_model_path=str(base.model_path), adapter_directory=candidate["adapter_directory"],
+                           worker_prompt_profile=profile, output_directory=str(run_directory))
+
+
+def _discard_run(output_root: Path, job_id: str) -> None:
+    """A stopped run leaves nothing: not its output, its stop request or its log."""
+    runs = output_root / "runs"
+    shutil.rmtree(runs / job_id, ignore_errors=True)
+    for suffix in (".stop", ".log"):
+        (runs / f"{job_id}{suffix}").unlink(missing_ok=True)
+
+
+def _halt(transport, process, job_id: str) -> None:
+    transport.stop(job_id)  # seen at the worker's next optimizer step, held-out case or pause slice
+    try:
+        process.wait(timeout=WORKER_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+
+
+def _supervise(transport, process, job_id: str, between_steps: Callable[[], None]) -> None:
+    """Wait for the worker; when ``between_steps`` raises (a request, battery, shutdown) stop it first."""
+    try:
+        while transport.running(job_id):
+            between_steps()
+            time.sleep(WORKER_POLL_SECONDS)
+    except BaseException:
+        if transport.running(job_id):
+            _halt(transport, process, job_id)
+        raise
+
+
+def train_candidate(*, target: SpecialistTarget, output_root: Path, between_steps: Callable[[], None],
+                    limits: dict) -> SimpleNamespace | None:
+    """Train one candidate with the portable worker in a child process; None when no stage beat the start.
+
+    The worker process returns all of its memory when it exits, and a crash in
+    training cannot take the serving process with it.
+    """
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    job_id = f"{target.name}-{stamp}"
+    folder = build_specialist_job(target, profiles=model_profiles(), directory=output_root / "jobs" / job_id,
+                                  stages=WORKER_STAGES, stamp=stamp, device="cuda",
+                                  settings={**WORKER_RECIPE, "limits": limits})
+    transport = local_transport(output_root)
+    try:
+        transport.send(folder, job_id)
+        process = transport.start(job_id)
+        _supervise(transport, process, job_id, between_steps)
+    except TrainingYielded:
+        _discard_run(output_root, job_id)
+        raise
+    finally:
+        transport.clean(job_id)  # the job folder: links to the base weights, and the data
+    run_directory = transport.fetch(job_id)
+    if not (run_directory / "result.json").is_file():
+        raise RuntimeError(f"the worker ended with exit code {process.returncode} and wrote no result "
+                           f"(log: runs/{job_id}.log)")
+    result = json.loads((run_directory / "result.json").read_text(encoding="utf-8"))
+    outcome = result.get("outcome")
+    if outcome == "interrupted":
+        _discard_run(output_root, job_id)
+        raise TrainingYielded("worker_stopped")
+    if outcome not in {"trained", "no_improvement"}:
+        raise RuntimeError(f"worker outcome {outcome}: {result.get('error')}")
+    candidate = collect_candidate(run_directory)
+    return None if candidate is None else candidate_manifest(target, candidate, run_directory)
 
 
 def evaluate_candidate(*, target: SpecialistTarget, manifest, report_path: Path):
@@ -273,34 +363,38 @@ class SpecialistIdleTrainer:
             return None
         fingerprint = fingerprints[target.name]
         started = time.monotonic()
-        limiter = StepLimiter(should_yield=lambda: self.yield_reason(),
-                              pause_seconds=self.settings.step_pause_seconds)
         output_root = self.work_root / target.name
         print(f"[CONTINUAL] specialist training started specialist={target.name}")
 
-        def work() -> SpecialistCycleResult:
-            # A request that queued while this cycle waited keeps the serving models.
+        def check() -> None:
+            # While the worker trains (it pauses between its own steps) and before each held-out check.
             reason = self.yield_reason()
             if reason is not None:
                 raise TrainingYielded(reason)
+
+        def work() -> SpecialistCycleResult:
+            # A request that queued while this cycle waited keeps the serving models.
+            check()
             self.runtime.model_manager.unload_all()
-            scratch = Path(tempfile.mkdtemp(prefix=f"{target.name}-corpus-", dir=self._scratch_root()))
+            # Work a stopped service left behind (the job folders hold links to the base weights).
+            self._remove_unfinished_runs(output_root, keep_logs=True)
+            shutil.rmtree(output_root / "jobs", ignore_errors=True)
             try:
                 with gpu_budget(fraction=self.settings.gpu_memory_fraction,
                                 min_free_gib=self.settings.min_free_gpu_gib):
-                    corpus = build_corpus(target, scratch / "corpus")
-                    manifest = train_candidate(target=target, corpus_directory=corpus, output_root=output_root,
-                                               between_steps=limiter)
-                    release_training_memory()
-                    limiter()
+                    manifest = train_candidate(target=target, output_root=output_root, between_steps=check,
+                                               limits=self._worker_limits())
+                    if manifest is None:
+                        return SpecialistCycleResult(specialist=target.name, outcome="rejected",
+                                                     reason="no stage beat the specialist it started from")
+                    check()
                     reports = Path(manifest.output_directory)
                     candidate = evaluate_candidate(target=target, manifest=manifest,
                                                    report_path=reports / "heldout-candidate.json")
-                    limiter()
+                    check()
                     serving = evaluate_candidate(target=target, manifest=None,
                                                  report_path=reports / "heldout-serving.json")
             finally:
-                shutil.rmtree(scratch, ignore_errors=True)
                 release_training_memory()
             better = serving is None or candidate.passed >= serving.passed
             return SpecialistCycleResult(
@@ -313,10 +407,10 @@ class SpecialistIdleTrainer:
         try:
             result = await self.runtime.gpu_scheduler.run(priority=self.TRAINING_PRIORITY, work=work)
         except TrainingYielded as stopped:
-            self._remove_unfinished_runs(output_root)
+            self._remove_unfinished_runs(output_root, keep_logs=False)
             result = SpecialistCycleResult(specialist=target.name, outcome="interrupted", reason=stopped.reason)
         except Exception as exc:  # recorded so the same inputs are not retried every idle window
-            self._remove_unfinished_runs(output_root)
+            self._remove_unfinished_runs(output_root, keep_logs=True)
             result = SpecialistCycleResult(specialist=target.name, outcome="failed",
                                            reason=f"{type(exc).__name__}: {str(exc)[:300]}")
         result.seconds = round(time.monotonic() - started, 1)
@@ -327,13 +421,24 @@ class SpecialistIdleTrainer:
               f"reason={result.reason} heldout={result.passed}/{result.total} seconds={result.seconds}")
         return result
 
-    def _scratch_root(self) -> Path:
-        self.work_root.mkdir(parents=True, exist_ok=True)
-        return self.work_root
+    def _worker_limits(self) -> dict:
+        """The breathing room the worker keeps on this shared machine (a job allows at most 60 s)."""
+        return {"step_pause_seconds": min(self.settings.step_pause_seconds, 60.0),
+                "gpu_memory_fraction": self.settings.gpu_memory_fraction}
 
     @staticmethod
-    def _remove_unfinished_runs(output_root: Path) -> None:
-        """A run without a training manifest never produced a candidate."""
-        for run in (output_root / "runs").glob("*") if (output_root / "runs").is_dir() else []:
-            if not (run / "training-manifest.json").is_file():
+    def _remove_unfinished_runs(output_root: Path, *, keep_logs: bool) -> None:
+        """Remove runs that left no candidate: no worker ``final`` adapter and no training manifest.
+
+        A failed run keeps its log for diagnosis; an interrupted one is tried again, so its log goes too.
+        """
+        runs = output_root / "runs"
+        if not runs.is_dir():
+            return
+        for run in list(runs.iterdir()):
+            if run.is_dir() and not (run / "final").is_dir() and not (run / "training-manifest.json").is_file():
                 shutil.rmtree(run, ignore_errors=True)
+                if not keep_logs:
+                    run.with_name(run.name + ".log").unlink(missing_ok=True)
+        for stop in runs.glob("*.stop"):  # no worker runs while this is called
+            stop.unlink(missing_ok=True)
