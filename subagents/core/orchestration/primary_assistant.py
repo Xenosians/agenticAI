@@ -1,4 +1,5 @@
 import json
+import os
 import re
 from collections.abc import Callable
 from typing import Any
@@ -133,6 +134,96 @@ def plain_summary(text: str) -> str | None:
         return None
     sentences = [part for part in re.split(r"(?<=[.!?])\s+", summary) if part]
     return summary if len(sentences) <= 2 else None
+
+
+# What a reading says it does not know. Live (18 November), asked whether there
+# were pending package updates, a summary said "There are no pending package
+# updates available." above a reading that says they are not read. An answer
+# may name such a subject only to say it is not known.
+_UNREADABLE_LIST = re.compile(r"not readable with janus's access:\s*([^.\n]+)", re.IGNORECASE)
+_UNKNOWN_CLAUSE = re.compile(
+    r"^(?P<subject>.+?)\s+(?:(?:is|are|was|were)\s+(?:not\s+(?:read|known|checked|reported|confirmed|visible|"
+    r"available)|unknown|unavailable|unreadable)|(?:could|can)\s*not\s+be\s+\w+|unknown)\b",
+    re.IGNORECASE,
+)
+_LEADING_WORDS = re.compile(r"^(?:so|and|but|then|while|its|their|his|her|the|a|an|all|every|any|some)\s+",
+                            re.IGNORECASE)
+_PHRASE_END = re.compile(r"\s(?:of|on|for|in|from|with|to|at)\s")
+_WORD = re.compile(r"[a-z0-9][a-z0-9/_.-]*")
+_NOT_A_SUBJECT = {"it", "they", "this", "that", "these", "those", "which", "what", "there"}
+# Words that say a thing is not known; a clause with one does not claim it.
+_HEDGE = re.compile(
+    r"\b(?:unknown|unavailable|unreadable|unclear|unable|cannot|can't|couldn't|"
+    r"(?:can|could|does|do|did|is|are|was|were)\s*not\s+(?:be\s+)?(?:read|known|checked|confirmed|verified|"
+    r"visible|available|reported|seen|determined|shown|show|tell|say|know)|not\s+known|no\s+visibility)\b",
+    re.IGNORECASE,
+)
+
+
+def _head(subject: str) -> str | None:
+    words = _WORD.findall(_PHRASE_END.split(f" {subject.lower()} ", 1)[0])
+    return words[-1] if words and words[-1] not in _NOT_A_SUBJECT else None
+
+
+def _same_word(word: str, head: str) -> bool:
+    def stem(text: str) -> str:
+        text = text.removesuffix("'s")
+        return text[:-1] if len(text) > 4 and text.endswith("s") and not text.endswith("ss") else text
+
+    word, head = stem(word), stem(head)
+    if min(len(word), len(head)) < 4:
+        return word == head
+    if word.startswith(head) or head.startswith(word):
+        return True
+    # One stem in two forms ("expires" and "expiry", "covered" and "coverage").
+    shared = len(os.path.commonprefix([word, head]))
+    return shared >= 5 and shared >= 0.6 * min(len(word), len(head))
+
+
+def unknown_subjects(reading: str) -> list[str]:
+    """The subjects a reading says it could not read or does not know, in order."""
+    subjects: list[str] = []
+    for match in _UNREADABLE_LIST.finditer(reading or ""):
+        subjects += [item.strip() for item in re.split(r",|\band\b", match.group(1)) if item.strip()]
+    for clause in re.split(r"[.;:,()\n]+", reading or ""):
+        clause = clause.strip()
+        while _LEADING_WORDS.match(clause):
+            clause = _LEADING_WORDS.sub("", clause, count=1)
+        match = _UNKNOWN_CLAUSE.match(clause)
+        if match and _head(match.group("subject")):
+            subjects.append(match.group("subject").strip())
+    return list(dict.fromkeys(subjects))
+
+
+def states_an_unknown(text: str, subjects: list[str]) -> bool:
+    """Whether a clause of the text names one of the subjects without saying it is not known.
+
+    A word check, so it fails safe: a false alarm only replaces an answer with
+    the exact reading. It cannot catch a guess that shares no word with the
+    subject ("all packages are up to date" for pending updates).
+    """
+    heads = [head for head in (_head(subject) for subject in subjects) if head]
+    if not heads:
+        return False
+    for clause in re.split(r"[.;!?,\n]+|\bbut\b", text or ""):
+        if _HEDGE.search(clause):
+            continue
+        words = _WORD.findall(clause.lower())
+        if any(_same_word(word, head) for word in words for head in heads):
+            return True
+    return False
+
+
+def exact_readings(results: list[AgentResult]) -> str | None:
+    """Every result's complete reading, when each result is a successful read that declares one."""
+    readings = []
+    for result in results:
+        tool = get_tool(result.proposed_tool) if result.proposed_tool else None
+        answer = (result.answer or "").strip()
+        if result.status != "success" or (tool or {}).get("synthesis_evidence") != "answer" or not answer:
+            return None
+        readings.append(answer)
+    return "\n\n".join(readings) if readings else None
 
 
 class PrimaryAssistant:
@@ -326,7 +417,8 @@ class PrimaryAssistant:
                     "\n\n"
                     "Write one or two sentences that answer the request in words. Use no numbers: no digits, "
                     "no number words and no names or values that contain digits; the reading gives every "
-                    "figure. State nothing the reading does not state."
+                    "figure. State nothing the reading does not state. If the reading says something is not "
+                    "read or unknown, say it is not known; never guess it."
                 ),
             },
         ]
@@ -344,6 +436,10 @@ class PrimaryAssistant:
         summary = plain_summary(response)
         if summary is None:
             print("[HUB] Figure-free summary not used (a figure, too long or more than two sentences); "
+                  "the exact reading stands")
+            return reading
+        if states_an_unknown(summary, unknown_subjects(reading)):
+            print("[HUB] Figure-free summary not used (it states what the reading does not know); "
                   "the exact reading stands")
             return reading
         return f"{summary}\n\n{reading}"
@@ -447,4 +543,10 @@ class PrimaryAssistant:
             )
         )
 
-        return response.strip()
+        answer = response.strip()
+        readings = exact_readings(results)
+        if readings is not None and states_an_unknown(answer, unknown_subjects(readings)):
+            print("[HUB] Synthesized answer not used (it states what a reading does not know); "
+                  "the exact readings stand")
+            return readings
+        return answer

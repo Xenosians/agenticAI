@@ -2,7 +2,9 @@ import asyncio
 import json
 
 from subagents.core.definitions.types import AgentResult
-from subagents.core.orchestration.primary_assistant import PrimaryAssistant, plain_summary, synthesis_evidence
+from subagents.core.orchestration.primary_assistant import (
+    PrimaryAssistant, plain_summary, states_an_unknown, synthesis_evidence, unknown_subjects,
+)
 
 
 def worker_result(**overrides):
@@ -224,3 +226,83 @@ def test_readings_with_few_figures_still_go_through_synthesis():
     reading = HA_READING + "\n2 node(s) in HA; manager active."
     assert asyncio.run(assistant.synthesize("Is HA healthy?", [ha_result(answer=reading)])) == "Summary."
     assert "TRUSTED SPECIALIST RESULTS" in inference.calls[0]["messages"][-1]["content"]
+
+
+# The live maintenance reading of 18 November (hummingbird), verbatim.
+MAINTENANCE_READING = (
+    "Node hummingbird runs Proxmox VE 9.2.27 on kernel 7.0.14-29-pve; boots EFI with Secure Boot on.\n"
+    "Nothing needs attention.\n"
+    "Services: 20 of 21 running; corosync stopped as expected (the node is not in a cluster).\n"
+    "Certificates: pve-ssl.pem (served to browsers, signed by the Proxmox cluster CA, RSA 2048) expires in 722 days; "
+    "pve-root-ca.pem (cluster CA, self-signed, RSA 4096) expires in 3642 days.\n"
+    "Updates come from: no-subscription, ceph-squid-no-subscription; turned off: enterprise; no subscription.\n"
+    "Pending package updates are not read: Proxmox shows them only with Sys.Modify on the node, which can also "
+    "change node settings, so Janus does not use it."
+)
+
+
+def maintenance_result(**overrides):
+    values = dict(agent_name="proxmox-specialist", proposed_tool="proxmox_node_maintenance",
+                  proposed_arguments={"node": "hummingbird"}, tool_result={"ok": True, "data": {}},
+                  answer=MAINTENANCE_READING, presentation=None, execution_provenance=None, task_instructions=None)
+    values.update(overrides)
+    return worker_result(**values)
+
+
+def test_a_summary_that_answers_what_the_reading_could_not_read_is_dropped():
+    # Live (18 November): asked whether there are pending package updates, the
+    # summary said "There are no pending package updates available." above a
+    # reading that says they are not read. A summary may name such a subject
+    # only to say it is not known; otherwise the exact reading stands alone.
+    question = "Does Proxmox node hummingbird need a reboot, and are there pending package updates?"
+    invented = "No, the node hummingbird does not require a reboot. There are no pending package updates available."
+    inference = SummaryInference(invented)
+    assistant = PrimaryAssistant(inference, "hub-main", response_max_new_tokens=64, synthesis_max_new_tokens=500)
+    assert asyncio.run(assistant.synthesize(question, [maintenance_result()])) == MAINTENANCE_READING
+    request = inference.calls[0]["messages"][-1]["content"]
+    assert "never guess" in request
+    honest = "The node does not need a reboot; pending package updates cannot be checked."
+    assistant = PrimaryAssistant(SummaryInference(honest), "hub-main", response_max_new_tokens=64,
+                                 synthesis_max_new_tokens=500)
+    assert asyncio.run(assistant.synthesize(question, [maintenance_result()])) == honest + "\n\n" + MAINTENANCE_READING
+
+
+def test_unknown_subjects_are_read_from_what_the_reading_says_it_does_not_know():
+    cases = [
+        (MAINTENANCE_READING, "There are no pending package updates.", "Pending updates are not known."),
+        ("Not readable with Janus's access: services, certificates.", "All services are running.",
+         "Services could not be read."),
+        ("Node pve1 has no sample in the last hour (60 expected), so its load is unknown.",
+         "The node was lightly loaded.", "Its load is unknown for that hour."),
+        ("Storage backup-nas could not be read, so missing or old backups cannot be confirmed.",
+         "No backups are missing.", "Backups on that storage cannot be confirmed."),
+        ("pve-a: posture could not be read.", "Every device meets the posture rules.",
+         "The posture of pve-a is not known."),
+        ("/dev/sda: SMART health unknown.", "All disks are healthy.", "The health of /dev/sda is unknown."),
+        # One stem in two forms is the same subject.
+        ("laptop: online state unknown; key expiry unknown.", "Its key never expires.",
+         "Its key expiry is unknown."),
+        ("No guest is tagged; backup coverage unknown (Proxmox did not report backup jobs).",
+         "Every guest is covered by a backup job.", "Backup coverage is unknown."),
+    ]
+    for reading, guessed, hedged in cases:
+        subjects = unknown_subjects(reading)
+        assert subjects, reading
+        assert states_an_unknown(guessed, subjects), (reading, guessed)
+        assert not states_an_unknown(hedged, subjects), (reading, hedged)
+    # Facts the reading does know stay free to state.
+    assert not states_an_unknown("The node does not need a reboot.", unknown_subjects(MAINTENANCE_READING))
+    assert unknown_subjects("High availability is not in use: no VM or container is an HA resource.") == []
+
+
+def test_a_synthesized_answer_that_guesses_an_unknown_falls_back_to_the_exact_reading():
+    # A multi-line reading with few figures still goes through synthesis; if the
+    # answer states what the reading says is unknown, the reading is shown instead.
+    reading = HA_READING + "\nHA manager state unknown."
+    guessed = PrimaryAssistant(SummaryInference("HA is not in use and the HA manager state is active."), "hub-main",
+                               response_max_new_tokens=64, synthesis_max_new_tokens=500)
+    assert asyncio.run(guessed.synthesize("Is HA healthy?", [ha_result(answer=reading)])) == reading
+    honest_text = "HA is not in use; the HA manager state is unknown."
+    honest = PrimaryAssistant(SummaryInference(honest_text), "hub-main", response_max_new_tokens=64,
+                              synthesis_max_new_tokens=500)
+    assert asyncio.run(honest.synthesize("Is HA healthy?", [ha_result(answer=reading)])) == honest_text
