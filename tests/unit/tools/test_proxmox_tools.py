@@ -408,7 +408,9 @@ def test_node_maintenance_reads_in_words():
         "Certificates: pve-ssl.pem (served to browsers, signed by the Proxmox cluster CA, RSA 2048) expires in "
         "725 days; pve-root-ca.pem (cluster CA, self-signed, RSA 4096) expires in 3645 days.",
         "Updates come from: no-subscription, ceph-squid-no-subscription; turned off: enterprise; no subscription.",
-        "Pending package updates are not read: that needs a privilege Janus does not hold.",
+        # The reading names the privilege, so no answer has to guess why updates are unknown.
+        "Pending package updates are not read: Proxmox shows them only with Sys.Modify on the node, "
+        "which can also change node settings, so Janus does not use it.",
     ]
     failing = dict(MAINTENANCE, kernel=dict(MAINTENANCE["kernel"], newest_installed="7.0.14-28-pve"),
                    boot={"mode": "legacy", "secure_boot": None}, in_cluster=None,
@@ -429,6 +431,9 @@ def test_node_maintenance_reads_in_words():
                         "expired 1 day ago; pve-root-ca.pem (cluster CA, self-signed, RSA 4096) expires in 12 days.")
     assert lines[4] == "Updates come from: enterprise, test; 1 repository error."
     assert lines[5] == "Not readable with Janus's access: subscription."
+    # An unreadable section does not hide that pending updates are not read either.
+    assert lines[6] == ("Pending package updates are not read: Proxmox shows them only with Sys.Modify on the node, "
+                        "which can also change node settings, so Janus does not use it.")
     nothing = dict(MAINTENANCE, issues=[], kernel=dict(MAINTENANCE["kernel"], newest_installed="7.0.14-28-pve"))
     assert formatter(dict(result, data=nothing)).splitlines()[1] == "Nothing needs attention."
     assert formatter({"ok": False}) == "The Proxmox read did not succeed."

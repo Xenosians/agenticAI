@@ -271,8 +271,9 @@ def format_node_maintenance(result: dict) -> str:
         lines.append(line + ".")
     if data["unreadable"]:
         lines.append("Not readable with Janus's access: " + ", ".join(data["unreadable"]) + ".")
-    else:
-        lines.append("Pending package updates are not read: that needs a privilege Janus does not hold.")
+    # Said in full (privilege and why it is not used), so an answer never has to guess at it.
+    lines.append("Pending package updates are not read: Proxmox shows them only with Sys.Modify on the node, "
+                 "which can also change node settings, so Janus does not use it.")
     return "\n".join(lines)
 
 

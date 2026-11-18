@@ -32,8 +32,8 @@ def client(monkeypatch):
     settings = SimpleNamespace(require_internal_job_token=lambda: TOKEN)
     monkeypatch.setattr(extensions, "get_settings", lambda: settings)
     monkeypatch.setattr(engineering, "observation_sources",
-                        lambda: {"containers": Containers(), "endpoints": Endpoints(), "router": None,
-                                 "default_interfaces": ["lan"]})
+                        lambda owner=None: {"containers": Containers(), "endpoints": Endpoints(), "router": None,
+                                            "default_interfaces": ["lan"]})
     app = FastAPI()
     app.include_router(engineering.router)
     return TestClient(app)
@@ -65,6 +65,24 @@ def test_drift_observes_and_compares_the_supplied_version(client):
     assert "127.0.0.1" not in response.text
 
 
+def test_drift_observes_with_the_signed_in_accounts_own_links(monkeypatch):
+    """Phoenix names the session's account in the query, as for the other dashboard reads; the body cannot."""
+    seen = []
+    settings = SimpleNamespace(require_internal_job_token=lambda: TOKEN)
+    monkeypatch.setattr(extensions, "get_settings", lambda: settings)
+    monkeypatch.setattr(engineering, "observation_sources",
+                        lambda owner=None: seen.append(owner) or {"containers": Containers(), "endpoints": Endpoints(),
+                                                                  "router": None, "default_interfaces": []})
+    app = FastAPI()
+    app.include_router(engineering.router)
+    client = TestClient(app)
+    assert client.post(DRIFT + "?owner=user-1", json=drift_body(), headers=HEADERS).status_code == 200
+    assert client.post(DRIFT, json=drift_body(), headers=HEADERS).status_code == 200
+    assert client.post(DRIFT, json=drift_body(owner="alice"), headers=HEADERS).status_code == 422
+    assert client.post(DRIFT + "?owner=", json=drift_body(), headers=HEADERS).status_code == 422
+    assert seen == ["user-1", None]
+
+
 def test_drift_without_a_topology_returns_the_observation_only(client):
     response = client.post(DRIFT, json=drift_body(topology={"nodes": [], "edges": []}), headers=HEADERS)
     assert response.json()["not_in_design"] == ["container:itsm-surrealdb", "endpoint:phoenix"]
@@ -92,8 +110,8 @@ def test_observation_never_blocks_the_event_loop(monkeypatch):
     settings = SimpleNamespace(require_internal_job_token=lambda: TOKEN)
     monkeypatch.setattr(extensions, "get_settings", lambda: settings)
     monkeypatch.setattr(engineering, "observation_sources",
-                        lambda: {"containers": LoopAware(), "endpoints": LoopAware(), "router": None,
-                                 "default_interfaces": []})
+                        lambda owner=None: {"containers": LoopAware(), "endpoints": LoopAware(), "router": None,
+                                            "default_interfaces": []})
     app = FastAPI()
     app.include_router(engineering.router)
     response = TestClient(app).post(DRIFT, json=drift_body(), headers=HEADERS)
@@ -134,17 +152,22 @@ def test_invalid_netlists_are_refused(client, body):
 
 
 def test_observation_sources_are_built_from_the_fixed_read_adapters(monkeypatch):
+    from services.extensions.context import request_owner
+
     settings = SimpleNamespace(openwrt_base_url=None, openwrt_username=None, openwrt_password=None,
                                operations_containers=["itsm-surrealdb"], engineering_router_interfaces=["lan", "wan"])
     monkeypatch.setattr(engineering, "get_settings", lambda: settings)
-    built = []
-    monkeypatch.setattr(engineering, "OperationsService", lambda value: built.append(value) or "operations")
-    monkeypatch.setattr(engineering, "build_openwrt_service", lambda value: built.append(value) or None)
-    monkeypatch.setattr(engineering, "build_tailnet_service", lambda value: built.append(value) or None)
-    sources = engineering.observation_sources()
-    assert sources == {"containers": "operations", "endpoints": "operations", "router": None, "tailnet": None,
+    built = {}
+    monkeypatch.setattr(engineering, "OperationsService", lambda value: built.setdefault("operations", value) and "operations")
+    monkeypatch.setattr(engineering, "build_openwrt_service", lambda value: built.setdefault("router", value) and None)
+    # The tailnet is the requesting account's own (owner decision, 17 November), as on the dashboard.
+    monkeypatch.setattr(engineering, "owner_tailnet_service",
+                        lambda value: built.setdefault("tailnet", (value, request_owner.get())) and "tailnet")
+    sources = engineering.observation_sources("user-1")
+    assert sources == {"containers": "operations", "endpoints": "operations", "router": None, "tailnet": "tailnet",
                        "default_interfaces": ["lan", "wan"]}
-    assert built == [settings, settings, settings]
+    assert built == {"operations": settings, "router": settings, "tailnet": (settings, "user-1")}
+    assert request_owner.get() is None
 
 
 @pytest.mark.parametrize("value,expected", [("lan, wan,lan", ["lan", "wan"]), ("", [])])

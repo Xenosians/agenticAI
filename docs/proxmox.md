@@ -165,7 +165,8 @@ served certificate), `certificate_expiring` (within 30 days),
 never healthy. Certificate subjects, issuers, SANs, fingerprints and PEM, the
 subscription key and server id, and repository file paths never leave the
 service. Pending package updates need `Sys.Modify` (`GET apt/update`), which
-Janus does not hold, so they are not read; nothing is installed or rebooted.
+Janus does not hold (it can also change node settings), so they are not read;
+the reading says so by name on every answer. Nothing is installed or rebooted.
 
 ## Node load history
 
