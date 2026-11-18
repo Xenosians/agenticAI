@@ -2,6 +2,7 @@
 import pytest
 
 from services.proxmox import ProxmoxConflict
+from subagents.core.tooling.gateway import resolve_policy_execution_arguments
 from tools.proxmox import catalog as proxmox_catalog
 from tools.proxmox.catalog import PROXMOX_CHANGE_TOOLS, PROXMOX_TOOLS
 from tools.proxmox.mcp import register_proxmox_tools
@@ -70,6 +71,49 @@ def test_configuration_changes_freeze_the_digest_and_the_guest_identity(changes)
     assert result["execution_arguments"] == {
         "node": "hummingbird", "vmid": 990, "cores": 2, "memory_mib": 256,
         "expected_type": "lxc", "expected_name": "janus-lab", "expected_digest": "d990"}
+
+
+ONLY_WHAT_THE_USER_NAMED = {
+    "proxmox_guest_set_resources": {"node": "hummingbird", "vmid": 990, "cores": 2},
+    "proxmox_guest_resize_disk": {"node": "hummingbird", "vmid": 990, "disk": "rootfs", "grow_gib": 1},
+    "proxmox_guest_set_options": {"node": "hummingbird", "vmid": 990, "tags": "lab"},
+    "proxmox_snapshot_create": {"node": "hummingbird", "vmid": 990, "snapshot": "before"},
+    "proxmox_snapshot_delete": {"node": "hummingbird", "vmid": 990, "snapshot": "before"},
+    "proxmox_snapshot_rollback": {"node": "hummingbird", "vmid": 990, "snapshot": "before"},
+    "proxmox_backup_now": {"node": "hummingbird", "vmid": 990, "storage": "local"},
+    "proxmox_backup_restore": {"node": "hummingbird", "volume": "local:backup/vzdump-lxc-990-x.tar.zst",
+                               "name": "restored"},
+    "proxmox_guest_clone": {"node": "hummingbird", "vmid": 990, "name": "lab-clone", "full": True},
+    "proxmox_guest_create": {"node": "hummingbird", "hostname": "lab-2", "template": "local:vztmpl/alpine.tar.xz",
+                             "cores": 1, "memory_mib": 128, "disk_gib": 1, "storage": "local-lvm"},
+    "proxmox_guest_delete": {"node": "hummingbird", "vmid": 990},
+}
+
+
+def test_a_change_naming_only_what_the_user_said_passes_the_gateway_binding_unchanged(changes):
+    """Live failure, 18 November: an omitted optional (a snapshot's description) came back from the
+    policy as None, and the gateway refused it as an undeclared trusted argument. The policy may add
+    only its declared trusted facts; everything else stays exactly what the request named."""
+    assert set(ONLY_WHAT_THE_USER_NAMED) == CHANGE_TOOLS
+    for name, arguments in ONLY_WHAT_THE_USER_NAMED.items():
+        tool = TOOLS[name]
+        result = tool["policy_resolver"](**arguments)
+        assert result["ok"] is True, (name, result)
+        resolved, error = resolve_policy_execution_arguments(
+            tool_name=name, tool=tool, original_arguments=dict(arguments), policy_result=result)
+        assert error is None, (name, error)
+        assert set(resolved) - set(arguments) <= set(tool["trusted_policy_arguments"]), name
+        assert None not in resolved.values(), name
+
+
+def test_an_optional_the_user_did_name_is_bound_exactly(changes):
+    tool = TOOLS["proxmox_snapshot_create"]
+    arguments = {"node": "hummingbird", "vmid": 990, "snapshot": "before", "description": "pre-upgrade"}
+    resolved, error = resolve_policy_execution_arguments(
+        tool_name="proxmox_snapshot_create", tool=tool, original_arguments=dict(arguments),
+        policy_result=tool["policy_resolver"](**arguments))
+    assert error is None
+    assert resolved == {**arguments, "expected_type": "lxc", "expected_name": "janus-lab"}
 
 
 def test_a_template_locked_or_running_guest_is_refused_without_an_approval(monkeypatch):

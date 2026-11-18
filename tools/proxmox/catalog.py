@@ -638,6 +638,10 @@ def _policy_for(risk: str, read):
         from services.proxmox import ProxmoxConflict
         from tools.provider_reads import provider_read
 
+        # An optional the request left out arrives as None. It is not part of the request: the
+        # approval binds only what was named plus the declared trusted facts (the gateway refuses
+        # any other added argument), and the change applies its own default for what was left out.
+        arguments = {name: value for name, value in arguments.items() if value is not None}
         try:
             service = _policy_service()
         except ValueError:
@@ -949,7 +953,8 @@ def _snapshot_rollback_policy(node: str, vmid: int, snapshot: str):
         node=node, vmid=vmid, snapshot=snapshot)
 
 
-def _backup_now_policy(node: str, vmid: int, storage: str, mode: str = "snapshot"):
+def _backup_now_policy(node: str, vmid: int, storage: str, mode: str | None = None):
+    # An unnamed mode stays unnamed: the approval reads "snapshot mode" and the change defaults to it.
     return _policy_for(CHANGE_RISKS["proxmox_backup_now"], _read_backup_now)(
         node=node, vmid=vmid, storage=storage, mode=mode)
 
