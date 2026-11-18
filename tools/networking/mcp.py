@@ -2,13 +2,29 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from services.dns_integrity import DnsIntegrityService
 from services.openwrt import OpenWrtService
 from services.tailnet import TailnetService
 from services.tailnet_coverage import tailnet_coverage
 from tools.provider_reads import not_configured, provider_read
+
+
+class TailnetChangeResult(BaseModel):
+    """The receipt of one approved tailnet policy change: the grant, the write and the read-back."""
+    model_config = ConfigDict(extra="allow")
+
+    ok: bool
+    status: str
+    provider: str = "tailscale"
+    operation: str | None = None
+    grant: str | None = None
+    changed: bool = False
+    verification_ok: bool = False
+    retry_safe: bool = True
+    error: str | None = None
+    error_code: str | None = None
 
 
 class NetworkReadResult(BaseModel):
@@ -133,6 +149,44 @@ def register_networking_tools(server, service: OpenWrtService | None, tailnet: T
             return NetworkReadResult(ok=True, status="success", provider="tailscale",
                                      observed_at=devices.get("observed_at"),
                                      data=tailnet_coverage(machines["data"], devices["data"]))
+
+    # Approved tailnet policy changes. grant/expected_etag/*_sha256 are trusted policy arguments
+    # frozen at approval; they are never model-facing.
+
+    def grant_change(operation: str, sources: list[str], destinations: list[str], ports: list[str],
+                     expected_etag: str, policy_sha256: str, new_policy_sha256: str) -> TailnetChangeResult:
+        from services.tailnet_policy_change import apply_grant_change
+        from services.tailnet_policy_edit import GrantSpec
+
+        with tailnet_resolve() as current:
+            if current is None:
+                return TailnetChangeResult(**not_configured("tailscale", "The Tailscale network",
+                                                            missing.get("tailscale", ())))
+            try:
+                spec = GrantSpec(tuple(sources or ()), tuple(destinations or ()), tuple(ports or ()))
+                return TailnetChangeResult(**apply_grant_change(
+                    current, operation, spec, expected_etag=expected_etag, policy_sha256=policy_sha256,
+                    new_policy_sha256=new_policy_sha256))
+            except Exception:
+                # Nothing is known about a write that may have been sent: never invite a resend.
+                return TailnetChangeResult(ok=False, status="outcome_unknown", retry_safe=False,
+                                           error="The tailnet policy change did not report its outcome. Read "
+                                                 "the policy before trying again.")
+
+    @server.tool()
+    def network_tailnet_grant_add(sources: list[str], destinations: list[str], ports: list[str], grant: str = "",
+                                  expected_etag: str = "", policy_sha256: str = "",
+                                  new_policy_sha256: str = "") -> TailnetChangeResult:
+        """Add one approved grant to the tailnet policy and read the policy back."""
+        return grant_change("add", sources, destinations, ports, expected_etag, policy_sha256, new_policy_sha256)
+
+    @server.tool()
+    def network_tailnet_grant_remove(sources: list[str], destinations: list[str], ports: list[str],
+                                     grant: str = "", expected_etag: str = "", policy_sha256: str = "",
+                                     new_policy_sha256: str = "") -> TailnetChangeResult:
+        """Remove one approved grant from the tailnet policy and read the policy back."""
+        return grant_change("remove", sources, destinations, ports, expected_etag, policy_sha256,
+                            new_policy_sha256)
 
     @server.tool()
     def network_dns_integrity_check(names: list[str] | None = None) -> NetworkReadResult:

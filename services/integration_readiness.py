@@ -27,7 +27,7 @@ from tools.git.catalog import GIT_TOOLS
 from tools.jira.catalog import JIRA_TOOLS
 from tools.knowledge.catalog import KNOWLEDGE_TOOLS
 from tools.mailbox.catalog import MAILBOX_TOOLS
-from tools.networking.catalog import DNS_CHECK_TOOLS, OPENWRT_TOOLS, TAILNET_TOOLS
+from tools.networking.catalog import DNS_CHECK_TOOLS, OPENWRT_TOOLS, TAILNET_CHANGE_TOOLS, TAILNET_TOOLS
 from tools.operations.catalog import OPERATIONS_TOOLS
 from tools.proxmox.catalog import PROXMOX_TOOLS
 from tools.registry import TOOLS
@@ -172,7 +172,8 @@ PROVIDER_FAMILIES: tuple[ProviderFamily, ...] = (
     ProviderFamily("assets", "Asset inventory", "provider", _assets, frozenset(ASSET_TOOLS)),
     ProviderFamily("knowledge", "Knowledge and runbooks", "provider", _knowledge, frozenset(KNOWLEDGE_TOOLS)),
     ProviderFamily("openwrt", "OpenWrt", "provider", _openwrt, frozenset(OPENWRT_TOOLS)),
-    ProviderFamily("tailscale", "Tailscale network", "provider", _tailscale, frozenset(TAILNET_TOOLS)),
+    ProviderFamily("tailscale", "Tailscale network", "provider", _tailscale,
+                   frozenset(TAILNET_TOOLS) | frozenset(TAILNET_CHANGE_TOOLS)),
     ProviderFamily("proxmox", "Proxmox VE", "provider", _proxmox, frozenset(PROXMOX_TOOLS)),
     ProviderFamily("dns_check", "DNS integrity check", "local", _dns_check, frozenset(DNS_CHECK_TOOLS)),
     ProviderFamily("operations", "Platform operations", "provider", _operations, frozenset(OPERATIONS_TOOLS)),

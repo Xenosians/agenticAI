@@ -163,6 +163,12 @@ def build_cases(run: str, project: str) -> list[tuple[str, str, str, object]]:
         ("network-tailnet-policy", "network_tailnet_policy", "Who can reach what under our Tailscale ACL policy?", None),
         ("network-tailnet-posture", "network_tailnet_posture", "Which tailnet devices have Tailscale auto-update off?", None),
         ("network-tailnet-coverage", "network_tailnet_coverage", "Which Proxmox VMs and containers are not on the tailnet?", None),
+        # Governed tailnet policy change (D2): one harmless grant is added and removed again in the
+        # same run, so the policy file ends exactly as found (the removal types the grant).
+        ("network-tailnet-grant-add", "network_tailnet_grant_add",
+         "Add a tailnet grant so tag:janus-lab can reach tag:janus-lab on port 22.", True),
+        ("network-tailnet-grant-remove", "network_tailnet_grant_remove",
+         "Remove the tailnet grant that lets tag:janus-lab reach tag:janus-lab on port 22.", True),
         ("network-dns-integrity", "network_dns_integrity_check", "Is our ISP rewriting DNS answers? Check vimeo.com and example.com.", None),
         # --- Proxmox VE (reads; power actions are approval-gated, lab guest only) ---
         ("proxmox-cluster", "proxmox_cluster_status", "What is the Proxmox VE cluster status?", None),

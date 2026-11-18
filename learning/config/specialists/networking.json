@@ -845,6 +845,148 @@
         "authored-networking",
         "dns-integrity"
       ]
+    },
+    {
+      "tool_name": "network_tailnet_grant_add",
+      "user_request": "Let tag:ci reach tag:build-cache on port 8080 in our tailnet policy.",
+      "arguments": {
+        "sources": [
+          "tag:ci"
+        ],
+        "destinations": [
+          "tag:build-cache"
+        ],
+        "ports": [
+          "8080"
+        ]
+      },
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-grant"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_grant_add",
+      "user_request": "Add a tailnet grant so group:ops can reach tag:db on tcp:5432.",
+      "arguments": {
+        "sources": [
+          "group:ops"
+        ],
+        "destinations": [
+          "tag:db"
+        ],
+        "ports": [
+          "tcp:5432"
+        ]
+      },
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-grant"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_grant_add",
+      "user_request": "Allow autogroup:member to reach tag:monitoring on ports 3000 and 9090.",
+      "arguments": {
+        "sources": [
+          "autogroup:member"
+        ],
+        "destinations": [
+          "tag:monitoring"
+        ],
+        "ports": [
+          "3000",
+          "9090"
+        ]
+      },
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-grant"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_grant_add",
+      "user_request": "Grant tag:backup access to tag:nas on port 22 in the Tailscale ACL.",
+      "arguments": {
+        "sources": [
+          "tag:backup"
+        ],
+        "destinations": [
+          "tag:nas"
+        ],
+        "ports": [
+          "22"
+        ]
+      },
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-grant"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_grant_remove",
+      "user_request": "Remove the tailnet grant that lets tag:ci reach tag:build-cache on port 8080.",
+      "arguments": {
+        "sources": [
+          "tag:ci"
+        ],
+        "destinations": [
+          "tag:build-cache"
+        ],
+        "ports": [
+          "8080"
+        ]
+      },
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-grant"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_grant_remove",
+      "user_request": "Take away group:ops access to tag:db on tcp:5432 in the tailnet policy.",
+      "arguments": {
+        "sources": [
+          "group:ops"
+        ],
+        "destinations": [
+          "tag:db"
+        ],
+        "ports": [
+          "tcp:5432"
+        ]
+      },
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-grant"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_grant_remove",
+      "user_request": "Delete the grant allowing autogroup:member to reach tag:monitoring on ports 3000 and 9090.",
+      "arguments": {
+        "sources": [
+          "autogroup:member"
+        ],
+        "destinations": [
+          "tag:monitoring"
+        ],
+        "ports": [
+          "3000",
+          "9090"
+        ]
+      },
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-grant"
+      ]
     }
   ],
   "eval_cases": [
@@ -1147,6 +1289,66 @@
       "expected_arguments": {
         "names": [
           "github.com"
+        ]
+      }
+    },
+    {
+      "name": "tailnet-grant-add-paraphrase",
+      "user": "Open port 443 from tag:web to tag:api in our tailnet access rules.",
+      "allowed_tools": [
+        "network_tailnet_grant_add"
+      ],
+      "allowed_arguments": {
+        "sources": [
+          "tag:web"
+        ],
+        "destinations": [
+          "tag:api"
+        ],
+        "ports": [
+          "443"
+        ]
+      },
+      "expected_tool": "network_tailnet_grant_add",
+      "expected_arguments": {
+        "sources": [
+          "tag:web"
+        ],
+        "destinations": [
+          "tag:api"
+        ],
+        "ports": [
+          "443"
+        ]
+      }
+    },
+    {
+      "name": "tailnet-grant-remove-paraphrase",
+      "user": "Revoke tag:web reaching tag:api on port 443 in the tailnet policy.",
+      "allowed_tools": [
+        "network_tailnet_grant_remove"
+      ],
+      "allowed_arguments": {
+        "sources": [
+          "tag:web"
+        ],
+        "destinations": [
+          "tag:api"
+        ],
+        "ports": [
+          "443"
+        ]
+      },
+      "expected_tool": "network_tailnet_grant_remove",
+      "expected_arguments": {
+        "sources": [
+          "tag:web"
+        ],
+        "destinations": [
+          "tag:api"
+        ],
+        "ports": [
+          "443"
         ]
       }
     }

@@ -146,6 +146,8 @@ CAPABILITY_SEMANTICS: dict[str, dict[str, str]] = {
     "network_tailnet_policy": {"resource_type": "network.tailnet.policy", "operation_kind": "read", "effect": "read", "permission": "network.tailnet.policy.read"},
     "network_tailnet_posture": {"resource_type": "network.tailnet.posture", "operation_kind": "read", "effect": "read", "permission": "network.tailnet.posture.read"},
     "network_tailnet_coverage": {"resource_type": "network.tailnet.coverage", "operation_kind": "read", "effect": "read", "permission": "network.tailnet.coverage.read"},
+    "network_tailnet_grant_add": {"resource_type": "network.tailnet.policy", "operation_kind": "create", "effect": "mutation", "permission": "network.tailnet.policy.grant.add"},
+    "network_tailnet_grant_remove": {"resource_type": "network.tailnet.policy", "operation_kind": "delete", "effect": "mutation", "permission": "network.tailnet.policy.grant.remove"},
     "network_dns_integrity_check": {"resource_type": "network.dns.integrity", "operation_kind": "read", "effect": "read", "permission": "network.dns.integrity.read"},
 }
 

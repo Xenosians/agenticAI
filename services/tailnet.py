@@ -1,4 +1,5 @@
-"""Bounded read-only Tailscale API provider: tailnet devices, DNS, policy and device posture.
+"""Bounded Tailscale API provider: tailnet devices, DNS, policy and device posture reads, and the
+policy file's governed text write (read with its ETag, validated by Tailscale, written with If-Match).
 
 Signs in with the deployment's own trust credential (devices:core:read,
 dns:read, devices:posture_attributes:read and policy_file); the token lasts an
@@ -63,6 +64,10 @@ class TailnetConfig:
 
 class TailscaleRefused(RuntimeError):
     """Tailscale answered with a status other than 200; the answer itself is never repeated."""
+
+
+class PolicyConflict(RuntimeError):
+    """The policy changed since it was read (If-Match failed): nothing was written or overwritten."""
 
 
 def _invalid() -> RuntimeError:
@@ -398,6 +403,58 @@ class TailnetService:
             "summary": {"rules": len(rules), "ssh_rules": len(ssh), "tags": len(owners), "groups": len(groups),
                         "open_to_all_members": bool(open_to_all)},
         })
+
+    # ---- The policy file as text: read with its ETag, validate, write with If-Match (D2) ----
+
+    def _policy_request(self, method: str, path: str, *, content: str | None = None,
+                        headers: dict | None = None) -> httpx.Response:
+        sent = {"Authorization": f"Bearer {self._access_token()}", **(headers or {})}
+        response = self.client.request(method, API + path, headers=sent,
+                                       content=None if content is None else content.encode("utf-8"))
+        if len(response.content) > MAX_RESPONSE_BYTES:
+            raise RuntimeError("Tailscale's answer exceeds the bounded response size.")
+        return response
+
+    def policy_text(self) -> tuple[str, str]:
+        """The policy file exactly as stored (HuJSON, comments kept) and its ETag."""
+        response = self._policy_request("GET", "/tailnet/-/acl", headers={"Accept": "application/hujson"})
+        if response.status_code != 200:
+            raise TailscaleRefused(f"Tailscale refused the read (HTTP {response.status_code}).")
+        etag = response.headers.get("etag")
+        if not etag:
+            raise TailscaleRefused("Tailscale returned the policy without an ETag, so it cannot be changed safely.")
+        return response.text, etag
+
+    def validate_policy(self, text: str) -> str | None:
+        """Tailscale's own check of a changed policy (it writes nothing): None when valid, else why not."""
+        response = self._policy_request("POST", "/tailnet/-/acl/validate", content=text,
+                                        headers={"Content-Type": "application/hujson",
+                                                 "Accept": "application/json"})
+        if response.status_code != 200:
+            raise TailscaleRefused(f"Tailscale refused to validate the policy (HTTP {response.status_code}).")
+        try:
+            body = response.json() if response.content.strip() else {}
+        except ValueError:
+            raise _invalid() from None
+        message = body.get("message") if isinstance(body, dict) else None
+        if not message:
+            return None
+        # Only the short reason is repeated; details can name users and addresses.
+        reason = str(message).strip().rstrip(".")[:160]
+        return f"Tailscale rejected the changed policy: {reason}."
+
+    def write_policy(self, text: str, etag: str) -> str | None:
+        """Write the policy only if it is still the version read (If-Match); returns the new ETag."""
+        if not etag:
+            raise ValueError("A policy write needs the ETag of the version it changes.")
+        response = self._policy_request("POST", "/tailnet/-/acl", content=text,
+                                        headers={"Content-Type": "application/hujson", "If-Match": etag,
+                                                 "Accept": "application/hujson"})
+        if response.status_code == 412:
+            raise PolicyConflict("The tailnet policy changed since it was read; nothing was written.")
+        if response.status_code != 200:
+            raise TailscaleRefused(f"Tailscale refused the policy write (HTTP {response.status_code}).")
+        return response.headers.get("etag")
 
     def device_posture(self) -> dict:
         """Each device's fixed posture attributes (OS, Tailscale version, auto-update, encrypted state)."""

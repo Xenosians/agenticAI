@@ -30,9 +30,9 @@ and has no radios, so both client reads are empty there.
 Four reads (and the coverage join below) use the Tailscale API with the deployment's own trust credential
 (`TAILSCALE_CLIENT_ID`, `TAILSCALE_CLIENT_SECRET`), holding `devices:core:read`,
 `dns:read`, `devices:posture_attributes:read` and `policy_file`. `policy_file`
-also allows writing the policy; these reads only read it, and a policy change
-is a separate, owner-approved action. The credential cannot approve, expire
-or remove devices, or change DNS. Its one-hour token is reused until five
+also allows writing the policy; the reads only read it, and the two governed
+grant changes below write it, each after the owner's approval. The credential
+cannot approve, expire or remove devices, or change DNS. Its one-hour token is reused until five
 minutes before it expires, so most reads make one API request.
 
 | Tool | Reads | Notes |
@@ -48,6 +48,36 @@ days), `waiting_for_approval`, `tailnet_lock_error`,
 `routes_waiting_for_approval`, `blocks_incoming`, `udp_blocked` (traffic goes
 through a relay) and `update_available`. A device that sent no connectivity
 report has `connectivity: null`; that is unknown, not healthy.
+
+### Governed policy changes
+
+Two tools change who may reach what, one grant at a time; nothing else in the
+policy can be written, and the model never writes policy text.
+
+| Tool | Changes | Approval |
+|---|---|---|
+| `network_tailnet_grant_add` | Adds one grant `{"src": [...], "dst": [...], "ip": [...]}` as the last entry of `grants` (creating the section if it is missing). | Owner approval of the exact grant. |
+| `network_tailnet_grant_remove` | Removes the one grant with exactly those sources, destinations and ports (order does not matter). | Owner approval and the grant typed exactly as the approval shows it, for example `tag:janus-lab -> tag:janus-lab : 22`. |
+
+Sources are tags (`tag:name`), groups (`group:name`) or autogroups
+(`autogroup:member`, `autogroup:self`, ...); destinations may also be `*`.
+Ports are `*`, a port, a range or `tcp:`/`udp:`/`icmp:` with one of those.
+Users, addresses and host aliases are refused, so no identity or address
+enters a proposal.
+
+The policy file is HuJSON (comments and trailing commas), so a change edits
+its text and keeps every other byte; the parsed result must differ from the
+original by exactly that grant. Before approval, trusted policy reads the text
+and its ETag (`Accept: application/hujson`), refuses a policy managed outside
+the admin console, makes the edit, has Tailscale validate it with
+`POST /tailnet/-/acl/validate` (which writes nothing) and freezes the ETag and
+the SHA-256 of the current and the changed text. After approval the change
+reads the policy again and refuses (`conflict`, nothing written) if its ETag
+or digest moved, makes the same edit and checks its digest, writes it with
+`POST /tailnet/-/acl` and `If-Match` (a concurrent edit answers 412: refused,
+never overwritten), then reads the policy back. A lost answer after the write
+is `outcome_unknown` with `retry_safe: false`. The receipt names the grant,
+never the policy text.
 
 The backend reads both through `GET /internal/v1/tailnet/overview` (internal
 token) and serves them to the signed-in owner at `GET /api/v1/tailnet/overview`

@@ -478,6 +478,114 @@ def format_dns_integrity(result: dict) -> str:
     return "\n".join(lines)
 
 
+# Governed tailnet policy changes (direction note D2, owner decision 5): one typed grant added or
+# removed, never model-written policy text. Trusted policy validates and freezes the change first.
+GRANT_TRUSTED = ["expected_etag", "policy_sha256", "new_policy_sha256", "grant"]
+GRANT_TAIL = ("Tailscale validated the changed policy before this approval; Janus writes it only if the policy "
+              "is still the version it read (a concurrent edit is refused, never overwritten) and reads the "
+              "policy back.")
+GRANT_PARAMETERS = {
+    "sources": {"type": "list[str]", "description": "Named tag:, group: or autogroup: selectors."},
+    "destinations": {"type": "list[str]", "description": "Named tag:, group:, autogroup: selectors or *."},
+    "ports": {"type": "list[str]", "description": "Named ports: *, 22, 8000-8100 or tcp:443."},
+}
+
+
+def _policy_tailnet():
+    """The proposing account's Tailscale (its own link, else the machine default) for trusted
+    pre-approval reads, or None."""
+    from config import Settings
+    from services.provider_links import owner_tailnet_service
+
+    return owner_tailnet_service(Settings())
+
+
+def _grant_policy(operation: str):
+    def evaluate(sources: list[str], destinations: list[str], ports: list[str]) -> dict:
+        """Read-only: make the typed edit, have Tailscale validate it and freeze the version and digests."""
+        from services.tailnet_policy_change import prepare_grant_change
+        from services.tailnet_policy_edit import GrantSpec
+        from tools.provider_reads import provider_read
+
+        risk = "high" if operation == "remove" else "medium"
+
+        def refused(status: str, error: str) -> dict:
+            return {"ok": False, "status": status, "risk": risk, "requires_approval": True, "error": error}
+
+        service = _policy_tailnet()
+        if service is None:
+            return refused("error", "The Tailscale network is not connected for this account. Add a Tailscale "
+                                    "link in Connections.")
+        try:
+            spec = GrantSpec(tuple(sources or ()), tuple(destinations or ()), tuple(ports or ()))
+            outcome = provider_read("tailscale", "The Tailscale network",
+                                    lambda: {"ok": True, "data": prepare_grant_change(service, operation, spec)})
+        finally:
+            service.close()
+        if not outcome.get("ok"):
+            return refused("error", outcome.get("error") or "The Tailscale network could not check the change.")
+        prepared = outcome["data"]
+        if not prepared["ok"]:
+            return refused(prepared["status"], prepared["error"])
+        return {"ok": True, "status": "ready", "risk": risk, "requires_approval": True, "error": None,
+                "execution_arguments": {"sources": sources, "destinations": destinations, "ports": ports,
+                                        "grant": prepared["grant"], **prepared["frozen"]}}
+
+    return evaluate
+
+
+def _grant_approval(verb: str, consequence: str):
+    def format_approval(arguments: dict) -> str:
+        return f"{verb} the tailnet grant {arguments.get('grant')}. {consequence}{GRANT_TAIL}"
+    return format_approval
+
+
+def _grant_result(done: str):
+    def format_result(result: dict) -> str:
+        grant = result.get("grant") or "the grant"
+        if result.get("ok") and result.get("verification_ok"):
+            return f"{done} {grant}. Janus read the policy back and confirmed it."
+        if result.get("status") == "outcome_unknown":
+            return (f"The tailnet policy change for {grant} has an unknown outcome: {result.get('error')} "
+                    "Do not repeat it before reading the policy.")
+        return f"The tailnet policy change for {grant} did not happen: {result.get('error')}"
+    return format_result
+
+
+def _grant_tool(operation: str, description: str, approval, done: str) -> dict:
+    tool = {
+        "description": description, "resource_type": "network.tailnet.policy",
+        "operation_kind": "delete" if operation == "remove" else "create",
+        "effect": "mutation", "permission": f"network.tailnet.policy.grant.{operation}",
+        "risk": "high" if operation == "remove" else "medium", "requires_approval": True,
+        "policy_owns_preconditions": True, "policy_resolver": _grant_policy(operation),
+        "trusted_policy_arguments": list(GRANT_TRUSTED),
+        "grounded_arguments": ["sources", "destinations", "ports"], "derived_arguments": [],
+        "required_arguments": ["sources", "destinations", "ports"], "parameters": GRANT_PARAMETERS,
+        "condition_fields": ["ok", "status", "verification_ok"],
+        "approval_formatter": approval, "result_formatter": _grant_result(done),
+    }
+    if operation == "remove":
+        # Removing access is destructive: the owner types the grant exactly as the approval shows it.
+        tool["confirmation_argument"] = "grant"
+    return tool
+
+
+TAILNET_CHANGE_TOOLS = {
+    "network_tailnet_grant_add": _grant_tool(
+        "add",
+        "Add one tailnet access grant: named sources may reach named destinations on named ports. Approved "
+        "first; never users or addresses.",
+        _grant_approval("Add", "Devices it covers can start these connections at once. "), "Added the tailnet grant"),
+    "network_tailnet_grant_remove": _grant_tool(
+        "remove",
+        "Remove one existing tailnet access grant, named by its sources, destinations and ports. Approved "
+        "with the grant typed.",
+        _grant_approval("Remove", "Connections that only this grant allowed stop at once and devices lose that "
+                                  "access. "),
+        "Removed the tailnet grant"),
+}
+
 # Checks how names resolve from the AI host itself; independent of the router and the tailnet.
 DNS_CHECK_TOOLS = {
     "network_dns_integrity_check": {
@@ -496,4 +604,5 @@ DNS_CHECK_TOOLS = {
 # The networking specialist's reads; readiness keeps OpenWrt, Tailscale and the DNS check as separate providers.
 OPENWRT_TOOLS = dict(NETWORKING_TOOLS)
 NETWORKING_TOOLS.update(TAILNET_TOOLS)
+NETWORKING_TOOLS.update(TAILNET_CHANGE_TOOLS)
 NETWORKING_TOOLS.update(DNS_CHECK_TOOLS)
