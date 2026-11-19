@@ -26,7 +26,8 @@ def answer_only_loss(model, inputs, *, num_items_in_batch=None):
     targets = labels[:, first:].to(logits.device)
     denominator = int(supervised.sum().item()) if num_items_in_batch is None else num_items_in_batch
     if torch.is_tensor(denominator):
-        denominator = denominator.item()
+        # Under DataParallel transformers repeats the count once per GPU; every entry is the same count.
+        denominator = denominator.reshape(-1)[0].item()
     loss = functional.cross_entropy(logits.reshape(-1, logits.shape[-1]), targets.reshape(-1), ignore_index=-100,
                                     reduction="sum") / denominator
     return loss, outputs

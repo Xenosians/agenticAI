@@ -70,6 +70,19 @@ def _clean(text: str) -> str:
     return fenced.group(1).strip() if fenced else text
 
 
+def pin_one_gpu() -> None:
+    """One job runs on one GPU (owner decision 2: never split across devices).
+
+    With two GPUs visible (Kaggle's two T4s) the trainer wraps the model in DataParallel. The first visible
+    GPU is kept; an empty value (a CPU job) stays empty. Must run before torch initialises CUDA.
+    """
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if visible is None:
+        os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    elif "," in visible:
+        os.environ["CUDA_VISIBLE_DEVICES"] = visible.split(",", 1)[0].strip()
+
+
 def choose_dtype(*, device: str, precision: str, capability: tuple[int, int] | None) -> str:
     """fp32 on a CPU; bf16 only where the GPU computes it natively (compute capability 8.0 and newer).
 
@@ -589,6 +602,7 @@ def run(job_path: Path, output: Path, *, stop_file: Path | None = None,
 
 
 def main(argv: list[str] | None = None) -> int:
+    pin_one_gpu()
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("job")
     parser.add_argument("output")

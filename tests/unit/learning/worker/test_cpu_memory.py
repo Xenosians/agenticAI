@@ -71,3 +71,21 @@ def test_bf16_only_where_the_gpu_computes_it_natively():
     assert choose_dtype(device="cuda", precision="auto", capability=(8, 9)) == "bf16"   # an RTX 4050
     assert choose_dtype(device="cpu", precision="auto", capability=None) == "fp32"
     assert choose_dtype(device="cuda", precision="bf16", capability=(7, 5)) == "bf16"   # asked for by name
+
+
+def test_one_job_uses_one_gpu_even_where_the_machine_has_several(monkeypatch):
+    """Owner decision 2: one job is never split across GPUs. Kaggle offers two T4s; with both visible the
+    trainer wrapped the model in DataParallel. The worker pins the first one before torch starts CUDA."""
+    from learning.worker.stages import pin_one_gpu
+
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    pin_one_gpu()
+    import os
+
+    assert os.environ["CUDA_VISIBLE_DEVICES"] == "0"
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")          # a CPU job stays without CUDA
+    pin_one_gpu()
+    assert os.environ["CUDA_VISIBLE_DEVICES"] == ""
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1,0")       # the host chose: its first choice is kept
+    pin_one_gpu()
+    assert os.environ["CUDA_VISIBLE_DEVICES"] == "1"

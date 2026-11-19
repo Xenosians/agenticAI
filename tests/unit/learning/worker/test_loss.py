@@ -55,3 +55,16 @@ def test_a_row_without_any_answer_token_is_refused():
     model = Recorder()
     with pytest.raises(ValueError, match="answer"):
         answer_only_loss(model, {"input_ids": torch.tensor([[1, 2, 3]]), "labels": torch.tensor([[-100] * 3])})
+
+
+def test_a_per_device_count_from_data_parallel_is_summed_once():
+    """transformers expands the batch's item count to one entry per GPU under DataParallel (Kaggle has two
+    T4s); the loss must divide by the count, not fail on a two-element tensor (live: 'a Tensor with 2
+    elements cannot be converted to Scalar')."""
+    model = Recorder()
+    input_ids = torch.tensor([[1, 2, 3, 4, 5, 6]])
+    labels = torch.tensor([[-100, -100, -100, 4, 5, 6]])
+    batch = {"input_ids": input_ids, "attention_mask": torch.ones_like(input_ids), "labels": labels}
+    expected, _ = answer_only_loss(model, batch, num_items_in_batch=torch.tensor(3))
+    expanded, _ = answer_only_loss(model, batch, num_items_in_batch=torch.tensor(3).unsqueeze(0).expand(2, -1))
+    assert torch.allclose(expanded, expected)
