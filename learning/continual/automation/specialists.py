@@ -20,6 +20,13 @@ its last candidate:
 - Janus's own held-out gate then checks the candidate next to the specialist
   serving now, and the candidate stays where the worker wrote it.
 
+Proxmox comes first (owner decisions 18 November 2026, 23:30 WIB): when a
+registered remote worker (the ``janus-trainer`` container) is free and the
+specialist fits it, ``tend_remote`` sends it the same job over SSH; that needs
+neither the GPU nor an idle machine. A finished run is fetched, also kept on
+the worker, and judged by Janus's gate in the next idle window, like a local
+one. What does not fit the worker trains on the local GPU when it is idle.
+
 Nothing here registers or serves a candidate. Putting one into service stays an
 explicit decision.
 """
@@ -42,8 +49,10 @@ from types import SimpleNamespace
 
 from learning.continual.automation.limiter import TrainingYielded, gpu_budget
 from learning.paths import REPOSITORY_ROOT, RUNTIME_LEARNING_ROOT
+from learning.worker_dispatch import Worker, fits
 from learning.worker_jobs import build_specialist_job
-from learning.worker_transport import LocalTransport, collect_candidate
+from learning.worker_transport import (LocalTransport, SshTransport, TransportError, build_worker_package,
+                                       collect_candidate)
 
 SPECIALIST_CONFIG_DIRECTORY = REPOSITORY_ROOT / "learning" / "config" / "specialists"
 SPECIALIST_WORK_ROOT = RUNTIME_LEARNING_ROOT / "continuous" / "specialists"
@@ -113,15 +122,60 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+@dataclass(frozen=True)
+class RemoteWorker:
+    """A registered remote training machine (``~/.config/janus-live/<name>.json``), reached over SSH."""
+    name: str
+    kind: str
+    device: str
+    host: str
+    user: str
+    key: Path
+    known_hosts: Path
+    ram_gib: float
+    threads: int
+    gpu_gib: float = 0.0
+
+    def capacity(self) -> Worker:
+        return Worker(name=self.name, kind=self.kind, device=self.device, ram_gib=self.ram_gib, gpu_gib=self.gpu_gib)
+
+
+def load_remote_worker(path: Path | None) -> RemoteWorker | None:
+    """The worker file the first boot wrote, or None when there is none or it is not in the known shape."""
+    if path is None:
+        return None
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        worker = RemoteWorker(name=str(data["name"]), kind=str(data["kind"]), device=str(data["device"]),
+                              host=str(data["host"]), user=str(data["user"]), key=Path(data["key"]),
+                              known_hosts=Path(data["known_hosts"]), ram_gib=float(data["ram_gib"]),
+                              threads=int(data["threads"]), gpu_gib=float(data.get("gpu_gib", 0.0)))
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if worker.kind not in ("proxmox", "local", "kaggle") or worker.device not in ("cpu", "cuda") \
+            or not (1 <= worker.threads <= 256):
+        return None
+    return worker
+
+
+def remote_transport(worker: RemoteWorker) -> SshTransport:
+    return SshTransport(host=worker.host, user=worker.user, key=worker.key, known_hosts=worker.known_hosts,
+                        environment={"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1", "PYTHONDONTWRITEBYTECODE": "1",
+                                     "TOKENIZERS_PARALLELISM": "false", "OMP_NUM_THREADS": str(worker.threads)})
+
+
 class SpecialistCandidateStore:
     """Per specialist: what its last candidate was trained from and how that run ended.
 
     Only a run that produced a candidate (accepted or rejected by its held-out
     cases) or failed for its inputs counts as done for those inputs; an
-    interrupted run is tried again.
+    interrupted run is tried again. A run dispatched to a remote worker, or
+    fetched from one and waiting for Janus's gate, is not trained again
+    meanwhile.
     """
 
     DONE = {"candidate", "rejected", "failed"}
+    PENDING = {"dispatched", "fetched"}
 
     def __init__(self, directory: Path):
         self.path = Path(directory) / "specialists.json"
@@ -139,7 +193,10 @@ class SpecialistCandidateStore:
 
     def needs_training(self, target: SpecialistTarget, fingerprint: str) -> bool:
         last = self.last(target)
-        return not (last and last.get("fingerprint") == fingerprint and last.get("outcome") in self.DONE)
+        return not (last and last.get("fingerprint") == fingerprint and last.get("outcome") in self.DONE | self.PENDING)
+
+    def pending(self, targets: Iterable[SpecialistTarget], outcome: str) -> list[tuple[SpecialistTarget, dict]]:
+        return [(target, last) for target in targets if (last := self.last(target)) and last.get("outcome") == outcome]
 
     def next_target(self, targets: Iterable[SpecialistTarget],
                     fingerprints: dict[str, str]) -> SpecialistTarget | None:
@@ -161,7 +218,7 @@ class SpecialistCandidateStore:
 @dataclass
 class SpecialistCycleResult:
     specialist: str
-    outcome: str  # candidate | rejected | interrupted | failed
+    outcome: str  # candidate | rejected | interrupted | failed | dispatched | fetched
     reason: str | None = None
     candidate: str | None = None
     gate_passed: bool | None = None
@@ -336,14 +393,19 @@ def tool_catalog_fingerprint(target: SpecialistTarget) -> str:
 
 
 class SpecialistIdleTrainer:
-    """Trains one small specialist candidate per idle cycle, inside the breathing-room limits."""
+    """Trains one small specialist candidate per idle cycle, inside the breathing-room limits.
+
+    With a registered remote worker, ``tend_remote`` (called on every controller tick) sends the worker
+    what fits it and brings finished runs back; ``run_cycle`` judges fetched runs first, then trains locally.
+    """
 
     TRAINING_PRIORITY = 1000
 
     def __init__(self, *, runtime, settings, targets: list[SpecialistTarget], store: SpecialistCandidateStore,
                  work_root: Path = SPECIALIST_WORK_ROOT,
                  catalog_fingerprint: Callable[[SpecialistTarget], str] = tool_catalog_fingerprint,
-                 yield_reason: Callable[[], str | None]):
+                 yield_reason: Callable[[], str | None], remote: RemoteWorker | None = None,
+                 remote_transport_factory: Callable[[RemoteWorker], object] = remote_transport):
         self.runtime = runtime
         self.settings = settings
         self.targets = targets
@@ -351,12 +413,98 @@ class SpecialistIdleTrainer:
         self.work_root = Path(work_root)
         self.catalog_fingerprint = catalog_fingerprint
         self.yield_reason = yield_reason
+        self.remote = remote
+        self.remote_transport_factory = remote_transport_factory
+        self.weights_gib = lambda target: _weights_bytes(model_profiles()[target.base_model_key]) / 2**30
 
     def _fingerprints(self) -> dict[str, str]:
         return {target.name: target.fingerprint(catalog=self.catalog_fingerprint(target))
                 for target in self.targets}
 
+    # -- the remote worker (Proxmox first) --------------------------------------------------------------------
+
+    async def tend_remote(self) -> SpecialistCycleResult | None:
+        """Bring back a finished remote run, or send the remote worker the next job that fits it."""
+        if self.remote is None:
+            return None
+        return await asyncio.to_thread(self._tend_remote)
+
+    def _tend_remote(self) -> SpecialistCycleResult | None:
+        transport = self.remote_transport_factory(self.remote)
+        try:
+            for target, last in self.store.pending(self.targets, "dispatched"):
+                if last.get("worker") != self.remote.name:
+                    continue
+                if transport.running(last["job_id"]):
+                    return None
+                return self._collect_remote(transport, target, last)
+            if transport.busy():
+                return None
+            fingerprints = self._fingerprints()
+            waiting = [target for target in self.targets
+                       if self.store.needs_training(target, fingerprints[target.name])
+                       and fits(self.remote.capacity(), weights_gib=self.weights_gib(target), stages=list(WORKER_STAGES))]
+            target = self.store.next_target(waiting, fingerprints)
+            if target is None:
+                return None
+            return self._dispatch_remote(transport, target, fingerprints[target.name])
+        except TransportError as error:
+            # Unreachable for now (powered off, Wi-Fi): nothing changes, the next tick tries again.
+            print(f"[CONTINUAL] remote worker unavailable worker={self.remote.name} reason={str(error)[:200]}")
+            return None
+
+    def _dispatch_remote(self, transport, target: SpecialistTarget, fingerprint: str) -> SpecialistCycleResult:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        job_id = f"{target.name}-{stamp}"
+        output_root = self.work_root / target.name
+        folder = build_specialist_job(target, profiles=model_profiles(), directory=output_root / "jobs" / job_id,
+                                      stages=WORKER_STAGES, stamp=stamp, device=self.remote.device,
+                                      settings={**WORKER_RECIPE, "threads": self.remote.threads})
+        try:
+            transport.install(build_worker_package(self.work_root / "worker-package"))
+            transport.send(folder, job_id)
+            transport.start(job_id)
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)   # links to the base weights and the data; sent or not
+        self.store.record(target, fingerprint=fingerprint, outcome="dispatched", candidate=None, job_id=job_id,
+                          worker=self.remote.name)
+        print(f"[CONTINUAL] specialist job dispatched specialist={target.name} worker={self.remote.name} "
+              f"job={job_id}")
+        return SpecialistCycleResult(specialist=target.name, outcome="dispatched", reason=self.remote.name)
+
+    def _collect_remote(self, transport, target: SpecialistTarget, last: dict) -> SpecialistCycleResult:
+        job_id = last["job_id"]
+        run_directory = transport.fetch(job_id, self.work_root / target.name / "runs" / job_id)
+        transport.clean(job_id, keep_result=True)   # results are stored on Proxmox too (owner decision 1)
+        details = {key: last.get(key) for key in ("job_id", "worker")}
+        try:
+            result = json.loads((Path(run_directory) / "result.json").read_text(encoding="utf-8"))
+            candidate = collect_candidate(Path(run_directory)) if result.get("outcome") == "trained" else None
+        except (OSError, ValueError, TransportError) as error:
+            result, candidate = {"outcome": "failed", "error": f"{type(error).__name__}: {error}"}, None
+        outcome = result.get("outcome")
+        if candidate is not None:
+            recorded = SpecialistCycleResult(specialist=target.name, outcome="fetched",
+                                             candidate=candidate["adapter_directory"])
+            self.store.record(target, fingerprint=last["fingerprint"], outcome="fetched",
+                              candidate=candidate["adapter_directory"], run_directory=str(run_directory), **details)
+        else:
+            mapped = {"no_improvement": "rejected", "interrupted": "interrupted"}.get(outcome, "failed")
+            reason = ("no stage beat the specialist it started from" if mapped == "rejected"
+                      else str(result.get("error") or outcome)[:300])
+            recorded = SpecialistCycleResult(specialist=target.name, outcome=mapped, reason=reason)
+            self.store.record(target, fingerprint=last["fingerprint"], outcome=mapped, candidate=None, reason=reason,
+                              **details)
+        print(f"[CONTINUAL] specialist job {recorded.outcome} specialist={target.name} worker={last.get('worker')} "
+              f"job={job_id}")
+        return recorded
+
+    # -- the idle cycle on this machine -------------------------------------------------------------------------
+
     async def run_cycle(self) -> SpecialistCycleResult | None:
+        fetched = self.store.pending(self.targets, "fetched")
+        if fetched:
+            return await self._judge_fetched(*fetched[0])
         fingerprints = await asyncio.to_thread(self._fingerprints)
         target = self.store.next_target(self.targets, fingerprints)
         if target is None:
@@ -388,21 +536,9 @@ class SpecialistIdleTrainer:
                         return SpecialistCycleResult(specialist=target.name, outcome="rejected",
                                                      reason="no stage beat the specialist it started from")
                     check()
-                    reports = Path(manifest.output_directory)
-                    candidate = evaluate_candidate(target=target, manifest=manifest,
-                                                   report_path=reports / "heldout-candidate.json")
-                    check()
-                    serving = evaluate_candidate(target=target, manifest=None,
-                                                 report_path=reports / "heldout-serving.json")
+                    return self._judge(target, manifest)
             finally:
                 release_training_memory()
-            better = serving is None or candidate.passed >= serving.passed
-            return SpecialistCycleResult(
-                specialist=target.name,
-                outcome="candidate" if candidate.promotion_gate_passed and better else "rejected",
-                candidate=str(manifest.adapter_directory), gate_passed=bool(candidate.promotion_gate_passed),
-                passed=candidate.passed, total=candidate.total,
-                serving_passed=None if serving is None else serving.passed)
 
         try:
             result = await self.runtime.gpu_scheduler.run(priority=self.TRAINING_PRIORITY, work=work)
@@ -413,13 +549,55 @@ class SpecialistIdleTrainer:
             self._remove_unfinished_runs(output_root, keep_logs=True)
             result = SpecialistCycleResult(specialist=target.name, outcome="failed",
                                            reason=f"{type(exc).__name__}: {str(exc)[:300]}")
+        return self._finish(target, fingerprint, result, started)
+
+    def _finish(self, target: SpecialistTarget, fingerprint: str, result: SpecialistCycleResult, started: float,
+                **details) -> SpecialistCycleResult:
         result.seconds = round(time.monotonic() - started, 1)
         self.store.record(target, fingerprint=fingerprint, outcome=result.outcome, candidate=result.candidate,
                           reason=result.reason, gate_passed=result.gate_passed, passed=result.passed,
-                          total=result.total, serving_passed=result.serving_passed, seconds=result.seconds)
+                          total=result.total, serving_passed=result.serving_passed, seconds=result.seconds, **details)
         print(f"[CONTINUAL] specialist training {result.outcome} specialist={target.name} "
               f"reason={result.reason} heldout={result.passed}/{result.total} seconds={result.seconds}")
         return result
+
+    def _judge(self, target: SpecialistTarget, manifest) -> SpecialistCycleResult:
+        """Janus's held-out gate on a candidate, next to the specialist serving now."""
+        reports = Path(manifest.output_directory)
+        candidate = evaluate_candidate(target=target, manifest=manifest, report_path=reports / "heldout-candidate.json")
+        serving = evaluate_candidate(target=target, manifest=None, report_path=reports / "heldout-serving.json")
+        better = serving is None or candidate.passed >= serving.passed
+        return SpecialistCycleResult(
+            specialist=target.name, outcome="candidate" if candidate.promotion_gate_passed and better else "rejected",
+            candidate=str(manifest.adapter_directory), gate_passed=bool(candidate.promotion_gate_passed),
+            passed=candidate.passed, total=candidate.total, serving_passed=None if serving is None else serving.passed)
+
+    async def _judge_fetched(self, target: SpecialistTarget, last: dict) -> SpecialistCycleResult:
+        """A run a remote worker trained: Janus's own gate on this machine, in an idle window."""
+        started = time.monotonic()
+        details = {key: last.get(key) for key in ("job_id", "worker", "run_directory")}
+
+        def work() -> SpecialistCycleResult:
+            if self.yield_reason() is not None:
+                raise TrainingYielded(self.yield_reason() or "request_waiting")
+            self.runtime.model_manager.unload_all()
+            try:
+                run_directory = Path(last["run_directory"])
+                candidate = collect_candidate(run_directory)
+                if candidate is None:
+                    raise TransportError("the fetched run holds no trained adapter")
+                return self._judge(target, candidate_manifest(target, candidate, run_directory))
+            finally:
+                release_training_memory()
+
+        try:
+            result = await self.runtime.gpu_scheduler.run(priority=self.TRAINING_PRIORITY, work=work)
+        except TrainingYielded:
+            return SpecialistCycleResult(specialist=target.name, outcome="interrupted", reason="request_waiting")
+        except Exception as exc:
+            result = SpecialistCycleResult(specialist=target.name, outcome="failed",
+                                           reason=f"{type(exc).__name__}: {str(exc)[:300]}")
+        return self._finish(target, last["fingerprint"], result, started, **details)
 
     def _worker_limits(self) -> dict:
         """The breathing room the worker keeps on this shared machine (a job allows at most 60 s)."""

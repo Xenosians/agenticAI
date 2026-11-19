@@ -57,6 +57,13 @@ GUEST_NAME = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
 SNAPSHOT_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,62}")
 STORAGE_ID = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,63}")
 TAG = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.:/-]{0,127}")
+# One public SSH key on one line (a container's root login); never a private key.
+SSH_PUBLIC_KEY = re.compile(r"(?:ssh-ed25519|ecdsa-sha2-nistp256|ssh-rsa) [A-Za-z0-9+/=]{16,8192}(?: [A-Za-z0-9@._-]{1,64})?")
+# A container's first network interface, only with the fields Janus sets: a bridge, an address (or DHCP)
+# with its gateway, and the firewall flag.
+LXC_NET0 = re.compile(r"name=eth0,bridge=[A-Za-z][A-Za-z0-9_.-]{0,15},ip=(?:dhcp|[0-9.]{7,15}/[0-9]{1,2})"
+                      r"(?:,gw=[0-9.]{7,15})?(?:,firewall=[01])?")
+MAX_SWAP_MIB = 1_048_576
 DISK_ID = re.compile(r"(?:rootfs|mp[0-9]{1,3}|(?:scsi|virtio|sata|ide)[0-9]{1,3})")
 TOKEN_ID = re.compile(r"[A-Za-z0-9_.-]{1,64}@[A-Za-z0-9_.-]{1,64}![A-Za-z0-9_.-]{1,64}")
 TLS_SERVER_NAME = re.compile(
@@ -1819,15 +1826,17 @@ class ProxmoxService:
 
     def guest_set_options(self, node: str, vmid: int, *, tags: str | None, on_boot: bool | None,
                           expected_type: str, expected_name: str | None, expected_digest: str | None,
-                          sleep=time.sleep, clock=time.monotonic) -> dict:
-        """Set one guest's tags and/or start-at-boot flag on the exact approved guest."""
+                          console_mode: str | None = None, sleep=time.sleep, clock=time.monotonic) -> dict:
+        """Set one guest's tags, start-at-boot flag and/or (containers) console mode on the exact approved guest."""
         normalized = None
         if tags is not None:
             parts = [part.strip() for part in re.split(r"[,;]", tags) if part.strip()]
             if len(parts) > 32 or any(not TAG.fullmatch(part) for part in parts):
                 raise ValueError("Enter tags as a comma-separated list of letters, digits, '_', '.', ':', '/' or '-'.")
             normalized = ",".join(dict.fromkeys(parts))
-        if normalized is None and on_boot is None:
+        if console_mode is not None and (console_mode not in ("tty", "console", "shell") or expected_type != "lxc"):
+            raise ValueError("A container's console mode is tty, console or shell.")
+        if normalized is None and on_boot is None and console_mode is None:
             raise ValueError("Enter tags or a start-at-boot choice.")
         receipt = self._change_receipt("guest_set_options", node, vmid)
         try:
@@ -1853,6 +1862,8 @@ class ProxmoxService:
             form["tags"] = normalized
         if on_boot is not None:
             form["onboot"] = "1" if on_boot else "0"
+        if console_mode is not None:
+            form["cmode"] = console_mode
         try:
             response = self._put(f"/nodes/{node}/{guest['type']}/{vmid}/config", form)
         except (httpx.ConnectError, httpx.ConnectTimeout):
@@ -1872,7 +1883,10 @@ class ProxmoxService:
         try:
             current = self._get(f"/nodes/{node}/{guest['type']}/{vmid}/config")
             observed = {"tags": _text(current, "tags", limit=2048) if isinstance(current, dict) else None,
-                        "on_boot": _boolean(current, "onboot") if isinstance(current, dict) else None}
+                        "on_boot": _boolean(current, "onboot") if isinstance(current, dict) else None,
+                        # Proxmox omits the console mode while it is the default, tty.
+                        "console_mode": (_text(current, "cmode", limit=16) or "tty") if isinstance(current, dict)
+                        else None}
         except (httpx.HTTPError, RuntimeError, ProviderResourceNotFound):
             return self._change_outcome(receipt, False, "outcome_unknown",
                                         "Proxmox accepted the change, but the guest could not be read back. "
@@ -1880,7 +1894,8 @@ class ProxmoxService:
         receipt.update(previous=previous, observed=observed, tags=normalized if normalized is not None else observed["tags"],
                        on_boot=on_boot if on_boot is not None else observed["on_boot"])
         if (normalized is not None and observed["tags"] != normalized) or \
-                (on_boot is not None and observed["on_boot"] != on_boot):
+                (on_boot is not None and observed["on_boot"] != on_boot) or \
+                (console_mode is not None and observed["console_mode"] != console_mode):
             return self._change_outcome(receipt, False, "failed",
                                         "Proxmox accepted the change but the guest does not show it.")
         return self._change_outcome(receipt, True, "executed", verification_ok=True)
@@ -2178,8 +2193,16 @@ class ProxmoxService:
 
     def guest_create_lxc(self, node: str, vmid: int, *, hostname: str, template: str, cores: int,
                          memory_mib: int, disk_gib: int, storage: str, pool: str | None,
-                         description: str | None, sleep=time.sleep, clock=time.monotonic) -> dict:
-        """Create one stopped LXC container from a template on the exact node, then prove it exists."""
+                         description: str | None, swap_mib: int | None = None, net0: str | None = None,
+                         nameserver: str | None = None, ssh_public_keys: str | None = None,
+                         nesting: bool = False, console_mode: str | None = None, on_boot: bool = False,
+                         tags: str | None = None, sleep=time.sleep, clock=time.monotonic) -> dict:
+        """Create one stopped LXC container from a template on the exact node, then prove it exists.
+
+        The optional settings are sent only when given, each in its own fixed shape: swap, the first network
+        interface, nameservers, one public SSH key for root, nesting (systemd in an unprivileged container),
+        the console mode, start at boot and tags. A password is never part of the request.
+        """
         if type(vmid) is not int or not (1 <= vmid <= MAX_VMID):
             raise ValueError("Enter one valid Proxmox VMID.")
         if not isinstance(hostname, str) or not GUEST_NAME.fullmatch(hostname):
@@ -2200,6 +2223,51 @@ class ProxmoxService:
         if description is not None and (not isinstance(description, str) or len(description) > 256
                                         or any(ord(char) < 32 for char in description)):
             raise ValueError("Keep the description to one line of at most 256 characters.")
+        optional: dict[str, str] = {}
+        if swap_mib is not None:
+            if type(swap_mib) is not int or not (0 <= swap_mib <= MAX_SWAP_MIB):
+                raise ValueError("Enter swap in MiB (0-1048576).")
+            optional["swap"] = str(swap_mib)
+        if net0 is not None:
+            if not isinstance(net0, str) or not LXC_NET0.fullmatch(net0):
+                raise ValueError("Enter the network as name=eth0,bridge=<bridge>,ip=<address/prefix or dhcp>"
+                                 "[,gw=<gateway>][,firewall=0|1].")
+            for field_name in ("ip", "gw"):
+                value = dict(part.split("=", 1) for part in net0.split(",")).get(field_name)
+                if value not in (None, "dhcp"):
+                    try:
+                        (ipaddress.ip_interface if field_name == "ip" else ipaddress.ip_address)(value)
+                    except ValueError:
+                        raise ValueError(f"The network's {field_name} is not an IPv4 address.") from None
+            optional["net0"] = net0
+        if nameserver is not None:
+            servers = nameserver.split(" ") if isinstance(nameserver, str) else []
+            try:
+                valid = 1 <= len(servers) <= 3 and all(ipaddress.ip_address(server) for server in servers)
+            except ValueError:
+                valid = False
+            if not valid:
+                raise ValueError("Enter one to three nameserver addresses separated by spaces.")
+            optional["nameserver"] = nameserver
+        if ssh_public_keys is not None:
+            if not isinstance(ssh_public_keys, str) or not SSH_PUBLIC_KEY.fullmatch(ssh_public_keys):
+                raise ValueError("Enter one public SSH key on one line.")
+            optional["ssh-public-keys"] = ssh_public_keys
+        if type(nesting) is not bool or type(on_boot) is not bool:
+            raise ValueError("Nesting and start at boot are on or off.")
+        if nesting:
+            optional["features"] = "nesting=1"
+        if console_mode is not None:
+            if console_mode not in ("tty", "shell"):
+                raise ValueError("The console mode is tty or shell.")
+            optional["cmode"] = console_mode
+        if on_boot:
+            optional["onboot"] = "1"
+        if tags is not None:
+            parts = [part.strip() for part in tags.split(",") if part.strip()] if isinstance(tags, str) else []
+            if not parts or len(parts) > 32 or any(not TAG.fullmatch(part) for part in parts):
+                raise ValueError("Enter tags as a comma-separated list of letters, digits, '_', '.', ':', '/' or '-'.")
+            optional["tags"] = ",".join(dict.fromkeys(parts))
         receipt = self._change_receipt("guest_create_lxc", node, vmid)
         receipt.update(name=hostname)
         try:
@@ -2217,6 +2285,7 @@ class ProxmoxService:
             form["pool"] = pool
         if description:
             form["description"] = description
+        form.update(optional)
         try:
             response = self._post(f"/nodes/{node}/lxc", form)
         except (httpx.ConnectError, httpx.ConnectTimeout):

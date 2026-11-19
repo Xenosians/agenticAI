@@ -70,6 +70,20 @@ def _clean(text: str) -> str:
     return fenced.group(1).strip() if fenced else text
 
 
+def release_freed_memory() -> None:
+    """Give freed heap pages back to the system (glibc keeps them after a model is freed).
+
+    Measured on a 0.5B model on a CPU: after generate(), freeing it left 2.1 GB resident, and the next stage's
+    model doubled memory past a 3.5 GiB container; malloc_trim returned it (0.8 GB). Elsewhere it does nothing.
+    """
+    import ctypes
+
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except (OSError, AttributeError):
+        pass
+
+
 class Run:
     def __init__(self, job: TrainingJob, root: Path, output: Path, stop_file: Path | None):
         import torch
@@ -110,6 +124,10 @@ class Run:
         run = self
 
         class Yield(TrainerCallback):
+            def on_substep_end(self, args, state, control, **kwargs):
+                # Between micro-batches too: with gradient accumulation a full step on a CPU takes minutes.
+                run.check_stop()
+
             def on_step_end(self, args, state, control, **kwargs):
                 run.check_stop()
                 pause = run.job.limits.step_pause_seconds
@@ -126,8 +144,10 @@ class Run:
         common = dict(output_dir=str(directory), report_to=[], seed=self.job.seed, save_only_model=True,
                       use_cpu=self.device == "cpu", bf16=self.dtype == "bf16", fp16=self.dtype == "fp16",
                       dataloader_pin_memory=self.device == "cuda", disable_tqdm=True, logging_steps=1,
-                      remove_unused_columns=False, gradient_checkpointing=self.device == "cuda",
-                      gradient_checkpointing_kwargs={"use_reentrant": False} if self.device == "cuda" else None)
+                      # Activations are recomputed on every device: a CPU worker in a small container would
+                      # otherwise hold gigabytes of them (a 0.5B model with 1.5k-token rows needs ~3.5 GB).
+                      remove_unused_columns=False, gradient_checkpointing=True,
+                      gradient_checkpointing_kwargs={"use_reentrant": False})
         common.update(overrides)
         return common, TrainingArguments
 
@@ -136,6 +156,7 @@ class Run:
         gc.collect()
         if self.device == "cuda":
             self.torch.cuda.empty_cache()
+        release_freed_memory()
 
     def base(self):
         return load_base(self.job, self.model_directory, self.gguf_file, device=self.device,
@@ -151,7 +172,7 @@ class Run:
 
             model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True,
                                                     gradient_checkpointing_kwargs={"use_reentrant": False})
-        elif trainable and self.device == "cuda":
+        elif trainable:
             model.enable_input_require_grads()   # checkpointing through frozen embeddings needs input grads
         if adapter is None:
             return model
@@ -446,6 +467,12 @@ class Run:
         previous: dict | None = baseline if baseline["passed"] > 0 else None
         gate, stages = StageGate(), self.progress["stages"]
         for name in job.stages:
+            if previous is not None and previous["passed"] >= previous["total"]:
+                # A stage is kept only when strictly better: nothing can beat a perfect start, so no stage
+                # trains for hours (a CPU worker's SFT) towards a verdict known in advance.
+                stages.append({"stage": name, "ran": False, "kept": False, "seconds": 0.0,
+                               "reason": "the starting model already passes every held-out case"})
+                continue
             self.check_stop()
             started = time.monotonic()
             outcome = getattr(self, name)(current)

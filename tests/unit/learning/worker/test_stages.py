@@ -102,6 +102,16 @@ def stage(result, name):
     return next(item for item in result["stages"] if item["stage"] == name)
 
 
+def add_unlearnable_case(job: Path) -> Path:
+    """A held-out case no stage can learn (nothing trains its tool): a perfect score would end the run before
+    the stage under test, since nothing can beat a perfect start."""
+    with (job.parent / "data/heldout.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"name": "unlearnable", "prompt_messages": _messages("trace the path to the router"),
+                                 "expected_tool": "traceroute", "expected_arguments": {},
+                                 "max_new_tokens": 40}) + "\n")
+    return job
+
+
 def test_a_job_without_the_hosts_admissions_never_loads_anything(tmp_path, tiny_base):
     job = make_job(tmp_path, tiny_base, stages=["sft"], admit=False)
     result = run(job, tmp_path / "out")
@@ -134,7 +144,7 @@ def test_sft_learns_the_task_under_the_fit_guard_and_is_kept_because_it_beats_th
 
 
 def test_a_stage_that_does_not_beat_the_previous_one_is_dropped_and_the_earlier_model_stays(tmp_path, tiny_base):
-    job = make_job(tmp_path, tiny_base, stages=["sft", "dpo"])
+    job = add_unlearnable_case(make_job(tmp_path, tiny_base, stages=["sft", "dpo"]))
     _write_jsonl(job.parent / "data/preferences.jsonl", [
         {"prompt_messages": _messages(f"check {target}"), "chosen": ANSWER, "rejected": "I cannot help."}
         for target in TRAIN_TARGETS[:4]])
@@ -200,12 +210,29 @@ def test_the_weight_space_merge_combines_adapters_of_the_same_base(tmp_path, tin
 
 
 def test_ppo_optimises_the_tool_call_reward_for_the_hub(tmp_path, tiny_base):
-    result = run(make_job(tmp_path, tiny_base, stages=["sft", "ppo"], role="hub"), tmp_path / "out")
+    result = run(add_unlearnable_case(make_job(tmp_path, tiny_base, stages=["sft", "ppo"], role="hub")),
+                 tmp_path / "out")
     ppo = stage(result, "ppo")
     assert ppo["ran"], ppo
     assert ppo["method"].startswith("ppo-clip")
     assert ppo["steps"] >= 1 and "mean_reward" in ppo
     assert ppo["reason"] in {"better", "not_better", "nothing_passed"}
+
+
+def test_a_start_that_already_passes_every_case_trains_nothing(tmp_path, tiny_base, monkeypatch):
+    """A stage is kept only when strictly better, so nothing can beat a perfect start: the run ends at once
+    instead of training for hours to a verdict known in advance (a CPU worker's SFT takes hours)."""
+    from learning.worker import stages as stages_module
+
+    monkeypatch.setattr(stages_module.Run, "evaluate", lambda self, model, label: {
+        "passed": len(self.cases), "total": len(self.cases), "cases_sha256": self.cases_sha256,
+        "needs_host_policy": 0})
+    monkeypatch.setattr(stages_module.Run, "sft", lambda self, current: pytest.fail("nothing beats a perfect start"))
+    result = run(make_job(tmp_path, tiny_base, stages=["sft", "dpo"]), tmp_path / "out")
+    assert result["outcome"] == "no_improvement"
+    assert [(item["stage"], item["ran"], item["kept"]) for item in result["stages"]] == [
+        ("sft", False, False), ("dpo", False, False)]
+    assert {item["reason"] for item in result["stages"]} == {"the starting model already passes every held-out case"}
 
 
 def test_a_stop_file_interrupts_the_run_and_keeps_no_half_trained_model(tmp_path, tiny_base):

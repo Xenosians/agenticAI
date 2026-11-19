@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -17,6 +18,25 @@ from typing import Any
 
 JOB_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}-\d{8}T\d{6}Z$")
 WORKER_HOME_CODE = "janus-worker"       # the worker package lives in ~/janus-worker on remote workers
+ENVIRONMENT_NAME = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
+ENVIRONMENT_VALUE = re.compile(r"[A-Za-z0-9_.:/+=,-]{0,256}")
+REPOSITORY = Path(__file__).resolve().parents[1]
+
+
+def build_worker_package(directory: Path, *, repository: Path = REPOSITORY) -> Path:
+    """The worker as a remote machine runs it: ``learning/worker`` and its requirements, nothing else.
+
+    The service's ``learning/__init__.py`` imports the whole service, so the package carries an empty one:
+    ``python -m learning.worker.stages`` must not import anything a worker does not install.
+    """
+    directory = Path(directory)
+    shutil.rmtree(directory, ignore_errors=True)
+    shutil.copytree(repository / "learning" / "worker", directory / "learning" / "worker",
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    (directory / "learning" / "__init__.py").write_text(
+        '"""The training worker package (see learning/worker/__init__.py)."""\n', encoding="utf-8")
+    shutil.copy2(repository / "requirements-worker.txt", directory / "requirements-worker.txt")
+    return directory
 
 
 class TransportError(RuntimeError):
@@ -31,13 +51,19 @@ def _job_id(job_id: str) -> str:
 
 class SshTransport:
     def __init__(self, *, host: str, user: str, key: Path, known_hosts: Path, port: int = 22,
-                 python: str = "~/janus-worker/.venv/bin/python",
-                 runner: Callable[..., subprocess.CompletedProcess] = subprocess.run):
+                 python: str = "$HOME/janus-worker/.venv/bin/python",
+                 runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+                 environment: dict[str, str] | None = None):
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]{0,252}", host) or not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}",
                                                                                          user):
             raise ValueError("an SSH worker is a host name and a user name")
+        environment = dict(environment or {})
+        if any(not ENVIRONMENT_NAME.fullmatch(name) or not ENVIRONMENT_VALUE.fullmatch(value)
+               for name, value in environment.items()):
+            raise ValueError("the worker's environment is plain NAME=value pairs")
         self.host, self.user, self.port, self.python = host, user, port, python
         self.key, self.known_hosts, self.runner = Path(key), Path(known_hosts), runner
+        self.environment = environment
 
     def _ssh_options(self) -> list[str]:
         return ["-i", str(self.key), "-p", str(self.port), "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
@@ -68,18 +94,37 @@ class SshTransport:
                     "sending the job")
 
     def start(self, job_id: str) -> None:
+        """Start the job as a user unit, so it outlives this SSH session and is stopped by systemd.
+
+        The remote login shell expands ``$HOME``: systemd-run would make a relative ``%h`` absolute against
+        the session's directory instead. The unit's output goes to the run's log, which ``fetch`` brings back.
+        """
         job_id = _job_id(job_id)
         unit = f"janus-train-{job_id}"
-        command = (f"systemd-run --user --unit={unit} --collect --property=Nice=10 "
-                   f"--working-directory=%h/{WORKER_HOME_CODE} "
-                   f"{self.python} -m learning.worker.stages %h/jobs/{job_id}/job.json %h/runs/{job_id} "
-                   f"--stop-file %h/runs/{job_id}.stop")
-        self._remote(command, "starting the worker")
+        settings = " ".join(f"--setenv={name}={value}" for name, value in sorted(self.environment.items()))
+        command = (f'mkdir -p "$HOME/runs/{job_id}" && '
+                   f"systemd-run --user --unit={unit} --collect --property=Nice=10 "
+                   f'--property=StandardOutput=append:"$HOME/runs/{job_id}/worker.log" '
+                   f'--property=StandardError=append:"$HOME/runs/{job_id}/worker.log" '
+                   f'--working-directory="$HOME/{WORKER_HOME_CODE}" {settings} '
+                   f'{self.python} -m learning.worker.stages "$HOME/jobs/{job_id}/job.json" "$HOME/runs/{job_id}" '
+                   f'--stop-file "$HOME/runs/{job_id}.stop"')
+        self._remote(" ".join(command.split()), "starting the worker")
 
     def running(self, job_id: str) -> bool:
         result = self._remote(f"systemctl --user is-active janus-train-{_job_id(job_id)}", "reading the worker",
                               check=False)
+        if result.returncode == 255:            # ssh itself failed: the state is unknown, not "finished"
+            raise TransportError(f"the worker {self.host} could not be reached")
         return result.stdout.strip() in {"active", "activating"}
+
+    def busy(self) -> bool:
+        """Whether any training unit runs on the worker (one job at a time per machine)."""
+        result = self._remote("systemctl --user list-units --type=service --state=active,activating --no-legend "
+                              "'janus-train-*'", "reading the worker", check=False)
+        if result.returncode == 255:
+            raise TransportError(f"the worker {self.host} could not be reached")
+        return bool(result.stdout.strip())
 
     def stop(self, job_id: str) -> None:
         self._remote(f"touch runs/{_job_id(job_id)}.stop", "asking the worker to yield")
@@ -92,9 +137,11 @@ class SshTransport:
                     ("--exclude=cache/", "--exclude=checkpoint-*/"))
         return destination
 
-    def clean(self, job_id: str) -> None:
+    def clean(self, job_id: str, *, keep_result: bool = False) -> None:
+        """Remove the job (and its stop request); the run stays on the worker when ``keep_result``."""
         job_id = _job_id(job_id)
-        self._remote(f"rm -rf jobs/{job_id} runs/{job_id} runs/{job_id}.stop", "removing the job", check=False)
+        paths = f"jobs/{job_id} runs/{job_id}.stop" if keep_result else f"jobs/{job_id} runs/{job_id} runs/{job_id}.stop"
+        self._remote(f"rm -rf {paths}", "removing the job", check=False)
 
 
 class LocalTransport:

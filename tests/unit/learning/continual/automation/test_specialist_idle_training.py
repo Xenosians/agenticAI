@@ -540,3 +540,156 @@ def test_a_candidate_that_passes_but_does_worse_than_the_serving_one_is_rejected
     idle, _runtime, _unloaded = build_trainer(tmp_path, monkeypatch, train=train, evaluate=evaluate)
     result = asyncio.run(idle.run_cycle())
     assert (result.outcome, result.passed, result.serving_passed) == ("rejected", 9, 10)
+
+
+# ---- Proxmox first (owner decision 1, 18 Nov 2026): the trainer container takes what fits it ----
+
+class FakeRemote:
+    """SshTransport's interface for a remote worker; ``running`` answers from ``states`` in turn."""
+
+    def __init__(self, root: Path, *, states=(True, False), result=None, busy=False, unreachable=False):
+        self.root, self.states, self.result = Path(root), list(states), result
+        self.calls, self.is_busy, self.unreachable = [], busy, unreachable
+
+    def busy(self):
+        self.calls.append("busy")
+        return self.is_busy
+
+    def install(self, package):
+        self.calls.append("install")
+        assert (Path(package) / "learning" / "worker").is_dir() or Path(package).name == "package"
+
+    def send(self, folder, job_id):
+        self.calls.append("send")
+        self.job_id = job_id
+
+    def start(self, job_id):
+        self.calls.append("start")
+
+    def running(self, job_id):
+        from learning.worker_transport import TransportError
+
+        self.calls.append("running")
+        if self.unreachable:
+            raise TransportError("ssh failed on janus-trainer with exit code 255")
+        return self.states.pop(0) if self.states else False
+
+    def fetch(self, job_id, destination):
+        from learning.worker.stages import fingerprint_directory
+
+        self.calls.append("fetch")
+        destination = Path(destination)
+        destination.mkdir(parents=True, exist_ok=True)
+        result = dict(self.result or {"outcome": "trained"})
+        if result["outcome"] == "trained":
+            (destination / "final").mkdir(exist_ok=True)
+            (destination / "final" / "adapter_model.safetensors").write_bytes(b"weights")
+            result |= {"final_adapter": "final", "final_adapter_sha256": fingerprint_directory(destination / "final")}
+        (destination / "result.json").write_text(json.dumps({"job_id": job_id} | result), encoding="utf-8")
+        return destination
+
+    def clean(self, job_id, *, keep_result=False):
+        self.calls.append(f"clean keep_result={keep_result}")
+
+
+TRAINER = specialists_module.RemoteWorker(name="janus-trainer", kind="proxmox", device="cpu",
+                                          host="janus-trainer.example.ts.net", user="janus", key=Path("k"),
+                                          known_hosts=Path("kh"), ram_gib=3.5, threads=4)
+
+
+def remote_trainer(tmp_path, monkeypatch, remote, *, weights_gib=0.9, evaluate=None):
+    jobs = []
+
+    def build_job(target, *, profiles, directory, stages, stamp, device, settings):
+        jobs.append({"target": target.name, "device": device, "settings": settings, "stages": tuple(stages)})
+        Path(directory).mkdir(parents=True)
+        return directory
+
+    monkeypatch.setattr(specialists_module, "build_specialist_job", build_job)
+    monkeypatch.setattr(specialists_module, "model_profiles", lambda: MODEL_PROFILES)
+    monkeypatch.setattr(specialists_module, "candidate_manifest",
+                        lambda target, candidate, run_directory: SimpleNamespace(
+                            adapter_directory=candidate["adapter_directory"], output_directory=str(run_directory)))
+    idle, runtime, unloaded = build_trainer(
+        tmp_path, monkeypatch, train=lambda **_: pytest.fail("a job that fits the trainer is not trained here"),
+        evaluate=evaluate or (lambda **kw: None if kw["manifest"] is None else SimpleNamespace(
+            passed=9, total=9, promotion_gate_passed=True)))
+    idle.remote, idle.remote_transport_factory = TRAINER, lambda worker: remote
+    idle.weights_gib = lambda target: weights_gib
+    return idle, runtime, unloaded, jobs
+
+
+def test_a_job_that_fits_the_proxmox_trainer_is_dispatched_there_without_the_local_gpu(tmp_path, monkeypatch):
+    remote = FakeRemote(tmp_path / "remote")
+    idle, runtime, unloaded, jobs = remote_trainer(tmp_path, monkeypatch, remote)
+    runtime.gpu_scheduler = None                     # dispatching needs neither the GPU nor an idle machine
+    result = asyncio.run(idle.tend_remote())
+    assert (result.specialist, result.outcome) == ("account", "dispatched")
+    assert jobs == [{"target": "account", "device": "cpu", "stages": ("sft", "dpo"),
+                     "settings": {**specialists_module.WORKER_RECIPE, "threads": 4}}]
+    assert remote.calls == ["busy", "install", "send", "start"]
+    assert unloaded == []
+    last = idle.store.last(idle.targets[0])
+    assert last["outcome"] == "dispatched" and last["worker"] == "janus-trainer"
+    # The job folder (links to the base weights) does not stay on this machine.
+    assert not (tmp_path / "work" / "account" / "jobs" / last["job_id"]).exists()
+    # Dispatched work is not trained again on the laptop meanwhile.
+    assert asyncio.run(idle.run_cycle()) is None
+
+
+def test_a_finished_remote_run_is_fetched_kept_on_the_trainer_and_judged_by_janus_gate(tmp_path, monkeypatch):
+    remote = FakeRemote(tmp_path / "remote", states=[True, False])
+    idle, _runtime, unloaded, _jobs = remote_trainer(tmp_path, monkeypatch, remote)
+    asyncio.run(idle.tend_remote())                  # dispatched
+    assert asyncio.run(idle.tend_remote()) is None   # still running: nothing to do
+    fetched = asyncio.run(idle.tend_remote())
+    assert fetched.outcome == "fetched"
+    assert remote.calls[-2:] == ["fetch", "clean keep_result=True"]   # the run stays on Proxmox (decision 1)
+    result = asyncio.run(idle.run_cycle())           # the next idle window runs Janus's held-out gate locally
+    assert (result.outcome, result.passed, result.total) == ("candidate", 9, 9)
+    assert result.candidate.endswith("final") and unloaded == [1]
+    assert asyncio.run(idle.run_cycle()) is None and asyncio.run(idle.tend_remote()) is None
+
+
+@pytest.mark.parametrize("worker_result, outcome", [
+    ({"outcome": "no_improvement"}, "rejected"),
+    ({"outcome": "failed", "error": "OutOfMemoryError"}, "failed"),
+    ({"outcome": "interrupted"}, "interrupted"),
+])
+def test_a_remote_run_without_a_candidate_is_recorded_like_a_local_one(tmp_path, monkeypatch, worker_result, outcome):
+    remote = FakeRemote(tmp_path / "remote", states=[False], result=worker_result)
+    idle, _runtime, _unloaded, _jobs = remote_trainer(tmp_path, monkeypatch, remote)
+    asyncio.run(idle.tend_remote())
+    assert asyncio.run(idle.tend_remote()).outcome == outcome
+    assert idle.store.last(idle.targets[0])["outcome"] == outcome
+
+
+def test_a_job_too_big_for_the_trainer_stays_with_the_local_gpu(tmp_path, monkeypatch):
+    remote = FakeRemote(tmp_path / "remote")
+    idle, _runtime, _unloaded, jobs = remote_trainer(tmp_path, monkeypatch, remote, weights_gib=1.4)
+    assert asyncio.run(idle.tend_remote()) is None
+    assert jobs == [] and "send" not in remote.calls
+
+
+def test_a_busy_or_unreachable_trainer_gets_nothing_new_and_keeps_its_job(tmp_path, monkeypatch):
+    busy = FakeRemote(tmp_path / "remote", busy=True)        # e.g. a job started by hand
+    idle, _runtime, _unloaded, jobs = remote_trainer(tmp_path, monkeypatch, busy)
+    assert asyncio.run(idle.tend_remote()) is None and jobs == []
+    remote = FakeRemote(tmp_path / "remote")
+    idle.remote_transport_factory = lambda worker: remote
+    asyncio.run(idle.tend_remote())
+    remote.unreachable = True
+    assert asyncio.run(idle.tend_remote()) is None
+    assert idle.store.last(idle.targets[0])["outcome"] == "dispatched"
+
+
+def test_a_registered_worker_file_is_read_in_its_known_shape_only(tmp_path):
+    path = tmp_path / "janus-trainer.json"
+    path.write_text(json.dumps({"name": "janus-trainer", "kind": "proxmox", "device": "cpu", "host": "t.example",
+                                "user": "janus", "key": "/k", "known_hosts": "/kh", "ram_gib": 3.5, "threads": 4}))
+    assert specialists_module.load_remote_worker(path) == specialists_module.RemoteWorker(
+        name="janus-trainer", kind="proxmox", device="cpu", host="t.example", user="janus", key=Path("/k"),
+        known_hosts=Path("/kh"), ram_gib=3.5, threads=4)
+    assert specialists_module.load_remote_worker(None) is None
+    path.write_text("{}")
+    assert specialists_module.load_remote_worker(path) is None

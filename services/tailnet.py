@@ -10,7 +10,7 @@ addresses replaced by fixed words.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import ipaddress
 import re
@@ -68,6 +68,23 @@ class TailscaleRefused(RuntimeError):
 
 class PolicyConflict(RuntimeError):
     """The policy changed since it was read (If-Match failed): nothing was written or overwritten."""
+
+
+ENROLMENT_TAG = re.compile(r"tag:[a-z0-9][a-z0-9-]{0,62}")
+AUTH_KEY = re.compile(r"tskey-auth-[A-Za-z0-9-]{10,200}")
+KEY_ID = re.compile(r"[A-Za-z0-9]{4,64}")
+MIN_KEY_SECONDS, MAX_KEY_SECONDS = 300, 86400
+
+
+@dataclass(frozen=True)
+class EnrolmentKey:
+    """A one-time auth key. Its text form never shows the key, so it cannot leak into a log or receipt."""
+    key_id: str
+    key: str = field(repr=False)
+    expires: str | None
+
+    def __str__(self) -> str:
+        return f"EnrolmentKey({self.key_id}, expires {self.expires})"
 
 
 def _invalid() -> RuntimeError:
@@ -455,6 +472,47 @@ class TailnetService:
         if response.status_code != 200:
             raise TailscaleRefused(f"Tailscale refused the policy write (HTTP {response.status_code}).")
         return response.headers.get("etag")
+
+    # ---- One-time enrolment keys (owner decision 18 Nov 2026: a worker joins with a key for one tag) ----
+
+    def create_enrolment_key(self, *, tag: str, description: str, expiry_seconds: int) -> EnrolmentKey:
+        """A single-use, preauthorized auth key that enrols exactly one device under ``tag``.
+
+        Not ephemeral: the worker stays enrolled across restarts. The key is returned to the caller only.
+        """
+        if not isinstance(tag, str) or not ENROLMENT_TAG.fullmatch(tag):
+            raise ValueError("An enrolment key carries one tag, for example tag:janus-trainer.")
+        if type(expiry_seconds) is not int or not (MIN_KEY_SECONDS <= expiry_seconds <= MAX_KEY_SECONDS):
+            raise ValueError("An enrolment key expires within five minutes to one day.")
+        if not isinstance(description, str) or not (1 <= len(description) <= 50) or \
+                not re.fullmatch(r"[A-Za-z0-9 ._-]+", description):
+            raise ValueError("Describe the key in up to 50 letters, digits, spaces, '.', '_' or '-'.")
+        body = {"description": description, "expirySeconds": expiry_seconds, "capabilities": {"devices": {
+            "create": {"reusable": False, "ephemeral": False, "preauthorized": True, "tags": [tag]}}}}
+        response = self.client.request("POST", API + "/tailnet/-/keys", json=body, headers={
+            "Authorization": f"Bearer {self._access_token()}", "Accept": "application/json"})
+        if response.status_code != 200:
+            # The answer is never echoed: a refusal can repeat what was sent.
+            raise TailscaleRefused(f"Tailscale refused the enrolment key (HTTP {response.status_code}).")
+        try:
+            answer = response.json()
+        except ValueError:
+            raise _invalid() from None
+        key = answer.get("key") if isinstance(answer, dict) else None
+        key_id = answer.get("id") if isinstance(answer, dict) else None
+        if not isinstance(key, str) or not AUTH_KEY.fullmatch(key) or not isinstance(key_id, str) \
+                or not KEY_ID.fullmatch(key_id):
+            raise _invalid()
+        return EnrolmentKey(key_id=key_id, key=key, expires=_text(answer.get("expires"), 40))
+
+    def revoke_key(self, key_id: str) -> None:
+        """Revoke an auth key that was not used (a first boot that failed before enrolment)."""
+        if not isinstance(key_id, str) or not KEY_ID.fullmatch(key_id):
+            raise ValueError("A key id is letters and digits.")
+        response = self.client.request("DELETE", API + f"/tailnet/-/keys/{key_id}", headers={
+            "Authorization": f"Bearer {self._access_token()}"})
+        if response.status_code not in (200, 204, 404):
+            raise TailscaleRefused(f"Tailscale refused to revoke the key (HTTP {response.status_code}).")
 
     def device_posture(self) -> dict:
         """Each device's fixed posture attributes (OS, Tailscale version, auto-update, encrypted state)."""

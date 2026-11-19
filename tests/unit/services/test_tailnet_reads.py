@@ -255,3 +255,60 @@ def test_the_service_exists_only_when_the_read_credential_is_configured():
     Settings.tailscale_client_id, Settings.tailscale_client_secret = "id", "secret"
     assert isinstance(build_tailnet_service(Settings()), TailnetService)
     assert tailnet_integration_status(Settings()) == {"configured": True}
+
+
+# ---- One-time enrolment keys (owner decision 18 Nov 2026: workers join with auth keys for one tag) ----
+
+def key_service(answer_status=200, answer=None):
+    calls = []
+
+    def handler(request):
+        calls.append((request.method, request.url.path, json.loads(request.content) if request.content
+                      and request.url.path.endswith("/keys") else None))
+        if request.url.path == "/api/v2/oauth/token":
+            return httpx.Response(200, json={"access_token": "token-1", "expires_in": 3600, "token_type": "Bearer"})
+        return httpx.Response(answer_status, json=answer if answer is not None else {
+            "id": "kABC123CNTRL", "key": "tskey-auth-" + "kABC123CNTRL-" + "Z" * 30,
+            "expires": "2026-11-02T04:00:00Z", "capabilities": {}})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    return TailnetService(TailnetConfig("client-id", "client-secret"), client, clock=lambda: NOW), calls
+
+
+def test_an_enrolment_key_is_single_use_preauthorized_tagged_and_short_lived():
+    tailnet, calls = key_service()
+    key = tailnet.create_enrolment_key(tag="tag:janus-trainer", description="janus-trainer first boot",
+                                       expiry_seconds=3600)
+    assert key.key.startswith("tskey-auth-") and key.key_id == "kABC123CNTRL"
+    method, path, body = calls[-1]
+    assert (method, path) == ("POST", "/api/v2/tailnet/-/keys")
+    assert body == {"description": "janus-trainer first boot", "expirySeconds": 3600, "capabilities": {"devices": {
+        "create": {"reusable": False, "ephemeral": False, "preauthorized": True, "tags": ["tag:janus-trainer"]}}}}
+    # The key itself never appears in the object's text form (logs, receipts, errors).
+    assert key.key not in repr(key) and key.key not in str(key)
+
+
+@pytest.mark.parametrize("tag, expiry", [("janus-trainer", 3600), ("tag:Janus Trainer", 3600),
+                                         ("tag:janus-trainer", 30), ("tag:janus-trainer", 7 * 86400)])
+def test_an_enrolment_key_needs_one_tag_and_a_short_expiry(tag, expiry):
+    tailnet, calls = key_service()
+    with pytest.raises(ValueError):
+        tailnet.create_enrolment_key(tag=tag, description="x", expiry_seconds=expiry)
+    assert calls == []
+
+
+@pytest.mark.parametrize("status, answer", [(403, {"message": "tskey-auth-echo"}), (200, {"id": "k1"}),
+                                            (200, {"id": "k1", "key": "not-a-key"})])
+def test_a_refused_or_unexpected_key_answer_is_an_error_that_never_repeats_it(status, answer):
+    tailnet, _ = key_service(status, answer)
+    with pytest.raises(RuntimeError) as raised:
+        tailnet.create_enrolment_key(tag="tag:janus-trainer", description="x", expiry_seconds=3600)
+    assert "tskey" not in str(raised.value)
+
+
+def test_an_unused_enrolment_key_can_be_revoked():
+    tailnet, calls = key_service(200, {})
+    tailnet.revoke_key("kABC123CNTRL")
+    assert calls[-1][:2] == ("DELETE", "/api/v2/tailnet/-/keys/kABC123CNTRL")
+    with pytest.raises(ValueError):
+        tailnet.revoke_key("../acl")

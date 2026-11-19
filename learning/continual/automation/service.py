@@ -54,6 +54,7 @@ from learning.continual.automation.specialists import (
     SpecialistCandidateStore,
     SpecialistCycleResult,
     SpecialistIdleTrainer,
+    load_remote_worker,
     small_specialist_targets,
 )
 from learning.continual.automation.store import (
@@ -170,6 +171,7 @@ class ContinualAutomationService:
 
         self._specialist_trainer = specialist_trainer
         self._latest_specialist_cycle: dict | None = None
+        self._latest_remote_dispatch: dict | None = None
 
     @property
     def enabled(
@@ -314,6 +316,7 @@ class ContinualAutomationService:
                 "hub_training": self.settings.hub_training,
             },
             "latest_specialist_cycle": self._latest_specialist_cycle,
+            "latest_remote_dispatch": self._latest_remote_dispatch,
             "trigger_ready": trigger_ready,
             "idle_ready": idle_ready,
             "training_stage_ready": bool(
@@ -796,8 +799,43 @@ class ContinualAutomationService:
                     self.settings.state_db_path.parent
                 ),
                 yield_reason=self._yield_reason,
+                remote=load_remote_worker(
+                    self.settings.remote_worker_file
+                ),
             )
         return self._specialist_trainer
+
+    async def _tend_remote_worker(
+        self,
+    ) -> None:
+        """Proxmox first: send the remote trainer what fits it and bring
+        finished runs back. Neither needs this GPU or an idle machine, and a
+        failure here never stops the local cycle."""
+        try:
+            result = await self._specialists().tend_remote()
+        except Exception as exc:
+            print(
+                "[CONTINUAL] remote worker tick failed "
+                f"error={exc!r}"
+            )
+            return
+        if result is None:
+            return
+        self._latest_remote_dispatch = {
+            "specialist": result.specialist,
+            "outcome": result.outcome,
+            "worker": (
+                result.reason
+                if result.outcome == "dispatched"
+                else None
+            ),
+            "reason": (
+                None
+                if result.outcome == "dispatched"
+                else result.reason
+            ),
+            "completed_at": _utc_now(),
+        }
 
     async def _run_specialist_cycle(
         self,
@@ -852,6 +890,7 @@ class ContinualAutomationService:
             return None
 
         if self.settings.specialist_training:
+            await self._tend_remote_worker()
             # Small specialists train from their reviewed training sets, so
             # they do not wait for queued events.
             if not self._idle_ready() or not self._room_ready():

@@ -37,6 +37,7 @@ class FakeCluster:
         self.task_polls = task_polls
         self.exitstatus = exitstatus
         self.calls = []
+        self.created_forms = []
 
     def rows(self):
         return [{"id": f"{guest['type']}/{vmid}", "type": guest["type"], "vmid": vmid, "node": guest["node"],
@@ -127,6 +128,7 @@ class FakeCluster:
                 self.guests[vmid] = {"type": "lxc", "node": "pve-a", "name": body.get("hostname"),
                                      "status": "stopped", "config": {"rootfs": "local-lvm:vm-x,size=1G"}}
             else:
+                self.created_forms.append(dict(body))
                 self.guests[vmid] = {"type": "lxc", "node": "pve-a", "name": body.get("hostname"),
                                      "status": "stopped", "config": {"corefs": body.get("rootfs")}}
             self.digests[vmid] = f"d{vmid}"
@@ -196,6 +198,21 @@ def test_set_options_normalizes_tags_and_verifies_start_at_boot():
     assert receipt["tags"] == "db,prod" and receipt["on_boot"] is True
     assert fake.guests[990]["config"]["tags"] == "db,prod"
     assert fake.guests[990]["config"]["onboot"] == 1
+
+
+def test_a_containers_console_returns_to_a_login_prompt_and_is_read_back():
+    fake = FakeCluster()
+    fake.guests[990]["config"]["cmode"] = "shell"
+    receipt = run(fake, lambda service, clock: service.guest_set_options(
+        "pve-a", 990, tags=None, on_boot=None, console_mode="tty", expected_type="lxc", expected_name="janus-lab",
+        expected_digest="d990", sleep=clock.sleep, clock=clock.monotonic))
+    assert (receipt["ok"], receipt["verification_ok"]) == (True, True)
+    assert receipt["observed"]["console_mode"] == "tty"
+    assert fake.guests[990]["config"]["cmode"] == "tty"
+    with pytest.raises(ValueError):                      # a VM has no container console mode
+        run(fake, lambda service, clock: service.guest_set_options(
+            "pve-a", 101, tags=None, on_boot=None, console_mode="tty", expected_type="qemu", expected_name="db",
+            expected_digest="d101"))
 
 
 def test_grow_only_disk_resize_reads_the_new_size_back():
@@ -268,6 +285,57 @@ def test_create_builds_the_container_and_confirms_it():
         sleep=clock.sleep, clock=clock.monotonic))
     assert (receipt["ok"], receipt["verification_ok"]) == (True, True)
     assert fake.guests[993]["name"] == "lab-2" and fake.guests[993]["type"] == "lxc"
+    # Without the optional settings the request is exactly the minimal container.
+    assert fake.created_forms == [{"vmid": "993", "ostemplate": "local:vztmpl/alpine-3.23-default_20260116_amd64.tar.xz",
+                                   "hostname": "lab-2", "cores": "1", "memory": "128", "rootfs": "local-lvm:2",
+                                   "unprivileged": "1", "pool": "janus"}]
+
+
+PUBLIC_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMdV8iaJ0lYvGbM3hJmW0sQyJ7dU6m8rM2r6QJ0Z1aBc janus-trainer"
+
+
+def test_create_sends_the_approved_container_settings_and_nothing_else():
+    # The trainer container (owner decision, 18 Nov 2026): swap, a fixed address on the NAT VNet, its own
+    # nameservers, a public SSH key, nesting for systemd, a root-shell console for first boot, start at boot.
+    fake = FakeCluster()
+    receipt = run(fake, lambda service, clock: service.guest_create_lxc(
+        "pve-a", 991, hostname="janus-trainer", template="local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst",
+        cores=4, memory_mib=3584, disk_gib=48, storage="local-lvm", pool=None, description="Janus training worker",
+        swap_mib=4096, net0="name=eth0,bridge=janusnat,ip=10.77.0.10/24,gw=10.77.0.1,firewall=1",
+        nameserver="1.1.1.1 9.9.9.9", ssh_public_keys=PUBLIC_KEY, nesting=True, console_mode="shell",
+        on_boot=True, tags="janus-trainer", sleep=clock.sleep, clock=clock.monotonic))
+    assert (receipt["ok"], receipt["verification_ok"]) == (True, True)
+    form = fake.created_forms[0]
+    assert {key: form[key] for key in ("swap", "net0", "nameserver", "ssh-public-keys", "features", "cmode",
+                                       "onboot", "tags")} == {
+        "swap": "4096", "net0": "name=eth0,bridge=janusnat,ip=10.77.0.10/24,gw=10.77.0.1,firewall=1",
+        "nameserver": "1.1.1.1 9.9.9.9", "ssh-public-keys": PUBLIC_KEY, "features": "nesting=1", "cmode": "shell",
+        "onboot": "1", "tags": "janus-trainer"}
+    assert form["unprivileged"] == "1" and "password" not in form
+
+
+@pytest.mark.parametrize("field, value", [
+    ("ssh_public_keys", "-----BEGIN OPENSSH " + "PRIVATE KEY-----"),        # only a public key is ever sent
+    ("ssh_public_keys", PUBLIC_KEY + "\nssh-rsa AAAAB3Nza second"),        # one key, one line
+    ("net0", "name=eth0,bridge=vmbr0,ip=dhcp;rm -rf /"),
+    ("net0", "name=eth0,bridge=janusnat,ip=10.77.0.10/24,hwaddr=AA:BB"),    # only the fields Janus sets
+    ("nameserver", "1.1.1.1 evil.example"),
+    ("console_mode", "console"),
+    ("swap_mib", -1),
+    ("tags", "a;b"),
+])
+def test_create_refuses_settings_outside_their_shape_before_any_request(field, value):
+    fake = FakeCluster()
+    arguments = dict(hostname="janus-trainer", template="local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst",
+                     cores=4, memory_mib=3584, disk_gib=48, storage="local-lvm", pool=None, description=None)
+    arguments[field] = value
+    service, client = service_for(fake)
+    try:
+        with pytest.raises(ValueError):
+            service.guest_create_lxc("pve-a", 991, **arguments)
+    finally:
+        client.close()
+    assert fake.calls == []
 
 
 def test_clone_creates_the_new_guest_and_confirms_its_name():

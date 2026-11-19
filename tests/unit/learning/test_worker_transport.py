@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from learning.worker_transport import LocalTransport, SshTransport, TransportError, collect_candidate
+from learning.worker_transport import (LocalTransport, SshTransport, TransportError, build_worker_package,
+                                       collect_candidate)
 
 
 def write_job(root: Path) -> Path:
@@ -39,8 +40,61 @@ def test_ssh_sends_the_job_runs_the_worker_and_fetches_only_the_result(tmp_path)
     assert sync[0] == "rsync" and sync[-1] == "janus@janus-trainer:jobs/access-20261119T000000Z/"
     assert start[0] == "ssh" and "StrictHostKeyChecking=yes" in " ".join(start)
     assert "systemd-run" in start[-1] and "learning.worker.stages" in start[-1]
+    # systemd-run makes a relative --working-directory absolute against the session's directory, so "%h"
+    # became /home/janus/%h and the unit never started; the remote login shell expands $HOME instead.
+    assert "%h" not in start[-1]
+    assert '--working-directory="$HOME/janus-worker"' in start[-1]
+    assert '"$HOME/jobs/access-20261119T000000Z/job.json" "$HOME/runs/access-20261119T000000Z"' in start[-1]
+    # No --wait: it needs the user D-Bus, which a minimal container lacks; the manager's own socket serves the rest.
+    assert "--wait" not in start[-1]
     assert fetch[0] == "rsync" and "--exclude=cache/" in fetch
     assert fetch[-2] == "janus@janus-trainer:runs/access-20261119T000000Z/"
+
+
+def test_a_worker_with_a_training_unit_running_is_busy(tmp_path):
+    runner = FakeRunner({"list-units": (0, "janus-train-account-20261119T000000Z.service loaded active running\n")})
+    transport = SshTransport(host="h", user="janus", key=tmp_path / "id", known_hosts=tmp_path / "kh", runner=runner)
+    assert transport.busy() is True
+    runner.results = {"list-units": (0, "")}
+    assert transport.busy() is False
+
+
+def test_cleaning_can_keep_the_result_on_the_worker(tmp_path):
+    runner = FakeRunner()
+    transport = SshTransport(host="h", user="janus", key=tmp_path / "id", known_hosts=tmp_path / "kh", runner=runner)
+    transport.clean("access-20261119T000000Z", keep_result=True)
+    assert runner.calls[-1][-1] == "rm -rf jobs/access-20261119T000000Z runs/access-20261119T000000Z.stop"
+    transport.clean("access-20261119T000000Z")
+    assert "runs/access-20261119T000000Z " in runner.calls[-1][-1] + " "
+
+
+def test_the_worker_gets_only_the_environment_it_was_given(tmp_path):
+    runner = FakeRunner()
+    transport = SshTransport(host="h", user="janus", key=tmp_path / "id", known_hosts=tmp_path / "kh", runner=runner,
+                             environment={"HF_HUB_OFFLINE": "1", "TOKENIZERS_PARALLELISM": "false"})
+    transport.start("access-20261119T000000Z")
+    assert "--setenv=HF_HUB_OFFLINE=1 --setenv=TOKENIZERS_PARALLELISM=false" in runner.calls[0][-1]
+    with pytest.raises(ValueError):
+        SshTransport(host="h", user="janus", key=tmp_path / "id", known_hosts=tmp_path / "kh",
+                     environment={"X": "1; rm -rf ~"})
+
+
+def test_the_worker_package_is_the_worker_alone_with_its_requirements(tmp_path):
+    import os
+
+    package = build_worker_package(tmp_path / "package")
+    files = sorted(path.relative_to(package).as_posix() for path in package.rglob("*") if path.is_file())
+    assert {"requirements-worker.txt", "learning/__init__.py", "learning/worker/stages.py"} <= set(files)
+    assert all(name.startswith("learning/worker/") or name in ("learning/__init__.py", "requirements-worker.txt")
+               for name in files)
+    assert not any("__pycache__" in name for name in files)
+    # The service's learning/__init__.py imports the whole service; the package's imports nothing.
+    assert "import" not in (package / "learning" / "__init__.py").read_text(encoding="utf-8")
+    environment = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+    imported = subprocess.run([sys.executable, "-c", "import learning.worker.job, learning; print(learning.__file__)"],
+                              cwd=package, capture_output=True, text=True, env=environment)
+    assert imported.returncode == 0, imported.stderr
+    assert Path(imported.stdout.strip()).resolve() == (package / "learning" / "__init__.py").resolve()
 
 
 @pytest.mark.parametrize("job_id", ["../etc", "a b", "x;rm -rf /", ""])

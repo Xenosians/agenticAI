@@ -32,16 +32,22 @@ class Inference:
 
 
 class Specialists:
-    def __init__(self, results):
+    def __init__(self, results, remote_results=()):
         self.results = list(results)
+        self.remote_results = list(remote_results)
         self.cycles = 0
+        self.tended = 0
 
     async def run_cycle(self):
         self.cycles += 1
         return self.results.pop(0) if self.results else None
 
+    async def tend_remote(self):
+        self.tended += 1
+        return self.remote_results.pop(0) if self.remote_results else None
 
-def build(tmp_path: Path, monkeypatch, *, specialist_training=True, results=()):
+
+def build(tmp_path: Path, monkeypatch, *, specialist_training=True, results=(), remote_results=()):
     sources = tmp_path / "corpus-sources.json"
     sources.write_text("[]", encoding="utf-8")
     runtime = SimpleNamespace(
@@ -53,7 +59,7 @@ def build(tmp_path: Path, monkeypatch, *, specialist_training=True, results=()):
         enabled=True, auto_train=True, specialist_training=specialist_training, single_gpu_idle_only=False,
         step_pause_seconds=0.0, state_db_path=tmp_path / "continuous.sqlite3", corpus_sources_path=sources,
     )
-    specialists = Specialists(results)
+    specialists = Specialists(results, remote_results)
     monkeypatch.setattr(service_module, "room_to_train", lambda **_: None)
     service = ContinualAutomationService(runtime=runtime, settings=settings, specialist_trainer=specialists)
     return service, runtime, specialists
@@ -142,3 +148,39 @@ def test_status_reports_the_last_specialist_runs(tmp_path, monkeypatch):
     status = service.status()
     assert status["controls"]["specialist_training"] is True
     assert status["latest_specialist_cycle"]["specialist"] == "account"
+
+
+def test_the_proxmox_trainer_is_tended_on_every_tick_even_while_this_machine_is_busy(tmp_path, monkeypatch):
+    # Proxmox first (owner decision 1): sending it work needs neither this GPU nor an idle machine.
+    dispatched = SpecialistCycleResult(specialist="account", outcome="dispatched", reason="janus-trainer")
+    service, runtime, specialists = build(tmp_path, monkeypatch, results=[finished()], remote_results=[dispatched])
+    service.settings = service.settings.model_copy(update={"single_gpu_idle_only": True,
+                                                           "idle_seconds_before_training": 60.0})
+    runtime.active_jobs["chat"] = object()
+    assert asyncio.run(service.run_cycle()) is None
+    assert (specialists.tended, specialists.cycles) == (1, 0)
+    assert service.status()["latest_remote_dispatch"]["outcome"] == "dispatched"
+    assert service.status()["latest_remote_dispatch"]["worker"] == "janus-trainer"
+
+
+def test_the_trainer_is_left_alone_while_specialist_training_is_off(tmp_path, monkeypatch):
+    service, _runtime, specialists = build(tmp_path, monkeypatch, specialist_training=False)
+    asyncio.run(service.run_cycle())
+    assert specialists.tended == 0
+
+
+def test_a_failing_remote_worker_never_stops_the_local_cycle(tmp_path, monkeypatch):
+    service, _runtime, specialists = build(tmp_path, monkeypatch, results=[finished()])
+
+    async def broken():
+        raise RuntimeError("worker file unreadable")
+
+    specialists.tend_remote = broken
+    assert asyncio.run(service.run_cycle()).specialist == "account"
+
+
+def test_the_registered_trainer_is_read_from_the_environment(monkeypatch, tmp_path):
+    monkeypatch.setenv("CONTINUAL_REMOTE_WORKER_FILE", str(tmp_path / "janus-trainer.json"))
+    assert ContinualAutomationSettings.from_env().remote_worker_file == tmp_path / "janus-trainer.json"
+    monkeypatch.delenv("CONTINUAL_REMOTE_WORKER_FILE")
+    assert ContinualAutomationSettings.from_env().remote_worker_file is None

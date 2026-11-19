@@ -133,6 +133,12 @@ class ContinualAutomationSettings(BaseModel):
         gt=0.0,
     )
 
+    # A registered remote training machine (the Proxmox janus-trainer
+    # container), written by its first boot. Proxmox comes first: it gets
+    # every specialist that fits it, on every tick (owner decision 1,
+    # 18 November 2026). None keeps all training on this machine.
+    remote_worker_file: Path | None = None
+
     # Keep the previous physical runtime location for backward-compatible
     # recovery of any already-persisted state. The Python namespace itself
     # is now consistently "continual".
@@ -526,6 +532,12 @@ class ContinualAutomationSettings(BaseModel):
                     "CONTINUAL_SPECIALIST_MAX_WEIGHTS_GIB",
                     str(base.specialist_max_weights_gib),
                 )
+            ),
+
+            remote_worker_file=(
+                Path(os.environ["CONTINUAL_REMOTE_WORKER_FILE"])
+                if os.getenv("CONTINUAL_REMOTE_WORKER_FILE")
+                else None
             ),
 
             state_db_path=cls._path_env(
