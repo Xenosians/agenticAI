@@ -62,3 +62,12 @@ def test_releasing_freed_memory_never_fails_where_glibc_is_absent(monkeypatch):
 
     monkeypatch.setattr(ctypes, "CDLL", missing)
     release_freed_memory()           # musl, macOS, Windows: nothing to trim, nothing raised
+
+
+def test_bf16_only_where_the_gpu_computes_it_natively():
+    from learning.worker.stages import choose_dtype
+
+    assert choose_dtype(device="cuda", precision="auto", capability=(7, 5)) == "fp16"   # Kaggle's T4
+    assert choose_dtype(device="cuda", precision="auto", capability=(8, 9)) == "bf16"   # an RTX 4050
+    assert choose_dtype(device="cpu", precision="auto", capability=None) == "fp32"
+    assert choose_dtype(device="cuda", precision="bf16", capability=(7, 5)) == "bf16"   # asked for by name

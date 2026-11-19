@@ -7,7 +7,7 @@ on this laptop or that all SRS acceptance criteria are complete.
 
 | Method | Entry point | Admitted input | Current execution evidence |
 |---|---|---|---|
-| SFT + PEFT/LoRA/QLoRA | `scripts/train_recipe.py --recipe recipe.json --allow-training` | Reviewed, hash-pinned messages; independent train/validation | Networking uses the existing `specialist_sft_train.py` QLoRA trainer on the RTX 4050 |
+| SFT + PEFT/LoRA/QLoRA | `scripts/train_recipe.py --recipe recipe.json --allow-training` | Reviewed, hash-pinned messages; independent train/validation | Every specialist trains with the one portable worker: `python -m learning.cli.train_specialist <name> --device cpu\|cuda` (the name picks the dataset and model) |
 | Self-supervised causal adaptation | Same recipe CLI, objective `causal_adaptation` | Reviewed licensed text; next-token loss | Implemented; optimizer run not performed |
 | Full parameter tuning | Same recipe CLI, tuning `full` | Same objective-specific evidence | Implemented; conservatively requires at least 16 GiB free VRAM |
 | DPO | `scripts/train_preferences.py --settings settings.json --train TRAIN --validation VALIDATION --allow-training` | Existing verified preference partitions with matching base/tokenizer provenance | Real train/evaluate/save path; not run on this laptop |

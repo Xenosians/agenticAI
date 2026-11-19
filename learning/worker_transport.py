@@ -40,7 +40,16 @@ def build_worker_package(directory: Path, *, repository: Path = REPOSITORY) -> P
 
 
 class TransportError(RuntimeError):
-    pass
+    """A step on the worker failed; ``returncode`` is the command's exit code when one ran."""
+
+    def __init__(self, message: str, *, returncode: int | None = None):
+        super().__init__(message)
+        self.returncode = returncode
+
+    @property
+    def unreachable(self) -> bool:
+        """ssh exits 255 when it cannot reach the worker: its state is unknown, not failed."""
+        return self.returncode == 255
 
 
 def _job_id(job_id: str) -> str:
@@ -74,7 +83,7 @@ class SshTransport:
         result = self.runner(argv, capture_output=True, text=True, timeout=3600)
         if check and result.returncode != 0:
             raise TransportError(f"{what} failed on {self.host} with exit code {result.returncode}: "
-                                 f"{(result.stderr or '').strip()[-300:]}")
+                                 f"{(result.stderr or '').strip()[-300:]}", returncode=result.returncode)
         return result
 
     def _remote(self, command: str, what: str, *, check: bool = True) -> subprocess.CompletedProcess:
@@ -115,7 +124,7 @@ class SshTransport:
         result = self._remote(f"systemctl --user is-active janus-train-{_job_id(job_id)}", "reading the worker",
                               check=False)
         if result.returncode == 255:            # ssh itself failed: the state is unknown, not "finished"
-            raise TransportError(f"the worker {self.host} could not be reached")
+            raise TransportError(f"the worker {self.host} could not be reached", returncode=255)
         return result.stdout.strip() in {"active", "activating"}
 
     def busy(self) -> bool:
@@ -123,7 +132,7 @@ class SshTransport:
         result = self._remote("systemctl --user list-units --type=service --state=active,activating --no-legend "
                               "'janus-train-*'", "reading the worker", check=False)
         if result.returncode == 255:
-            raise TransportError(f"the worker {self.host} could not be reached")
+            raise TransportError(f"the worker {self.host} could not be reached", returncode=255)
         return bool(result.stdout.strip())
 
     def stop(self, job_id: str) -> None:

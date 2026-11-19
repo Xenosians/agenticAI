@@ -65,6 +65,10 @@ WORKER_RECIPE = {"sft": {"epochs": 4, "max_length": 1536}, "dpo": {"max_length":
 WORKER_POLL_SECONDS = 0.5
 # How long a worker asked to stop may take to reach its next step, case or pause before it is killed.
 WORKER_GRACE_SECONDS = 120.0
+# The controller ticks every few seconds; each look at a remote worker is an SSH connection (15 s when it is off).
+REMOTE_POLL_SECONDS = 60.0
+REMOTE_RETRY_SECONDS = 600.0
+RSYNC_PARTIAL = frozenset({23, 24})   # rsync: some or all of the files were not there
 
 
 @dataclass(frozen=True)
@@ -258,6 +262,13 @@ def candidate_manifest(target: SpecialistTarget, candidate: dict, run_directory:
                            worker_prompt_profile=profile, output_directory=str(run_directory))
 
 
+def _no_improvement_reason(result: dict) -> str:
+    """Why a run kept nothing: one reason shared by every stage that did not run (e.g. a perfect start)."""
+    skipped = {str(stage.get("reason")) for stage in result.get("stages") or []
+               if isinstance(stage, dict) and not stage.get("ran", True) and stage.get("reason")}
+    return skipped.pop()[:300] if len(skipped) == 1 else "no stage beat the specialist it started from"
+
+
 def _discard_run(output_root: Path, job_id: str) -> None:
     """A stopped run leaves nothing: not its output, its stop request or its log."""
     runs = output_root / "runs"
@@ -416,6 +427,9 @@ class SpecialistIdleTrainer:
         self.remote = remote
         self.remote_transport_factory = remote_transport_factory
         self.weights_gib = lambda target: _weights_bytes(model_profiles()[target.base_model_key]) / 2**30
+        self.clock: Callable[[], float] = time.monotonic
+        self._next_remote_look = 0.0
+        self._remote_reachable = remote is not None   # until a look says otherwise
 
     def _fingerprints(self) -> dict[str, str]:
         return {target.name: target.fingerprint(catalog=self.catalog_fingerprint(target))
@@ -430,28 +444,37 @@ class SpecialistIdleTrainer:
         return await asyncio.to_thread(self._tend_remote)
 
     def _tend_remote(self) -> SpecialistCycleResult | None:
+        now = self.clock()
+        if now < self._next_remote_look:
+            return None
+        self._next_remote_look = now + REMOTE_POLL_SECONDS
         transport = self.remote_transport_factory(self.remote)
         try:
-            for target, last in self.store.pending(self.targets, "dispatched"):
-                if last.get("worker") != self.remote.name:
-                    continue
-                if transport.running(last["job_id"]):
-                    return None
-                return self._collect_remote(transport, target, last)
-            if transport.busy():
-                return None
-            fingerprints = self._fingerprints()
-            waiting = [target for target in self.targets
-                       if self.store.needs_training(target, fingerprints[target.name])
-                       and fits(self.remote.capacity(), weights_gib=self.weights_gib(target), stages=list(WORKER_STAGES))]
-            target = self.store.next_target(waiting, fingerprints)
-            if target is None:
-                return None
-            return self._dispatch_remote(transport, target, fingerprints[target.name])
+            result = self._look_at_remote(transport)
         except TransportError as error:
-            # Unreachable for now (powered off, Wi-Fi): nothing changes, the next tick tries again.
+            # Unreachable for now (powered off, Wi-Fi): nothing changes; look again in a while, not every tick.
+            self._next_remote_look = now + REMOTE_RETRY_SECONDS
+            self._remote_reachable = False              # unreachable or broken: the idle laptop may take its work
             print(f"[CONTINUAL] remote worker unavailable worker={self.remote.name} reason={str(error)[:200]}")
             return None
+        self._remote_reachable = True
+        return result
+
+    def _look_at_remote(self, transport) -> SpecialistCycleResult | None:
+        for target, last in self.store.pending(self.targets, "dispatched"):
+            if last.get("worker") != self.remote.name:
+                continue
+            if transport.running(last["job_id"]):
+                return None
+            return self._collect_remote(transport, target, last)
+        fingerprints = self._fingerprints()
+        waiting = [target for target in self.targets
+                   if self.store.needs_training(target, fingerprints[target.name])
+                   and fits(self.remote.capacity(), weights_gib=self.weights_gib(target), stages=list(WORKER_STAGES))]
+        target = self.store.next_target(waiting, fingerprints)
+        if target is None or transport.busy():      # nothing to send: the trainer is not contacted
+            return None
+        return self._dispatch_remote(transport, target, fingerprints[target.name])
 
     def _dispatch_remote(self, transport, target: SpecialistTarget, fingerprint: str) -> SpecialistCycleResult:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -466,19 +489,30 @@ class SpecialistIdleTrainer:
             transport.start(job_id)
         finally:
             shutil.rmtree(folder, ignore_errors=True)   # links to the base weights and the data; sent or not
+        previous = self.store.last(target) or {}
+        losses = int(previous.get("losses") or 0) if previous.get("fingerprint") == fingerprint else 0
         self.store.record(target, fingerprint=fingerprint, outcome="dispatched", candidate=None, job_id=job_id,
-                          worker=self.remote.name)
+                          worker=self.remote.name, losses=losses)
         print(f"[CONTINUAL] specialist job dispatched specialist={target.name} worker={self.remote.name} "
               f"job={job_id}")
         return SpecialistCycleResult(specialist=target.name, outcome="dispatched", reason=self.remote.name)
 
     def _collect_remote(self, transport, target: SpecialistTarget, last: dict) -> SpecialistCycleResult:
         job_id = last["job_id"]
-        run_directory = transport.fetch(job_id, self.work_root / target.name / "runs" / job_id)
-        transport.clean(job_id, keep_result=True)   # results are stored on Proxmox too (owner decision 1)
-        details = {key: last.get(key) for key in ("job_id", "worker")}
+        details = {key: last.get(key) for key in ("job_id", "worker")} | {"losses": int(last.get("losses") or 0)}
+        destination = self.work_root / target.name / "runs" / job_id
         try:
-            result = json.loads((Path(run_directory) / "result.json").read_text(encoding="utf-8"))
+            run_directory = Path(transport.fetch(job_id, destination))
+        except TransportError as error:
+            if error.returncode not in RSYNC_PARTIAL:
+                raise                                   # unreachable or unknown, not lost: the job keeps waiting
+            run_directory = destination                 # what did arrive, if anything, is checked below
+        transport.clean(job_id, keep_result=True)   # results are stored on Proxmox too (owner decision 1)
+        result_file = run_directory / "result.json"
+        if not result_file.is_file():
+            return self._lost_remote(target, last, details)
+        try:
+            result = json.loads(result_file.read_text(encoding="utf-8"))
             candidate = collect_candidate(Path(run_directory)) if result.get("outcome") == "trained" else None
         except (OSError, ValueError, TransportError) as error:
             result, candidate = {"outcome": "failed", "error": f"{type(error).__name__}: {error}"}, None
@@ -490,7 +524,7 @@ class SpecialistIdleTrainer:
                               candidate=candidate["adapter_directory"], run_directory=str(run_directory), **details)
         else:
             mapped = {"no_improvement": "rejected", "interrupted": "interrupted"}.get(outcome, "failed")
-            reason = ("no stage beat the specialist it started from" if mapped == "rejected"
+            reason = (_no_improvement_reason(result) if mapped == "rejected"
                       else str(result.get("error") or outcome)[:300])
             recorded = SpecialistCycleResult(specialist=target.name, outcome=mapped, reason=reason)
             self.store.record(target, fingerprint=last["fingerprint"], outcome=mapped, candidate=None, reason=reason,
@@ -499,6 +533,26 @@ class SpecialistIdleTrainer:
               f"job={job_id}")
         return recorded
 
+    def _lost_remote(self, target: SpecialistTarget, last: dict, details: dict) -> SpecialistCycleResult:
+        """The run ended without a result: a power loss stops the unit for good, and so does the kernel's
+        out-of-memory killer. The first loss is an interruption (tried again); a second one for the same
+        inputs is a failure, so a job that cannot fit is not sent forever."""
+        losses = details["losses"] + 1
+        if losses >= 2:
+            outcome, reason = "failed", "the run on the trainer ended without a result twice"
+        else:
+            outcome, reason = "interrupted", "the run on the trainer ended without a result"
+        self.store.record(target, fingerprint=last["fingerprint"], outcome=outcome, candidate=None, reason=reason,
+                          **(details | {"losses": losses}))
+        print(f"[CONTINUAL] specialist job {outcome} specialist={target.name} worker={last.get('worker')} "
+              f"job={last['job_id']} reason={reason}")
+        return SpecialistCycleResult(specialist=target.name, outcome=outcome, reason=reason)
+
+    def _defer_to_remote(self, target: SpecialistTarget) -> bool:
+        """Proxmox first: what fits the trainer waits for it while its last look succeeded."""
+        return (self.remote is not None and self._remote_reachable
+                and fits(self.remote.capacity(), weights_gib=self.weights_gib(target), stages=list(WORKER_STAGES)))
+
     # -- the idle cycle on this machine -------------------------------------------------------------------------
 
     async def run_cycle(self) -> SpecialistCycleResult | None:
@@ -506,7 +560,8 @@ class SpecialistIdleTrainer:
         if fetched:
             return await self._judge_fetched(*fetched[0])
         fingerprints = await asyncio.to_thread(self._fingerprints)
-        target = self.store.next_target(self.targets, fingerprints)
+        target = self.store.next_target([target for target in self.targets if not self._defer_to_remote(target)],
+                                        fingerprints)
         if target is None:
             return None
         fingerprint = fingerprints[target.name]

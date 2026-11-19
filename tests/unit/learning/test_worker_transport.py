@@ -161,3 +161,16 @@ def test_a_fetched_result_becomes_a_candidate_only_with_a_matching_adapter_diges
 def test_a_result_without_a_trained_adapter_is_no_candidate(tmp_path):
     (tmp_path / "result.json").write_text(json.dumps({"job_id": "x-20261119T000000Z", "outcome": "no_improvement"}))
     assert collect_candidate(tmp_path) is None
+
+
+def test_a_transport_error_tells_an_unreachable_worker_from_a_failed_command(tmp_path):
+    """ssh exits 255 when it cannot reach the worker; rsync 23/24 when the files are not there."""
+    runner = FakeRunner({"rsync": (23, ""), "is-active": (255, "")})
+    transport = SshTransport(host="h", user="janus", key=tmp_path / "id", known_hosts=tmp_path / "kh", runner=runner)
+    with pytest.raises(TransportError) as missing:
+        transport.fetch("access-20261119T000000Z", tmp_path / "back")
+    assert missing.value.returncode == 23 and not missing.value.unreachable
+    with pytest.raises(TransportError) as unreachable:
+        transport.running("access-20261119T000000Z")
+    assert unreachable.value.unreachable
+    assert TransportError("the fetched run holds no trained adapter").returncode is None

@@ -6,6 +6,7 @@ limits as the Hub cycle, checks it on the specialist's held-out cases and keeps
 it as an unregistered candidate. Nothing here changes what serves requests.
 """
 import asyncio
+import itertools
 import json
 import subprocess
 import time
@@ -547,12 +548,18 @@ def test_a_candidate_that_passes_but_does_worse_than_the_serving_one_is_rejected
 class FakeRemote:
     """SshTransport's interface for a remote worker; ``running`` answers from ``states`` in turn."""
 
-    def __init__(self, root: Path, *, states=(True, False), result=None, busy=False, unreachable=False):
+    def __init__(self, root: Path, *, states=(True, False), result=None, busy=False, unreachable=False,
+                 lost=False, fetch_exit=None):
         self.root, self.states, self.result = Path(root), list(states), result
         self.calls, self.is_busy, self.unreachable = [], busy, unreachable
+        self.lost, self.fetch_exit = lost, fetch_exit      # no result.json / the run cannot be fetched
 
     def busy(self):
+        from learning.worker_transport import TransportError
+
         self.calls.append("busy")
+        if self.unreachable:
+            raise TransportError("the worker janus-trainer could not be reached", returncode=255)
         return self.is_busy
 
     def install(self, package):
@@ -577,9 +584,16 @@ class FakeRemote:
     def fetch(self, job_id, destination):
         from learning.worker.stages import fingerprint_directory
 
+        from learning.worker_transport import TransportError
+
         self.calls.append("fetch")
+        if self.fetch_exit is not None:
+            raise TransportError("fetching the result failed", returncode=self.fetch_exit)
         destination = Path(destination)
         destination.mkdir(parents=True, exist_ok=True)
+        if self.lost:                                   # e.g. the power went out: the worker wrote no result
+            (destination / "worker.log").write_text("step 3/40\n", encoding="utf-8")
+            return destination
         result = dict(self.result or {"outcome": "trained"})
         if result["outcome"] == "trained":
             (destination / "final").mkdir(exist_ok=True)
@@ -616,6 +630,8 @@ def remote_trainer(tmp_path, monkeypatch, remote, *, weights_gib=0.9, evaluate=N
             passed=9, total=9, promotion_gate_passed=True)))
     idle.remote, idle.remote_transport_factory = TRAINER, lambda worker: remote
     idle.weights_gib = lambda target: weights_gib
+    # Every look at the trainer is due: each call to the clock moves past the longest wait.
+    idle.clock = itertools.count(0.0, specialists_module.REMOTE_RETRY_SECONDS + 1).__next__
     return idle, runtime, unloaded, jobs
 
 
@@ -668,7 +684,7 @@ def test_a_job_too_big_for_the_trainer_stays_with_the_local_gpu(tmp_path, monkey
     remote = FakeRemote(tmp_path / "remote")
     idle, _runtime, _unloaded, jobs = remote_trainer(tmp_path, monkeypatch, remote, weights_gib=1.4)
     assert asyncio.run(idle.tend_remote()) is None
-    assert jobs == [] and "send" not in remote.calls
+    assert jobs == [] and remote.calls == []           # nothing to send: the trainer is not even contacted
 
 
 def test_a_busy_or_unreachable_trainer_gets_nothing_new_and_keeps_its_job(tmp_path, monkeypatch):
@@ -693,3 +709,73 @@ def test_a_registered_worker_file_is_read_in_its_known_shape_only(tmp_path):
     assert specialists_module.load_remote_worker(None) is None
     path.write_text("{}")
     assert specialists_module.load_remote_worker(path) is None
+
+
+def test_the_trainer_is_looked_at_once_a_minute_and_rarely_while_it_cannot_be_reached(tmp_path, monkeypatch):
+    """The controller ticks every few seconds; each look is an SSH connection (15 s when the trainer is off)."""
+    now = [1000.0]
+    remote = FakeRemote(tmp_path / "remote", states=[True, True, True])
+    idle, _runtime, _unloaded, _jobs = remote_trainer(tmp_path, monkeypatch, remote)
+    idle.clock = lambda: now[0]
+    assert asyncio.run(idle.tend_remote()).outcome == "dispatched"
+    looked = len(remote.calls)
+    now[0] += 5
+    assert asyncio.run(idle.tend_remote()) is None and len(remote.calls) == looked     # too soon: no SSH
+    now[0] += specialists_module.REMOTE_POLL_SECONDS
+    assert asyncio.run(idle.tend_remote()) is None and remote.calls[looked:] == ["running"]
+    remote.unreachable = True
+    now[0] += specialists_module.REMOTE_POLL_SECONDS
+    assert asyncio.run(idle.tend_remote()) is None                                       # cannot be reached
+    looked = len(remote.calls)
+    now[0] += specialists_module.REMOTE_POLL_SECONDS
+    assert asyncio.run(idle.tend_remote()) is None and len(remote.calls) == looked     # waits longer now
+    now[0] += specialists_module.REMOTE_RETRY_SECONDS
+    asyncio.run(idle.tend_remote())
+    assert len(remote.calls) == looked + 1
+
+
+def test_a_specialist_that_already_passes_every_case_is_recorded_with_that_reason(tmp_path, monkeypatch):
+    perfect = {"outcome": "no_improvement", "stages": [
+        {"stage": stage, "ran": False, "kept": False, "reason": "the starting model already passes every held-out case"}
+        for stage in ("sft", "dpo")]}
+    remote = FakeRemote(tmp_path / "remote", states=[False], result=perfect)
+    idle, _runtime, _unloaded, _jobs = remote_trainer(tmp_path, monkeypatch, remote)
+    asyncio.run(idle.tend_remote())
+    result = asyncio.run(idle.tend_remote())
+    assert (result.outcome, result.reason) == ("rejected", "the starting model already passes every held-out case")
+
+
+@pytest.mark.parametrize("trouble", [{"lost": True}, {"fetch_exit": 23}])
+def test_a_run_lost_on_the_trainer_is_tried_once_more_then_counted_as_failed(tmp_path, monkeypatch, trouble):
+    """A power loss ends the run without a result (the systemd unit does not come back): that is an
+    interruption, tried again; a second loss for the same inputs (e.g. the kernel killing it) is a failure."""
+    remote = FakeRemote(tmp_path / "remote", states=[False, False], **trouble)
+    idle, _runtime, _unloaded, jobs = remote_trainer(tmp_path, monkeypatch, remote)
+    asyncio.run(idle.tend_remote())
+    first = asyncio.run(idle.tend_remote())
+    assert first.outcome == "interrupted" and "without a result" in first.reason
+    assert asyncio.run(idle.tend_remote()).outcome == "dispatched" and len(jobs) == 2    # the same inputs again
+    second = asyncio.run(idle.tend_remote())
+    assert second.outcome == "failed" and "twice" in second.reason
+    assert asyncio.run(idle.tend_remote()) is None and len(jobs) == 2                    # not a third time
+
+
+def test_a_fetch_that_cannot_reach_the_trainer_keeps_the_job_waiting(tmp_path, monkeypatch):
+    remote = FakeRemote(tmp_path / "remote", states=[False], fetch_exit=255)      # ssh itself failed
+    idle, _runtime, _unloaded, _jobs = remote_trainer(tmp_path, monkeypatch, remote)
+    asyncio.run(idle.tend_remote())
+    assert asyncio.run(idle.tend_remote()) is None
+    assert idle.store.last(idle.targets[0])["outcome"] == "dispatched"
+
+
+def test_the_laptop_leaves_what_fits_the_trainer_to_it_while_the_trainer_can_be_reached(tmp_path, monkeypatch):
+    remote = FakeRemote(tmp_path / "remote", busy=True)       # busy with a job started by hand
+    idle, _runtime, _unloaded, _jobs = remote_trainer(tmp_path, monkeypatch, remote)
+    assert asyncio.run(idle.tend_remote()) is None
+    assert asyncio.run(idle.run_cycle()) is None             # Proxmox first: it waits for the trainer
+    remote.unreachable = True                                 # e.g. hummingbird's battery ran out
+    asyncio.run(idle.tend_remote())
+    trained = []
+    monkeypatch.setattr(specialists_module, "train_candidate", lambda **kw: trained.append(kw["target"].name))
+    result = asyncio.run(idle.run_cycle())                    # the idle laptop GPU takes it meanwhile
+    assert trained == ["account"] and result.outcome == "rejected"

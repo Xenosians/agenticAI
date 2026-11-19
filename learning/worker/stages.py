@@ -70,6 +70,18 @@ def _clean(text: str) -> str:
     return fenced.group(1).strip() if fenced else text
 
 
+def choose_dtype(*, device: str, precision: str, capability: tuple[int, int] | None) -> str:
+    """fp32 on a CPU; bf16 only where the GPU computes it natively (compute capability 8.0 and newer).
+
+    torch reports bf16 as supported on older GPUs (Kaggle's T4 is 7.5) through slow emulation; fp16 is native.
+    """
+    if precision == "fp32" or device == "cpu":
+        return "fp32"
+    if precision == "bf16":
+        return "bf16"
+    return "bf16" if capability is not None and capability[0] >= 8 else "fp16"
+
+
 def release_freed_memory() -> None:
     """Give freed heap pages back to the system (glibc keeps them after a model is freed).
 
@@ -97,12 +109,8 @@ class Run:
         if job.device == "cuda" and not cuda:
             raise RuntimeError("the job asks for CUDA and this worker has no CUDA device")
         self.device = "cuda" if job.device == "cuda" or (job.device == "auto" and cuda) else "cpu"
-        if job.precision == "fp32" or self.device == "cpu":
-            self.dtype = "fp32"
-        elif job.precision == "bf16" or torch.cuda.is_bf16_supported():
-            self.dtype = "bf16"
-        else:
-            self.dtype = "fp16"
+        self.dtype = choose_dtype(device=self.device, precision=job.precision,
+                                  capability=torch.cuda.get_device_capability() if self.device == "cuda" else None)
         if self.device == "cuda" and job.limits.gpu_memory_fraction:
             torch.cuda.set_per_process_memory_fraction(job.limits.gpu_memory_fraction)
         self.quantize = job.sft.tuning == "qlora" and self.device == "cuda"
