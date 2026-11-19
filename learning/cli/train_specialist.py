@@ -15,13 +15,14 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 from learning.continual.automation.specialists import (SPECIALIST_WORK_ROOT, model_profiles,
                                                        small_specialist_targets)
 from learning.worker_jobs import STAGES, build_specialist_job
-from learning.worker_transport import collect_candidate
+from learning.worker_transport import build_worker_package, collect_candidate
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 SUMMARY = "Train any specialist with the one portable worker; Janus's held-out gate decides."
@@ -31,6 +32,36 @@ def specialist_targets() -> dict:
     """Every configured specialist whose base model has local weights, by name (no size limit by hand)."""
     return {target.name: target for target in small_specialist_targets(profiles=model_profiles(),
                                                                          max_weights_gib=float("inf"))}
+
+
+KAGGLE_TIMEOUT_SECONDS = 3 * 3600
+
+
+def kaggle_worker():
+    """Kaggle's free GPU with the account's API token (environment ``KAGGLE_API_TOKEN``, never an argument)."""
+    from learning.kaggle_worker import connect
+
+    token = os.environ.get("KAGGLE_API_TOKEN", "")
+    if not token:
+        raise SystemExit("set KAGGLE_API_TOKEN to use --kaggle")
+    return connect(token=token, package=build_worker_package(SPECIALIST_WORK_ROOT / "worker-package"))
+
+
+def _run_on_kaggle(folder: Path, job_id: str, output: Path) -> int:
+    kaggle = kaggle_worker()
+    started = time.monotonic()
+    try:
+        kaggle.send(folder, job_id)
+        kaggle.start(job_id)
+        while kaggle.running(job_id):
+            if time.monotonic() - started > KAGGLE_TIMEOUT_SECONDS:
+                kaggle.stop(job_id)
+                break
+            time.sleep(30)
+        kaggle.fetch(job_id, output)
+    finally:
+        kaggle.clean(job_id, keep_result=True)    # nothing stays on Kaggle
+    return 0
 
 
 def _settings(text: str) -> dict:
@@ -56,7 +87,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--settings", type=_settings, default={},
                         help="job settings merged into the recipe, e.g. {\"sft\": {\"epochs\": 3}}")
     parser.add_argument("--work", type=Path, default=SPECIALIST_WORK_ROOT / "by-hand")
+    parser.add_argument("--kaggle", action="store_true",
+                        help="run on Kaggle's free GPU; a base pinned to a public commit is fetched there")
     args = parser.parse_args(argv)
+    if args.kaggle:
+        args.device = "cuda"
     targets = specialist_targets()
     if args.specialist not in targets:
         parser.error(f"no specialist named {args.specialist!r}; known: {', '.join(sorted(targets)) or 'none'}")
@@ -65,7 +100,7 @@ def main(argv: list[str] | None = None) -> int:
     work = Path(args.work)
     folder = build_specialist_job(targets[args.specialist], profiles=model_profiles(),
                                   directory=work / "jobs" / job_id, stages=args.stages, stamp=stamp,
-                                  device=args.device, settings=args.settings)
+                                  device=args.device, settings=args.settings, base_by_reference=args.kaggle)
     output = work / "runs" / job_id
     environment = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(Path.home()),
                    "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1", "PYTHONDONTWRITEBYTECODE": "1",
@@ -73,8 +108,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.device == "cpu":
         environment["CUDA_VISIBLE_DEVICES"] = ""
     try:
-        code = subprocess.run([sys.executable, "-m", "learning.worker.stages", str(folder / "job.json"), str(output)],
-                              cwd=str(REPOSITORY), env=environment).returncode
+        if args.kaggle:
+            code = _run_on_kaggle(folder, job_id, output)
+        else:
+            code = subprocess.run([sys.executable, "-m", "learning.worker.stages", str(folder / "job.json"),
+                                   str(output)], cwd=str(REPOSITORY), env=environment).returncode
     finally:
         shutil.rmtree(folder, ignore_errors=True)       # links to the base weights and the data
     result_file = output / "result.json"

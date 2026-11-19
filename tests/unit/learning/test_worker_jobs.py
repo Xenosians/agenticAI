@@ -141,3 +141,38 @@ def test_the_cpu_proxmox_worker_gets_a_lora_job_and_a_gpu_worker_qlora(tmp_path,
                                stages=("sft",), stamp="20261119T010203Z", device="cuda")
     assert load_job(cpu / "job.json")[0].sft.tuning == "lora"
     assert load_job(gpu / "job.json")[0].sft.tuning == "qlora"
+
+
+def write_provenance(base: Path, *, files: dict[str, bytes], repository="mistralai/Tiny", revision="a" * 40):
+    import hashlib
+
+    for name, content in files.items():
+        (base / name).write_bytes(content)
+    (base / "acquisition-provenance.json").write_text(json.dumps({
+        "repository": repository, "revision": revision, "license": "Apache-2.0",
+        "sha256": {name: hashlib.sha256(content).hexdigest() for name, content in files.items()}}))
+
+
+def test_a_remote_gpu_job_names_a_verified_base_by_its_pinned_repository_instead_of_carrying_it(tmp_path, host):
+    """A 7.2 GiB base in every Kaggle upload is not needed when the local files are the pinned public files."""
+    write_provenance(host.base, files={"model.safetensors": b"weights", "config.json": b"{}"})
+    folder = build_specialist_job(fixture_target(tmp_path), profiles=host.profiles, directory=tmp_path / "job",
+                                  stamp="20261119T010203Z", device="cuda", base_by_reference=True)
+    job, root = load_job(folder / "job.json")
+    assert (job.model.source, job.model.name, job.model.revision) == ("huggingface", "mistralai/Tiny", "a" * 40)
+    assert not (root / "base").exists()
+    require_admissions(job)
+    assert "huggingface:mistralai/Tiny@" + "a" * 40 in {artifact for artifact, _ in host.admitted}
+
+
+@pytest.mark.parametrize("trouble", ["no provenance", "changed file", "not a commit"])
+def test_a_base_that_cannot_be_proven_identical_travels_with_the_job(tmp_path, host, trouble):
+    if trouble != "no provenance":
+        write_provenance(host.base, files={"model.safetensors": b"weights"},
+                         revision="main" if trouble == "not a commit" else "a" * 40)
+    if trouble == "changed file":
+        (host.base / "model.safetensors").write_bytes(b"other weights")
+    folder = build_specialist_job(fixture_target(tmp_path), profiles=host.profiles, directory=tmp_path / "job",
+                                  stamp="20261119T010203Z", device="cuda", base_by_reference=True)
+    job, root = load_job(folder / "job.json")
+    assert job.model.source == "local" and (root / "base" / "model.safetensors").is_file()

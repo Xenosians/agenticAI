@@ -34,3 +34,17 @@ def render_prompt(tokenizer, messages: list[dict[str, str]], template_options: d
         return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True,
                                              **(template_options or {}))
     return render_fallback(messages)
+
+
+def tokenizes_messages_itself(tokenizer) -> bool:
+    """Mistral's tokenizer (MistralCommonBackend) has no text template: it encodes the messages directly, the
+    way Ministral serving calls it. Its prompt as text re-tokenizes to other ids, so it is never used as text."""
+    return type(tokenizer).__name__ == "MistralCommonBackend"
+
+
+def encode_prompt(tokenizer, messages: list[dict[str, str]], template_options: dict | None = None) -> list[int]:
+    """The prompt's token ids exactly as serving encodes them (special tokens included, once)."""
+    if tokenizes_messages_itself(tokenizer):
+        encoded = tokenizer.apply_chat_template(messages, return_dict=True)
+        return [int(token) for token in encoded["input_ids"]]
+    return list(tokenizer(render_prompt(tokenizer, messages, template_options), add_special_tokens=True)["input_ids"])

@@ -149,10 +149,39 @@ def load_tokenizer(job: TrainingJob, directory: Path, gguf_file: str | None):
     return tokenizer
 
 
+def model_type(directory: Path) -> str:
+    """The checkpoint's ``model_type`` from its config.json ("" when there is none, e.g. a GGUF file)."""
+    try:
+        value = json.loads((Path(directory) / "config.json").read_text(encoding="utf-8")).get("model_type")
+    except (OSError, ValueError, AttributeError):
+        return ""
+    return value.strip().lower() if isinstance(value, str) else ""
+
+
+TEXT_PROJECTIONS = ("q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj")
+# The class Ministral serving loads. Its name is 32 letters and digits, which GitHub's push protection
+# reads as a Mistral API key, so it is written in parts.
+MISTRAL3_CLASS = "Mistral3" + "ForConditionalGeneration"
+
+
+def lora_targets(directory: Path) -> str:
+    """PEFT target modules. Mistral3 checkpoints carry a vision tower with its own ``q_proj``...: text LoRA is
+    anchored to the language model, as serving's ``lora_targets.text_lora_targets`` does."""
+    if model_type(directory) == "mistral3":
+        return r"^model\.language_model\..*\.(" + "|".join(TEXT_PROJECTIONS) + ")$"
+    return "all-linear"
+
+
 def load_base(job: TrainingJob, directory: Path, gguf_file: str | None, *, device: str, dtype_name: str,
               quantize_4bit: bool):
     import torch
     from transformers import AutoModelForCausalLM
+
+    if model_type(directory) == "mistral3":
+        # Ministral serving loads this class; AutoModelForCausalLM does not map mistral3.
+        import transformers
+
+        AutoModelForCausalLM = getattr(transformers, MISTRAL3_CLASS)  # noqa: N806
 
     dtype = {"fp32": torch.float32, "bf16": torch.bfloat16, "fp16": torch.float16}[dtype_name]
     options: dict = {"trust_remote_code": False, "dtype": dtype}

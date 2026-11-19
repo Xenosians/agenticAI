@@ -24,13 +24,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .data import Collator, cases_digest, heldout_cases, preference_rows, sft_rows, split, tokenize_pair
+from .data import Collator, cases_digest, encode_answer, encode_pair, heldout_cases, preference_rows, sft_rows, split
 from .guard import FitGuard, StageGate
 from .job import TrainingJob, load_job
 from .loading import (NotAdmitted, admitted_load, fetch_dataset, fetch_model, load_base, load_tokenizer,
-                      own_output, require_admissions)
+                      lora_targets, own_output, require_admissions)
 from .loss import answer_only_trainer
-from .prompts import render_prompt
+from .prompts import encode_prompt, render_prompt, tokenizes_messages_itself
 from .scoring import score_case, tool_call_reward
 
 FENCE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL | re.IGNORECASE)
@@ -68,6 +68,23 @@ def _clean(text: str) -> str:
     text = text.strip()
     fenced = FENCE.fullmatch(text)
     return fenced.group(1).strip() if fenced else text
+
+
+def pretokenized(trainer_class):
+    """A DPO trainer for rows that already hold ``prompt_ids``, ``chosen_ids`` and ``rejected_ids``.
+
+    trl tokenizes text rows itself; Mistral's tokenizer must encode the messages instead (see prompts.py).
+    trl's own filter for rows whose prompt alone fills ``max_length`` is kept.
+    """
+    class PreTokenized(trainer_class):
+        def _prepare_dataset(self, dataset, processing_class, args, dataset_name):
+            if "prompt_ids" not in dataset.column_names:
+                return super()._prepare_dataset(dataset, processing_class, args, dataset_name)
+            if args.max_length is not None and getattr(args, "truncation_mode", "keep_start") == "keep_start":
+                dataset = dataset.filter(lambda row: len(row["prompt_ids"]) < args.max_length)
+            return dataset
+
+    return PreTokenized
 
 
 def pin_one_gpu() -> None:
@@ -208,14 +225,19 @@ class Run:
     def render(self, messages) -> str:
         return render_prompt(self.tokenizer, messages, self.job.evaluation.template_options)
 
+    def encode(self, messages) -> list[int]:
+        """The prompt's token ids exactly as serving encodes them; every stage and the evaluation use these."""
+        return encode_prompt(self.tokenizer, messages, self.job.evaluation.template_options)
+
     def generate(self, model, messages, max_new_tokens: int) -> str:
         torch = self.torch
-        prompt = self.render(messages)
-        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device if not self.quantize else "cuda")
+        prompt_ids = self.encode(messages)
+        input_ids = torch.tensor([prompt_ids], device=self.device if not self.quantize else "cuda")
         with torch.inference_mode():
-            output = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False,
+            output = model.generate(input_ids=input_ids, attention_mask=torch.ones_like(input_ids),
+                                    max_new_tokens=max_new_tokens, do_sample=False,
                                     pad_token_id=self.tokenizer.pad_token_id)
-        return _clean(self.tokenizer.decode(output[0, inputs["input_ids"].shape[-1]:], skip_special_tokens=True))
+        return _clean(self.tokenizer.decode(output[0, len(prompt_ids):], skip_special_tokens=True))
 
     def evaluate(self, model, label: str) -> dict:
         model.eval()
@@ -296,14 +318,15 @@ class Run:
             return {"ran": False, "reason": "SFT needs training rows and validation rows for the fit guard"}
 
         def encode(rows):
-            return [tokenize_pair(self.tokenizer, self.render(row["prompt_messages"]),
-                                  row["chosen"], settings.max_length) for row in rows]
+            return [encode_pair(self.tokenizer, self.encode(row["prompt_messages"]), row["chosen"],
+                                settings.max_length) for row in rows]
 
         train_features, validation_features = encode(train), encode(validation)
         model = self.with_adapter(current, trainable=True)
         if current is None:
             model = get_peft_model(model, LoraConfig(r=settings.lora_r, lora_alpha=settings.lora_alpha,
-                                                     lora_dropout=settings.lora_dropout, target_modules="all-linear",
+                                                     lora_dropout=settings.lora_dropout,
+                                                     target_modules=lora_targets(self.model_directory),
                                                      task_type="CAUSAL_LM"))
         steps_per_epoch = max(1, math.ceil(len(train_features) / (settings.batch_size *
                                                                   settings.gradient_accumulation)))
@@ -365,21 +388,26 @@ class Run:
         if not pairs:
             return {"ran": False, "reason": "no preference pairs: no preferences file, and the model already "
                                             "answers every training prompt as chosen"}
-        dataset = self.as_dataset([{"prompt": self.render(row["prompt_messages"]),
-                                    "chosen": row["chosen"], "rejected": row["rejected"]} for row in pairs])
+        # Token ids, not text: DPO sees the prompts serving and the SFT stage see, and no boundary merge of
+        # prompt and answer can shift where the answer starts.
+        dataset = self.as_dataset([{"prompt_ids": self.encode(row["prompt_messages"]),
+                                    "chosen_ids": encode_answer(self.tokenizer, row["chosen"]),
+                                    "rejected_ids": encode_answer(self.tokenizer, row["rejected"])}
+                                   for row in pairs])
         model = self.with_adapter(current, trainable=True)
         peft_config = None
         if current is None:
             from peft import LoraConfig
 
-            peft_config = LoraConfig(r=job.sft.lora_r, lora_alpha=job.sft.lora_alpha, target_modules="all-linear",
+            peft_config = LoraConfig(r=job.sft.lora_r, lora_alpha=job.sft.lora_alpha,
+                                     target_modules=lora_targets(self.model_directory),
                                      lora_dropout=job.sft.lora_dropout, task_type="CAUSAL_LM")
         directory = self.output / "stages" / "dpo"
         common, _ = self.args(directory, num_train_epochs=settings.epochs, learning_rate=settings.learning_rate,
                               per_device_train_batch_size=1, gradient_accumulation_steps=settings.gradient_accumulation,
                               save_strategy="no", lr_scheduler_type="cosine")
         common.pop("save_only_model")
-        trainer = DPOTrainer(model=model, ref_model=None, args=DPOConfig(
+        trainer = pretokenized(DPOTrainer)(model=model, ref_model=None, args=DPOConfig(
             **common, beta=settings.beta, loss_type=[settings.loss_type], max_length=settings.max_length),
             train_dataset=dataset, processing_class=self.tokenizer, peft_config=peft_config,
             callbacks=[self.stop_callback()])
@@ -421,6 +449,9 @@ class Run:
         train_path = self.dataset_directory / job.dataset.train
         if not train_path.is_file():
             return {"ran": False, "reason": f"the dataset has no {job.dataset.train}"}
+        if tokenizes_messages_itself(self.tokenizer):
+            # trl's GRPO samples from text prompts; this tokenizer's prompt as text re-tokenizes to other ids.
+            return {"ran": False, "reason": "PPO needs a text chat template; this tokenizer encodes messages itself"}
         rows = sft_rows(train_path)
         dataset = self.as_dataset([{"prompt": self.render(row["prompt_messages"]),
                                     "expected": row["chosen"]} for row in rows])
@@ -436,7 +467,8 @@ class Run:
         if current is None:
             from peft import LoraConfig
 
-            peft_config = LoraConfig(r=job.sft.lora_r, lora_alpha=job.sft.lora_alpha, target_modules="all-linear",
+            peft_config = LoraConfig(r=job.sft.lora_r, lora_alpha=job.sft.lora_alpha,
+                                     target_modules=lora_targets(self.model_directory),
                                      lora_dropout=job.sft.lora_dropout, task_type="CAUSAL_LM")
         directory = self.output / "stages" / "ppo"
         common, _ = self.args(directory, num_train_epochs=settings.epochs, learning_rate=settings.learning_rate,

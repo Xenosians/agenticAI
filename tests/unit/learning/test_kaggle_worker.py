@@ -135,6 +135,8 @@ def test_the_kernel_runs_the_shared_worker_and_zips_the_run_into_its_output():
     assert "'janus-job-account-20261119t000000z'" in script and "job.zip" in script
     assert "requirements-worker.txt" in script and "!= 'torch'" in script   # Kaggle's torch fits its driver
     compile(script, "kernel.py", "exec")                  # a valid Python script
+    # The worker may fetch a base the job names by its pinned public commit (it runs offline otherwise).
+    assert "HF_HUB_OFFLINE='0'" in script and "HF_HUB_DISABLE_TELEMETRY='1'" in script
 
 
 def test_the_kernel_finds_the_job_whether_kaggle_kept_the_zip_or_unpacked_it(tmp_path, monkeypatch):

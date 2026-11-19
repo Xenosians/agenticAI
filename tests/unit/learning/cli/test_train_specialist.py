@@ -24,8 +24,9 @@ class Target:
 def fake_environment(tmp_path, monkeypatch, *, outcome="trained", exit_code=0):
     built, ran = [], []
 
-    def build_job(target, *, profiles, directory, stages, stamp, device, settings):
-        built.append({"name": target.name, "stages": tuple(stages), "device": device, "settings": settings})
+    def build_job(target, *, profiles, directory, stages, stamp, device, settings, base_by_reference=False):
+        built.append({"name": target.name, "stages": tuple(stages), "device": device, "settings": settings,
+                      "base_by_reference": base_by_reference})
         directory = Path(directory)
         directory.mkdir(parents=True)
         (directory / "job.json").write_text("{}", encoding="utf-8")
@@ -53,7 +54,8 @@ def test_one_command_trains_any_specialist_with_the_shared_worker(tmp_path, monk
     built, ran = fake_environment(tmp_path, monkeypatch)
     code = train_specialist.main(["account", "--device", "cpu", "--stages", "sft,dpo", "--work", str(tmp_path)])
     assert code == 0
-    assert built == [{"name": "account", "stages": ("sft", "dpo"), "device": "cpu", "settings": {}}]
+    assert built == [{"name": "account", "stages": ("sft", "dpo"), "device": "cpu", "settings": {},
+                      "base_by_reference": False}]
     worker = ran[0]
     assert worker["argv"][:3] == [sys.executable, "-m", "learning.worker.stages"]
     assert worker["env"]["CUDA_VISIBLE_DEVICES"] == "" and worker["env"]["HF_HUB_OFFLINE"] == "1"
@@ -93,3 +95,36 @@ def test_the_old_per_specialist_trainers_are_gone():
         assert importlib.util.find_spec(name) is None, name
     root = Path(__file__).resolve().parents[4]
     assert not (root / "scripts" / "specialist_sft_train.py").exists()
+
+
+def test_kaggle_runs_the_same_job_on_its_free_gpu_with_the_base_named_by_reference(tmp_path, monkeypatch, capsys):
+    built, ran = fake_environment(tmp_path, monkeypatch)
+    calls = []
+
+    class FakeKaggle:
+        def send(self, folder, job_id):
+            calls.append(("send", job_id))
+
+        def start(self, job_id):
+            calls.append(("start", job_id))
+
+        def running(self, job_id):
+            calls.append(("running", job_id))
+            return len([c for c in calls if c[0] == "running"]) < 2
+
+        def fetch(self, job_id, destination):
+            calls.append(("fetch", job_id))
+            destination.mkdir(parents=True)
+            (destination / "result.json").write_text(json.dumps({"outcome": "trained", "stages": []}))
+            return destination
+
+        def clean(self, job_id, keep_result=False):
+            calls.append(("clean", job_id))
+
+    monkeypatch.setattr(train_specialist, "kaggle_worker", lambda: FakeKaggle())
+    monkeypatch.setattr(train_specialist.time, "sleep", lambda seconds: None)
+    assert train_specialist.main(["account", "--kaggle", "--work", str(tmp_path)]) == 0
+    assert built[0]["device"] == "cuda" and built[0]["base_by_reference"] is True
+    assert ran == []                                       # nothing trains on this machine
+    assert [name for name, _ in calls] == ["send", "start", "running", "running", "fetch", "clean"]
+    assert json.loads(capsys.readouterr().out)["outcome"] == "trained"

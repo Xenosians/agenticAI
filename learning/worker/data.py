@@ -111,8 +111,20 @@ def split(rows: list[dict[str, Any]], fraction: float, seed: int) -> tuple[list,
 
 def tokenize_pair(tokenizer, prompt: str, target: str, max_length: int) -> dict[str, list[int]]:
     """Janus's specialist tokenization: the loss covers only the answer; a long prompt keeps its tail."""
-    prompt_ids = tokenizer(prompt, add_special_tokens=True)["input_ids"]
-    target_ids = tokenizer(target + (tokenizer.eos_token or ""), add_special_tokens=False)["input_ids"]
+    return encode_pair(tokenizer, list(tokenizer(prompt, add_special_tokens=True)["input_ids"]), target, max_length)
+
+
+def encode_answer(tokenizer, text: str) -> list[int]:
+    """An answer's ids and the end-of-sequence id (the id itself: Mistral's tokenizer splits "</s>" as text)."""
+    ids = [int(token) for token in tokenizer.encode(text, add_special_tokens=False)]
+    if tokenizer.eos_token_id is not None:
+        ids.append(int(tokenizer.eos_token_id))
+    return ids
+
+
+def encode_pair(tokenizer, prompt_ids: list[int], target: str, max_length: int) -> dict[str, list[int]]:
+    """The same, from the prompt's token ids (``prompts.encode_prompt``), so no prompt is re-tokenized."""
+    target_ids = encode_answer(tokenizer, target)
     if not target_ids:
         raise ValueError("an answer tokenized to zero tokens")
     if len(target_ids) >= max_length:

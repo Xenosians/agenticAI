@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -154,9 +155,54 @@ def _same_base(serving, base_profile) -> bool:
     return same_weights and same_backend
 
 
+COMMIT = re.compile(r"^[0-9a-f]{40}$")
+REPOSITORY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}/[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def pinned_reference(base: Path) -> dict | None:
+    """The base's public source, when every weight and tokenizer file here is that commit's file.
+
+    ``acquisition-provenance.json`` names the repository, the commit and each file's SHA-256 (the
+    Hugging Face LFS digest); the files on disk are hashed again now. Anything unproven returns None, and
+    the job then carries the base itself.
+    """
+    try:
+        provenance = json.loads((Path(base) / "acquisition-provenance.json").read_text(encoding="utf-8"))
+        repository, revision = str(provenance["repository"]), str(provenance["revision"])
+        digests = dict(provenance["sha256"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if not REPOSITORY.match(repository) or ".." in repository or not COMMIT.match(revision):
+        return None
+    needed = sorted(path.name for path in Path(base).iterdir()
+                    if path.is_file() and path.suffix in (".safetensors", ".json", ".model", ".txt", ".jinja",
+                                                         ".tiktoken")
+                    and path.name != "acquisition-provenance.json")
+    weights = [name for name in needed if name.endswith(".safetensors")]
+    if not weights or any(name not in digests for name in weights):
+        return None
+    for name in needed:
+        if name in digests and _file_sha256(Path(base) / name) != str(digests[name]).lower():
+            return None
+    return {"source": "huggingface", "name": repository, "revision": revision}
+
+
 def build_specialist_job(target, *, profiles: dict, directory: Path, stages=("sft", "dpo"),
-                         stamp: str | None = None, device: str = "auto", settings: dict | None = None) -> Path:
-    """Write a worker job folder for one specialist; nothing is written when an admission is refused."""
+                         stamp: str | None = None, device: str = "auto", settings: dict | None = None,
+                         base_by_reference: bool = False) -> Path:
+    """Write a worker job folder for one specialist; nothing is written when an admission is refused.
+
+    ``base_by_reference`` (a remote GPU with internet, e.g. Kaggle): a base proven identical to a pinned public
+    commit is named by that commit and fetched there, instead of travelling in every upload.
+    """
     unknown = [stage for stage in stages if stage not in STAGES]
     if unknown:
         raise ValueError(f"unknown stages: {unknown}")
@@ -184,12 +230,14 @@ def build_specialist_job(target, *, profiles: dict, directory: Path, stages=("sf
         _write_jsonl(staging / "data" / "validation.jsonl", validation)
         _write_jsonl(staging / "data" / "heldout.jsonl", specialist_heldout_rows(target, system_prompt=system_prompt))
         shutil.rmtree(staging / "corpus")
-        _link_or_copy(Path(base_profile.model_path), staging / "base")
+        reference = pinned_reference(Path(base_profile.model_path)) if base_by_reference else None
+        if reference is None:
+            _link_or_copy(Path(base_profile.model_path), staging / "base")
         if serving_adapter is not None:
             _link_or_copy(serving_adapter, staging / "serving-adapter")
         job: dict[str, Any] = {
             "schema": "janus-training-job.v1", "job_id": f"{target.name}-{stamp or _stamp()}",
-            "role": "specialist", "model": {"source": "local", "path": "base"},
+            "role": "specialist", "model": reference or {"source": "local", "path": "base"},
             "dataset": {"source": "local", "path": "data"}, "stages": list(stages),
             "evaluation": {"cases": "data/heldout.jsonl", "template_options": template_options},
             "device": device,
@@ -202,7 +250,8 @@ def build_specialist_job(target, *, profiles: dict, directory: Path, stages=("sf
         from learning.worker.job import TrainingJob
 
         parsed = TrainingJob.model_validate(job)
-        sources = {"local:base": Path(base_profile.model_path), "local:data": staging / "data",
+        sources = {"local:base": Path(base_profile.model_path), parsed.model.key(): Path(base_profile.model_path),
+                   "local:data": staging / "data",
                    "local:data/heldout.jsonl": staging / "data" / "heldout.jsonl",
                    "local:serving-adapter": serving_adapter}
         job["admissions"] = [{"artifact": artifact,
