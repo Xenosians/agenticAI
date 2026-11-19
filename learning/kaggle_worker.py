@@ -35,6 +35,10 @@ RSYNC_MISSING = 23            # the same signal as rsync's "files not there", so
 class KaggleRefused(RuntimeError):
     """Kaggle answered with an error; the message names the call and the status, never the token."""
 
+    def __init__(self, message: str, *, status: int | None = None):
+        super().__init__(message)
+        self.status = status
+
 
 def _slug(prefix: str, job_id: str) -> str:
     if not isinstance(job_id, str) or not JOB_ID.match(job_id):
@@ -141,7 +145,7 @@ class KaggleWorker:
         except httpx.TransportError as error:
             raise TransportError(f"Kaggle could not be reached ({type(error).__name__})", returncode=255) from None
         if answer.status_code != 200:
-            raise KaggleRefused(f"Kaggle refused {method} with HTTP {answer.status_code}")
+            raise KaggleRefused(f"Kaggle refused {method} with HTTP {answer.status_code}", status=answer.status_code)
         try:
             data = answer.json()
         except ValueError:
@@ -221,8 +225,13 @@ class KaggleWorker:
         self.started.add(job_id)
 
     def running(self, job_id: str) -> bool:
-        status = self._call("kernels.KernelsApiService", "GetKernelSessionStatus",
-                            {"userName": self.username, "kernelSlug": _slug("janus-train", job_id)}).get("status")
+        try:
+            status = self._call("kernels.KernelsApiService", "GetKernelSessionStatus",
+                                {"userName": self.username, "kernelSlug": _slug("janus-train", job_id)}).get("status")
+        except KaggleRefused as refused:
+            if refused.status == 404:
+                return False         # no such kernel: fetching it finds the run lost
+            raise
         return status not in FINISHED
 
     def busy(self) -> bool:

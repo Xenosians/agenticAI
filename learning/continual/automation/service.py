@@ -54,6 +54,7 @@ from learning.continual.automation.specialists import (
     SpecialistCandidateStore,
     SpecialistCycleResult,
     SpecialistIdleTrainer,
+    load_kaggle_worker,
     load_remote_worker,
     small_specialist_targets,
 )
@@ -786,13 +787,21 @@ class ContinualAutomationService:
         self,
     ):
         if self._specialist_trainer is None:
+            # With Kaggle registered, the specialists too big for this
+            # machine (the 3B ones) are targets too; the laptop keeps its
+            # own limit and leaves them to Kaggle.
+            kaggle = load_kaggle_worker(
+                self.settings.kaggle_worker_file
+            )
             self._specialist_trainer = SpecialistIdleTrainer(
                 runtime=self.runtime,
                 settings=self.settings,
                 targets=small_specialist_targets(
                     profiles=Settings().model_profiles,
                     max_weights_gib=(
-                        self.settings.specialist_max_weights_gib
+                        float("inf")
+                        if kaggle is not None
+                        else self.settings.specialist_max_weights_gib
                     ),
                 ),
                 store=SpecialistCandidateStore(
@@ -801,6 +810,10 @@ class ContinualAutomationService:
                 yield_reason=self._yield_reason,
                 remote=load_remote_worker(
                     self.settings.remote_worker_file
+                ),
+                kaggle=kaggle,
+                local_max_weights_gib=(
+                    self.settings.specialist_max_weights_gib
                 ),
             )
         return self._specialist_trainer

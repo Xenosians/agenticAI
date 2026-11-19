@@ -49,7 +49,7 @@ from types import SimpleNamespace
 
 from learning.continual.automation.limiter import TrainingYielded, gpu_budget
 from learning.paths import REPOSITORY_ROOT, RUNTIME_LEARNING_ROOT
-from learning.worker_dispatch import Worker, fits
+from learning.worker_dispatch import MIN_KAGGLE_HOURS, Worker, fits
 from learning.worker_jobs import build_specialist_job
 from learning.worker_transport import (LocalTransport, SshTransport, TransportError, build_worker_package,
                                        collect_candidate)
@@ -128,17 +128,19 @@ def _utc_now() -> str:
 
 @dataclass(frozen=True)
 class RemoteWorker:
-    """A registered remote training machine (``~/.config/janus-live/<name>.json``), reached over SSH."""
+    """A registered remote training machine (``~/.config/janus-live/<name>.json``): reached over SSH, or
+    Kaggle's API (``kind`` kaggle, with a 0600 token file instead of SSH details)."""
     name: str
     kind: str
     device: str
-    host: str
-    user: str
-    key: Path
-    known_hosts: Path
     ram_gib: float
     threads: int
+    host: str = ""
+    user: str = ""
+    key: Path | None = None
+    known_hosts: Path | None = None
     gpu_gib: float = 0.0
+    token_file: Path | None = None
 
     def capacity(self) -> Worker:
         return Worker(name=self.name, kind=self.kind, device=self.device, ram_gib=self.ram_gib, gpu_gib=self.gpu_gib)
@@ -156,10 +158,55 @@ def load_remote_worker(path: Path | None) -> RemoteWorker | None:
                               threads=int(data["threads"]), gpu_gib=float(data.get("gpu_gib", 0.0)))
     except (OSError, ValueError, KeyError, TypeError):
         return None
-    if worker.kind not in ("proxmox", "local", "kaggle") or worker.device not in ("cpu", "cuda") \
+    if worker.kind not in ("proxmox", "local") or worker.device not in ("cpu", "cuda") \
             or not (1 <= worker.threads <= 256):
         return None
     return worker
+
+
+def load_kaggle_worker(path: Path | None) -> RemoteWorker | None:
+    """The Kaggle worker file (``kind`` kaggle, a CUDA device and a token file), or None."""
+    if path is None:
+        return None
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        worker = RemoteWorker(name=str(data["name"]), kind=str(data["kind"]), device=str(data["device"]),
+                              ram_gib=float(data["ram_gib"]), threads=int(data["threads"]),
+                              gpu_gib=float(data["gpu_gib"]), token_file=Path(data["token_file"]))
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if worker.kind != "kaggle" or worker.device != "cuda" or worker.gpu_gib <= 0 \
+            or not worker.token_file.is_absolute() or not (1 <= worker.threads <= 256):
+        return None
+    return worker
+
+
+def read_token_file(path: Path) -> str:
+    """A secret kept in a file only its owner reads (mode 0600); never an environment variable or argument."""
+    import stat
+
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+            info = os.fstat(handle.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077 or info.st_size > 4096:
+                raise TransportError("the token file must be a private regular file (mode 0600)")
+            return handle.read().strip()
+    except OSError:
+        raise TransportError("the token file cannot be read") from None
+
+
+def kaggle_transport(worker: RemoteWorker):
+    from learning.kaggle_worker import connect
+
+    return connect(token=read_token_file(worker.token_file),
+                   package=build_worker_package(SPECIALIST_WORK_ROOT / "worker-package"))
+
+
+def kaggle_hours_left(transport) -> float | None:
+    from learning.kaggle_worker import weekly_gpu_hours_left
+
+    return weekly_gpu_hours_left(transport)
 
 
 def remote_transport(worker: RemoteWorker) -> SshTransport:
@@ -416,7 +463,10 @@ class SpecialistIdleTrainer:
                  work_root: Path = SPECIALIST_WORK_ROOT,
                  catalog_fingerprint: Callable[[SpecialistTarget], str] = tool_catalog_fingerprint,
                  yield_reason: Callable[[], str | None], remote: RemoteWorker | None = None,
-                 remote_transport_factory: Callable[[RemoteWorker], object] = remote_transport):
+                 remote_transport_factory: Callable[[RemoteWorker], object] = remote_transport,
+                 kaggle: RemoteWorker | None = None,
+                 kaggle_transport_factory: Callable[[RemoteWorker], object] = kaggle_transport,
+                 local_max_weights_gib: float = float("inf")):
         self.runtime = runtime
         self.settings = settings
         self.targets = targets
@@ -430,6 +480,12 @@ class SpecialistIdleTrainer:
         self.clock: Callable[[], float] = time.monotonic
         self._next_remote_look = 0.0
         self._remote_reachable = remote is not None   # until a look says otherwise
+        self.kaggle = kaggle
+        self.kaggle_transport_factory = kaggle_transport_factory
+        self.kaggle_hours = kaggle_hours_left
+        # The laptop's own limit (CONTINUAL_SPECIALIST_MAX_WEIGHTS_GIB): what is bigger is Kaggle's to train.
+        self.local_max_weights_gib = local_max_weights_gib
+        self._next_kaggle_look = 0.0
 
     def _fingerprints(self) -> dict[str, str]:
         return {target.name: target.fingerprint(catalog=self.catalog_fingerprint(target))
@@ -438,10 +494,16 @@ class SpecialistIdleTrainer:
     # -- the remote worker (Proxmox first) --------------------------------------------------------------------
 
     async def tend_remote(self) -> SpecialistCycleResult | None:
-        """Bring back a finished remote run, or send the remote worker the next job that fits it."""
-        if self.remote is None:
-            return None
-        return await asyncio.to_thread(self._tend_remote)
+        """Bring back a finished remote run, or send a remote worker the next job that fits it.
+
+        The Proxmox trainer first (owner decision 1); Kaggle's GPU for what fits nowhere else.
+        """
+        result = None
+        if self.remote is not None:
+            result = await asyncio.to_thread(self._tend_remote)
+        if result is None and self.kaggle is not None:
+            result = await asyncio.to_thread(self._tend_kaggle)
+        return result
 
     def _tend_remote(self) -> SpecialistCycleResult | None:
         now = self.clock()
@@ -474,15 +536,56 @@ class SpecialistIdleTrainer:
         target = self.store.next_target(waiting, fingerprints)
         if target is None or transport.busy():      # nothing to send: the trainer is not contacted
             return None
-        return self._dispatch_remote(transport, target, fingerprints[target.name])
+        return self._dispatch_remote(transport, target, fingerprints[target.name], self.remote)
 
-    def _dispatch_remote(self, transport, target: SpecialistTarget, fingerprint: str) -> SpecialistCycleResult:
+    # -- Kaggle's free GPU (owner decision 8): what fits neither the trainer nor this machine ------------------
+
+    def _kaggle_only(self, target: SpecialistTarget) -> bool:
+        weights = self.weights_gib(target)
+        on_trainer = self.remote is not None and fits(self.remote.capacity(), weights_gib=weights,
+                                                      stages=list(WORKER_STAGES))
+        return (not on_trainer and weights > self.local_max_weights_gib
+                and fits(self.kaggle.capacity(), weights_gib=weights, stages=list(WORKER_STAGES)))
+
+    def _tend_kaggle(self) -> SpecialistCycleResult | None:
+        now = self.clock()
+        if now < self._next_kaggle_look:
+            return None
+        self._next_kaggle_look = now + REMOTE_POLL_SECONDS
+        fingerprints = None
+        pending = [(target, last) for target, last in self.store.pending(self.targets, "dispatched")
+                   if last.get("worker") == self.kaggle.name]
+        if not pending:
+            fingerprints = self._fingerprints()
+            waiting = [target for target in self.targets
+                       if self.store.needs_training(target, fingerprints[target.name]) and self._kaggle_only(target)]
+            if not waiting:
+                return None                          # nothing for Kaggle: no API call at all
+        try:
+            transport = self.kaggle_transport_factory(self.kaggle)
+            for target, last in pending:
+                if transport.running(last["job_id"]):
+                    return None
+                return self._collect_remote(transport, target, last)
+            target = self.store.next_target(waiting, fingerprints)
+            hours = self.kaggle_hours(transport)
+            if target is None or hours is None or hours < MIN_KAGGLE_HOURS or transport.busy():
+                return None
+            return self._dispatch_remote(transport, target, fingerprints[target.name], self.kaggle)
+        except Exception as error:  # noqa: BLE001 - Kaggle unreachable or refusing: try again later
+            self._next_kaggle_look = now + REMOTE_RETRY_SECONDS
+            print(f"[CONTINUAL] kaggle unavailable reason={type(error).__name__}: {str(error)[:200]}")
+            return None
+
+    def _dispatch_remote(self, transport, target: SpecialistTarget, fingerprint: str,
+                         worker: RemoteWorker) -> SpecialistCycleResult:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         job_id = f"{target.name}-{stamp}"
         output_root = self.work_root / target.name
         folder = build_specialist_job(target, profiles=model_profiles(), directory=output_root / "jobs" / job_id,
-                                      stages=WORKER_STAGES, stamp=stamp, device=self.remote.device,
-                                      settings={**WORKER_RECIPE, "threads": self.remote.threads})
+                                      stages=WORKER_STAGES, stamp=stamp, device=worker.device,
+                                      settings={**WORKER_RECIPE, "threads": worker.threads},
+                                      base_by_reference=worker.kind == "kaggle")
         try:
             transport.install(build_worker_package(self.work_root / "worker-package"))
             transport.send(folder, job_id)
@@ -492,10 +595,10 @@ class SpecialistIdleTrainer:
         previous = self.store.last(target) or {}
         losses = int(previous.get("losses") or 0) if previous.get("fingerprint") == fingerprint else 0
         self.store.record(target, fingerprint=fingerprint, outcome="dispatched", candidate=None, job_id=job_id,
-                          worker=self.remote.name, losses=losses)
-        print(f"[CONTINUAL] specialist job dispatched specialist={target.name} worker={self.remote.name} "
+                          worker=worker.name, losses=losses)
+        print(f"[CONTINUAL] specialist job dispatched specialist={target.name} worker={worker.name} "
               f"job={job_id}")
-        return SpecialistCycleResult(specialist=target.name, outcome="dispatched", reason=self.remote.name)
+        return SpecialistCycleResult(specialist=target.name, outcome="dispatched", reason=worker.name)
 
     def _collect_remote(self, transport, target: SpecialistTarget, last: dict) -> SpecialistCycleResult:
         job_id = last["job_id"]
@@ -548,6 +651,12 @@ class SpecialistIdleTrainer:
               f"job={last['job_id']} reason={reason}")
         return SpecialistCycleResult(specialist=target.name, outcome=outcome, reason=reason)
 
+    def _local(self, target: SpecialistTarget) -> bool:
+        """Within this machine's own limit (CONTINUAL_SPECIALIST_MAX_WEIGHTS_GIB); bigger is Kaggle's."""
+        if self.local_max_weights_gib == float("inf"):
+            return True                                   # no limit set: nothing needs measuring
+        return self.weights_gib(target) <= self.local_max_weights_gib
+
     def _defer_to_remote(self, target: SpecialistTarget) -> bool:
         """Proxmox first: what fits the trainer waits for it while its last look succeeded."""
         return (self.remote is not None and self._remote_reachable
@@ -560,8 +669,8 @@ class SpecialistIdleTrainer:
         if fetched:
             return await self._judge_fetched(*fetched[0])
         fingerprints = await asyncio.to_thread(self._fingerprints)
-        target = self.store.next_target([target for target in self.targets if not self._defer_to_remote(target)],
-                                        fingerprints)
+        target = self.store.next_target([target for target in self.targets if not self._defer_to_remote(target)
+                                         and self._local(target)], fingerprints)
         if target is None:
             return None
         fingerprint = fingerprints[target.name]

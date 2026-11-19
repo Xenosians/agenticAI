@@ -277,3 +277,11 @@ def test_a_send_that_fails_after_the_create_removes_the_dataset(tmp_path):
         kaggle.send(make_job(tmp_path), "account-20261119T000000Z")
     assert fake.calls[-1][0] == "DeleteDataset"           # nothing is left on the account
     assert not list(tmp_path.glob("*.job.zip"))           # nor the archive here
+
+
+def test_a_kernel_that_is_gone_is_not_running_and_a_refusal_is_not_read_as_finished(tmp_path):
+    fake = FakeKaggle(refuse={"GetKernelSessionStatus": 404})
+    assert worker(fake, tmp_path).running("account-20261119T000000Z") is False     # fetched or found lost next
+    fake = FakeKaggle(refuse={"GetKernelSessionStatus": 403})
+    with pytest.raises(KaggleRefused):
+        worker(fake, tmp_path).running("account-20261119T000000Z")             # unknown: looked at again later

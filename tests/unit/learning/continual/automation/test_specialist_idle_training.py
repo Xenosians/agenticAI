@@ -6,6 +6,7 @@ limits as the Hub cycle, checks it on the specialist's held-out cases and keeps
 it as an unregistered candidate. Nothing here changes what serves requests.
 """
 import asyncio
+import dataclasses
 import itertools
 import json
 import subprocess
@@ -614,8 +615,9 @@ TRAINER = specialists_module.RemoteWorker(name="janus-trainer", kind="proxmox", 
 def remote_trainer(tmp_path, monkeypatch, remote, *, weights_gib=0.9, evaluate=None):
     jobs = []
 
-    def build_job(target, *, profiles, directory, stages, stamp, device, settings):
-        jobs.append({"target": target.name, "device": device, "settings": settings, "stages": tuple(stages)})
+    def build_job(target, *, profiles, directory, stages, stamp, device, settings, base_by_reference=False):
+        jobs.append({"target": target.name, "device": device, "settings": settings, "stages": tuple(stages),
+                     "base_by_reference": base_by_reference})
         Path(directory).mkdir(parents=True)
         return directory
 
@@ -642,7 +644,7 @@ def test_a_job_that_fits_the_proxmox_trainer_is_dispatched_there_without_the_loc
     result = asyncio.run(idle.tend_remote())
     assert (result.specialist, result.outcome) == ("account", "dispatched")
     assert jobs == [{"target": "account", "device": "cpu", "stages": ("sft", "dpo"),
-                     "settings": {**specialists_module.WORKER_RECIPE, "threads": 4}}]
+                     "settings": {**specialists_module.WORKER_RECIPE, "threads": 4}, "base_by_reference": False}]
     assert remote.calls == ["busy", "install", "send", "start"]
     assert unloaded == []
     last = idle.store.last(idle.targets[0])
@@ -779,3 +781,66 @@ def test_the_laptop_leaves_what_fits_the_trainer_to_it_while_the_trainer_can_be_
     monkeypatch.setattr(specialists_module, "train_candidate", lambda **kw: trained.append(kw["target"].name))
     result = asyncio.run(idle.run_cycle())                    # the idle laptop GPU takes it meanwhile
     assert trained == ["account"] and result.outcome == "rejected"
+
+
+# ---- Kaggle for what fits nowhere else (owner decision 1 and 8, 18 Nov 2026) ----
+
+KAGGLE = specialists_module.RemoteWorker(name="kaggle", kind="kaggle", device="cuda", ram_gib=28.0, threads=4,
+                                         gpu_gib=14.0, token_file=Path("/k/kaggle-token"))
+
+
+def with_kaggle(tmp_path, monkeypatch, *, hours=29.9):
+    trainer_fake = FakeRemote(tmp_path / "remote", states=[True] * 9)
+    kaggle_fake = FakeRemote(tmp_path / "kaggle", states=[True] * 9)
+    idle, _runtime, _unloaded, jobs = remote_trainer(tmp_path, monkeypatch, trainer_fake)
+    idle.targets = [idle.targets[0], dataclasses.replace(idle.targets[0], name="operations")]
+    sizes = {"account": 0.9, "operations": 7.2}          # a 0.5B base and the 3B Ministral base
+    idle.weights_gib = lambda target: sizes[target.name]
+    idle.kaggle, idle.kaggle_transport_factory = KAGGLE, lambda worker: kaggle_fake
+    idle.kaggle_hours = lambda transport: hours
+    idle.local_max_weights_gib = 2.0
+    return idle, jobs, trainer_fake, kaggle_fake
+
+
+def test_what_fits_nowhere_else_goes_to_kaggle_with_its_base_named_by_reference(tmp_path, monkeypatch):
+    idle, jobs, _trainer, kaggle = with_kaggle(tmp_path, monkeypatch)
+    first = asyncio.run(idle.tend_remote())
+    assert (first.specialist, first.outcome, first.reason) == ("account", "dispatched", "janus-trainer")
+    second = asyncio.run(idle.tend_remote())
+    assert (second.specialist, second.outcome, second.reason) == ("operations", "dispatched", "kaggle")
+    assert jobs[-1] == {"target": "operations", "device": "cuda", "stages": ("sft", "dpo"),
+                        "settings": {**specialists_module.WORKER_RECIPE, "threads": 4}, "base_by_reference": True}
+    assert kaggle.calls == ["busy", "install", "send", "start"]
+    assert idle.store.last(idle.targets[1])["worker"] == "kaggle"
+    # The laptop trains neither: the 3B base is not its to train, and the trainer has the 0.5B one.
+    assert asyncio.run(idle.run_cycle()) is None
+
+
+def test_kaggle_gets_nothing_while_its_weekly_gpu_hours_run_low(tmp_path, monkeypatch):
+    idle, jobs, _trainer, kaggle = with_kaggle(tmp_path, monkeypatch, hours=1.5)
+    asyncio.run(idle.tend_remote())                          # the trainer takes account
+    assert asyncio.run(idle.tend_remote()) is None
+    assert "send" not in kaggle.calls and [job["target"] for job in jobs] == ["account"]
+
+
+def test_the_kaggle_worker_file_and_its_private_token_file(tmp_path):
+    import os
+
+    token = tmp_path / "kaggle-token"
+    token.write_text("KGAT_" + "x" * 30 + "\n")
+    os.chmod(token, 0o600)
+    path = tmp_path / "kaggle.json"
+    path.write_text(json.dumps({"name": "kaggle", "kind": "kaggle", "device": "cuda", "ram_gib": 28,
+                                "threads": 4, "gpu_gib": 14, "token_file": str(token)}))
+    worker = specialists_module.load_kaggle_worker(path)
+    assert (worker.kind, worker.device, worker.gpu_gib) == ("kaggle", "cuda", 14.0)
+    assert specialists_module.read_token_file(worker.token_file) == "KGAT_" + "x" * 30
+    os.chmod(token, 0o644)                                   # readable by others: refused
+    from learning.worker_transport import TransportError
+
+    with pytest.raises(TransportError):
+        specialists_module.read_token_file(worker.token_file)
+    path.write_text(json.dumps({"name": "kaggle", "kind": "proxmox", "device": "cuda", "ram_gib": 28,
+                                "threads": 4, "gpu_gib": 14, "token_file": str(token)}))
+    assert specialists_module.load_kaggle_worker(path) is None
+    assert specialists_module.load_kaggle_worker(None) is None

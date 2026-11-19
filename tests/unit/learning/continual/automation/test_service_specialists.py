@@ -184,3 +184,41 @@ def test_the_registered_trainer_is_read_from_the_environment(monkeypatch, tmp_pa
     assert ContinualAutomationSettings.from_env().remote_worker_file == tmp_path / "janus-trainer.json"
     monkeypatch.delenv("CONTINUAL_REMOTE_WORKER_FILE")
     assert ContinualAutomationSettings.from_env().remote_worker_file is None
+
+
+def test_the_kaggle_worker_is_read_from_the_environment(monkeypatch, tmp_path):
+    monkeypatch.setenv("CONTINUAL_KAGGLE_WORKER_FILE", str(tmp_path / "kaggle.json"))
+    assert ContinualAutomationSettings.from_env().kaggle_worker_file == tmp_path / "kaggle.json"
+    monkeypatch.delenv("CONTINUAL_KAGGLE_WORKER_FILE")
+    assert ContinualAutomationSettings.from_env().kaggle_worker_file is None
+
+
+def test_with_kaggle_the_big_specialists_become_targets_and_the_laptop_keeps_its_limit(monkeypatch, tmp_path):
+    from learning.continual.automation import service as service_module
+
+    seen = {}
+
+    def targets(*, profiles, max_weights_gib):
+        seen["max_weights_gib"] = max_weights_gib
+        return []
+
+    class Trainer:
+        def __init__(self, **kwargs):
+            seen.update(kwargs)
+
+    import json
+
+    monkeypatch.setattr(service_module, "small_specialist_targets", targets)
+    monkeypatch.setattr(service_module, "SpecialistIdleTrainer", Trainer)
+    kaggle = tmp_path / "kaggle.json"
+    token = tmp_path / "token"
+    token.write_text("t")
+    kaggle.write_text(json.dumps({"name": "kaggle", "kind": "kaggle", "device": "cuda", "ram_gib": 28,
+                                  "threads": 4, "gpu_gib": 14, "token_file": str(token)}))
+    service, _runtime, _specialists = build(tmp_path, monkeypatch)
+    service.settings = service.settings.model_copy(update={"kaggle_worker_file": kaggle})
+    service._specialist_trainer = None
+    service._specialists()
+    assert seen["max_weights_gib"] == float("inf")              # the 3B specialists are targets now
+    assert seen["local_max_weights_gib"] == service.settings.specialist_max_weights_gib
+    assert seen["kaggle"].name == "kaggle"

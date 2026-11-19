@@ -139,6 +139,11 @@ class ContinualAutomationSettings(BaseModel):
     # 18 November 2026). None keeps all training on this machine.
     remote_worker_file: Path | None = None
 
+    # Kaggle's free GPU (owner decision 8): a worker file naming a 0600
+    # token file. With it, specialists too big for this machine and the
+    # trainer (the 3B ones) train there. None keeps them untrained.
+    kaggle_worker_file: Path | None = None
+
     # Keep the previous physical runtime location for backward-compatible
     # recovery of any already-persisted state. The Python namespace itself
     # is now consistently "continual".
@@ -537,6 +542,12 @@ class ContinualAutomationSettings(BaseModel):
             remote_worker_file=(
                 Path(os.environ["CONTINUAL_REMOTE_WORKER_FILE"])
                 if os.getenv("CONTINUAL_REMOTE_WORKER_FILE")
+                else None
+            ),
+
+            kaggle_worker_file=(
+                Path(os.environ["CONTINUAL_KAGGLE_WORKER_FILE"])
+                if os.getenv("CONTINUAL_KAGGLE_WORKER_FILE")
                 else None
             ),
 
