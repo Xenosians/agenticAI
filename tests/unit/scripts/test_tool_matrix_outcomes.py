@@ -389,6 +389,34 @@ def test_the_device_removal_case_is_skipped_without_a_named_disposable_device(mo
         "Remove the tailnet device {tailnet_matrix_device} from our tailnet.".format(**context)
 
 
+def test_the_matrix_key_comes_from_the_backend_client_and_is_never_kept(monkeypatch):
+    # The matrix is its own process: it must read the client the running AI uses (the backend .env),
+    # mint one single-use key for tag:janus-lab, and keep only its id.
+    seen = {}
+
+    class Key:
+        key_id, key = "kMATRIX2CNTRL", "tskey-auth-kMATRIX2CNTRL-secret"
+
+    class Service:
+        def create_enrolment_key(self, **asked):
+            seen.update(asked)
+            return Key()
+
+        def close(self):
+            seen["closed"] = True
+
+    import services.tailnet as tailnet
+    monkeypatch.setattr(matrix, "dotenv_values", lambda path: {
+        "TAILSCALE_CLIENT_ID": "id", "TAILSCALE_CLIENT_SECRET": "secret", "OTHER": "x"}
+        if str(path).endswith("itsm_backend/.env") else {})
+    monkeypatch.setattr(tailnet, "build_tailnet_service",
+                        lambda settings: Service() if settings.tailscale_client_id == "id" else None)
+    assert matrix.mint_tailnet_matrix_key() == {"tailnet_matrix_key": "kMATRIX2CNTRL"}
+    assert seen["tag"] == "tag:janus-lab" and seen["expiry_seconds"] == 1800 and seen["closed"] is True
+    monkeypatch.setattr(matrix, "dotenv_values", lambda path: {})
+    assert matrix.mint_tailnet_matrix_key() == {}
+
+
 def test_created_guests_are_remembered_for_their_cleanup_cases():
     context = {}
     matrix.record_created("proxmox_guest_create", {"ok": True, "new_vmid": None, "vmid": 993,

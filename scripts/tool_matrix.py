@@ -369,13 +369,22 @@ def discover_fixtures(context: dict) -> None:
 
 
 def mint_tailnet_matrix_key() -> dict:
-    """One disposable enrolment key through Janus's own service (its id only; the key is discarded)."""
+    """One disposable enrolment key through Janus's own service (its id only; the key is discarded).
+
+    The matrix is its own process: it reads the Tailscale client the running AI uses from the backend's
+    .env (the file the stack loads), never from this shell's environment.
+    """
     try:
-        from config import Settings
+        from config.settings import Settings
         from services.tailnet import build_tailnet_service
     except ImportError:
         return {}
-    service = build_tailnet_service(Settings())
+    backend_env = PROJECT_ROOT.parents[1] / "agenticBackend" / "itsm_backend" / ".env"
+    client = {key.lower(): value for key, value in dotenv_values(backend_env).items()
+              if key in ("TAILSCALE_CLIENT_ID", "TAILSCALE_CLIENT_SECRET") and value}
+    if len(client) != 2:
+        return {}
+    service = build_tailnet_service(Settings(**client))
     if service is None:
         return {}
     try:
