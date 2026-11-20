@@ -188,6 +188,75 @@ def register_networking_tools(server, service: OpenWrtService | None, tailnet: T
         return grant_change("remove", sources, destinations, ports, expected_etag, policy_sha256,
                             new_policy_sha256)
 
+    # Approved device, DNS and key changes (services/tailnet_changes.py). setting/device_*/previous and
+    # key_* are trusted policy arguments frozen at approval; they are never model-facing.
+
+    def tailnet_change(run) -> TailnetChangeResult:
+        with tailnet_resolve() as current:
+            if current is None:
+                return TailnetChangeResult(**not_configured("tailscale", "The Tailscale network",
+                                                            missing.get("tailscale", ())))
+            try:
+                return TailnetChangeResult(**run(current))
+            except Exception:
+                # Nothing is known about a write that may have been sent: never invite a resend.
+                return TailnetChangeResult(ok=False, status="outcome_unknown", retry_safe=False,
+                                           error="The tailnet change did not report its outcome. Read the "
+                                                 "tailnet before trying again.")
+
+    def device_change(device: str, setting: str, value: dict, device_id: str, device_name: str,
+                      device_tags: list[str], previous: dict) -> TailnetChangeResult:
+        from services.tailnet_changes import DeviceChange, apply_device_change
+
+        return tailnet_change(lambda current: apply_device_change(
+            current, DeviceChange(device, setting, value), device_id=device_id, device_name=device_name,
+            device_tags=list(device_tags or []), previous=dict(previous or {})))
+
+    @server.tool()
+    def network_tailnet_device_set(device: str, routes: list[str] | None = None, authorized: bool | None = None,
+                                   tags: list[str] | None = None, key_expiry_disabled: bool | None = None,
+                                   new_name: str | None = None, setting: str = "", device_id: str = "",
+                                   device_name: str = "", device_tags: list[str] | None = None,
+                                   previous: dict | None = None) -> TailnetChangeResult:
+        """Change one approved setting of one tailnet device and read the device back."""
+        value = {"routes": {"routes": routes}, "authorized": {"authorized": authorized},
+                 "tags": {"tags": tags}, "key_expiry": {"key_expiry_disabled": key_expiry_disabled},
+                 "name": {"name": new_name}}.get(setting)
+        if value is None:
+            return TailnetChangeResult(ok=False, status="denied", error="The approval names no device setting.")
+        return device_change(device, setting, value, device_id, device_name, device_tags or [], previous or {})
+
+    @server.tool()
+    def network_tailnet_device_remove(device: str, device_id: str = "", device_name: str = "",
+                                      device_tags: list[str] | None = None,
+                                      previous: dict | None = None) -> TailnetChangeResult:
+        """Remove one approved device from the tailnet and confirm it is no longer listed."""
+        return device_change(device, "remove", {}, device_id, device_name, device_tags or [], previous or {})
+
+    @server.tool()
+    def network_tailnet_dns_set(nameservers: list[str] | None = None, magic_dns: bool | None = None,
+                                search_paths: list[str] | None = None, split_dns_domain: str | None = None,
+                                split_dns_nameservers: list[str] | None = None, setting: str = "",
+                                previous: dict | None = None) -> TailnetChangeResult:
+        """Change one approved tailnet DNS setting and read it back."""
+        from services.tailnet_changes import apply_dns_change
+
+        value = {"nameservers": {"nameservers": nameservers}, "magic_dns": {"magic_dns": magic_dns},
+                 "search_paths": {"search_paths": search_paths},
+                 "split_dns": {"domain": split_dns_domain, "nameservers": split_dns_nameservers}}.get(setting)
+        if value is None:
+            return TailnetChangeResult(ok=False, status="denied", error="The approval names no DNS setting.")
+        return tailnet_change(lambda current: apply_dns_change(current, setting, value, previous=dict(previous or {})))
+
+    @server.tool()
+    def network_tailnet_key_revoke(key_id: str, key_type: str = "", key_description: str = "",
+                                   key_tags: list[str] | None = None) -> TailnetChangeResult:
+        """Revoke one approved tailnet auth key and confirm it is gone."""
+        from services.tailnet_changes import apply_key_revoke
+
+        return tailnet_change(lambda current: apply_key_revoke(
+            current, key_id, key_type=key_type, key_description=key_description, key_tags=list(key_tags or [])))
+
     @server.tool()
     def network_dns_integrity_check(names: list[str] | None = None) -> NetworkReadResult:
         return read(dns_check, "dns_check", "dns", "The DNS integrity check", lambda: dns_check.check(names))

@@ -987,6 +987,218 @@
         "tailnet",
         "tailnet-grant"
       ]
+    },
+    {
+      "tool_name": "network_tailnet_device_set",
+      "user_request": "Approve the 10.77.0.0/24 route that hummingbird advertises on the tailnet.",
+      "arguments": {
+        "device": "hummingbird",
+        "routes": [
+          "10.77.0.0/24"
+        ]
+      },
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-change"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_device_set",
+      "user_request": "Enable subnet routes 192.168.50.0/24 on tailnet device edge-router.",
+      "arguments": {
+        "device": "edge-router",
+        "routes": [
+          "192.168.50.0/24"
+        ]
+      },
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-change"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_device_set",
+      "user_request": "Deauthorize the tailnet device old-laptop so it loses access.",
+      "arguments": {
+        "device": "old-laptop",
+        "authorized": false
+      },
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-change"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_device_set",
+      "user_request": "Tag the tailnet device build-runner with tag:janus-lab.",
+      "arguments": {
+        "device": "build-runner",
+        "tags": [
+          "tag:janus-lab"
+        ]
+      },
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-change"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_device_set",
+      "user_request": "Rename tailnet device janus-router-lab to lab-router.",
+      "arguments": {
+        "device": "janus-router-lab",
+        "new_name": "lab-router"
+      },
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-change"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_device_set",
+      "user_request": "Turn off key expiry for the tailnet device nas-01.",
+      "arguments": {
+        "device": "nas-01",
+        "key_expiry_disabled": true
+      },
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-change"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_device_remove",
+      "user_request": "Remove the tailnet device old-phone from our tailnet.",
+      "arguments": {
+        "device": "old-phone"
+      },
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-change"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_device_remove",
+      "user_request": "Delete tailnet device test-vm-3; it is gone for good.",
+      "arguments": {
+        "device": "test-vm-3"
+      },
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-change"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_device_remove",
+      "user_request": "Kick decommissioned-server off the tailnet.",
+      "arguments": {
+        "device": "decommissioned-server"
+      },
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-change"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_dns_set",
+      "user_request": "Set the tailnet nameservers to 1.1.1.1 and 9.9.9.9.",
+      "arguments": {
+        "nameservers": [
+          "1.1.1.1",
+          "9.9.9.9"
+        ]
+      },
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-change"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_dns_set",
+      "user_request": "Turn MagicDNS off for the tailnet.",
+      "arguments": {
+        "magic_dns": false
+      },
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-change"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_dns_set",
+      "user_request": "Use lab.internal as the tailnet search domain.",
+      "arguments": {
+        "search_paths": [
+          "lab.internal"
+        ]
+      },
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-change"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_dns_set",
+      "user_request": "Send lab.internal lookups on the tailnet to 10.77.0.1 with split DNS.",
+      "arguments": {
+        "split_dns_domain": "lab.internal",
+        "split_dns_nameservers": [
+          "10.77.0.1"
+        ]
+      },
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-change"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_key_revoke",
+      "user_request": "Revoke the tailnet auth key kAbCd1234CNTRL.",
+      "arguments": {
+        "key_id": "kAbCd1234CNTRL"
+      },
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-change"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_key_revoke",
+      "user_request": "Kill tailnet key k9Zy8Xw7CNTRL, it leaked.",
+      "arguments": {
+        "key_id": "k9Zy8Xw7CNTRL"
+      },
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-change"
+      ]
+    },
+    {
+      "tool_name": "network_tailnet_key_revoke",
+      "user_request": "Invalidate the unused enrolment key kQrSt5678CNTRL.",
+      "arguments": {
+        "key_id": "kQrSt5678CNTRL"
+      },
+      "tags": [
+        "authored-networking",
+        "tailnet",
+        "tailnet-change"
+      ]
     }
   ],
   "eval_cases": [
@@ -1380,6 +1592,78 @@
         "ports": [
           "5432"
         ]
+      }
+    },
+    {
+      "name": "tailnet-device-routes-paraphrase",
+      "user": "On the tailnet, let gateway-2 serve its advertised 172.20.0.0/16 subnet.",
+      "allowed_tools": [
+        "network_tailnet_device_set"
+      ],
+      "allowed_arguments": {
+        "device": [
+          "gateway-2"
+        ],
+        "routes": [
+          "172.20.0.0/16"
+        ]
+      },
+      "expected_tool": "network_tailnet_device_set",
+      "expected_arguments": {
+        "device": "gateway-2",
+        "routes": [
+          "172.20.0.0/16"
+        ]
+      }
+    },
+    {
+      "name": "tailnet-device-remove-paraphrase",
+      "user": "Take the device stale-desktop out of the tailnet entirely.",
+      "allowed_tools": [
+        "network_tailnet_device_remove"
+      ],
+      "allowed_arguments": {
+        "device": [
+          "stale-desktop"
+        ]
+      },
+      "expected_tool": "network_tailnet_device_remove",
+      "expected_arguments": {
+        "device": "stale-desktop"
+      }
+    },
+    {
+      "name": "tailnet-dns-paraphrase",
+      "user": "Make the tailnet resolve through nameserver 9.9.9.9 only.",
+      "allowed_tools": [
+        "network_tailnet_dns_set"
+      ],
+      "allowed_arguments": {
+        "nameservers": [
+          "9.9.9.9"
+        ]
+      },
+      "expected_tool": "network_tailnet_dns_set",
+      "expected_arguments": {
+        "nameservers": [
+          "9.9.9.9"
+        ]
+      }
+    },
+    {
+      "name": "tailnet-key-revoke-paraphrase",
+      "user": "Our tailnet key kLmNo4321CNTRL should stop working now.",
+      "allowed_tools": [
+        "network_tailnet_key_revoke"
+      ],
+      "allowed_arguments": {
+        "key_id": [
+          "kLmNo4321CNTRL"
+        ]
+      },
+      "expected_tool": "network_tailnet_key_revoke",
+      "expected_arguments": {
+        "key_id": "kLmNo4321CNTRL"
       }
     }
   ]

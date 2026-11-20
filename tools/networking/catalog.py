@@ -586,6 +586,258 @@ TAILNET_CHANGE_TOOLS = {
         "Removed the tailnet grant"),
 }
 
+
+# Governed tailnet device, DNS and key changes (owner decision 20 Nov 2026, ~14:10 WIB, item 1: Janus's
+# client may write devices:core, devices:routes and dns). The trusted policy reads the target before
+# approval and freezes its identity and the value being replaced; the tool re-reads, sends once and
+# reads back (services/tailnet_changes.py).
+DEVICE_TRUSTED = ["setting", "device_id", "device_name", "device_tags", "previous"]
+DEVICE_SETTING_ARGUMENTS = {"routes": "routes", "authorized": "authorized", "tags": "tags",
+                            "key_expiry_disabled": "key_expiry", "new_name": "name"}
+DNS_SETTING_ARGUMENTS = {"nameservers": "nameservers", "magic_dns": "magic_dns", "search_paths": "search_paths",
+                         "split_dns_domain": "split_dns"}
+CHANGE_CHECK = ("Janus refuses the change if the target changed since this approval, sends it once and reads it "
+                "back.")
+
+
+def _tailnet_change_policy(prepare, risk_of):
+    def evaluate(**arguments) -> dict:
+        from tools.provider_reads import provider_read
+
+        arguments = {name: value for name, value in arguments.items() if value is not None}
+        risk = risk_of(arguments)
+
+        def refused(status: str, error: str) -> dict:
+            return {"ok": False, "status": status, "risk": risk, "requires_approval": True, "error": error}
+
+        service = _policy_tailnet()
+        if service is None:
+            return refused("error", "The Tailscale network is not connected for this account. Add a Tailscale "
+                                    "link in Connections.")
+        try:
+            outcome = provider_read("tailscale", "The Tailscale network",
+                                    lambda: {"ok": True, "data": prepare(service, arguments)})
+        finally:
+            service.close()
+        if not outcome.get("ok"):
+            return refused("error", outcome.get("error") or "The Tailscale network could not check the change.")
+        prepared = outcome["data"]
+        if not prepared["ok"]:
+            return refused(prepared["status"], prepared["error"])
+        return {"ok": True, "status": "ready", "risk": risk, "requires_approval": True, "error": None,
+                "execution_arguments": {**arguments, **prepared["frozen"]}}
+
+    return evaluate
+
+
+def _one_setting(arguments: dict, names: dict) -> str:
+    given = [name for name in names if name in arguments]
+    if len(given) != 1:
+        raise ValueError("Change one setting per approval: " + ", ".join(names) + ".")
+    return given[0]
+
+
+def _device_change(arguments: dict):
+    from services.tailnet_changes import DeviceChange
+
+    device = str(arguments.get("device") or "")
+    if arguments.get("remove"):
+        return DeviceChange(device, "remove", {})
+    name = _one_setting(arguments, DEVICE_SETTING_ARGUMENTS)
+    setting = DEVICE_SETTING_ARGUMENTS[name]
+    key = {"key_expiry": "key_expiry_disabled", "name": "name"}.get(setting, setting)
+    return DeviceChange(device, setting, {key: arguments[name]})
+
+
+def _prepare_device(service, arguments: dict) -> dict:
+    from services.tailnet_changes import TailnetChangeRefused, prepare_device_change
+
+    try:
+        change = _device_change(arguments)
+    except (ValueError, TailnetChangeRefused) as error:
+        return {"ok": False, "status": "denied", "error": str(error)}
+    prepared = prepare_device_change(service, change)
+    if prepared["ok"] and change.setting != "remove":
+        prepared["frozen"] = {"setting": change.setting, **prepared["frozen"]}
+    return prepared
+
+
+def _prepare_dns(service, arguments: dict) -> dict:
+    from services.tailnet_changes import prepare_dns_change
+
+    try:
+        name = _one_setting(arguments, DNS_SETTING_ARGUMENTS)
+    except ValueError as error:
+        return {"ok": False, "status": "denied", "error": str(error)}
+    setting = DNS_SETTING_ARGUMENTS[name]
+    value = ({"domain": arguments[name], "nameservers": arguments.get("split_dns_nameservers")}
+             if setting == "split_dns" else {name: arguments[name]})
+    prepared = prepare_dns_change(service, setting, value)
+    if prepared["ok"]:
+        prepared["frozen"] = {"setting": setting, **prepared["frozen"]}
+    return prepared
+
+
+def _prepare_key(service, arguments: dict) -> dict:
+    from services.tailnet_changes import prepare_key_revoke
+
+    return prepare_key_revoke(service, str(arguments.get("key_id") or ""))
+
+
+def _values(value) -> str:
+    if isinstance(value, dict):
+        return ", ".join(f"{key.replace('_', ' ')} {_values(item)}" for key, item in value.items()) or "nothing"
+    if isinstance(value, list):
+        return ", ".join(str(item) for item in value) or "none"
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    return "none" if value is None else str(value)
+
+
+def _device_set_approval(arguments: dict) -> str:
+    setting = arguments.get("setting") or "setting"
+    wanted = next((arguments[name] for name in DEVICE_SETTING_ARGUMENTS if name in arguments), None)
+    text = (f"Set the {setting.replace('_', ' ')} of tailnet device {arguments.get('device_name') or arguments.get('device')} "
+            f"to {_values(wanted)} (now {_values(arguments.get('previous'))}). ")
+    if setting == "routes":
+        text += "Every tailnet member the policy allows can then reach those subnets through this device. "
+    if setting == "authorized" and wanted is False:
+        text += "The device loses tailnet access at once. "
+    return text + CHANGE_CHECK
+
+
+def _device_remove_approval(arguments: dict) -> str:
+    return (f"Remove tailnet device {arguments.get('device_name')} (tags {_values(arguments.get('device_tags'))}) "
+            "from the tailnet. It loses access at once and must enrol again with a new key. " + CHANGE_CHECK)
+
+
+def _dns_approval(arguments: dict) -> str:
+    setting = arguments.get("setting") or "dns"
+    wanted = (f"{arguments.get('split_dns_domain')} -> {_values(arguments.get('split_dns_nameservers'))}"
+              if setting == "split_dns" else _values(next((arguments[name] for name in DNS_SETTING_ARGUMENTS
+                                                           if name in arguments), None)))
+    return (f"Set the tailnet DNS {setting.replace('_', ' ')} to {wanted} (now {_values(arguments.get('previous'))}). "
+            "Every device that uses tailnet DNS follows it at once. " + CHANGE_CHECK)
+
+
+def _key_approval(arguments: dict) -> str:
+    return (f"Revoke tailnet key {arguments.get('key_id')} ({arguments.get('key_type')} key "
+            f"'{arguments.get('key_description')}', tags {_values(arguments.get('key_tags'))}). A device not yet "
+            "enrolled with it can no longer join. " + CHANGE_CHECK)
+
+
+def _tailnet_change_result(subject: str):
+    def format_result(result: dict) -> str:
+        target = result.get("device") or result.get("key") or "the tailnet"
+        if result.get("ok") and result.get("verification_ok"):
+            observed = result.get("observed")
+            return (f"{subject} for {target} done; Janus read it back"
+                    + (f": {_values(observed)}." if observed else "."))
+        if result.get("status") == "outcome_unknown":
+            return (f"The {subject.lower()} for {target} has an unknown outcome: {result.get('error')} "
+                    "Do not repeat it before reading the tailnet.")
+        return f"The {subject.lower()} for {target} did not happen: {result.get('error')}"
+    return format_result
+
+
+def _tailnet_change_tool(*, description: str, resource: str, operation: str, permission: str, risk: str,
+                         policy, trusted: list[str], grounded: list[str], required: list[str], parameters: dict,
+                         approval, subject: str, confirmation: str | None = None) -> dict:
+    tool = {
+        "description": description, "resource_type": resource, "operation_kind": operation,
+        "effect": "mutation", "permission": permission, "risk": risk, "requires_approval": True,
+        "policy_owns_preconditions": True, "policy_resolver": policy, "trusted_policy_arguments": trusted,
+        "grounded_arguments": grounded, "derived_arguments": [], "required_arguments": required,
+        "parameters": parameters, "condition_fields": ["ok", "status", "verification_ok"],
+        "approval_formatter": approval, "result_formatter": _tailnet_change_result(subject),
+    }
+    if confirmation:
+        tool["confirmation_argument"] = confirmation
+    return tool
+
+
+DEVICE_PARAMETER = {"type": "str", "description": "Exact tailnet device name, as listed by network_tailnet_devices."}
+
+
+def _device_set_policy(device: str, routes: list[str] | None = None, authorized: bool | None = None,
+                       tags: list[str] | None = None, key_expiry_disabled: bool | None = None,
+                       new_name: str | None = None):
+    return _tailnet_change_policy(_prepare_device, lambda a: "high" if a.get("authorized") is False else "medium")(
+        device=device, routes=routes, authorized=authorized, tags=tags, key_expiry_disabled=key_expiry_disabled,
+        new_name=new_name)
+
+
+def _device_remove_policy(device: str):
+    return _tailnet_change_policy(_prepare_device, lambda _a: "high")(device=device, remove=True)
+
+
+def _dns_set_policy(nameservers: list[str] | None = None, magic_dns: bool | None = None,
+                    search_paths: list[str] | None = None, split_dns_domain: str | None = None,
+                    split_dns_nameservers: list[str] | None = None):
+    return _tailnet_change_policy(_prepare_dns, lambda _a: "high")(
+        nameservers=nameservers, magic_dns=magic_dns, search_paths=search_paths,
+        split_dns_domain=split_dns_domain, split_dns_nameservers=split_dns_nameservers)
+
+
+def _key_revoke_policy(key_id: str):
+    return _tailnet_change_policy(_prepare_key, lambda _a: "high")(key_id=key_id)
+
+
+def _remove_policy_arguments(policy):
+    """The removal policy marks its request; the mark is not an execution argument."""
+    def evaluate(**arguments):
+        result = policy(**arguments)
+        if result.get("ok"):
+            result["execution_arguments"].pop("remove", None)
+        return result
+    return evaluate
+
+
+TAILNET_CHANGE_TOOLS.update({
+    "network_tailnet_device_set": _tailnet_change_tool(
+        description="Change one setting of one tailnet device: approve its advertised subnet routes, authorize "
+                    "or deauthorize it, set its tags, its key expiry or its name. Approved first.",
+        resource="network.tailnet.device", operation="update", permission="network.tailnet.device.update",
+        risk="medium", policy=_device_set_policy, trusted=DEVICE_TRUSTED,
+        grounded=["device", "routes", "tags", "new_name"], required=["device"],
+        parameters={"device": DEVICE_PARAMETER,
+                    "routes": {"type": "list[str]", "description": "Advertised subnet routes to enable, e.g. "
+                                                                   "10.77.0.0/24."},
+                    "authorized": {"type": "bool", "description": "Authorize (true) or deauthorize (false)."},
+                    "tags": {"type": "list[str]", "description": "Tags to set, e.g. tag:janus-lab."},
+                    "key_expiry_disabled": {"type": "bool", "description": "True: the key never expires."},
+                    "new_name": {"type": "str", "description": "New device name."}},
+        approval=_device_set_approval, subject="The device change"),
+    "network_tailnet_device_remove": _tailnet_change_tool(
+        description="Remove one device from the tailnet; it must enrol again to rejoin. Approved with the "
+                    "device name typed.",
+        resource="network.tailnet.device", operation="delete", permission="network.tailnet.device.remove",
+        risk="high", policy=_remove_policy_arguments(_device_remove_policy),
+        trusted=["device_id", "device_name", "device_tags", "previous"], grounded=["device"], required=["device"],
+        parameters={"device": DEVICE_PARAMETER}, approval=_device_remove_approval,
+        subject="The device removal", confirmation="device_name"),
+    "network_tailnet_dns_set": _tailnet_change_tool(
+        description="Change one tailnet DNS setting: the global nameservers, MagicDNS, the search domains or "
+                    "one split-DNS domain. Approved first.",
+        resource="network.tailnet.dns", operation="update", permission="network.tailnet.dns.update", risk="high",
+        policy=_dns_set_policy, trusted=["setting", "previous"],
+        grounded=["nameservers", "search_paths", "split_dns_domain", "split_dns_nameservers"], required=[],
+        parameters={"nameservers": {"type": "list[str]", "description": "Nameserver addresses."},
+                    "magic_dns": {"type": "bool", "description": "MagicDNS on (true) or off (false)."},
+                    "search_paths": {"type": "list[str]", "description": "Search domains."},
+                    "split_dns_domain": {"type": "str", "description": "One split-DNS domain."},
+                    "split_dns_nameservers": {"type": "list[str]", "description": "That domain's nameservers; "
+                                                                                  "omit to remove it."}},
+        approval=_dns_approval, subject="The DNS change"),
+    "network_tailnet_key_revoke": _tailnet_change_tool(
+        description="Revoke one tailnet auth key by its id; never Janus's own client. Approved with the key id "
+                    "typed.",
+        resource="network.tailnet.key", operation="delete", permission="network.tailnet.key.revoke", risk="high",
+        policy=_key_revoke_policy, trusted=["key_type", "key_description", "key_tags"], grounded=["key_id"],
+        required=["key_id"], parameters={"key_id": {"type": "str", "description": "Exact key id."}},
+        approval=_key_approval, subject="The key revocation", confirmation="key_id"),
+})
+
 # Checks how names resolve from the AI host itself; independent of the router and the tailnet.
 DNS_CHECK_TOOLS = {
     "network_dns_integrity_check": {
