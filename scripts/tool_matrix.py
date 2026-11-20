@@ -175,6 +175,22 @@ def build_cases(run: str, project: str, pool: str | None = None) -> list[tuple[s
          "Add a tailnet grant so tag:janus-lab can reach tag:janus-lab on port 22.", True),
         ("network-tailnet-grant-remove", "network_tailnet_grant_remove",
          "Remove the tailnet grant that lets tag:janus-lab reach tag:janus-lab on port 22.", True),
+        # Governed device, DNS and key changes (owner decision 20 Nov 2026, item 1), each undone in the same
+        # run so the tailnet ends as found: the lab router's tags gain tag:janus-trainer and return to
+        # tag:janus-lab; split DNS for a matrix-only domain is added and removed; the key-revoke and
+        # device-remove cases act only on the enrolment key and device the run itself made ({tailnet_*}).
+        ("network-tailnet-device-set", "network_tailnet_device_set",
+         "Set the tags of tailnet device janus-router-lab to tag:janus-lab and tag:janus-trainer.", True),
+        ("network-tailnet-device-restore", "network_tailnet_device_set",
+         "Set the tags of tailnet device janus-router-lab to tag:janus-lab.", True),
+        ("network-tailnet-dns-set", "network_tailnet_dns_set",
+         "Send matrix{run}.internal lookups on the tailnet to 10.77.0.1 with split DNS.", True),
+        ("network-tailnet-dns-restore", "network_tailnet_dns_set",
+         "Remove the split DNS for matrix{run}.internal from the tailnet.", True),
+        ("network-tailnet-key-revoke", "network_tailnet_key_revoke",
+         "Revoke the tailnet auth key {tailnet_matrix_key}.", True),
+        ("network-tailnet-device-remove", "network_tailnet_device_remove",
+         "Remove the tailnet device {tailnet_matrix_device} from our tailnet.", True),
         ("network-dns-integrity", "network_dns_integrity_check", "Is our ISP rewriting DNS answers? Check vimeo.com and example.com.", None),
         # --- Proxmox VE (reads; power actions are approval-gated, lab guest only) ---
         ("proxmox-cluster", "proxmox_cluster_status", "What is the Proxmox VE cluster status?", None),
@@ -238,6 +254,12 @@ def build_cases(run: str, project: str, pool: str | None = None) -> list[tuple[s
          "Delete guest {proxmox_clone_vmid} on node {proxmox_node}.", True),
         ("proxmox-delete-created", "proxmox_guest_delete",
          "Delete guest {proxmox_created_vmid} on node {proxmox_node}.", True),
+        # A database guest from the official PostgreSQL image (item 5), deleted again by the next case.
+        ("proxmox-database-create", "proxmox_database_create",
+         "Create a postgresql database guest named matrix-db-{run} on node {proxmox_node} running version "
+         "17-alpine.", True),
+        ("proxmox-delete-database", "proxmox_guest_delete",
+         "Delete guest {proxmox_database_vmid} on node {proxmox_node}.", True),
     ]
 
 
@@ -334,6 +356,36 @@ def discover_fixtures(context: dict) -> None:
                         context.setdefault("service_desk", PROJECT)
                         context.setdefault("request_type", request_type["name"])
                         break
+    # --- tailnet fixtures ---
+    # The key-revoke case revokes only a key this run minted: one unused, single-use, ephemeral
+    # enrolment key for tag:janus-lab that expires in 30 minutes anyway. No device ever joins with it.
+    # The device-remove case runs only on a disposable device an operator names in
+    # ACCEPTANCE_TAILNET_DEVICE; without one it is skipped, never pointed at a real machine.
+    if "tailnet_matrix_key" not in context:
+        context.update(mint_tailnet_matrix_key())
+    device = os.environ.get("ACCEPTANCE_TAILNET_DEVICE")
+    if device and "tailnet_matrix_device" not in context:
+        context["tailnet_matrix_device"] = device
+
+
+def mint_tailnet_matrix_key() -> dict:
+    """One disposable enrolment key through Janus's own service (its id only; the key is discarded)."""
+    try:
+        from config import Settings
+        from services.tailnet import build_tailnet_service
+    except ImportError:
+        return {}
+    service = build_tailnet_service(Settings())
+    if service is None:
+        return {}
+    try:
+        key = service.create_enrolment_key(tag="tag:janus-lab", description=f"Janus matrix {RUN}",
+                                           expiry_seconds=1800)
+    except Exception:  # noqa: BLE001 - a missing fixture skips its case; it never fails the run
+        return {}
+    finally:
+        service.close()
+    return {"tailnet_matrix_key": key.key_id}
 
 
 def record_created(tool: str, tool_result: dict, context: dict) -> None:
@@ -353,6 +405,8 @@ def record_created(tool: str, tool_result: dict, context: dict) -> None:
     new_vmid = tool_result.get("new_vmid") if type(tool_result.get("new_vmid")) is int else None
     if tool == "proxmox_guest_create" and type(tool_result.get("vmid")) is int:
         context["proxmox_created_vmid"] = tool_result["vmid"]
+    if tool == "proxmox_database_create" and type(tool_result.get("vmid")) is int:
+        context["proxmox_database_vmid"] = tool_result["vmid"]
     if tool == "proxmox_guest_clone" and new_vmid is not None:
         context["proxmox_clone_vmid"] = new_vmid
     if tool == "proxmox_backup_restore" and new_vmid is not None:

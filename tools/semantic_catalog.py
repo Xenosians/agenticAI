@@ -70,6 +70,7 @@ CAPABILITY_SEMANTICS: dict[str, dict[str, str]] = {
     "proxmox_guest_clone": {"resource_type": "proxmox.guest", "operation_kind": "create", "effect": "mutation", "permission": "proxmox.guest.clone"},
     "proxmox_guest_create": {"resource_type": "proxmox.guest", "operation_kind": "create", "effect": "mutation", "permission": "proxmox.guest.create"},
     "proxmox_guest_delete": {"resource_type": "proxmox.guest", "operation_kind": "delete", "effect": "mutation", "permission": "proxmox.guest.delete"},
+    "proxmox_database_create": {"resource_type": "proxmox.database", "operation_kind": "create", "effect": "mutation", "permission": "proxmox.database.create"},
     "proxmox_node_network": {"resource_type": "proxmox.network", "operation_kind": "read", "effect": "read", "permission": "proxmox.network.list"},
     "proxmox_nodes": {"resource_type": "proxmox.node", "operation_kind": "read", "effect": "read", "permission": "proxmox.node.list"},
     "proxmox_recent_tasks": {"resource_type": "proxmox.task", "operation_kind": "read", "effect": "read", "permission": "proxmox.task.list"},

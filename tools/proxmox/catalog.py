@@ -616,6 +616,7 @@ CHANGE_RISKS = {
     "proxmox_guest_clone": "medium",
     "proxmox_guest_create": "medium",
     "proxmox_guest_delete": "high",
+    "proxmox_database_create": "medium",
 }
 # The owner must type the target's own name (the approval authority checks
 # it against the frozen arguments, not the page) for these.
@@ -987,6 +988,67 @@ def _delete_policy(node: str, vmid: int):
     return _policy_for(CHANGE_RISKS["proxmox_guest_delete"], read)(node=node, vmid=vmid)
 
 
+# Database guests from official OCI images (owner decision 20 Nov 2026, ~14:10 WIB, item 5). The guest
+# lives in the lab pool on the subnet the tailnet bridge routes; the policy picks its VMID and its free
+# address from Proxmox itself and freezes the whole plan, so the approval shows exactly what runs.
+DATABASE_POOL = "janus"
+DATABASE_VNET = "janusnat"
+DATABASE_GATEWAY = "10.77.0.1"
+DATABASE_TEMPLATE_STORAGE = "local"
+# Addresses .20-.99 of the bridged subnet are for database guests (.10 is the trainer, .1 the gateway).
+DATABASE_ADDRESSES = range(20, 100)
+
+
+def _used_bridge_addresses(service, node: str) -> set[str]:
+    """Every 10.77.0.x a guest's config already names, read from Proxmox (never guessed)."""
+    return service.guest_addresses(node, "10.77.0.0/24")
+
+
+def _read_database_create(service, arguments: dict) -> dict[str, Any]:
+    from services.database_guests import DatabaseGuestRefused, database_guest_plan
+
+    frozen = _freeze_new_guest(service, arguments, "vmid")
+    vmid = frozen.get("allocated_vmid") or arguments.get("vmid")
+    if type(vmid) is not int:
+        raise ValueError("Proxmox did not name a free VMID for the database guest.")
+    used = _used_bridge_addresses(service, arguments["node"])
+    free = next((f"10.77.0.{host}" for host in DATABASE_ADDRESSES if f"10.77.0.{host}" not in used), None)
+    if free is None:
+        raise ValueError("Every database address in 10.77.0.20-99 is in use; remove a database guest first.")
+    try:
+        plan = database_guest_plan(
+            engine=str(arguments.get("engine") or ""), version=str(arguments.get("version") or ""),
+            hostname=str(arguments.get("hostname") or ""), node=arguments["node"], vmid=vmid,
+            storage=arguments.get("storage") or "local-lvm",
+            template_storage=DATABASE_TEMPLATE_STORAGE, pool=DATABASE_POOL, vnet=DATABASE_VNET,
+            address=f"{free}/24", gateway=DATABASE_GATEWAY, disk_gib=arguments.get("disk_gib") or 4,
+            memory_mib=arguments.get("memory_mib") or 1024, cores=arguments.get("cores") or 1,
+            data_gib=arguments.get("data_gib"))
+    except DatabaseGuestRefused as error:
+        raise ValueError(str(error)) from None
+    return {**frozen, "plan": plan}
+
+
+def _database_create_policy(node: str, engine: str, version: str, hostname: str, vmid: int | None = None,
+                            storage: str | None = None, cores: int | None = None, memory_mib: int | None = None,
+                            disk_gib: int | None = None, data_gib: int | None = None):
+    return _policy_for("medium", _read_database_create)(
+        node=node, engine=engine, version=version, hostname=hostname, vmid=vmid, storage=storage, cores=cores,
+        memory_mib=memory_mib, disk_gib=disk_gib, data_gib=data_gib)
+
+
+def _database_create_approval(arguments: dict[str, Any]) -> str:
+    plan = arguments.get("plan") or {}
+    create = plan.get("create") or {}
+    return (f"Create database guest {plan.get('hostname')} (LXC {plan.get('vmid')}) on Proxmox node "
+            f"{plan.get('node')} from the official image {plan.get('reference')}: {create.get('cores')} core(s), "
+            f"{create.get('memory')} MiB memory, root disk {create.get('rootfs')}, data volume "
+            f"{(create.get('mp0') or '').split(',', 1)[0]}, in pool {create.get('pool')}, at "
+            f"{plan.get('address')}:{plan.get('port')} on the tailnet-bridged subnet. "
+            + ("Proxmox pulls the image first. " if plan.get("template") else "")
+            + "No password is sent; Janus sets one afterwards and keeps it encrypted for your account.")
+
+
 PROXMOX_CHANGE_TOOLS = {
     "proxmox_guest_set_resources": _change_tool(
         name="proxmox_guest_set_resources",
@@ -1131,6 +1193,31 @@ PROXMOX_CHANGE_TOOLS = {
         trusted=GUEST_CHANGE_TRUSTED, required=["node", "vmid"],
         parameters=GUEST_PAIR,
         approval=_delete_approval, done="The guest was deleted", operation="delete"),
+    "proxmox_database_create": {
+        **_change_tool(
+            name="proxmox_database_create",
+            description="Create one PostgreSQL or MariaDB database guest from the engine's official OCI image at "
+                        "a pinned version, in the lab pool on the tailnet-bridged subnet, with its data on its own "
+                        "volume. Requires approval; Janus picks the VMID and a free address and confirms the "
+                        "guest exists.",
+            permission="proxmox.database.create", policy=_database_create_policy,
+            trusted=["allocated_vmid", "plan"], required=["node", "engine", "version", "hostname"],
+            grounded=["node", "engine", "version", "vmid"],
+            derived=["hostname", "storage", "cores", "memory_mib", "disk_gib", "data_gib"],
+            parameters={"node": {"type": "str", "description": "Exact Proxmox node, as listed by proxmox_nodes."},
+                        "engine": {"type": "str", "description": "postgresql or mariadb."},
+                        "version": {"type": "str", "description": "Pinned image tag, e.g. 17-alpine or 11.8."},
+                        "hostname": {"type": "str", "description": "Hostname: lowercase letters, digits, hyphens."},
+                        "vmid": {"type": "int", "description": "Optional free VMID; omit and Janus uses Proxmox's "
+                                                               "next free one."},
+                        "storage": {"type": "str", "description": "Optional disk storage; default local-lvm."},
+                        "cores": {"type": "int", "description": "Optional CPU cores (default 1)."},
+                        "memory_mib": {"type": "int", "description": "Optional memory in MiB (default 1024)."},
+                        "disk_gib": {"type": "int", "description": "Optional root disk GiB (default 4)."},
+                        "data_gib": {"type": "int", "description": "Optional data volume GiB (default = root)."}},
+            approval=_database_create_approval, done="The database guest was created", operation="create"),
+        "resource_type": "proxmox.database",
+    },
 }
 
 

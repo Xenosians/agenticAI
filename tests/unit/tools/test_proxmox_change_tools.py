@@ -42,6 +42,11 @@ class Changes:
             raise ProxmoxConflict(f"VMID {newid} is already used on node {node}; choose a free VMID.")
         return {"ok": True, "status": "success", "data": {"node": node, "vmid": newid, "free": True}}
 
+    def guest_addresses(self, node, subnet):
+        # The trainer holds .10 on the bridged subnet (live, 20 Nov 2026).
+        self.calls.append(("addresses", node, subnet))
+        return {"10.77.0.10"}
+
     def close(self):
         pass
 
@@ -87,6 +92,8 @@ ONLY_WHAT_THE_USER_NAMED = {
     "proxmox_guest_create": {"node": "hummingbird", "hostname": "lab-2", "template": "local:vztmpl/alpine.tar.xz",
                              "cores": 1, "memory_mib": 128, "disk_gib": 1, "storage": "local-lvm"},
     "proxmox_guest_delete": {"node": "hummingbird", "vmid": 990},
+    "proxmox_database_create": {"node": "hummingbird", "engine": "postgresql", "version": "17-alpine",
+                                "hostname": "db-lab"},
 }
 
 

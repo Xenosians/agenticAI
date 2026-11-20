@@ -1840,6 +1840,33 @@ class ProxmoxService:
                                         f"The Proxmox task finished, but guest {vmid} is not named '{name}'.")
         return None
 
+    def guest_addresses(self, node: str, subnet: str) -> set[str]:
+        """Read-only: the static IPv4 addresses inside ``subnet`` that the node's guests' configs name.
+
+        Used to pick a free address for a new guest; each guest's own config is read (net*/ipconfig*
+        ``ip=``), so an address a stopped guest holds is never handed out twice.
+        """
+        network = ipaddress.ip_network(subnet)
+        used: set[str] = set()
+        for row in self._rows(self._get("/cluster/resources", {"type": "vm"})):
+            if row.get("node") != node or row.get("type") not in ("lxc", "qemu") or type(row.get("vmid")) is not int:
+                continue
+            config = self._get(f"/nodes/{node}/{row['type']}/{row['vmid']}/config")
+            for key, value in (config or {}).items() if isinstance(config, dict) else ():
+                if not (key.startswith(("net", "ipconfig")) and isinstance(value, str)):
+                    continue
+                for part in value.split(","):
+                    name, _, address = part.partition("=")
+                    if name != "ip" or address in ("", "dhcp", "manual"):
+                        continue
+                    try:
+                        ip = ipaddress.ip_interface(address).ip
+                    except ValueError:
+                        continue
+                    if ip in network:
+                        used.add(str(ip))
+        return used
+
     def new_guest_target(self, node: str, newid: int) -> dict:
         """Read-only: the exact node a new guest would land on, and that its VMID is free."""
         if not isinstance(node, str) or not NODE_ID.fullmatch(node):
@@ -2263,6 +2290,82 @@ class ProxmoxService:
                                         f"The Proxmox task finished, but the guest does not follow snapshot "
                                         f"'{snapshot}'.")
         return self._change_outcome(receipt, True, "executed", snapshot=snapshot, verification_ok=True)
+
+    def database_guest_create(self, plan: dict, *, sleep=time.sleep, clock=time.monotonic) -> dict:
+        """Pull the plan's pinned OCI image when the storage lacks it, then create the database guest.
+
+        ``plan`` comes from services.database_guests.database_guest_plan and was frozen in the approval.
+        One pull (only when the template is absent) and one create are sent; neither is repeated. A pull
+        that fails creates nothing; the new guest is confirmed from its own config, as any new guest.
+        """
+        node, vmid, template = plan["node"], plan["vmid"], plan["template"]
+        storage = plan["template_storage"]
+        receipt = self._change_receipt("database_guest_create", node, vmid)
+        receipt.update(name=plan["hostname"], engine=plan["engine"], version=plan["version"], template=template,
+                       template_pulled=False)
+        try:
+            listed = self._rows(self._get(f"/nodes/{node}/storage/{storage}/content", {"content": "vztmpl"}))
+            existing = self._guest_exists(node, vmid)
+        except (httpx.HTTPError, RuntimeError, ProviderResourceNotFound):
+            return self._change_outcome(receipt, False, "error",
+                                        "Proxmox could not list the templates or guests; nothing was changed.")
+        if existing is not None:
+            return self._change_outcome(receipt, False, "conflict",
+                                        f"VMID {vmid} is already used; nothing was created.")
+        if template not in {row.get("volid") for row in listed}:
+            try:
+                response = self._post(f"/nodes/{node}/storage/{storage}/oci-registry-pull",
+                                      {"reference": plan["reference"]})
+            except (httpx.ConnectError, httpx.ConnectTimeout):
+                return self._change_outcome(receipt, False, "error", "Proxmox could not be reached; nothing "
+                                                                     "was pulled or created.")
+            except httpx.HTTPError:
+                return self._change_outcome(receipt, False, "outcome_unknown",
+                                            "Proxmox did not answer the image pull; it may be running. List the "
+                                            "templates before trying again.", retry_safe=False)
+            upid, failure = self._task_response(response, node, receipt)
+            if failure is not None:
+                return failure
+            task = self._follow_task(node, upid, deadline_seconds=GUEST_TASK_DEADLINE_SECONDS,
+                                     sleep=sleep, clock=clock)
+            if task is None:
+                return self._change_outcome(receipt, False, "outcome_unknown",
+                                            f"The image pull {upid} had not finished in time; list the templates "
+                                            "before trying again.")
+            exit_status = task.get("exitstatus") if isinstance(task.get("exitstatus"), str) else None
+            if exit_status != "OK":
+                return self._change_outcome(receipt, False, "failed",
+                                            f"The image pull ended with: {(exit_status or 'no status')[:300]}. "
+                                            "No guest was created.")
+            receipt["template_pulled"] = True
+            # The pull's own task is done; the create below is a separate request and task.
+            receipt.update(upid=None, changed=False, retry_safe=True)
+        try:
+            response = self._post(f"/nodes/{node}/lxc", dict(plan["create"]))
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            return self._change_outcome(receipt, False, "error", "Proxmox could not be reached; nothing was created.")
+        except httpx.HTTPError:
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        "Proxmox did not answer the creation request; it may have run. "
+                                        "Check the node before trying again.", retry_safe=False)
+        upid, failure = self._task_response(response, node, receipt)
+        if failure is not None:
+            return failure
+        task = self._follow_task(node, upid, deadline_seconds=GUEST_TASK_DEADLINE_SECONDS, sleep=sleep, clock=clock)
+        if task is None:
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        f"Proxmox task {upid} had not finished in time; check the node before "
+                                        "trying again.")
+        exit_status = task.get("exitstatus") if isinstance(task.get("exitstatus"), str) else None
+        receipt["task_exit_status"] = exit_status[:300] if exit_status else exit_status
+        if exit_status != "OK":
+            return self._change_outcome(receipt, False, "failed",
+                                        f"Proxmox task {upid} ended with: {receipt['task_exit_status']}")
+        mismatch = self._confirm_new_guest(receipt, node, vmid, "lxc", plan["hostname"])
+        if mismatch is not None:
+            return mismatch
+        receipt["type"] = "lxc"
+        return self._change_outcome(receipt, True, "executed", verification_ok=True)
 
     def guest_delete(self, node: str, vmid: int, *, expected_type: str, expected_name: str | None,
                      sleep=time.sleep, clock=time.monotonic) -> dict:

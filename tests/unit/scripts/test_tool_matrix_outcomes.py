@@ -362,6 +362,33 @@ def test_a_destructive_proposal_is_approved_with_the_name_it_shows():
     assert matrix.confirmation_for({"proposed_tool": None}) is None
 
 
+def test_every_tailnet_and_database_change_case_is_undone_in_the_same_run():
+    # 20 Nov 2026: the new tailnet device/DNS/key tools and the database guest run live; each change
+    # is followed by its undo so the tailnet and the cluster end as found.
+    order = [case[0] for case in matrix.build_cases("10191234", "FIX")]
+    for change, undo in (("network-tailnet-device-set", "network-tailnet-device-restore"),
+                         ("network-tailnet-dns-set", "network-tailnet-dns-restore"),
+                         ("proxmox-database-create", "proxmox-delete-database")):
+        assert order.index(change) < order.index(undo), (change, undo)
+    prompts = {case[0]: case[2] for case in matrix.build_cases("10191234", "FIX")}
+    # Only fixtures the run itself made are revoked or removed, never a named production device.
+    assert "{tailnet_matrix_key}" in prompts["network-tailnet-key-revoke"]
+    assert "{tailnet_matrix_device}" in prompts["network-tailnet-device-remove"]
+    context = {}
+    matrix.record_created("proxmox_database_create", {"ok": True, "vmid": 995}, context)
+    assert context == {"proxmox_database_vmid": 995}
+
+
+def test_the_device_removal_case_is_skipped_without_a_named_disposable_device(monkeypatch):
+    monkeypatch.delenv("ACCEPTANCE_TAILNET_DEVICE", raising=False)
+    monkeypatch.setattr(matrix, "mint_tailnet_matrix_key", lambda: {"tailnet_matrix_key": "kMATRIX1CNTRL"})
+    context = {"other_ticket": "X", "ticket_priority": "P", "service_desk": "S", "request_type": "R"}
+    matrix.discover_fixtures(context)
+    assert context["tailnet_matrix_key"] == "kMATRIX1CNTRL" and "tailnet_matrix_device" not in context
+    with pytest.raises(KeyError):
+        "Remove the tailnet device {tailnet_matrix_device} from our tailnet.".format(**context)
+
+
 def test_created_guests_are_remembered_for_their_cleanup_cases():
     context = {}
     matrix.record_created("proxmox_guest_create", {"ok": True, "new_vmid": None, "vmid": 993,

@@ -328,3 +328,17 @@ def register_proxmox_tools(server, service: ProxmoxService | None = None, missin
         """Delete one approved, stopped guest and confirm it is gone."""
         return change(lambda current: current.guest_delete(
             node, vmid, expected_type=expected_type, expected_name=expected_name))
+
+    @server.tool()
+    def proxmox_database_create(node: str, engine: str, version: str, hostname: str, vmid: int | None = None,
+                                storage: str | None = None, cores: int | None = None,
+                                memory_mib: int | None = None, disk_gib: int | None = None,
+                                data_gib: int | None = None, allocated_vmid: int | None = None,
+                                plan: dict | None = None) -> ProxmoxChangeResult:
+        """Create one approved database guest exactly as the frozen plan says."""
+        if not isinstance(plan, dict) or plan.get("node") != node or plan.get("engine") != engine \
+                or plan.get("version") != version or plan.get("hostname") != hostname \
+                or plan.get("vmid") != effective_vmid(vmid, allocated_vmid):
+            return ProxmoxChangeResult(ok=False, status="denied", node=node,
+                                       error="The approval carries no database plan matching the request.")
+        return change(lambda current: current.database_guest_create(plan))
