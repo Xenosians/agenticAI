@@ -677,6 +677,8 @@ class Settings(
     tailscale_client_id: str | None = None
     tailscale_client_secret: str | None = None
     tailscale_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    tailscale_read_attempts: int = Field(default=3, ge=1, le=5)
+    tailscale_retry_wait_seconds: float = Field(default=0.5, ge=0, le=3)
 
     # Proxmox VE: cluster, node, guest, storage and task reads, plus governed
     # guest power actions (start, shutdown, reboot, force stop) that need the
@@ -692,6 +694,13 @@ class Settings(
     # whether verification runs.
     proxmox_server_name: str | None = None
     proxmox_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    # Other HTTPS origins for the same Proxmox host, comma separated, tried
+    # when the tailnet name does not answer (for example the lab LAN address).
+    # An entry may name the certificate to verify after a pipe:
+    #   https://192.168.110.56:8006|hummingbird.local.pve
+    proxmox_alt_urls: str | None = None
+    proxmox_read_attempts: int = Field(default=3, ge=1, le=5)
+    proxmox_retry_wait_seconds: float = Field(default=0.5, ge=0, le=3)
 
     # DNS integrity check: a public resolver asked by plain DNS, the same
     # provider's DNS-over-HTTPS address, and the names checked when the user

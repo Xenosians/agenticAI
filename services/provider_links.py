@@ -36,7 +36,8 @@ def owner_proxmox_service(settings) -> proxmox.ProxmoxService | None:
         return proxmox.build_proxmox_service(settings)
     return proxmox.ProxmoxService(proxmox.ProxmoxConfig(
         link["url"], link["token_id"], link["token_secret"], link["verify_tls"], None, link["server_name"],
-        settings.proxmox_timeout_seconds))
+        settings.proxmox_timeout_seconds, (), getattr(settings, "proxmox_read_attempts", 3),
+        getattr(settings, "proxmox_retry_wait_seconds", 0.5)))
 
 
 def owner_tailnet_service(settings) -> tailnet.TailnetService | None:
@@ -44,8 +45,10 @@ def owner_tailnet_service(settings) -> tailnet.TailnetService | None:
     link = _owner_link("tailscale")
     if link is None:
         return tailnet.build_tailnet_service(settings)
-    return tailnet.TailnetService(tailnet.TailnetConfig(link["client_id"], link["client_secret"],
-                                                        settings.tailscale_timeout_seconds))
+    return tailnet.TailnetService(tailnet.TailnetConfig(
+        link["client_id"], link["client_secret"], settings.tailscale_timeout_seconds,
+        getattr(settings, "tailscale_read_attempts", 3),
+        getattr(settings, "tailscale_retry_wait_seconds", 0.5)))
 
 
 def proxmox_setup_missing(settings) -> tuple[str, ...]:

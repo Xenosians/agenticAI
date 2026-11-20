@@ -259,7 +259,10 @@ disks purged). They follow the power-action pattern:
 3. **One request, then receipts.** Janus re-reads the guest, refuses a changed
    identity or configuration digest, sends exactly one request, follows the
    Proxmox task and reads the result back (new values, snapshot listed or gone,
-   rollback parent, new backup volume, new guest listed).
+   rollback parent, new backup volume, new guest listed). Proxmox accepts tags
+   as a comma list but keeps them semicolon-separated (`tags: lab;matrix`), so
+   tags are compared as a set: the order and separator Proxmox returns can
+   never turn an applied change into a false failure.
 4. **Unknown is never retried.** Once Proxmox accepted the request,
    `retry_safe` is false. A lost answer, a task that does not finish in time,
    or a read-back that cannot be made is `outcome_unknown`, never `failed`:
@@ -315,6 +318,36 @@ the AI host trusts.
 
 Never disable verification. A certificate-name mismatch is fixed with
 `server_name`, not with `verify_tls = false`.
+
+### Reachability across networks
+
+The tailnet name works wherever Tailscale runs; a lab LAN address works where
+the tailnet does not. The machine profile may name both, in order, so a read
+still answers when one path is down:
+
+```
+PROXMOX_BASE_URL=https://hummingbird.<tailnet>.ts.net
+PROXMOX_ALT_URLS=https://192.168.110.56:8006|hummingbird.local.pve
+```
+
+Each fallback is an HTTPS origin for the same host, optionally followed by
+`|` and the certificate name TLS verifies (strict verification stays on). At
+most four are kept; one equal to the base URL is dropped. An account's own
+link in **Connections** uses exactly the address the owner entered.
+
+A read is tried on the next origin when the connection never opened (name
+resolution, TCP, TLS, or a pooled connection the host closed), up to
+`PROXMOX_READ_ATTEMPTS` attempts (default 3) with `PROXMOX_RETRY_WAIT_SECONDS`
+between them (default 0.5, doubling). The connect timeout is capped at 5
+seconds, so a read whose host is unreachable ends in seconds, not a minute. A
+slow answer (`ReadTimeout`) is not retried: the host may still be working.
+
+A change is sent once. It moves to a fallback origin only while the connection
+never opened, so a request Proxmox may have processed is never repeated; an
+unanswered change is reported as `outcome_unknown` and settled by reading the
+guest. Tailnet reads use the same bounded retry
+(`TAILSCALE_READ_ATTEMPTS`, `TAILSCALE_RETRY_WAIT_SECONDS`), because the
+control API is reached over the internet and a reconnect is transient.
 
 ## Tailscale setup
 

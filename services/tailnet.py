@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 import ipaddress
 import re
 import threading
+import time
 from typing import Callable
 
 import httpx
@@ -60,6 +61,8 @@ class TailnetConfig:
     client_id: str
     client_secret: str
     timeout_seconds: float = 10.0
+    read_attempts: int = 3
+    retry_wait_seconds: float = 0.5
 
 
 class TailscaleRefused(RuntimeError):
@@ -240,6 +243,25 @@ class TailnetService:
             self.client.close()
 
     def _send(self, request: httpx.Request) -> dict | list:
+        """One read of the tailnet control API; a failed connection is tried again.
+
+        Both requests sent here are reads (the OAuth grant and a GET): they have
+        no effect to repeat, so a dropped connection or a slow answer is tried
+        again a bounded number of times while the tailnet reconnects.
+        """
+        attempts = max(1, min(int(self.config.read_attempts), 5))
+        for attempt in range(attempts):
+            try:
+                return self._send_once(request)
+            except httpx.TransportError:
+                if attempt + 1 >= attempts:
+                    raise
+                wait = self.config.retry_wait_seconds * (2 ** attempt)
+                if wait > 0:
+                    time.sleep(min(wait, 3.0))
+        raise RuntimeError("Tailscale read failed.")
+
+    def _send_once(self, request: httpx.Request) -> dict | list:
         with self.client.stream(request.method, request.url, headers=request.headers,
                                 content=request.content) as response:
             if response.status_code != 200:
@@ -557,4 +579,6 @@ def build_tailnet_service(settings) -> TailnetService | None:
     if not tailnet_integration_status(settings)["configured"]:
         return None
     return TailnetService(TailnetConfig(settings.tailscale_client_id, settings.tailscale_client_secret,
-                                        settings.tailscale_timeout_seconds))
+                                        settings.tailscale_timeout_seconds,
+                                        getattr(settings, "tailscale_read_attempts", 3),
+                                        getattr(settings, "tailscale_retry_wait_seconds", 0.5)))
