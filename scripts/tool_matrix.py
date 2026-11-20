@@ -48,8 +48,14 @@ PROJECT = os.environ.get("ACCEPTANCE_JIRA_PROJECT_KEY", "SUP")
 
 # (id, tool, prompt, approve, expected_terminal_after)
 # approve=None for reads; True to approve the proposal; "reject" to reject it.
-def build_cases(run: str, project: str) -> list[tuple[str, str, str, object]]:
-    """Keep fixture identities stable when resuming the same evidence run."""
+def build_cases(run: str, project: str, pool: str | None = None) -> list[tuple[str, str, str, object]]:
+    """Keep fixture identities stable when resuming the same evidence run.
+
+    ``pool`` is the lab pool a new guest is asked for (the token's VM.Allocate is granted on
+    /pool/<pool>, as Proxmox checks the pool path for a create, clone or restore); without it the
+    owner names no pool, exactly as the product allows.
+    """
+    in_pool = f" in pool {pool}" if pool else ""
     return [
         # --- workspace / developer (reads) ---
         ("workspace-list", "workspace_list", "List the files at the root of the mvp repository.", None),
@@ -211,19 +217,21 @@ def build_cases(run: str, project: str) -> list[tuple[str, str, str, object]]:
         ("proxmox-restore-options", "proxmox_guest_set_options",
          "Set the tags of guest {proxmox_vmid} on node {proxmox_node} to lab.", True),
         ("proxmox-guest-create", "proxmox_guest_create",
-         "Create a container named matrix-{run} on node {proxmox_node} from template {proxmox_template} "
-         "with 1 core, 128 MiB memory and a 1 GiB disk on storage {proxmox_disk_storage}.", True),
+         "Create a container named matrix-{run} on node {proxmox_node}" + in_pool + " from template "
+         "{proxmox_template} with 1 core, 128 MiB memory and a 1 GiB disk on storage {proxmox_disk_storage}.",
+         True),
         ("proxmox-set-resources", "proxmox_guest_set_resources",
          "Set guest {proxmox_created_vmid} on node {proxmox_node} to 160 MiB of memory.", True),
         ("proxmox-resize-disk", "proxmox_guest_resize_disk",
          "Grow the rootfs disk of guest {proxmox_created_vmid} on node {proxmox_node} by 1 GiB.", True),
         ("proxmox-guest-clone", "proxmox_guest_clone",
-         "Make a full clone of guest {proxmox_created_vmid} on node {proxmox_node} named matrix-{run}-clone.", True),
+         "Make a full clone of guest {proxmox_created_vmid} on node {proxmox_node} named matrix-{run}-clone"
+         + in_pool + ".", True),
         ("proxmox-backup-now", "proxmox_backup_now",
          "Back up guest {proxmox_created_vmid} on node {proxmox_node} to storage {proxmox_backup_storage}.", True),
         ("proxmox-backup-restore", "proxmox_backup_restore",
-         "Restore backup {proxmox_backup_volume} on node {proxmox_node} as a new guest named matrix-{run}-restored.",
-         True),
+         "Restore backup {proxmox_backup_volume} on node {proxmox_node} as a new guest named "
+         "matrix-{run}-restored" + in_pool + ".", True),
         ("proxmox-delete-restored", "proxmox_guest_delete",
          "Delete guest {proxmox_restored_vmid} on node {proxmox_node}.", True),
         ("proxmox-delete-clone", "proxmox_guest_delete",
@@ -642,7 +650,8 @@ def main() -> int:
     report = load_matrix_report(args.report, resume=args.resume, identity=identity, run=RUN, project=PROJECT,
                                 execution_context=execution_context)
     RUN = report["run"]
-    selected = select_matrix_cases(build_cases(RUN, PROJECT), args.only or [])
+    selected = select_matrix_cases(build_cases(RUN, PROJECT, os.environ.get("ACCEPTANCE_PROXMOX_POOL") or None),
+                                   args.only or [])
     args.report.parent.mkdir(parents=True, exist_ok=True)
 
     def save() -> None:
@@ -671,6 +680,9 @@ def main() -> int:
             context[key] = value
     # Notifications go to the signed-in lab user, a registered application user.
     context.setdefault("user_email", login["ACCEPTANCE_EMAIL"])
+    # Disposable guest names carry the run's fixture identity, so a resumed report
+    # never reuses a name another run may still hold.
+    context.setdefault("run", RUN)
     discover_fixtures(context)
     pending_git = [case for case in selected if case[0] in GIT_MUTATION_CASES
                    and case[0] not in report["results"]]

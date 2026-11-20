@@ -22,7 +22,7 @@ def ok(request, data):
 class FakeCluster:
     """A small Proxmox: inventory, configs, snapshots, tasks, storage and new guests."""
 
-    def __init__(self, *, digests=None, task_polls=1, exitstatus="OK"):
+    def __init__(self, *, digests=None, task_polls=1, exitstatus="OK", inventory_lag=False):
         self.guests = {
             990: {"type": "lxc", "node": "pve-a", "name": "janus-lab", "status": "stopped",
                   "config": {"cores": 1, "memory": 128, "onboot": 0, "tags": "lab",
@@ -38,10 +38,21 @@ class FakeCluster:
         self.exitstatus = exitstatus
         self.calls = []
         self.created_forms = []
+        # Live Proxmox (20 Nov 2026): right after a create, clone or restore, /cluster/resources
+        # lists the new guest without its name for a few seconds; its own config and
+        # status/current already carry it.
+        self.inventory_lag = inventory_lag
+        self.fresh = set()
 
     def rows(self):
-        return [{"id": f"{guest['type']}/{vmid}", "type": guest["type"], "vmid": vmid, "node": guest["node"],
-                 "name": guest["name"], "status": guest["status"]} for vmid, guest in self.guests.items()]
+        rows = []
+        for vmid, guest in self.guests.items():
+            row = {"id": f"{guest['type']}/{vmid}", "type": guest["type"], "vmid": vmid, "node": guest["node"],
+                   "name": guest["name"], "status": guest["status"]}
+            if vmid in self.fresh:
+                del row["name"]
+            rows.append(row)
+        return rows
 
     def __call__(self, request):
         path = request.url.path
@@ -80,12 +91,22 @@ class FakeCluster:
                     live = {"status": guest["status"], "vmid": vmid}
                     if guest.get("lock"):
                         live["lock"] = guest["lock"]
+                    if guest.get("name"):
+                        live["name"] = guest["name"]
                     return ok(request, live)
                 if tail == ["config"] and method == "GET":
-                    return ok(request, {**guest["config"], "digest": self.digests.get(vmid)})
+                    config = {**guest["config"], "digest": self.digests.get(vmid)}
+                    if guest.get("name"):
+                        config["hostname" if guest_type == "lxc" else "name"] = guest["name"]
+                    return ok(request, config)
                 if tail == ["config"] and method == "PUT":
                     for key, value in body.items():
-                        guest["config"][key] = int(value) if key in {"cores", "memory", "onboot"} else value
+                        if key == "tags":
+                            # Proxmox takes a comma list and keeps it semicolon-separated.
+                            guest["config"][key] = ";".join(part for part in value.replace(";", ",").split(",")
+                                                            if part)
+                        else:
+                            guest["config"][key] = int(value) if key in {"cores", "memory", "onboot"} else value
                     self.digests[vmid] = f"d{vmid}-{len(self.calls)}"
                     return ok(request, None)
                 if tail == ["snapshot"] and method == "GET":
@@ -116,6 +137,8 @@ class FakeCluster:
                                           "status": "stopped",
                                           "config": dict(guest["config"])}
                     self.digests[newid] = f"d{newid}"
+                    if self.inventory_lag:
+                        self.fresh.add(newid)
                     return ok(request, UPID)
         if path == "/api2/json/nodes/pve-a/vzdump" and method == "POST":
             self.volumes.append({"volid": f"local:backup/vzdump-lxc-{body['vmid']}-2026_11_17.tar.zst",
@@ -130,8 +153,10 @@ class FakeCluster:
             else:
                 self.created_forms.append(dict(body))
                 self.guests[vmid] = {"type": "lxc", "node": "pve-a", "name": body.get("hostname"),
-                                     "status": "stopped", "config": {"corefs": body.get("rootfs")}}
+                                     "status": "stopped", "config": {"rootfs": body.get("rootfs")}}
             self.digests[vmid] = f"d{vmid}"
+            if self.inventory_lag:
+                self.fresh.add(vmid)
             return ok(request, UPID)
         return httpx.Response(404, json={"data": None, "message": "not found"}, request=request)
 
@@ -196,8 +221,34 @@ def test_set_options_normalizes_tags_and_verifies_start_at_boot():
         expected_digest="d990", sleep=clock.sleep, clock=clock.monotonic))
     assert (receipt["ok"], receipt["verification_ok"]) == (True, True)
     assert receipt["tags"] == "db,prod" and receipt["on_boot"] is True
-    assert fake.guests[990]["config"]["tags"] == "db,prod"
+    # Proxmox keeps the tags semicolon-separated, whatever the request used.
+    assert fake.guests[990]["config"]["tags"] == "db;prod"
     assert fake.guests[990]["config"]["onboot"] == 1
+
+
+class TagsInProxmoxOrder:
+    """The same cluster, but a config read lists the tags in its own order."""
+
+    def __init__(self, cluster):
+        self.cluster = cluster
+
+    def __call__(self, request):
+        response = self.cluster(request)
+        if request.method == "GET" and request.url.path.endswith("/config"):
+            data = response.json()["data"]
+            data["tags"] = ";".join(reversed((data.get("tags") or "").split(";")))
+            return httpx.Response(200, json={"data": data}, request=request)
+        return response
+
+
+def test_set_options_compares_tags_as_a_set_not_as_typed_text():
+    fake = FakeCluster()
+    receipt = run(TagsInProxmoxOrder(fake), lambda service, clock: service.guest_set_options(
+        "pve-a", 990, tags="lab,matrix", on_boot=None, expected_type="lxc", expected_name="janus-lab",
+        expected_digest="d990", sleep=clock.sleep, clock=clock.monotonic))
+    assert (receipt["ok"], receipt["verification_ok"], receipt["status"]) == (True, True, "executed")
+    assert receipt["observed"]["tags"] == "matrix;lab"
+    assert fake.guests[990]["config"]["tags"] == "lab;matrix"
 
 
 def test_a_containers_console_returns_to_a_login_prompt_and_is_read_back():
@@ -345,6 +396,55 @@ def test_clone_creates_the_new_guest_and_confirms_its_name():
         expected_name="janus-lab", sleep=clock.sleep, clock=clock.monotonic))
     assert (receipt["ok"], receipt["verification_ok"]) == (True, True)
     assert fake.guests[994]["name"] == "lab-clone"
+
+
+# Live, 20 Nov 2026: CT 100 was created exactly as approved (task OK, its own config named it), but
+# /cluster/resources listed it without a name for a few seconds, and the create was reported as a
+# failure: "guest 100 does not match the request". A new guest's identity is read from the guest itself.
+NEW_GUEST_CASES = {
+    "create": (993, lambda service, clock: service.guest_create_lxc(
+        "pve-a", 993, hostname="lab-2", template="local:vztmpl/alpine-3.23-default_20260116_amd64.tar.xz",
+        cores=1, memory_mib=128, disk_gib=2, storage="local-lvm", pool="janus", description=None,
+        sleep=clock.sleep, clock=clock.monotonic)),
+    "clone": (994, lambda service, clock: service.guest_clone(
+        "pve-a", 990, newid=994, name="lab-clone", full=True, pool=None, expected_type="lxc",
+        expected_name="janus-lab", sleep=clock.sleep, clock=clock.monotonic)),
+    "restore": (995, lambda service, clock: service.backup_restore(
+        "pve-a", volume="local:backup/vzdump-lxc-990-2026_11_17.tar.zst", newid=995, name="restored",
+        storage=None, pool=None, sleep=clock.sleep, clock=clock.monotonic)),
+}
+
+
+@pytest.mark.parametrize("case", sorted(NEW_GUEST_CASES))
+def test_a_new_guest_is_confirmed_from_its_own_config_while_the_inventory_lags(case):
+    fake = FakeCluster(inventory_lag=True)
+    vmid, call = NEW_GUEST_CASES[case]
+    receipt = run(fake, call)
+    assert (receipt["ok"], receipt["status"], receipt["verification_ok"]) == (True, "executed", True), receipt
+    assert len(fake.writes()) == 1
+    reads = [path for method, path, _ in fake.calls if method == "GET"]
+    assert any(path.endswith(f"/{vmid}/config") for path in reads)
+
+
+@pytest.mark.parametrize("case", sorted(NEW_GUEST_CASES))
+def test_a_new_guest_whose_own_config_names_another_guest_is_a_failure(case):
+    fake = FakeCluster(inventory_lag=True)
+    vmid, call = NEW_GUEST_CASES[case]
+
+    def renamed(request):
+        response = fake(request)
+        if request.method == "GET" and request.url.path.endswith(f"/{vmid}/config"):
+            data = response.json()["data"]
+            for key in ("hostname", "name"):
+                if key in data:
+                    data[key] = "someone-else"
+            return httpx.Response(200, json={"data": data}, request=request)
+        return response
+
+    receipt = run(renamed, call)
+    assert (receipt["ok"], receipt["status"], receipt["verification_ok"]) == (False, "failed", False)
+    assert "someone-else" not in receipt["error"]
+    assert receipt["retry_safe"] is False
 
 
 def test_backup_starts_one_run_and_confirms_a_new_volume():

@@ -1,5 +1,6 @@
 """Acceptance completion must reflect executed, declared coverage."""
 import json
+from pathlib import Path
 
 import pytest
 
@@ -328,6 +329,30 @@ def test_guest_change_cases_run_on_disposable_guests_and_leave_the_lab_guest_as_
     assert "{proxmox_created_vmid}" in prompts["proxmox-delete-created"]
     assert "{proxmox_vmid}" not in prompts["proxmox-delete-created"]
     assert "{proxmox_vmid}" in prompts["proxmox-snapshot-rollback"]
+
+
+def test_new_guests_are_asked_for_in_the_lab_pool_only_when_one_is_configured():
+    # Live, 20 Nov 2026: the token may create guests only inside its pool (/pool/<pool>), so a
+    # create without a pool was refused (HTTP 403); with no pool configured the prompts name none.
+    pooled = {case[0]: case[2] for case in matrix.build_cases("10191234", "FIX", "janus")}
+    plain = {case[0]: case[2] for case in matrix.build_cases("10191234", "FIX")}
+    for case_id in ("proxmox-guest-create", "proxmox-guest-clone", "proxmox-backup-restore"):
+        assert " in pool janus" in pooled[case_id]
+        assert " in pool" not in plain[case_id]
+    assert pooled["proxmox-guest-start"] == plain["proxmox-guest-start"]
+
+
+def test_every_run_placeholder_in_a_prompt_is_filled_by_the_run_context():
+    # Live, 20 Nov 2026: six guest-change prompts used {run} while the run's context never held it,
+    # so they were skipped instead of run.
+    source = Path(matrix.__file__).read_text(encoding="utf-8")
+    assert 'context.setdefault("run", RUN)' in source
+    uses_run = [case for case in matrix.build_cases("10191234", "FIX") if "{run}" in case[2]]
+    assert uses_run, "the guest-change prompts name their disposable guests after the run"
+    for case in uses_run:
+        assert "10191234" in case[2].format(**{"run": "10191234", "proxmox_node": "n", "proxmox_vmid": "1",
+                                               "proxmox_template": "t", "proxmox_disk_storage": "s",
+                                               "proxmox_created_vmid": "2", "proxmox_backup_volume": "v"})
 
 
 def test_a_destructive_proposal_is_approved_with_the_name_it_shows():

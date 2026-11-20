@@ -25,6 +25,22 @@ from services.lua_adapters.http_clients import client as lua_http_client
 from services.provider_errors import ProviderResourceNotFound
 
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+# Reachability: a read is tried once on each configured origin (the tailnet
+# name first, then any LAN address the owner added for the same host), and a
+# dropped connection is tried again on a fresh one. A change is sent once: it
+# never moves to another origin unless the connection itself never opened, so
+# an unanswered POST is never repeated. The whole read retry stays under the
+# tool's patience (3 attempts, connect timeout at most 5 s, short waits).
+MAX_ALT_ORIGINS = 4
+READ_ATTEMPTS = 3
+RETRY_WAIT_SECONDS = 0.5
+CONNECT_TIMEOUT_SECONDS = 5.0
+# A connection that never carried the request can be tried on the next origin:
+# name resolution, TCP connect, TLS handshake or a pooled connection the server
+# closed before reading it. A read timeout is not one of these (the server may
+# still be working), and a change is never retried after it may have been sent.
+CONNECT_FAILURES = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout,
+                    httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError)
 MAX_ROWS = 200
 MAX_GUEST_FILESYSTEMS = 128
 MAX_TASKS = 50
@@ -72,6 +88,43 @@ TLS_SERVER_NAME = re.compile(
 
 
 @dataclass(frozen=True)
+class ProxmoxOrigin:
+    """One HTTPS origin that answers for the same Proxmox host.
+
+    ``server_name`` is the certificate name TLS verifies, for an origin whose
+    host is a bare LAN address (strict verification stays on).
+    """
+    url: str
+    server_name: str | None = None
+
+
+def _https_origin(value: str) -> str:
+    parsed = urlsplit(str(value).strip())
+    try:
+        port = parsed.port
+    except ValueError:
+        raise ValueError("Proxmox URL port is invalid.") from None
+    # Both tailnet shapes are valid HTTPS origins:
+    #   native Proxmox: https://machine.tailXXX.ts.net:8006
+    #   tailscale serve (delegated reads): https://machine.tailXXX.ts.net
+    # The latter uses the implicit 443 port. Only reject an
+    # out-of-range or malformed explicit port.
+    if port is not None and not (1 <= port <= 65535):
+        raise ValueError("Proxmox URL port is invalid.")
+    if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
+            or parsed.path not in ("", "/") or parsed.query or parsed.fragment):
+        raise ValueError("Proxmox URL must be an HTTPS origin without credentials or path.")
+    hostname = parsed.hostname.lower()
+    try:
+        loopback = ipaddress.ip_address(parsed.hostname).is_loopback
+    except ValueError:
+        loopback = False
+    if loopback or hostname == "localhost" or hostname.endswith(".localhost"):
+        raise ValueError("Proxmox must use its configured HTTPS host, not a loopback alias.")
+    return str(value).strip().rstrip("/")
+
+
+@dataclass(frozen=True)
 class ProxmoxConfig:
     base_url: str
     token_id: str
@@ -80,31 +133,14 @@ class ProxmoxConfig:
     ca_file: Path | None = None
     server_name: str | None = None
     timeout_seconds: float = 10.0
+    # Ready-to-use fallbacks for the same host on another network (a LAN
+    # address while the tailnet is down). Empty when only the base URL applies.
+    alt_origins: tuple[ProxmoxOrigin, ...] = ()
+    read_attempts: int = READ_ATTEMPTS
+    retry_wait_seconds: float = RETRY_WAIT_SECONDS
 
     def origin(self) -> str:
-        parsed = urlsplit(self.base_url.strip())
-        try:
-            port = parsed.port
-        except ValueError:
-            raise ValueError("Proxmox URL port is invalid.") from None
-        # Both tailnet shapes are valid HTTPS origins:
-        #   native Proxmox: https://machine.tailXXX.ts.net:8006
-        #   tailscale serve (delegated reads): https://machine.tailXXX.ts.net
-        # The latter uses the implicit 443 port. Only reject an
-        # out-of-range or malformed explicit port.
-        if port is not None and not (1 <= port <= 65535):
-            raise ValueError("Proxmox URL port is invalid.")
-        if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
-                or parsed.path not in ("", "/") or parsed.query or parsed.fragment):
-            raise ValueError("Proxmox URL must be an HTTPS origin without credentials or path.")
-        hostname = parsed.hostname.lower()
-        try:
-            loopback = ipaddress.ip_address(parsed.hostname).is_loopback
-        except ValueError:
-            loopback = False
-        if loopback or hostname == "localhost" or hostname.endswith(".localhost"):
-            raise ValueError("Proxmox must use its configured HTTPS host, not a loopback alias.")
-        return self.base_url.strip().rstrip("/")
+        return _https_origin(self.base_url)
 
 
 def _invalid() -> RuntimeError:
@@ -323,6 +359,11 @@ def _tags(item: dict) -> str | None:
     return _text(item, "tags", limit=2048)
 
 
+def _tag_set(tags: str | None) -> tuple[str, ...]:
+    """The tags as a stable set: Proxmox accepts commas but stores them semicolon-separated."""
+    return tuple(sorted({part.strip() for part in re.split(r"[,;]", tags or "") if part.strip()}))
+
+
 def _memory_mib(item: dict, guest_type: str) -> int | float | None:
     """Configured memory in MiB. QEMU sends a property string such as "4096"
     or "current=4096" (Proxmox VE 8.1+); LXC sends an integer."""
@@ -357,20 +398,37 @@ class ProxmoxService:
             raise ValueError("Proxmox API token configuration is invalid.")
         if config.server_name is not None and not TLS_SERVER_NAME.fullmatch(config.server_name):
             raise ValueError("Proxmox TLS server name is invalid.")
+        origins = [ProxmoxOrigin(self.origin, config.server_name)]
+        if len(config.alt_origins) > MAX_ALT_ORIGINS:
+            raise ValueError("At most four Proxmox fallback origins can be configured.")
+        for alt in config.alt_origins:
+            if alt.server_name is not None and not TLS_SERVER_NAME.fullmatch(alt.server_name):
+                raise ValueError("Proxmox TLS server name is invalid.")
+            url = _https_origin(alt.url)
+            if all(existing.url != url for existing in origins):
+                origins.append(ProxmoxOrigin(url, alt.server_name))
+        self.origins = tuple(origins)
         verify = str(config.ca_file) if config.ca_file is not None else config.verify_tls
-        self.client = client or lua_http_client(verify=verify, timeout=config.timeout_seconds)
+        self.client = client or lua_http_client(
+            verify=verify, timeout=httpx.Timeout(config.timeout_seconds,
+                                                 connect=min(config.timeout_seconds, CONNECT_TIMEOUT_SECONDS)))
         self.owns_client = client is None
 
     def close(self) -> None:
         if self.owns_client:
             self.client.close()
 
-    def _get(self, path: str, params: dict | None = None) -> list | dict:
+    def _wait(self, attempt: int) -> None:
+        wait = self.config.retry_wait_seconds * (2 ** attempt)
+        if wait > 0:
+            time.sleep(min(wait, 3.0))
+
+    def _read(self, origin: ProxmoxOrigin, path: str, params: dict | None) -> list | dict:
         # The cluster certificate names the host (for example
         # hummingbird.local.pve) while the URL may use its LAN address. Keep
         # strict verification and tell TLS which name to verify against.
-        extensions = {"sni_hostname": self.config.server_name} if self.config.server_name else {}
-        request = httpx.Request("GET", self.origin + "/api2/json" + path, params=params,
+        extensions = {"sni_hostname": origin.server_name} if origin.server_name else {}
+        request = httpx.Request("GET", origin.url + "/api2/json" + path, params=params,
                                 headers={"Authorization": f"PVEAPIToken={self.config.token_id}={self.config.token_secret}",
                                          "Accept": "application/json"},
                                 extensions=extensions)
@@ -392,6 +450,26 @@ class ProxmoxService:
         if not isinstance(body, dict) or "data" not in body or type(body["data"]) not in (dict, list):
             raise _invalid()
         return body["data"]
+
+    def _get(self, path: str, params: dict | None = None) -> list | dict:
+        """One read, retried across this host's origins while the connection never opened.
+
+        The attempts rotate through the configured origins, so a tailnet name
+        that stopped resolving does not stop the read when a LAN origin still
+        answers. A read has no effect to repeat, so each attempt is safe; the
+        attempt count and the waits stay bounded.
+        """
+        attempts = max(1, min(int(self.config.read_attempts), READ_ATTEMPTS))
+        last: Exception | None = None
+        for attempt in range(attempts):
+            origin = self.origins[attempt % len(self.origins)]
+            try:
+                return self._read(origin, path, params)
+            except CONNECT_FAILURES as error:
+                last = error
+                if attempt + 1 < attempts:
+                    self._wait(attempt)
+        raise last if last is not None else RuntimeError("Proxmox read failed.")
 
     @staticmethod
     def _rows(value, *, required: tuple[str, ...] = ()) -> list[dict]:
@@ -1499,10 +1577,24 @@ class ProxmoxService:
         if form:
             headers["Content-Type"] = "application/x-www-form-urlencoded"
             body = "&".join(f"{key}={quote(value, safe='')}" for key, value in form.items())
-        extensions = {"sni_hostname": self.config.server_name} if self.config.server_name else {}
-        request = httpx.Request(method, self.origin + "/api2/json" + path, headers=headers,
-                                content=body.encode(), extensions=extensions)
-        return self.client.send(request)
+        # A change moves to another origin only while the connection never
+        # opened (nothing could have reached Proxmox yet). Once a request may
+        # have been sent it is never repeated here: the caller reports an
+        # unknown outcome and reconciles by reading the guest.
+        unsafe = (httpx.ReadTimeout, httpx.WriteTimeout, httpx.ReadError, httpx.WriteError,
+                  httpx.RemoteProtocolError)
+        last: Exception | None = None
+        for origin in self.origins:
+            extensions = {"sni_hostname": origin.server_name} if origin.server_name else {}
+            request = httpx.Request(method, origin.url + "/api2/json" + path, headers=headers,
+                                    content=body.encode(), extensions=extensions)
+            try:
+                return self.client.send(request)
+            except CONNECT_FAILURES as error:
+                if isinstance(error, unsafe):
+                    raise
+                last = error
+        raise last if last is not None else RuntimeError("Proxmox change could not be sent.")
 
     def _post(self, path: str, form: dict[str, str]) -> httpx.Response:
         return self._send("POST", path, form)
@@ -1714,6 +1806,40 @@ class ProxmoxService:
                 return row
         return None
 
+    def _confirm_new_guest(self, receipt: dict, node: str, vmid: int, guest_type: str | None,
+                           name: str) -> dict | None:
+        """After a finished create, clone or restore task: prove the new guest is the one asked for.
+
+        The type comes from the cluster inventory, the name from the guest's own configuration.
+        /cluster/resources lists a brand-new guest without its name for a few seconds (seen live
+        on 20 Nov 2026), so the inventory row alone cannot judge a new guest's identity. Returns
+        the failed or unknown receipt, or None when the guest is exactly the one requested.
+        """
+        try:
+            created = self._guest_exists(node, vmid)
+            config = None
+            if created is not None and created.get("type") in ("lxc", "qemu"):
+                config = self._get(f"/nodes/{node}/{created['type']}/{vmid}/config")
+        except (httpx.HTTPError, RuntimeError, ProviderResourceNotFound):
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        "The Proxmox task finished, but the guest list could not be read back. "
+                                        "Check the node before trying again.")
+        if created is None:
+            return self._change_outcome(receipt, False, "failed",
+                                        f"The Proxmox task finished, but guest {vmid} is not listed.")
+        if guest_type is not None and created.get("type") != guest_type:
+            return self._change_outcome(receipt, False, "failed",
+                                        f"The Proxmox task finished, but guest {vmid} is not a {guest_type} guest.")
+        if not isinstance(config, dict):
+            return self._change_outcome(receipt, False, "outcome_unknown",
+                                        "The Proxmox task finished, but the new guest's configuration could not be "
+                                        "read back. Check the node before trying again.")
+        observed = config.get("hostname" if created["type"] == "lxc" else "name")
+        if observed != name:
+            return self._change_outcome(receipt, False, "failed",
+                                        f"The Proxmox task finished, but guest {vmid} is not named '{name}'.")
+        return None
+
     def new_guest_target(self, node: str, newid: int) -> dict:
         """Read-only: the exact node a new guest would land on, and that its VMID is free."""
         if not isinstance(node, str) or not NODE_ID.fullmatch(node):
@@ -1893,7 +2019,7 @@ class ProxmoxService:
                                         "Check the guest before trying again.")
         receipt.update(previous=previous, observed=observed, tags=normalized if normalized is not None else observed["tags"],
                        on_boot=on_boot if on_boot is not None else observed["on_boot"])
-        if (normalized is not None and observed["tags"] != normalized) or \
+        if (normalized is not None and _tag_set(observed["tags"]) != _tag_set(normalized)) or \
                 (on_boot is not None and observed["on_boot"] != on_boot) or \
                 (console_mode is not None and observed["console_mode"] != console_mode):
             return self._change_outcome(receipt, False, "failed",
@@ -2309,18 +2435,9 @@ class ProxmoxService:
         if exit_status != "OK":
             return self._change_outcome(receipt, False, "failed",
                                         f"Proxmox task {upid} ended with: {receipt['task_exit_status']}")
-        try:
-            created = self._guest_exists(node, vmid)
-        except (httpx.HTTPError, RuntimeError):
-            return self._change_outcome(receipt, False, "outcome_unknown",
-                                        "The Proxmox task finished, but the guest list could not be read back. "
-                                        "Check the node before trying again.")
-        if created is None:
-            return self._change_outcome(receipt, False, "failed",
-                                        f"The Proxmox task finished, but guest {vmid} is not listed.")
-        if created.get("type") != "lxc" or created.get("name") != hostname:
-            return self._change_outcome(receipt, False, "failed",
-                                        f"The Proxmox task finished, but guest {vmid} does not match the request.")
+        mismatch = self._confirm_new_guest(receipt, node, vmid, "lxc", hostname)
+        if mismatch is not None:
+            return mismatch
         return self._change_outcome(receipt, True, "executed", type="lxc", name=hostname,
                                     core_count=cores, memory_mib=memory_mib, verification_ok=True)
 
@@ -2384,16 +2501,9 @@ class ProxmoxService:
         if exit_status != "OK":
             return self._change_outcome(receipt, False, "failed",
                                         f"Proxmox task {upid} ended with: {receipt['task_exit_status']}")
-        try:
-            created = self._guest_exists(node, newid)
-        except (httpx.HTTPError, RuntimeError):
-            return self._change_outcome(receipt, False, "outcome_unknown",
-                                        "The Proxmox task finished, but the guest list could not be read back. "
-                                        "Check the node before trying again.")
-        if created is None or created.get("name") != name:
-            return self._change_outcome(receipt, False, "failed",
-                                        f"The Proxmox task finished, but new guest {newid} is not listed as "
-                                        f"'{name}'.")
+        mismatch = self._confirm_new_guest(receipt, node, newid, guest["type"], name)
+        if mismatch is not None:
+            return mismatch
         return self._change_outcome(receipt, True, "executed", new_vmid=newid,
                                     new_name=name, verification_ok=True)
 
@@ -2520,15 +2630,9 @@ class ProxmoxService:
         if exit_status != "OK":
             return self._change_outcome(receipt, False, "failed",
                                         f"Proxmox task {upid} ended with: {receipt['task_exit_status']}")
-        try:
-            created = self._guest_exists(node, newid)
-        except (httpx.HTTPError, RuntimeError):
-            return self._change_outcome(receipt, False, "outcome_unknown",
-                                        "The Proxmox task finished, but the guest list could not be read back. "
-                                        "Check the node before trying again.")
-        if created is None or created.get("type") != guest_type:
-            return self._change_outcome(receipt, False, "failed",
-                                        f"The Proxmox task finished, but new guest {newid} is not listed.")
+        mismatch = self._confirm_new_guest(receipt, node, newid, guest_type, name)
+        if mismatch is not None:
+            return mismatch
         return self._change_outcome(receipt, True, "executed", new_vmid=newid, new_name=name,
                                     new_type=guest_type, verification_ok=True)
 
@@ -2543,10 +2647,26 @@ def proxmox_integration_status(settings) -> dict:
             "verify_tls": getattr(settings, "proxmox_verify_tls", True)}
 
 
+def alt_origins(value: str | None) -> tuple[ProxmoxOrigin, ...]:
+    """The configured fallback origins, in order; an unreadable entry is refused."""
+    entries = [part.strip() for part in (value or "").replace("\n", ",").split(",") if part.strip()]
+    if len(entries) > MAX_ALT_ORIGINS:
+        raise ValueError("At most four Proxmox fallback origins can be configured.")
+    result = []
+    for entry in entries:
+        url, _, server_name = entry.partition("|")
+        result.append(ProxmoxOrigin(_https_origin(url), server_name.strip() or None))
+    return tuple(result)
+
+
 def build_proxmox_service(settings) -> ProxmoxService | None:
     if not proxmox_integration_status(settings)["configured"]:
         return None
-    return ProxmoxService(ProxmoxConfig(settings.proxmox_base_url, settings.proxmox_api_token_id,
-                                        settings.proxmox_api_token_secret, settings.proxmox_verify_tls,
-                                        settings.proxmox_ca_file, settings.proxmox_server_name,
-                                        settings.proxmox_timeout_seconds))
+    return ProxmoxService(ProxmoxConfig(
+        settings.proxmox_base_url, settings.proxmox_api_token_id,
+        settings.proxmox_api_token_secret, settings.proxmox_verify_tls,
+        settings.proxmox_ca_file, settings.proxmox_server_name,
+        settings.proxmox_timeout_seconds,
+        alt_origins(getattr(settings, "proxmox_alt_urls", None)),
+        getattr(settings, "proxmox_read_attempts", READ_ATTEMPTS),
+        getattr(settings, "proxmox_retry_wait_seconds", RETRY_WAIT_SECONDS)))
