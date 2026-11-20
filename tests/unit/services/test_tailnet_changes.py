@@ -130,13 +130,17 @@ class Tailnet:
                         self.split[domain] = servers
             return httpx.Response(200, json=self.split)
         if path == "/api/v2/tailnet/-/keys":
-            return httpx.Response(200, json={"keys": [{"id": key} for key in self.keys]})
+            # Live 20 Nov 2026: a revoked key is no longer listed.
+            return httpx.Response(200, json={"keys": [{"id": key} for key, row in self.keys.items()
+                                                      if not row.get("revoked")]})
         if path.startswith("/api/v2/tailnet/-/keys/"):
             key_id = path.rsplit("/", 1)[1]
             if key_id not in self.keys:
                 return httpx.Response(404, json={"message": "not found"})
             if method == "DELETE":
-                del self.keys[key_id]
+                # Live 20 Nov 2026: after DELETE the key still reads back (HTTP 200) with "revoked" set
+                # and "invalid": true; it is not a 404.
+                self.keys[key_id] = {**self.keys[key_id], "revoked": "2026-11-20T09:12:00Z", "invalid": True}
                 return httpx.Response(200)
             return httpx.Response(200, json=self.keys[key_id])
         raise AssertionError((method, path))
@@ -275,7 +279,18 @@ def test_an_auth_key_is_revoked_and_confirmed_gone(tailnet):
     prepared = prepare_key_revoke(service, "kAAAA1111CNTRL")
     assert prepared["ok"] and prepared["frozen"]["key_description"] == "lab enrol"
     result = apply_key_revoke(service, "kAAAA1111CNTRL", **prepared["frozen"])
-    assert (result["ok"], result["verification_ok"]) == (True, True) and "kAAAA1111CNTRL" not in tailnet.keys
+    # Live 20 Nov 2026 the matrix revocation was reported outcome_unknown: the revoked key still reads
+    # back with HTTP 200, so "revoked"/"invalid" in that answer is the confirmation, not a 404.
+    assert (result["ok"], result["status"], result["verification_ok"]) == (True, "executed", True), result
+    assert tailnet.keys["kAAAA1111CNTRL"]["invalid"] is True
+
+
+def test_a_key_that_is_already_revoked_is_not_revoked_again(tailnet):
+    service = tailnet.service()
+    tailnet.keys["kAAAA1111CNTRL"] = {**tailnet.keys["kAAAA1111CNTRL"], "revoked": "2026-11-20T09:12:00Z",
+                                      "invalid": True}
+    prepared = prepare_key_revoke(service, "kAAAA1111CNTRL")
+    assert (prepared["ok"], prepared["status"]) == (False, "denied") and "already" in prepared["error"]
 
 
 def test_janus_never_revokes_the_client_it_runs_on(tailnet):

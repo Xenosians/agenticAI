@@ -345,10 +345,17 @@ def prepare_key_revoke(service: TailnetService, key_id: str) -> dict[str, Any]:
         key = service._get(f"/tailnet/-/keys/{key_id}")
     except TailscaleRefused:
         return _refused("denied", f"There is no key {key_id} on the tailnet.")
+    if _key_revoked(key):
+        return _refused("denied", f"Key {key_id} is already revoked; nothing would change.")
     tags = (((key.get("capabilities") or {}).get("devices") or {}).get("create") or {}).get("tags") or []
     return {"ok": True, "status": "ready", "frozen": {
         "key_type": str(key.get("keyType") or "auth")[:20], "key_description": str(key.get("description") or "")[:50],
         "key_tags": sorted(str(tag)[:60] for tag in tags)}}
+
+
+def _key_revoked(key: dict) -> bool:
+    """Live 20 Nov 2026: a revoked key still reads back (HTTP 200) with ``revoked`` set and ``invalid`` true."""
+    return bool(key.get("revoked")) or key.get("invalid") is True
 
 
 def apply_key_revoke(service: TailnetService, key_id: str, *, key_type: str, key_description: str,
@@ -371,10 +378,13 @@ def apply_key_revoke(service: TailnetService, key_id: str, *, key_type: str, key
                 "error": f"Tailscale refused the revocation (HTTP {response.status_code})."}
     base.update(changed=True, retry_safe=False)
     try:
-        service._get(f"/tailnet/-/keys/{key_id}")
+        after = service._get(f"/tailnet/-/keys/{key_id}")
     except TailscaleRefused:
+        # Gone entirely: also a confirmed revocation.
         return {**base, "ok": True, "status": "executed", "verification_ok": True, "error": None}
     except (httpx.TransportError, RuntimeError):
-        pass
+        after = None
+    if isinstance(after, dict) and _key_revoked(after):
+        return {**base, "ok": True, "status": "executed", "verification_ok": True, "error": None}
     return {**base, "ok": False, "status": "outcome_unknown",
             "error": "Tailscale accepted the revocation, but Janus could not confirm the key is gone."}

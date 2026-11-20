@@ -122,7 +122,9 @@ def test_key_revocation_is_confirmed_by_the_key_id_and_never_janus_own(tailnet):
     server = Server()
     register_networking_tools(server, None, tailnet.service())
     receipt = server.tools["network_tailnet_key_revoke"](**frozen)
-    assert (receipt.ok, receipt.verification_ok) == (True, True) and "kAAAA1111CNTRL" not in tailnet.keys
+    # Live 20 Nov 2026: the revoked key still reads back, marked revoked and invalid.
+    assert (receipt.ok, receipt.verification_ok) == (True, True)
+    assert tailnet.keys["kAAAA1111CNTRL"]["invalid"] is True
 
 
 def test_without_a_tailnet_link_every_new_tool_names_the_fix():
