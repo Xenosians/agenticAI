@@ -58,7 +58,13 @@ def test_the_compact_catalog_states_shared_defaults_once_and_loses_no_constraint
         stored = factored["capabilities"][name]
         assert {key: value for key, value in stored.items() if key != "intent_metadata"} == \
             {key: value for key, value in capability.items() if key != "intent_metadata"}
-        assert {**defaults, **stored["intent_metadata"]} == capability["intent_metadata"], name
+        shared = factored["argument_descriptions"]
+        metadata = {**defaults, **stored["intent_metadata"]}
+        own = metadata.get("grounded_argument_descriptions", {})
+        if metadata["grounded_arguments"]:
+            metadata["grounded_argument_descriptions"] = {
+                arg: own.get(arg, shared.get(arg)) for arg in metadata["grounded_arguments"]}
+        assert metadata == capability["intent_metadata"], name
         for key, value in stored["intent_metadata"].items():
             assert key not in defaults or value != defaults[key], (name, key)
 
@@ -81,6 +87,47 @@ def test_the_compact_prompt_explains_the_defaults_and_the_standard_prompt_is_unc
     assert "absent" in compact.split("\n", 1)[0]
     assert render_router_catalog(specs) == render_router_catalog(specs, factor_defaults=False)
     assert "intent_metadata_defaults" not in render_router_catalog(specs)
+
+
+def test_a_shared_argument_description_is_stated_once_and_every_capability_keeps_its_own():
+    # 20 Nov 2026: the broad catalog had 87 tokens left before its reserve, while
+    # "Exact VMID of the guest, as listed by proxmox_guests." alone was repeated
+    # nine times. A description several capabilities share is stated once under
+    # argument_descriptions; a capability lists only descriptions that differ,
+    # and every capability's full description map is still recoverable.
+    specs = _production_compact_specs()
+    full = compact_router_catalog(specs)
+    factored = compact_router_catalog(specs, factor_defaults=True)
+    shared = factored["argument_descriptions"]
+    assert shared and all(isinstance(text, str) and text for text in shared.values())
+    for name, capability in full["capabilities"].items():
+        own = factored["capabilities"][name]["intent_metadata"].get("grounded_argument_descriptions", {})
+        grounded = capability["intent_metadata"]["grounded_arguments"]
+        recovered = {arg: own.get(arg, shared.get(arg)) for arg in grounded}
+        assert recovered == capability["intent_metadata"].get("grounded_argument_descriptions", {}), name
+        for arg, text in own.items():
+            assert shared.get(arg) != text, (name, arg)
+    # Only descriptions used by more than one capability are shared.
+    uses = {}
+    for capability in full["capabilities"].values():
+        for arg, text in capability["intent_metadata"].get("grounded_argument_descriptions", {}).items():
+            uses[(arg, text)] = uses.get((arg, text), 0) + 1
+    assert all(uses[(arg, text)] > 1 for arg, text in shared.items())
+    rendered = render_router_catalog(specs, factor_defaults=True)
+    assert "argument_descriptions" in rendered.split("\n", 1)[0]
+
+
+def test_an_argument_without_any_description_is_never_given_a_shared_one():
+    # A grounded argument whose capability did not describe it must not
+    # silently borrow another capability's wording.
+    described = {"name": "a", "description": "d", "intent_metadata": {
+        **METADATA_DEFAULTS, "grounded_arguments": ["vmid"], "required_arguments": ["vmid"],
+        "grounded_argument_descriptions": {"vmid": "Exact VMID."}}}
+    twin = deepcopy(described) | {"name": "b"}
+    bare = {"name": "c", "description": "d", "intent_metadata": {
+        **METADATA_DEFAULTS, "grounded_arguments": ["vmid"], "required_arguments": ["vmid"]}}
+    with pytest.raises(ValueError, match="description"):
+        compact_router_catalog([{"name": "x", "capabilities": [described, twin, bare]}], factor_defaults=True)
 
 
 def test_the_whole_compact_catalog_fits_the_broad_routing_budget_with_room_to_grow():

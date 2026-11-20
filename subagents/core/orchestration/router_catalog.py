@@ -15,6 +15,7 @@ METADATA_DEFAULTS = {
     "requires_approval": False,
     "policy_owns_preconditions": False,
 }
+DESCRIPTIONS = "grounded_argument_descriptions"
 
 
 def _without_defaults(name: str, metadata: dict) -> dict:
@@ -24,6 +25,30 @@ def _without_defaults(name: str, metadata: dict) -> dict:
                          + ", ".join(missing))
     return {key: value for key, value in metadata.items()
             if key not in METADATA_DEFAULTS or value != METADATA_DEFAULTS[key]}
+
+
+def _shared_descriptions(capabilities: dict) -> dict:
+    """One wording per argument name that several capabilities describe identically.
+
+    The most used wording of a name is shared; ties go to the alphabetically
+    first. A grounded argument a capability leaves undescribed would silently
+    borrow the shared wording, so such a catalog is refused instead.
+    """
+    uses: dict[str, dict[str, int]] = {}
+    for name, capability in capabilities.items():
+        metadata = capability.get("intent_metadata", {})
+        described = metadata.get(DESCRIPTIONS) or {}
+        for argument in metadata.get("grounded_arguments") or []:
+            if argument not in described:
+                raise ValueError(f"Capability {name} has no description for its grounded argument {argument}")
+            texts = uses.setdefault(argument, {})
+            texts[described[argument]] = texts.get(described[argument], 0) + 1
+    shared = {}
+    for argument, texts in sorted(uses.items()):
+        text, count = min(texts.items(), key=lambda item: (-item[1], item[0]))
+        if count > 1:
+            shared[argument] = text
+    return shared
 
 
 def compact_router_catalog(specialists: list[dict], *, factor_defaults: bool = False) -> dict:
@@ -48,14 +73,28 @@ def compact_router_catalog(specialists: list[dict], *, factor_defaults: bool = F
             agent["capabilities"].append(name)
         agents.append(agent)
     if factor_defaults:
-        return {"intent_metadata_defaults": deepcopy(METADATA_DEFAULTS), "specialists": agents,
-                "capabilities": capabilities}
+        # A wording several capabilities share is stated once; a capability keeps
+        # only the descriptions that differ from it. Nothing is dropped: each
+        # grounded argument has exactly one description, its own or the shared one.
+        shared = _shared_descriptions(capabilities)
+        for capability in capabilities.values():
+            metadata = capability["intent_metadata"]
+            own = {argument: text for argument, text in (metadata.get(DESCRIPTIONS) or {}).items()
+                   if shared.get(argument) != text}
+            if own:
+                metadata[DESCRIPTIONS] = own
+            else:
+                metadata.pop(DESCRIPTIONS, None)
+        return {"intent_metadata_defaults": deepcopy(METADATA_DEFAULTS), "argument_descriptions": shared,
+                "specialists": agents, "capabilities": capabilities}
     return {"specialists": agents, "capabilities": capabilities}
 
 
 def render_router_catalog(specialists: list[dict], *, factor_defaults: bool = False) -> str:
     defaults = (" intent_metadata_defaults gives the value of every intent_metadata field a capability "
-                "leaves absent; an absent field has exactly that default value." if factor_defaults else "")
+                "leaves absent; an absent field has exactly that default value. argument_descriptions "
+                "describes each grounded argument whose capability lists no description of its own."
+                if factor_defaults else "")
     return (
         "Catalog format: specialists[].capabilities lists exact names in the shared "
         "capabilities dictionary. A specialist may only receive capabilities in its own list. "
