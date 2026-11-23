@@ -34,8 +34,9 @@ ACTION_TOOLS = {
     "clone": "proxmox_guest_clone",
     "create": "proxmox_guest_create",
     "delete": "proxmox_guest_delete",
+    "database_create": "proxmox_database_create",
 }
-NEW_GUEST_ACTIONS = frozenset({"create", "backup_restore"})
+NEW_GUEST_ACTIONS = frozenset({"create", "backup_restore", "database_create"})
 POWER_ACTIONS = frozenset({"start", "shutdown", "reboot", "force_stop"})
 SPECIALIST = "proxmox-specialist"
 # The signed-in account, sent by Phoenix from its session (never by the browser);
@@ -64,7 +65,7 @@ class ActionProposal(BaseModel):
     action: Literal[
         "start", "shutdown", "reboot", "force_stop", "set_resources", "resize_disk", "set_options",
         "snapshot_create", "snapshot_delete", "snapshot_rollback", "backup_now", "backup_restore", "clone",
-        "create", "delete",
+        "create", "delete", "database_create",
     ]
     params: dict[str, Any] = Field(default_factory=dict)
 
@@ -87,20 +88,21 @@ def _validate_action_parameters(action: str, vmid: int | None, params: dict[str,
         raise ValueError("The Proxmox action has no registered capability.")
 
     normalized = dict(params)
-    if action == "create" and "newid" in normalized:
+    if action in ("create", "database_create") and "newid" in normalized:
         requested = normalized.pop("newid")
         if "vmid" in normalized and normalized["vmid"] != requested:
             raise ValueError("The requested new VMID was supplied twice with different values.")
         normalized["vmid"] = requested
     if action in NEW_GUEST_ACTIONS and vmid is not None:
-        parameter_vmid = normalized.get("vmid" if action == "create" else "newid")
+        parameter_vmid = normalized.get("newid" if action == "backup_restore" else "vmid")
         if parameter_vmid is not None and vmid != parameter_vmid:
             raise ValueError("The requested new VMID was supplied twice with different values.")
 
     schema = tool.get("parameters")
     if not isinstance(schema, dict):
         raise ValueError("The Proxmox capability has an invalid parameter schema.")
-    allowed = set(schema) - {"node"}
+    # Only what an owner names: never a trusted argument (a frozen plan, an allocated VMID).
+    allowed = set(schema) - {"node"} - set(tool.get("trusted_policy_arguments") or ())
     if set(normalized) - allowed:
         raise ValueError("Proxmox action contains unsupported parameters.")
     if any(not _matches_parameter_type(value, schema[key].get("type")) for key, value in normalized.items()):
@@ -128,9 +130,9 @@ def _tool_arguments(body: ActionProposal) -> dict[str, Any]:
     if body.action in NEW_GUEST_ACTIONS:
         requested_vmid = body.vmid if body.vmid is not None else body.params.get("newid")
         if requested_vmid is not None:
-            target_argument = "vmid" if body.action == "create" else "newid"
+            target_argument = "newid" if body.action == "backup_restore" else "vmid"
             arguments[target_argument] = requested_vmid
-        if body.action == "create":
+        if body.action != "backup_restore":
             arguments.pop("newid", None)
     return arguments
 
@@ -183,7 +185,7 @@ async def propose_action(body: ActionProposal, request: Request):
     new_vmid = allocated_vmid
     if new_vmid is None:
         new_vmid = approval_arguments.get("newid")
-    if new_vmid is None and body.action == "create":
+    if new_vmid is None and body.action in ("create", "database_create"):
         new_vmid = approval_arguments.get("vmid")
 
     if body.action == "clone":

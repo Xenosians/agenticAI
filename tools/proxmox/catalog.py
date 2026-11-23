@@ -1044,9 +1044,10 @@ def _database_create_approval(arguments: dict[str, Any]) -> str:
             f"{plan.get('node')} from the official image {plan.get('reference')}: {create.get('cores')} core(s), "
             f"{create.get('memory')} MiB memory, root disk {create.get('rootfs')}, data volume "
             f"{(create.get('mp0') or '').split(',', 1)[0]}, in pool {create.get('pool')}, at "
-            f"{plan.get('address')}:{plan.get('port')} on the tailnet-bridged subnet. "
-            + ("Proxmox pulls the image first. " if plan.get("template") else "")
-            + "No password is sent; Janus sets one afterwards and keeps it encrypted for your account.")
+            f"{plan.get('address')}:{plan.get('port')} on the tailnet-bridged subnet, tagged {plan.get('tags')}. "
+            + ("Proxmox pulls the image first if it is not stored yet. " if plan.get("template") else "")
+            + "Janus then starts it and checks that the database answers. No password is sent: Janus "
+              "generates one, keeps it encrypted for your account and gives the guest only its verifier.")
 
 
 PROXMOX_CHANGE_TOOLS = {

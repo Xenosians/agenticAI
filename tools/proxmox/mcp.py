@@ -75,6 +75,34 @@ def fixed_service(service) -> Callable[[], AbstractContextManager]:
     return for_request
 
 
+def reachable(address: str, port: int, timeout: float = 3.0) -> bool:
+    """One TCP connect to a database guest over the tailnet bridge (the health read after a create)."""
+    import socket
+
+    try:
+        with socket.create_connection((address, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def store_credential(owner: str, plan: dict, password: str) -> None:
+    from services.extensions.database_credentials import database_credentials
+
+    database_credentials().save(owner, node=plan["node"], vmid=plan["vmid"], name=plan["hostname"],
+                                engine=plan["engine"], address=plan["address"], port=plan["port"],
+                                username=plan["superuser"], password=password)
+
+
+def forget_credential(owner: str, plan: dict) -> None:
+    from services.extensions.database_credentials import database_credentials
+
+    try:
+        database_credentials().remove(owner, plan["node"], plan["vmid"])
+    except Exception:  # noqa: BLE001 - a stale login for an absent guest is harmless and listed
+        pass
+
+
 def register_proxmox_tools(server, service: ProxmoxService | None = None, missing_settings: Iterable[str] = (),
                            *, for_request: Callable[[], AbstractContextManager] | None = None) -> None:
     """Each read returns observed data, or a typed failure naming the cause (see tools.provider_reads).
@@ -326,8 +354,16 @@ def register_proxmox_tools(server, service: ProxmoxService | None = None, missin
     def proxmox_guest_delete(node: str, vmid: int, expected_type: str = "",
                              expected_name: str | None = None) -> ProxmoxChangeResult:
         """Delete one approved, stopped guest and confirm it is gone."""
-        return change(lambda current: current.guest_delete(
+        receipt = change(lambda current: current.guest_delete(
             node, vmid, expected_type=expected_type, expected_name=expected_name))
+        if receipt.ok and getattr(receipt, "deleted", False) is True:
+            # A database guest's stored login goes with the guest, and only once it is confirmed gone.
+            from services.extensions.context import current_owner
+
+            owner = current_owner()
+            if owner is not None:
+                forget_credential(owner, {"node": node, "vmid": vmid})
+        return receipt
 
     @server.tool()
     def proxmox_database_create(node: str, engine: str, version: str, hostname: str, vmid: int | None = None,
@@ -335,10 +371,38 @@ def register_proxmox_tools(server, service: ProxmoxService | None = None, missin
                                 memory_mib: int | None = None, disk_gib: int | None = None,
                                 data_gib: int | None = None, allocated_vmid: int | None = None,
                                 plan: dict | None = None) -> ProxmoxChangeResult:
-        """Create one approved database guest exactly as the frozen plan says."""
+        """Create, configure, start and health-check one approved database guest as the frozen plan says.
+
+        The superuser password is generated here, when the approved change runs; only its verifier
+        reaches Proxmox, and the password itself is kept in the account's encrypted store before the
+        guest starts (a guest whose password was not stored is never started).
+        """
         if not isinstance(plan, dict) or plan.get("node") != node or plan.get("engine") != engine \
                 or plan.get("version") != version or plan.get("hostname") != hostname \
                 or plan.get("vmid") != effective_vmid(vmid, allocated_vmid):
             return ProxmoxChangeResult(ok=False, status="denied", node=node,
                                        error="The approval carries no database plan matching the request.")
-        return change(lambda current: current.database_guest_create(plan))
+        from services.database_guests import generate_password
+        from services.extensions.context import current_owner
+
+        owner = current_owner()
+        if owner is None:
+            return ProxmoxChangeResult(ok=False, status="denied", node=node,
+                                       error="A database guest is created for a signed-in account only; "
+                                             "nothing was sent.")
+        password = generate_password()
+        try:
+            store_credential(owner, plan, password)
+        except Exception:  # noqa: BLE001 - no secret store, no database: nothing was sent
+            return ProxmoxChangeResult(ok=False, status="error", node=node,
+                                       error="The account's credential store could not keep the database "
+                                             "login; nothing was sent.")
+        receipt = None
+        try:
+            receipt = change(lambda current: current.database_guest_create(plan, password=password,
+                                                                           reachable=reachable))
+            return receipt
+        finally:
+            # The login is kept whenever a guest may exist; only a create never sent (or refused) drops it.
+            if receipt is None or getattr(receipt, "guest_may_exist", True) is False:
+                forget_credential(owner, plan)

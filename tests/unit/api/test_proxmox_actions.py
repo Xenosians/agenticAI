@@ -168,6 +168,50 @@ def test_create_without_vmid_returns_the_value_allocated_by_the_approval_policy(
     assert "leave the new VMID for Proxmox to allocate" in gateway.calls[0][1]
 
 
+def test_a_database_guest_is_proposed_from_the_dashboard_with_its_frozen_plan(monkeypatch):
+    # 23 Nov 2026: the AI catalog had proxmox_database_create but the dashboard could not propose it.
+    approval = {
+        **APPROVAL,
+        "tool": "proxmox_database_create",
+        "risk": "medium",
+        "approval_arguments": {"node": "hummingbird", "engine": "postgresql", "version": "17-alpine",
+                               "hostname": "db-orders", "allocated_vmid": 136,
+                               "plan": {"vmid": 136, "hostname": "db-orders", "address": "10.77.0.21"}},
+    }
+    gateway = Gateway(approval)
+    client = client_for(monkeypatch, gateway)
+    response = client.post(
+        "/internal/v1/proxmox/actions/propose",
+        headers=HEADERS,
+        json={"owner": "user-1", "node": "hummingbird", "action": "database_create",
+              "params": {"engine": "postgresql", "version": "17-alpine", "hostname": "db-orders"}},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["tool"] == "proxmox_database_create" and body["vmid"] == 136 and body["new_vmid"] == 136
+    assert body["name"] == "db-orders"
+    assert gateway.calls[0][2:4] == (
+        "proxmox_database_create",
+        {"node": "hummingbird", "engine": "postgresql", "version": "17-alpine", "hostname": "db-orders"},
+    )
+    assert "leave the new VMID for Proxmox to allocate" in gateway.calls[0][1]
+
+
+@pytest.mark.parametrize("params", [
+    {"engine": "postgresql", "version": "17-alpine"},                       # no hostname
+    {"engine": "postgresql", "version": "17-alpine", "hostname": "db", "plan": {}},  # a trusted argument
+    {"engine": "postgresql", "version": "17-alpine", "hostname": "db", "password": "x" * 30},
+])
+def test_a_database_proposal_takes_only_what_the_owner_names(monkeypatch, params):
+    gateway = Gateway(APPROVAL)
+    client = client_for(monkeypatch, gateway)
+    response = client.post("/internal/v1/proxmox/actions/propose", headers=HEADERS,
+                           json={"owner": "user-1", "node": "hummingbird", "action": "database_create",
+                                 "params": params})
+    assert response.status_code == 422 and gateway.calls == []
+
+
 def test_explicit_new_vmid_is_mapped_to_the_capability_argument(monkeypatch):
     approval = {
         **APPROVAL,
