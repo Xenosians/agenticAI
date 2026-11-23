@@ -370,7 +370,12 @@ def test_every_tailnet_and_database_change_case_is_undone_in_the_same_run():
                          ("network-tailnet-dns-set", "network-tailnet-dns-restore"),
                          ("proxmox-database-create", "proxmox-delete-database")):
         assert order.index(change) < order.index(undo), (change, undo)
+    # 23 Nov 2026: the database create now starts the guest, and a running guest is never deleted;
+    # the run stops it in between.
+    stop = order.index("proxmox-database-stop")
+    assert order.index("proxmox-database-create") < stop < order.index("proxmox-delete-database")
     prompts = {case[0]: case[2] for case in matrix.build_cases("10191234", "FIX")}
+    assert "{proxmox_database_vmid}" in prompts["proxmox-database-stop"]
     # Only fixtures the run itself made are revoked or removed, never a named production device.
     assert "{tailnet_matrix_key}" in prompts["network-tailnet-key-revoke"]
     assert "{tailnet_matrix_device}" in prompts["network-tailnet-device-remove"]

@@ -258,6 +258,9 @@ def build_cases(run: str, project: str, pool: str | None = None) -> list[tuple[s
         ("proxmox-database-create", "proxmox_database_create",
          "Create a postgresql database guest named matrix-db-{run} on node {proxmox_node} running version "
          "17-alpine.", True),
+        # The create starts the guest (owner decision 23 Nov 2026); a running guest is never deleted.
+        ("proxmox-database-stop", "proxmox_guest_force_stop",
+         "Force stop guest {proxmox_database_vmid} on node {proxmox_node}.", True),
         ("proxmox-delete-database", "proxmox_guest_delete",
          "Delete guest {proxmox_database_vmid} on node {proxmox_node}.", True),
     ]
