@@ -10,8 +10,10 @@ import dataclasses
 import itertools
 import json
 import subprocess
+import threading
 import time
 from contextlib import nullcontext
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -105,6 +107,33 @@ def test_an_interrupted_run_does_not_count_as_trained(tmp_path):
     fingerprint = target.fingerprint(catalog="catalog")
     store.record(target, fingerprint=fingerprint, outcome="interrupted", candidate=None)
     assert store.needs_training(target, fingerprint)
+
+
+def test_a_failed_run_is_retried_when_the_worker_code_changes(tmp_path):
+    """A fixed worker is not blocked forever by a failure recorded by the broken one."""
+    write_config(tmp_path, "account", base="small-base", candidate="small-trained", agent="account-specialist")
+    [target] = small_specialist_targets(config_directory=tmp_path, profiles=MODEL_PROFILES, max_weights_gib=2.0,
+                                        weights_bytes=weights(900))
+    store = SpecialistCandidateStore(tmp_path / "state")
+    fingerprint = target.fingerprint(catalog="catalog")
+    store.record(target, fingerprint=fingerprint, outcome="failed", candidate=None, worker_digest="worker-a")
+    now = datetime.now(timezone.utc)
+    assert not store.needs_training(target, fingerprint, worker_digest="worker-a", now=now)
+    assert store.needs_training(target, fingerprint, worker_digest="worker-b", now=now)
+
+
+def test_a_failed_run_is_retried_after_its_cooldown(tmp_path):
+    write_config(tmp_path, "account", base="small-base", candidate="small-trained", agent="account-specialist")
+    [target] = small_specialist_targets(config_directory=tmp_path, profiles=MODEL_PROFILES, max_weights_gib=2.0,
+                                        weights_bytes=weights(900))
+    store = SpecialistCandidateStore(tmp_path / "state")
+    fingerprint = target.fingerprint(catalog="catalog")
+    store.record(target, fingerprint=fingerprint, outcome="failed", candidate=None, worker_digest="worker-a",
+                 attempted_at="2026-11-25T05:00:00Z")
+    soon = datetime(2026, 11, 25, 8, 0, tzinfo=timezone.utc)
+    later = soon + timedelta(seconds=specialists_module.FAILED_RETRY_SECONDS)
+    assert not store.needs_training(target, fingerprint, worker_digest="worker-a", now=soon)
+    assert store.needs_training(target, fingerprint, worker_digest="worker-a", now=later)
 
 
 def test_targets_take_turns_starting_with_the_longest_waiting(tmp_path):
@@ -240,7 +269,7 @@ def test_training_uses_the_limiter_between_optimizer_steps(tmp_path, monkeypatch
     assert (result.outcome, result.reason) == ("interrupted", "on_battery")
 
 
-def test_a_failed_run_is_recorded_and_not_retried_for_the_same_inputs(tmp_path, monkeypatch):
+def test_a_failed_run_is_recorded_and_not_retried_immediately(tmp_path, monkeypatch):
     def train(**_):
         raise ValueError("Target exceeds max_length: account-sft-0001")
 
@@ -248,7 +277,11 @@ def test_a_failed_run_is_recorded_and_not_retried_for_the_same_inputs(tmp_path, 
                                               evaluate=lambda **_: pytest.fail("must not evaluate"))
     result = asyncio.run(idle.run_cycle())
     assert result.outcome == "failed" and "max_length" in result.reason
+    # Same inputs and the same worker code: the failure waits for its cooldown, not another idle window.
     assert asyncio.run(idle.run_cycle()) is None
+    # A worker whose code changed may have fixed the failure, so the next cycle tries it again.
+    idle.worker_digest = lambda: "different-worker"
+    assert asyncio.run(idle.run_cycle()) is not None
 
 
 def test_work_files_of_a_stopped_run_are_removed(tmp_path, monkeypatch):
@@ -699,6 +732,37 @@ def test_a_busy_or_unreachable_trainer_gets_nothing_new_and_keeps_its_job(tmp_pa
     remote.unreachable = True
     assert asyncio.run(idle.tend_remote()) is None
     assert idle.store.last(idle.targets[0])["outcome"] == "dispatched"
+
+
+def test_the_laptop_keeps_tending_the_trainer_while_it_trains_a_candidate(tmp_path, monkeypatch):
+    """A local run can take an hour; the trainer must not be left waiting for it."""
+    remote = FakeRemote(tmp_path / "remote")
+    sent = threading.Event()
+
+    def send(folder, job_id):
+        remote.calls.append("send")
+        remote.job_id = job_id
+        sent.set()
+
+    remote.send = send
+    idle, _runtime, _unloaded, jobs = remote_trainer(tmp_path, monkeypatch, remote)
+    idle.targets = [idle.targets[0], dataclasses.replace(idle.targets[0], name="operations")]
+    idle.weights_gib = lambda target: 0.9
+    idle._defer_to_remote = lambda target: target.name != "account"    # account is this machine's to train
+    idle.remote_tend_seconds = 0.01
+
+    def train(*, target, output_root, between_steps, limits):
+        assert target.name == "account"
+        assert sent.wait(10), "the trainer was not tended while the laptop trained"
+        return SimpleNamespace(adapter_directory=str(output_root / "runs" / "r1" / "adapter"),
+                               output_directory=str(output_root / "runs" / "r1"))
+
+    monkeypatch.setattr(specialists_module, "train_candidate", train)
+    result = asyncio.run(idle.run_cycle())
+    assert result.outcome == "candidate"
+    assert sent.is_set()
+    assert [job["target"] for job in jobs] == ["operations"]
+    assert idle.store.last(idle.targets[1])["outcome"] == "dispatched"
 
 
 def test_a_registered_worker_file_is_read_in_its_known_shape_only(tmp_path):

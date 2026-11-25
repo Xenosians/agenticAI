@@ -120,11 +120,12 @@ def _hours(duration) -> float | None:
 class KaggleWorker:
     """SshTransport's interface (send, start, running, busy, stop, fetch, clean) on Kaggle."""
 
-    def __init__(self, *, token: str, username: str, package: Path, http=None,
+    def __init__(self, *, token: str, username: str, package: Path | None = None, http=None,
                  sleep: Callable[[float], None] = time.sleep):
         if not KAGGLE_TOKEN.match(token or "") or not KAGGLE_USER.match(username or ""):
             raise ValueError("a Kaggle worker is an API token and a user name")
-        self._token, self.username, self.package = token, username, Path(package)
+        self._token, self.username = token, username
+        self.package = Path(package) if package is not None else None
         if http is None:
             from services.lua_adapters.http_clients import client as lua_http_client
 
@@ -164,6 +165,10 @@ class KaggleWorker:
         self.package = Path(package)
 
     def send(self, job_folder: Path, job_id: str) -> None:
+        if self.package is None or not (self.package / "learning" / "worker").is_dir():
+            # The trainer installs the package it built for this dispatch first; an uninstalled worker
+            # must fail here, not upload a job that cannot run.
+            raise TransportError("the worker package was not installed on this Kaggle worker")
         slug = _slug("janus-job", job_id)
         archive = _zip_job(Path(job_folder), self.package, Path(job_folder).parent / f"{job_id}.job.zip")
         try:
@@ -285,7 +290,8 @@ class KaggleWorker:
         self.started.discard(job_id)
 
 
-def connect(*, token: str, package: Path, http=None, sleep: Callable[[float], None] = time.sleep) -> KaggleWorker:
+def connect(*, token: str, package: Path | None = None, http=None,
+            sleep: Callable[[float], None] = time.sleep) -> KaggleWorker:
     """A worker for the account the token belongs to (Kaggle names it; nothing is assumed)."""
     probe = KaggleWorker(token=token, username="janus-probe", package=package, http=http, sleep=sleep)
     answer = probe._call("security.OAuthService", "IntrospectToken", {"token": token})

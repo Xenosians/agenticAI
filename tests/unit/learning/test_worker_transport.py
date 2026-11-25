@@ -97,6 +97,23 @@ def test_the_worker_package_is_the_worker_alone_with_its_requirements(tmp_path):
     assert Path(imported.stdout.strip()).resolve() == (package / "learning" / "__init__.py").resolve()
 
 
+def test_the_worker_digest_changes_only_when_the_worker_code_changes(tmp_path):
+    from learning.worker_transport import worker_source_digest
+
+    repository = tmp_path / "repo"
+    (repository / "learning" / "worker").mkdir(parents=True)
+    (repository / "learning" / "worker" / "stages.py").write_text("A", encoding="utf-8")
+    (repository / "requirements-worker.txt").write_text("peft==1", encoding="utf-8")
+    first = worker_source_digest(repository=repository)
+    assert first == worker_source_digest(repository=repository)
+    (repository / "learning" / "worker" / "stages.py").write_text("B", encoding="utf-8")
+    assert worker_source_digest(repository=repository) != first
+    # Only the worker package is sent to the worker; other service code did not run there.
+    (repository / "learning" / "other.py").write_text("C", encoding="utf-8")
+    changed = worker_source_digest(repository=repository)
+    assert changed == worker_source_digest(repository=repository)
+
+
 @pytest.mark.parametrize("job_id", ["../etc", "a b", "x;rm -rf /", ""])
 def test_a_job_id_never_becomes_a_shell_fragment(tmp_path, job_id):
     transport = SshTransport(host="h", user="janus", key=tmp_path / "id", known_hosts=tmp_path / "kh",

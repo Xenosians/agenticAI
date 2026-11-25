@@ -109,11 +109,6 @@ def split(rows: list[dict[str, Any]], fraction: float, seed: int) -> tuple[list,
             [row for index, row in enumerate(rows) if index in chosen])
 
 
-def tokenize_pair(tokenizer, prompt: str, target: str, max_length: int) -> dict[str, list[int]]:
-    """Janus's specialist tokenization: the loss covers only the answer; a long prompt keeps its tail."""
-    return encode_pair(tokenizer, list(tokenizer(prompt, add_special_tokens=True)["input_ids"]), target, max_length)
-
-
 def encode_answer(tokenizer, text: str) -> list[int]:
     """An answer's ids and the end-of-sequence id (the id itself: Mistral's tokenizer splits "</s>" as text)."""
     ids = [int(token) for token in tokenizer.encode(text, add_special_tokens=False)]
@@ -122,19 +117,34 @@ def encode_answer(tokenizer, text: str) -> list[int]:
     return ids
 
 
-def encode_pair(tokenizer, prompt_ids: list[int], target: str, max_length: int) -> dict[str, list[int]]:
-    """The same, from the prompt's token ids (``prompts.encode_prompt``), so no prompt is re-tokenized."""
-    target_ids = encode_answer(tokenizer, target)
+def encode_pair_ids(prompt_ids: list[int], target_ids: list[int],
+                    max_length: int) -> dict[str, list[int]] | None:
+    """One prompt/answer feature, or ``None`` when the pair does not fit ``max_length``.
+
+    The prompt is never shortened: a cut prompt would train the model on text serving never sends. The
+    caller either raises its sequence budget to fit the pair or drops the row and records the count.
+    """
     if not target_ids:
         raise ValueError("an answer tokenized to zero tokens")
-    if len(target_ids) >= max_length:
-        raise ValueError("an answer is longer than max_length")
-    room = max_length - len(target_ids)
-    if len(prompt_ids) > room:
-        prompt_ids = prompt_ids[-room:]
+    if len(prompt_ids) + len(target_ids) > max_length:
+        return None
     input_ids = [*prompt_ids, *target_ids]
     return {"input_ids": input_ids, "attention_mask": [1] * len(input_ids),
             "labels": [*([-100] * len(prompt_ids)), *target_ids]}
+
+
+def encode_pair(tokenizer, prompt_ids: list[int], target: str, max_length: int) -> dict[str, list[int]]:
+    """The same, from the prompt's token ids (``prompts.encode_prompt``), so no prompt is re-tokenized.
+
+    Raises when the pair does not fit: callers that can choose a larger budget should use
+    ``encode_pair_ids`` and decide; this wrapper never cuts the prompt.
+    """
+    target_ids = encode_answer(tokenizer, target)
+    feature = encode_pair_ids(prompt_ids, target_ids, max_length)
+    if feature is None:
+        raise ValueError(f"the prompt and answer need {len(prompt_ids) + len(target_ids)} tokens, "
+                         f"more than max_length={max_length}; the prompt is not cut")
+    return feature
 
 
 class Collator:

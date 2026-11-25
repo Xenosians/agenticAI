@@ -24,7 +24,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .data import Collator, cases_digest, encode_answer, encode_pair, heldout_cases, preference_rows, sft_rows, split
+from .data import (Collator, cases_digest, encode_answer, encode_pair_ids, heldout_cases, preference_rows, sft_rows,
+                   split)
 from .guard import FitGuard, StageGate
 from .job import TrainingJob, load_job
 from .loading import (NotAdmitted, admitted_load, fetch_dataset, fetch_model, load_base, load_tokenizer,
@@ -34,6 +35,16 @@ from .prompts import encode_prompt, render_prompt, tokenizes_messages_itself
 from .scoring import score_case, tool_call_reward
 
 FENCE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL | re.IGNORECASE)
+
+# The longest sequence a small specialist is asked to train on. ``max_length`` in a job is a floor, not a
+# cut: a longer prompt raises the stage's budget up to this ceiling. Past it the row is dropped and counted,
+# because training on a shortened prompt teaches a prompt serving never sends (and a GPU run stops fitting).
+SEQUENCE_LENGTH_CEILING = 8192
+
+
+def sequence_budget(floor: int, lengths: list[int], *, ceiling: int = SEQUENCE_LENGTH_CEILING) -> int:
+    """The sequence length a stage trains with: the job's floor, raised to fit the longest row, capped."""
+    return min(ceiling, max(floor, max(lengths, default=0)))
 
 
 class Interrupted(RuntimeError):
@@ -308,20 +319,43 @@ class Run:
         train_path = self.dataset_directory / job.dataset.train
         if not train_path.is_file():
             return {"ran": False, "reason": f"the dataset has no {job.dataset.train}"}
-        train = sft_rows(train_path)
+        train_rows = sft_rows(train_path)
         validation_path = self.dataset_directory / job.dataset.validation if job.dataset.validation else None
-        if validation_path is not None and validation_path.is_file():
-            validation = sft_rows(validation_path)
-        else:
-            train, validation = split(train, job.guard.validation_fraction, job.seed)
-        if not train or not validation:
-            return {"ran": False, "reason": "SFT needs training rows and validation rows for the fit guard"}
+        validation_rows = (sft_rows(validation_path)
+                           if validation_path is not None and validation_path.is_file() else None)
+        prepared = [{"prompt_ids": self.encode(row["prompt_messages"]),
+                     "target_ids": encode_answer(self.tokenizer, row["chosen"])}
+                    for row in train_rows + (validation_rows or [])]
+        lengths = [len(item["prompt_ids"]) + len(item["target_ids"]) for item in prepared]
+        max_length = sequence_budget(settings.max_length, lengths)
+        train_prepared = prepared[:len(train_rows)]
+        validation_prepared = prepared[len(train_rows):] if validation_rows is not None else None
+        if validation_prepared is None:
+            train_prepared, validation_prepared = split(train_prepared, job.guard.validation_fraction, job.seed)
 
-        def encode(rows):
-            return [encode_pair(self.tokenizer, self.encode(row["prompt_messages"]), row["chosen"],
-                                settings.max_length) for row in rows]
+        dropped = 0
 
-        train_features, validation_features = encode(train), encode(validation)
+        def fits(items):
+            nonlocal dropped
+            kept = []
+            for item in items:
+                if len(item["prompt_ids"]) + len(item["target_ids"]) <= max_length:
+                    kept.append(item)
+                else:
+                    dropped += 1
+            return kept
+
+        train_prepared, validation_prepared = fits(train_prepared), fits(validation_prepared)
+        if not train_prepared or not validation_prepared:
+            return {"ran": False, "max_length": max_length, "dropped_rows": dropped,
+                    "reason": f"SFT needs training and validation rows that fit {max_length} tokens; "
+                              f"dropped {dropped} longer row(s)"}
+        train_features = [encode_pair_ids(item["prompt_ids"], item["target_ids"], max_length)
+                          for item in train_prepared]
+        validation_features = [encode_pair_ids(item["prompt_ids"], item["target_ids"], max_length)
+                               for item in validation_prepared]
+        if any(feature is None for feature in train_features + validation_features):
+            raise RuntimeError("a row that passed the sequence budget did not fit it")
         model = self.with_adapter(current, trainable=True)
         if current is None:
             model = get_peft_model(model, LoraConfig(r=settings.lora_r, lora_alpha=settings.lora_alpha,
@@ -370,8 +404,9 @@ class Run:
             "last_train_loss": losses.get("train"),
         }
         evaluation = self.evaluate(trainer.model, "sft")
-        return {"ran": True, "adapter": adapter, "tuning": "qlora" if self.quantize else "lora", "rows": len(train),
-                "validation_rows": len(validation), "guard": summary, **evaluation}
+        return {"ran": True, "adapter": adapter, "tuning": "qlora" if self.quantize else "lora",
+                "rows": len(train_prepared), "validation_rows": len(validation_prepared),
+                "max_length": max_length, "dropped_rows": dropped, "guard": summary, **evaluation}
 
     def dpo(self, current: Path | None) -> dict:
         from trl import DPOConfig, DPOTrainer
@@ -389,11 +424,26 @@ class Run:
             return {"ran": False, "reason": "no preference pairs: no preferences file, and the model already "
                                             "answers every training prompt as chosen"}
         # Token ids, not text: DPO sees the prompts serving and the SFT stage see, and no boundary merge of
-        # prompt and answer can shift where the answer starts.
-        dataset = self.as_dataset([{"prompt_ids": self.encode(row["prompt_messages"]),
-                                    "chosen_ids": encode_answer(self.tokenizer, row["chosen"]),
-                                    "rejected_ids": encode_answer(self.tokenizer, row["rejected"])}
-                                   for row in pairs])
+        # prompt and answer can shift where the answer starts. The job's max_length is a floor: raise it to
+        # fit the longest pair so trl's prompt filter cannot empty the dataset, and count what still does
+        # not fit instead of crashing with num_samples=0.
+        encoded = []
+        for row in pairs:
+            encoded.append((self.encode(row["prompt_messages"]),
+                            encode_answer(self.tokenizer, row["chosen"]),
+                            encode_answer(self.tokenizer, row["rejected"])))
+        lengths = [len(prompt) + max(len(chosen), len(rejected)) for prompt, chosen, rejected in encoded]
+        max_length = sequence_budget(settings.max_length, lengths)
+        kept = [item for item in encoded
+                if len(item[0]) + max(len(item[1]), len(item[2])) <= max_length]
+        dropped = len(encoded) - len(kept)
+        if not kept:
+            return {"ran": False, "max_length": max_length, "dropped_pairs": dropped,
+                    "reason": f"every preference pair needs more than {max_length} tokens; "
+                              f"dropped {dropped} pair(s)"}
+        dataset = self.as_dataset([{"prompt_ids": prompt_ids, "chosen_ids": chosen_ids,
+                                    "rejected_ids": rejected_ids}
+                                   for prompt_ids, chosen_ids, rejected_ids in kept])
         model = self.with_adapter(current, trainable=True)
         peft_config = None
         if current is None:
@@ -408,7 +458,7 @@ class Run:
                               save_strategy="no", lr_scheduler_type="cosine")
         common.pop("save_only_model")
         trainer = pretokenized(DPOTrainer)(model=model, ref_model=None, args=DPOConfig(
-            **common, beta=settings.beta, loss_type=[settings.loss_type], max_length=settings.max_length),
+            **common, beta=settings.beta, loss_type=[settings.loss_type], max_length=max_length),
             train_dataset=dataset, processing_class=self.tokenizer, peft_config=peft_config,
             callbacks=[self.stop_callback()])
         trainer.train()
@@ -419,7 +469,8 @@ class Run:
         trained.save_pretrained(str(adapter), selected_adapters=["default"])
         losses = [entry["loss"] for entry in trainer.state.log_history if "loss" in entry]
         evaluation = self.evaluate(trained, "dpo")
-        return {"ran": True, "adapter": adapter, "pairs": len(pairs), "self_generated": bool(mined),
+        return {"ran": True, "adapter": adapter, "pairs": len(kept), "dropped_pairs": dropped,
+                "max_length": max_length, "self_generated": bool(mined),
                 "beta": settings.beta, "first_loss": losses[0] if losses else None,
                 "last_loss": losses[-1] if losses else None, **evaluation}
 
@@ -528,7 +579,18 @@ class Run:
                 continue
             self.check_stop()
             started = time.monotonic()
-            outcome = getattr(self, name)(current)
+            try:
+                outcome = getattr(self, name)(current)
+            except Interrupted:
+                raise
+            except Exception as error:  # a later stage failing must not discard an earlier kept one
+                self.collect()
+                stages.append({"stage": name, "ran": False, "kept": False,
+                               "seconds": round(time.monotonic() - started, 1),
+                               "reason": f"{name} failed: {type(error).__name__}: {str(error)[:300]}",
+                               "error": f"{type(error).__name__}: {str(error)[:500]}"})
+                print(f"[WORKER] stage {name} failed: {type(error).__name__}: {error}")
+                continue
             self.collect()
             outcome = {"stage": name, **outcome, "seconds": round(time.monotonic() - started, 1)}
             if outcome["ran"]:

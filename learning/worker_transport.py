@@ -6,6 +6,7 @@ machine. Both run exactly ``python -m learning.worker.stages``; only the place d
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -37,6 +38,18 @@ def build_worker_package(directory: Path, *, repository: Path = REPOSITORY) -> P
         '"""The training worker package (see learning/worker/__init__.py)."""\n', encoding="utf-8")
     shutil.copy2(repository / "requirements-worker.txt", directory / "requirements-worker.txt")
     return directory
+
+
+def worker_source_digest(*, repository: Path = REPOSITORY) -> str:
+    """A digest of the worker code and its requirements: a failed job is retried when this changes."""
+    root = Path(repository)
+    files = sorted([*(root / "learning" / "worker").rglob("*.py"), root / "requirements-worker.txt"],
+                   key=lambda path: path.relative_to(root).as_posix())
+    digest = hashlib.sha256()
+    for path in files:
+        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+        digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest()
 
 
 class TransportError(RuntimeError):

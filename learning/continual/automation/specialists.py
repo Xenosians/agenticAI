@@ -39,6 +39,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from collections.abc import Callable, Iterable
@@ -52,14 +53,15 @@ from learning.paths import REPOSITORY_ROOT, RUNTIME_LEARNING_ROOT
 from learning.worker_dispatch import MIN_KAGGLE_HOURS, Worker, fits
 from learning.worker_jobs import build_specialist_job
 from learning.worker_transport import (LocalTransport, SshTransport, TransportError, build_worker_package,
-                                       collect_candidate)
+                                       collect_candidate, worker_source_digest)
 
 SPECIALIST_CONFIG_DIRECTORY = REPOSITORY_ROOT / "learning" / "config" / "specialists"
 SPECIALIST_WORK_ROOT = RUNTIME_LEARNING_ROOT / "continuous" / "specialists"
 WEIGHT_SUFFIXES = (".safetensors", ".bin")
 
 # What an idle cycle asks of the worker: the recipe with which the worker took the access specialist
-# from 0 to 13 of 13 held-out cases on a 6 GiB laptop GPU.
+# from 0 to 13 of 13 held-out cases on a 6 GiB laptop GPU. ``max_length`` is a floor, not a cut: the worker
+# raises it to fit the longest prompt and answer (up to its own ceiling) and reports the effective value.
 WORKER_STAGES = ("sft", "dpo")
 WORKER_RECIPE = {"sft": {"epochs": 4, "max_length": 1536}, "dpo": {"max_length": 1536}}
 WORKER_POLL_SECONDS = 0.5
@@ -68,6 +70,10 @@ WORKER_GRACE_SECONDS = 120.0
 # The controller ticks every few seconds; each look at a remote worker is an SSH connection (15 s when it is off).
 REMOTE_POLL_SECONDS = 60.0
 REMOTE_RETRY_SECONDS = 600.0
+# How often the remote workers are tended while the local GPU trains or judges a candidate.
+REMOTE_TEND_SECONDS = 5.0
+# A failed run is retried for the same inputs after this long even when the worker code did not change.
+FAILED_RETRY_SECONDS = 6 * 60 * 60
 RSYNC_PARTIAL = frozenset({23, 24})   # rsync: some or all of the files were not there
 
 
@@ -199,8 +205,10 @@ def read_token_file(path: Path) -> str:
 def kaggle_transport(worker: RemoteWorker):
     from learning.kaggle_worker import connect
 
-    return connect(token=read_token_file(worker.token_file),
-                   package=build_worker_package(SPECIALIST_WORK_ROOT / "worker-package"))
+    # No package is built here: the trainer installs the worker package it built for this dispatch
+    # (see SpecialistIdleTrainer._install_worker) before the first send. A second build in the shared
+    # folder could race that one, and a connect is not a dispatch.
+    return connect(token=read_token_file(worker.token_file))
 
 
 def kaggle_hours_left(transport) -> float | None:
@@ -215,55 +223,91 @@ def remote_transport(worker: RemoteWorker) -> SshTransport:
                                      "TOKENIZERS_PARALLELISM": "false", "OMP_NUM_THREADS": str(worker.threads)})
 
 
+def _attempted_at(entry: dict) -> datetime | None:
+    value = entry.get("attempted_at")
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+
+
 class SpecialistCandidateStore:
     """Per specialist: what its last candidate was trained from and how that run ended.
 
-    Only a run that produced a candidate (accepted or rejected by its held-out
-    cases) or failed for its inputs counts as done for those inputs; an
-    interrupted run is tried again. A run dispatched to a remote worker, or
-    fetched from one and waiting for Janus's gate, is not trained again
-    meanwhile.
+    Only a run that produced a candidate (accepted or rejected by its held-out cases) counts as done for
+    those inputs; an interrupted run is tried again. A failed run is retried when the worker code changed
+    (its digest differs) or after ``FAILED_RETRY_SECONDS``, so a fixed worker is not blocked forever by an
+    old failure. A run dispatched to a remote worker, or fetched from one and waiting for Janus's gate, is
+    not trained again meanwhile. The store is safe for the local cycle and the remote/Kaggle tending to
+    read and write it at the same time.
     """
 
-    DONE = {"candidate", "rejected", "failed"}
+    DONE = {"candidate", "rejected"}
     PENDING = {"dispatched", "fetched"}
+    FAILED = "failed"
 
     def __init__(self, directory: Path):
         self.path = Path(directory) / "specialists.json"
+        self._lock = threading.RLock()
 
     def _load(self) -> dict:
-        try:
-            state = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return {}
-        return state if isinstance(state, dict) else {}
+        with self._lock:
+            try:
+                state = json.loads(self.path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return {}
+            return state if isinstance(state, dict) else {}
 
     def last(self, target: SpecialistTarget) -> dict | None:
-        entry = self._load().get(target.name)
-        return entry if isinstance(entry, dict) else None
+        with self._lock:
+            entry = self._load().get(target.name)
+            return entry if isinstance(entry, dict) else None
 
-    def needs_training(self, target: SpecialistTarget, fingerprint: str) -> bool:
-        last = self.last(target)
-        return not (last and last.get("fingerprint") == fingerprint and last.get("outcome") in self.DONE | self.PENDING)
+    def needs_training(self, target: SpecialistTarget, fingerprint: str, *, worker_digest: str | None = None,
+                       now: datetime | None = None) -> bool:
+        with self._lock:
+            last = self.last(target)
+            if not last or last.get("fingerprint") != fingerprint:
+                return True
+            outcome = last.get("outcome")
+            if outcome in self.DONE or outcome in self.PENDING:
+                return False
+            if outcome != self.FAILED:
+                return True                      # interrupted or an unknown outcome: try again
+            recorded = last.get("worker_digest")
+            if worker_digest and recorded and recorded != worker_digest:
+                return True                      # the worker changed: the old failure may be fixed
+            attempted = _attempted_at(last)
+            if attempted is None:
+                return True
+            return ((now or datetime.now(timezone.utc)) - attempted).total_seconds() >= FAILED_RETRY_SECONDS
 
     def pending(self, targets: Iterable[SpecialistTarget], outcome: str) -> list[tuple[SpecialistTarget, dict]]:
-        return [(target, last) for target in targets if (last := self.last(target)) and last.get("outcome") == outcome]
+        with self._lock:
+            return [(target, last) for target in targets
+                    if (last := self.last(target)) and last.get("outcome") == outcome]
 
-    def next_target(self, targets: Iterable[SpecialistTarget],
-                    fingerprints: dict[str, str]) -> SpecialistTarget | None:
+    def next_target(self, targets: Iterable[SpecialistTarget], fingerprints: dict[str, str], *,
+                    worker_digest: str | None = None, now: datetime | None = None) -> SpecialistTarget | None:
         """The specialist with new material that has waited longest since its last attempt."""
-        waiting = [target for target in targets if self.needs_training(target, fingerprints[target.name])]
-        return min(waiting, key=lambda target: (self.last(target) or {}).get("attempted_at", ""), default=None)
+        with self._lock:
+            waiting = [target for target in targets
+                       if self.needs_training(target, fingerprints[target.name], worker_digest=worker_digest, now=now)]
+            return min(waiting, key=lambda target: (self.last(target) or {}).get("attempted_at", ""), default=None)
 
     def record(self, target: SpecialistTarget, *, fingerprint: str, outcome: str, candidate: str | None,
                **details) -> None:
-        state = self._load()
-        state[target.name] = {"fingerprint": fingerprint, "outcome": outcome, "candidate": candidate,
-                              "attempted_at": _utc_now(), **details}
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_name(self.path.name + "." + uuid.uuid4().hex + ".tmp")
-        temporary.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        os.replace(temporary, self.path)
+        with self._lock:
+            state = self._load()
+            state[target.name] = {"fingerprint": fingerprint, "outcome": outcome, "candidate": candidate,
+                                  "attempted_at": _utc_now(), **details}
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self.path.with_name(self.path.name + "." + uuid.uuid4().hex + ".tmp")
+            temporary.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            os.replace(temporary, self.path)
 
 
 @dataclass
@@ -466,7 +510,8 @@ class SpecialistIdleTrainer:
                  remote_transport_factory: Callable[[RemoteWorker], object] = remote_transport,
                  kaggle: RemoteWorker | None = None,
                  kaggle_transport_factory: Callable[[RemoteWorker], object] = kaggle_transport,
-                 local_max_weights_gib: float = float("inf")):
+                 local_max_weights_gib: float = float("inf"),
+                 worker_digest: Callable[[], str] = worker_source_digest):
         self.runtime = runtime
         self.settings = settings
         self.targets = targets
@@ -486,10 +531,60 @@ class SpecialistIdleTrainer:
         # The laptop's own limit (CONTINUAL_SPECIALIST_MAX_WEIGHTS_GIB): what is bigger is Kaggle's to train.
         self.local_max_weights_gib = local_max_weights_gib
         self._next_kaggle_look = 0.0
+        # A failed run is retried when the worker code that ran changed (see worker_source_digest).
+        self.worker_digest = worker_digest
+        # One worker package for every remote/Kaggle dispatch; rebuilt only when the worker source changes.
+        self._package_lock = threading.RLock()
+        self._package_path: Path | None = None
+        self._package_digest: str | None = None
+        # The specialist this machine is training right now: remote tending must not dispatch it too.
+        self._training: str | None = None
+        self.remote_tend_seconds = REMOTE_TEND_SECONDS
 
     def _fingerprints(self) -> dict[str, str]:
         return {target.name: target.fingerprint(catalog=self.catalog_fingerprint(target))
                 for target in self.targets}
+
+    def _digest(self) -> str:
+        return self.worker_digest()
+
+    def _worker_package(self) -> Path:
+        """The worker package every remote dispatch installs; built once per worker source digest."""
+        digest = self._digest()
+        with self._package_lock:
+            if (self._package_digest != digest or self._package_path is None
+                    or not self._package_path.is_dir()):
+                self._package_path = build_worker_package(self.work_root / "worker-package")
+                self._package_digest = digest
+            return self._package_path
+
+    def _install_worker(self, transport) -> None:
+        """Install the shared package under the lock, so a rebuild cannot race a running install."""
+        with self._package_lock:
+            transport.install(self._worker_package())
+
+    async def _tend_while(self, work):
+        """Await a long local step while tending Proxmox and Kaggle, so neither waits for the laptop."""
+        task = asyncio.ensure_future(work)
+        try:
+            while True:
+                done, _ = await asyncio.wait({task}, timeout=self.remote_tend_seconds)
+                if task in done:
+                    return task.result()
+                try:
+                    await self.tend_remote()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:  # a worker tick never stops the local step
+                    print("[CONTINUAL] tending while training failed "
+                          f"error={type(error).__name__}: {str(error)[:200]}")
+        finally:
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
     # -- the remote worker (Proxmox first) --------------------------------------------------------------------
 
@@ -530,13 +625,15 @@ class SpecialistIdleTrainer:
                 return None
             return self._collect_remote(transport, target, last)
         fingerprints = self._fingerprints()
+        digest = self._digest()
         waiting = [target for target in self.targets
-                   if self.store.needs_training(target, fingerprints[target.name])
+                   if target.name != self._training
+                   and self.store.needs_training(target, fingerprints[target.name], worker_digest=digest)
                    and fits(self.remote.capacity(), weights_gib=self.weights_gib(target), stages=list(WORKER_STAGES))]
-        target = self.store.next_target(waiting, fingerprints)
+        target = self.store.next_target(waiting, fingerprints, worker_digest=digest)
         if target is None or transport.busy():      # nothing to send: the trainer is not contacted
             return None
-        return self._dispatch_remote(transport, target, fingerprints[target.name], self.remote)
+        return self._dispatch_remote(transport, target, fingerprints[target.name], self.remote, digest)
 
     # -- Kaggle's free GPU (owner decision 8): what fits neither the trainer nor this machine ------------------
 
@@ -552,13 +649,16 @@ class SpecialistIdleTrainer:
         if now < self._next_kaggle_look:
             return None
         self._next_kaggle_look = now + REMOTE_POLL_SECONDS
+        digest = self._digest()
         fingerprints = None
         pending = [(target, last) for target, last in self.store.pending(self.targets, "dispatched")
                    if last.get("worker") == self.kaggle.name]
         if not pending:
             fingerprints = self._fingerprints()
             waiting = [target for target in self.targets
-                       if self.store.needs_training(target, fingerprints[target.name]) and self._kaggle_only(target)]
+                       if target.name != self._training
+                       and self.store.needs_training(target, fingerprints[target.name], worker_digest=digest)
+                       and self._kaggle_only(target)]
             if not waiting:
                 return None                          # nothing for Kaggle: no API call at all
         try:
@@ -567,18 +667,18 @@ class SpecialistIdleTrainer:
                 if transport.running(last["job_id"]):
                     return None
                 return self._collect_remote(transport, target, last)
-            target = self.store.next_target(waiting, fingerprints)
+            target = self.store.next_target(waiting, fingerprints, worker_digest=digest)
             hours = self.kaggle_hours(transport)
             if target is None or hours is None or hours < MIN_KAGGLE_HOURS or transport.busy():
                 return None
-            return self._dispatch_remote(transport, target, fingerprints[target.name], self.kaggle)
+            return self._dispatch_remote(transport, target, fingerprints[target.name], self.kaggle, digest)
         except Exception as error:  # noqa: BLE001 - Kaggle unreachable or refusing: try again later
             self._next_kaggle_look = now + REMOTE_RETRY_SECONDS
             print(f"[CONTINUAL] kaggle unavailable reason={type(error).__name__}: {str(error)[:200]}")
             return None
 
     def _dispatch_remote(self, transport, target: SpecialistTarget, fingerprint: str,
-                         worker: RemoteWorker) -> SpecialistCycleResult:
+                         worker: RemoteWorker, worker_digest: str) -> SpecialistCycleResult:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         job_id = f"{target.name}-{stamp}"
         output_root = self.work_root / target.name
@@ -587,7 +687,7 @@ class SpecialistIdleTrainer:
                                       settings={**WORKER_RECIPE, "threads": worker.threads},
                                       base_by_reference=worker.kind == "kaggle")
         try:
-            transport.install(build_worker_package(self.work_root / "worker-package"))
+            self._install_worker(transport)
             transport.send(folder, job_id)
             transport.start(job_id)
         finally:
@@ -595,14 +695,15 @@ class SpecialistIdleTrainer:
         previous = self.store.last(target) or {}
         losses = int(previous.get("losses") or 0) if previous.get("fingerprint") == fingerprint else 0
         self.store.record(target, fingerprint=fingerprint, outcome="dispatched", candidate=None, job_id=job_id,
-                          worker=worker.name, losses=losses)
+                          worker=worker.name, worker_digest=worker_digest, losses=losses)
         print(f"[CONTINUAL] specialist job dispatched specialist={target.name} worker={worker.name} "
               f"job={job_id}")
         return SpecialistCycleResult(specialist=target.name, outcome="dispatched", reason=worker.name)
 
     def _collect_remote(self, transport, target: SpecialistTarget, last: dict) -> SpecialistCycleResult:
         job_id = last["job_id"]
-        details = {key: last.get(key) for key in ("job_id", "worker")} | {"losses": int(last.get("losses") or 0)}
+        details = {key: last.get(key) for key in ("job_id", "worker", "worker_digest")} | {
+            "losses": int(last.get("losses") or 0)}
         destination = self.work_root / target.name / "runs" / job_id
         try:
             run_directory = Path(transport.fetch(job_id, destination))
@@ -669,8 +770,9 @@ class SpecialistIdleTrainer:
         if fetched:
             return await self._judge_fetched(*fetched[0])
         fingerprints = await asyncio.to_thread(self._fingerprints)
+        digest = await asyncio.to_thread(self._digest)
         target = self.store.next_target([target for target in self.targets if not self._defer_to_remote(target)
-                                         and self._local(target)], fingerprints)
+                                         and self._local(target)], fingerprints, worker_digest=digest)
         if target is None:
             return None
         fingerprint = fingerprints[target.name]
@@ -704,20 +806,29 @@ class SpecialistIdleTrainer:
             finally:
                 release_training_memory()
 
+        # While this machine trains, keep sending/collecting remote work: the trainer and Kaggle must not
+        # wait for a local run that can take an hour. ``_training`` keeps the same specialist from being
+        # dispatched remotely meanwhile.
+        self._training = target.name
         try:
-            result = await self.runtime.gpu_scheduler.run(priority=self.TRAINING_PRIORITY, work=work)
-        except TrainingYielded as stopped:
-            self._remove_unfinished_runs(output_root, keep_logs=False)
-            result = SpecialistCycleResult(specialist=target.name, outcome="interrupted", reason=stopped.reason)
-        except Exception as exc:  # recorded so the same inputs are not retried every idle window
-            self._remove_unfinished_runs(output_root, keep_logs=True)
-            result = SpecialistCycleResult(specialist=target.name, outcome="failed",
-                                           reason=f"{type(exc).__name__}: {str(exc)[:300]}")
-        return self._finish(target, fingerprint, result, started)
+            try:
+                result = await self._tend_while(
+                    self.runtime.gpu_scheduler.run(priority=self.TRAINING_PRIORITY, work=work))
+            except TrainingYielded as stopped:
+                self._remove_unfinished_runs(output_root, keep_logs=False)
+                result = SpecialistCycleResult(specialist=target.name, outcome="interrupted", reason=stopped.reason)
+            except Exception as exc:  # recorded so the same inputs are not retried every idle window
+                self._remove_unfinished_runs(output_root, keep_logs=True)
+                result = SpecialistCycleResult(specialist=target.name, outcome="failed",
+                                               reason=f"{type(exc).__name__}: {str(exc)[:300]}")
+            return self._finish(target, fingerprint, result, started, worker_digest=digest)
+        finally:
+            self._training = None
 
     def _finish(self, target: SpecialistTarget, fingerprint: str, result: SpecialistCycleResult, started: float,
                 **details) -> SpecialistCycleResult:
         result.seconds = round(time.monotonic() - started, 1)
+        details.setdefault("worker_digest", self._digest())
         self.store.record(target, fingerprint=fingerprint, outcome=result.outcome, candidate=result.candidate,
                           reason=result.reason, gate_passed=result.gate_passed, passed=result.passed,
                           total=result.total, serving_passed=result.serving_passed, seconds=result.seconds, **details)
@@ -739,7 +850,7 @@ class SpecialistIdleTrainer:
     async def _judge_fetched(self, target: SpecialistTarget, last: dict) -> SpecialistCycleResult:
         """A run a remote worker trained: Janus's own gate on this machine, in an idle window."""
         started = time.monotonic()
-        details = {key: last.get(key) for key in ("job_id", "worker", "run_directory")}
+        details = {key: last.get(key) for key in ("job_id", "worker", "worker_digest", "run_directory")}
 
         def work() -> SpecialistCycleResult:
             if self.yield_reason() is not None:
@@ -755,7 +866,8 @@ class SpecialistIdleTrainer:
                 release_training_memory()
 
         try:
-            result = await self.runtime.gpu_scheduler.run(priority=self.TRAINING_PRIORITY, work=work)
+            result = await self._tend_while(
+                self.runtime.gpu_scheduler.run(priority=self.TRAINING_PRIORITY, work=work))
         except TrainingYielded:
             return SpecialistCycleResult(specialist=target.name, outcome="interrupted", reason="request_waiting")
         except Exception as exc:

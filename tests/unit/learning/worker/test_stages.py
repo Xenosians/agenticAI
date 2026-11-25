@@ -5,6 +5,7 @@ The held-out gate decides what is kept; nothing here mocks the training librarie
 import json
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -250,3 +251,162 @@ def test_the_result_names_the_machine_it_ran_on(tmp_path, tiny_base):
     assert worker["device"] == "cpu" and worker["cpu_count"] >= 1
     assert {"torch", "transformers", "peft", "trl"} <= set(worker["versions"])
     assert json.loads((tmp_path / "out/result.json").read_text())["job_id"] == "tiny-20261119T000000Z"
+
+
+# ---- a long prompt raises the sequence budget; it is never silently cut (23 Nov 2026 faults) -------------
+
+def _stage_runner(tmp_path, tiny_base, monkeypatch, *, job_path):
+    """A Run whose tokenizer and dataset are real and whose trainers are captured, not run."""
+    from transformers import AutoTokenizer
+
+    from learning.worker.job import load_job
+    from learning.worker.stages import Run
+
+    job, root = load_job(job_path)
+    runner = Run(job, root, tmp_path / "out", None)
+    runner.dataset_directory = Path(job_path).parent / "data"
+    runner.tokenizer = AutoTokenizer.from_pretrained(tiny_base)
+    runner.cases_sha256 = "test-cases"
+    (runner.output).mkdir(parents=True, exist_ok=True)
+    return runner
+
+
+class _FakeModel:
+    peft_config: dict = {}
+
+    def __init__(self, adapter: Path | None = None):
+        self.adapter = adapter
+
+    def save_pretrained(self, directory, **kwargs):
+        Path(directory).mkdir(parents=True, exist_ok=True)
+        (Path(directory) / "adapter_model.safetensors").write_bytes(b"weights")
+
+
+class _FakeArguments:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+
+def test_sft_raises_its_budget_to_the_longest_prompt_instead_of_cutting_it(tmp_path, tiny_base, monkeypatch):
+    from learning.worker import stages as stages_module
+    from learning.worker.data import encode_answer
+
+    captured = {}
+
+    class FakeTrainer:
+        def __init__(self, *, model, args, train_dataset, eval_dataset, data_collator, callbacks):
+            captured.update(train=train_dataset, args=args)
+            self.model = model
+
+        def train(self):
+            pass
+
+    job = make_job(tmp_path, tiny_base, stages=["sft"],
+                   sft={"epochs": 1, "learning_rate": 0.01, "max_length": 64, "batch_size": 2,
+                        "gradient_accumulation": 1, "evaluations_per_epoch": 1})
+    long_messages = _messages("check host " + "x" * 300)
+    rows = [json.loads(line) for line in (job.parent / "data/train.jsonl").read_text().splitlines() if line]
+    _write_jsonl(job.parent / "data/train.jsonl",
+                 [*rows, {"prompt_messages": long_messages, "chosen": ANSWER}])
+    runner = _stage_runner(tmp_path, tiny_base, monkeypatch, job_path=job)
+    monkeypatch.setattr(runner, "args", lambda directory, **overrides: ({}, _FakeArguments))
+    monkeypatch.setattr(runner, "with_adapter", lambda current, trainable: _FakeModel())
+    monkeypatch.setattr(runner, "evaluate", lambda model, label: {
+        "passed": 1, "total": 2, "cases_sha256": runner.cases_sha256, "needs_host_policy": 0})
+    monkeypatch.setattr(stages_module, "answer_only_trainer", lambda trainer: FakeTrainer)
+
+    outcome = runner.sft(Path("adapter"))
+    prompt_ids = runner.encode(long_messages)
+    answer_ids = encode_answer(runner.tokenizer, ANSWER)
+    assert outcome["ran"] is True and outcome["max_length"] > 64
+    assert outcome["dropped_rows"] == 0
+    assert outcome["max_length"] >= len(prompt_ids) + len(answer_ids)
+    # The long prompt is present in full; a cut would train a prompt serving never sends.
+    assert any(feature["input_ids"][:len(prompt_ids)] == prompt_ids for feature in captured["train"])
+
+
+def test_dpo_raises_its_budget_so_trls_prompt_filter_cannot_empty_the_dataset(tmp_path, tiny_base, monkeypatch):
+    from learning.worker import stages as stages_module
+    from learning.worker.data import encode_answer
+
+    captured = {}
+
+    class FakeDPOTrainer:
+        def __init__(self, *, model, ref_model, args, train_dataset, processing_class, peft_config, callbacks):
+            captured.update(args=args, dataset=train_dataset)
+            self.model = _FakeModel()
+            self.state = SimpleNamespace(log_history=[])
+
+        def train(self):
+            pass
+
+    job = make_job(tmp_path, tiny_base, stages=["dpo"],
+                   dpo={"epochs": 1, "learning_rate": 0.001, "max_length": 64, "gradient_accumulation": 1,
+                        "self_generated_pairs": False})
+    long_messages = _messages("check host " + "x" * 300)
+    _write_jsonl(job.parent / "data/preferences.jsonl",
+                 [{"prompt_messages": long_messages, "chosen": ANSWER, "rejected": "I cannot help."}])
+    runner = _stage_runner(tmp_path, tiny_base, monkeypatch, job_path=job)
+    monkeypatch.setattr(runner, "args",
+                        lambda directory, **overrides: ({"save_only_model": True}, _FakeArguments))
+    monkeypatch.setattr(runner, "with_adapter", lambda current, trainable: _FakeModel())
+    monkeypatch.setattr(runner, "evaluate", lambda model, label: {
+        "passed": 1, "total": 2, "cases_sha256": runner.cases_sha256, "needs_host_policy": 0})
+    monkeypatch.setattr(stages_module, "pretokenized", lambda trainer: FakeDPOTrainer)
+
+    outcome = runner.dpo(Path("adapter"))
+    prompt_ids = runner.encode(long_messages)
+    assert outcome["ran"] is True and outcome["pairs"] == 1 and outcome["dropped_pairs"] == 0
+    assert outcome["max_length"] >= len(prompt_ids) + len(encode_answer(runner.tokenizer, ANSWER))
+    assert captured["args"].max_length == outcome["max_length"]
+    [row] = list(captured["dataset"])
+    assert row["prompt_ids"] == prompt_ids
+
+
+def test_dpo_counts_pairs_over_the_ceiling_and_returns_no_improvement_instead_of_crashing(tmp_path, tiny_base,
+                                                                                          monkeypatch):
+    from learning.worker import stages as stages_module
+
+    job = make_job(tmp_path, tiny_base, stages=["dpo"],
+                   dpo={"epochs": 1, "max_length": 64, "self_generated_pairs": False})
+    too_long = _messages("check host " + "y" * (stages_module.SEQUENCE_LENGTH_CEILING + 100))
+    _write_jsonl(job.parent / "data/preferences.jsonl",
+                 [{"prompt_messages": too_long, "chosen": ANSWER, "rejected": "I cannot help."}])
+    runner = _stage_runner(tmp_path, tiny_base, monkeypatch, job_path=job)
+    monkeypatch.setattr(runner, "with_adapter", lambda *a, **k: pytest.fail("nothing fits: no model is loaded"))
+
+    outcome = runner.dpo(None)
+    assert outcome["ran"] is False
+    assert outcome["dropped_pairs"] == 1
+    assert outcome["max_length"] == stages_module.SEQUENCE_LENGTH_CEILING
+    assert "every preference pair needs more than" in outcome["reason"]
+
+
+def test_a_failed_later_stage_keeps_the_earlier_kept_stage_as_the_final_one(tmp_path, tiny_base, monkeypatch):
+    from learning.worker.job import load_job
+    from learning.worker.stages import Run
+
+    job, root = load_job(make_job(tmp_path, tiny_base, stages=["sft", "dpo"]))
+    runner = Run(job, root, tmp_path / "out", None)
+    monkeypatch.setattr(runner, "base", lambda: None)
+    monkeypatch.setattr(runner, "evaluate", lambda model, label: {
+        "passed": 0, "total": 2, "cases_sha256": runner.cases_sha256, "needs_host_policy": 0})
+
+    def sft(current):
+        adapter = runner.output / "stages" / "sft" / "adapter"
+        adapter.mkdir(parents=True)
+        (adapter / "adapter_model.safetensors").write_bytes(b"weights")
+        return {"ran": True, "adapter": adapter, "passed": 1, "total": 2, "needs_host_policy": 0}
+
+    def dpo(current):
+        raise ValueError("num_samples=0")
+
+    runner.sft = sft
+    runner.dpo = dpo
+
+    result = runner.execute()
+    sft_stage, dpo_stage = result["stages"]
+    assert result["outcome"] == "trained" and result["final_stage"] == "sft"
+    assert sft_stage["kept"] is True and sft_stage["passed"] == 1
+    assert dpo_stage["ran"] is False and "num_samples=0" in dpo_stage["reason"]
+    assert (tmp_path / "out" / "final" / "adapter_model.safetensors").is_file()
