@@ -19,6 +19,7 @@ REASON_CODE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 SENDER = WORKER_ID
 MESSAGE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,63}$")
 LEASE_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$")
+WORKER_TOKEN = re.compile(r"^[A-Za-z0-9._~+/=-]{32,256}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 STAGE = re.compile(r"^[a-z][a-z0-9._-]{0,63}$")
 
