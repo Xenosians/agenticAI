@@ -1,0 +1,4 @@
+# The learning control plane (learning/control_plane): what the janus-control guest installs.
+# Pinned to the versions its tests pass with in the AI service's environment (qwen-infra).
+pydantic==2.13.5
+websockets==17.1

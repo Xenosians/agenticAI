@@ -14,9 +14,12 @@ Proxmox service with the owner's approval and are read back.
 """
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import re
 import shlex
+import shutil
+from pathlib import Path
 
 CONTROL_PROFILE = {"hostname": "janus-control", "cores": 2, "memory_mib": 2048, "swap_mib": 1024,
                    "disk_gib": 16, "storage": "local-lvm"}
@@ -35,10 +38,41 @@ NAME = re.compile(r"^[a-z][a-z0-9]{1,7}$")           # SDN zone and VNet ids: le
 UBUNTU_TEMPLATE = re.compile(
     r"^[A-Za-z][A-Za-z0-9_.-]{0,63}:vztmpl/ubuntu-2[0-9]\.[0-9]{2}-standard_[0-9A-Za-z_.+-]+\.tar\.(zst|xz|gz)$")
 PATH = re.compile(r"/[A-Za-z0-9._/-]{1,200}")
+REPOSITORY = Path(__file__).resolve().parents[1]
+CONTROL_REQUIREMENTS = "requirements-control.txt"
 
 
 class ControlGuestError(ValueError):
     pass
+
+
+def build_control_package(directory: Path, *, repository: Path = REPOSITORY) -> Path:
+    """The control plane as the guest runs it: ``learning/control_plane`` and its requirements, nothing else.
+
+    The service's ``learning/__init__.py`` imports the whole service, so the package carries an empty one:
+    ``python -m learning.control_plane`` must not import anything the guest does not install.
+    """
+    directory = Path(directory)
+    shutil.rmtree(directory, ignore_errors=True)
+    shutil.copytree(repository / "learning" / "control_plane", directory / "learning" / "control_plane",
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    (directory / "learning" / "__init__.py").write_text(
+        '"""The learning control plane package (see learning/control_plane/__init__.py)."""\n', encoding="utf-8")
+    shutil.copy2(repository / CONTROL_REQUIREMENTS, directory / CONTROL_REQUIREMENTS)
+    return directory
+
+
+def package_digest(directory: Path) -> str:
+    """One digest over the package's files (names and contents), caches excluded: the deployed code's identity."""
+    root = Path(directory)
+    files = sorted((path for path in root.rglob("*") if path.is_file()
+                    and "__pycache__" not in path.parts and path.suffix != ".pyc"),
+                   key=lambda path: path.relative_to(root).as_posix())
+    digest = hashlib.sha256()
+    for path in files:
+        digest.update(path.relative_to(root).as_posix().encode("utf-8") + b"\0")
+        digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest()
 
 
 def _subnet(cidr: str) -> ipaddress.IPv4Network:
@@ -145,4 +179,5 @@ def service_unit(*, service_root: str = SERVICE_ROOT, database: str = DATABASE, 
 
 
 __all__ = ["CONTROL_PROFILE", "CONTROL_TAG", "CONTROL_TAGS", "CONTROL_POOL", "CONTROL_HOST",
-           "ControlGuestError", "bootstrap_script", "container_arguments", "control_address", "service_unit"]
+           "ControlGuestError", "bootstrap_script", "build_control_package", "container_arguments",
+           "control_address", "package_digest", "service_unit"]

@@ -1,8 +1,14 @@
 """The janus-control container: the request Janus sends Proxmox, its first boot and its unit."""
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
 from learning.control_guest import (CONTROL_PROFILE, CONTROL_TAGS, ControlGuestError, bootstrap_script,
-                                    container_arguments, control_address, service_unit)
+                                    build_control_package, container_arguments, control_address, package_digest,
+                                    service_unit)
 
 
 KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMdV8iaJ0lYvGbM3hJmW0sQyJ7dU6m8rM2r6QJ0Z1aBc janus-control"
@@ -75,3 +81,77 @@ def test_invalid_unit_paths_and_ports_are_refused(tmp_path):
                       {"port": 0}, {"port": 70000}):
         with pytest.raises(ControlGuestError):
             service_unit(**arguments)
+
+
+# What `import learning.control_plane.daemon` may load outside the standard library: the two pinned
+# requirements and what they install themselves.
+CONTROL_THIRD_PARTY = {"pydantic", "pydantic_core", "annotated_types", "typing_extensions", "typing_inspection",
+                       "websockets"}
+IMPORT_PROBE = (
+    "import sys\n"
+    "before = set(sys.modules)\n"
+    "import learning.control_plane.daemon, learning\n"
+    "print(learning.__file__)\n"
+    "roots = {name.split('.')[0] for name in set(sys.modules) - before}\n"
+    "print(','.join(sorted(name for name in sys.modules if name.split('.')[0] in ('learning', 'services', 'config'))))\n"
+    # Interpreter-private modules (_sysconfigdata_*, _cffi_backend ...) are not packages anyone installs.
+    "print(','.join(sorted(name for name in roots - set(sys.stdlib_module_names) - {'learning'}\n"
+    "                      if not name.startswith('_'))))\n"
+)
+
+
+def _import_from(package: Path) -> list[str]:
+    environment = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+    imported = subprocess.run([sys.executable, "-c", IMPORT_PROBE], cwd=package, capture_output=True, text=True,
+                              env=environment)
+    assert imported.returncode == 0, imported.stderr
+    return imported.stdout.strip().splitlines()
+
+
+def test_the_control_package_is_the_control_plane_alone_with_its_requirements(tmp_path):
+    package = build_control_package(tmp_path / "package")
+    files = sorted(path.relative_to(package).as_posix() for path in package.rglob("*") if path.is_file())
+    assert {"requirements-control.txt", "learning/__init__.py", "learning/control_plane/daemon.py",
+            "learning/control_plane/__main__.py"} <= set(files)
+    assert all(name.startswith("learning/control_plane/") or name in ("learning/__init__.py",
+                                                                       "requirements-control.txt")
+               for name in files)
+    assert not any("__pycache__" in name or name.endswith(".pyc") for name in files)
+    # The service's learning/__init__.py imports the whole service (95 modules); the package's imports nothing.
+    assert "import" not in (package / "learning" / "__init__.py").read_text(encoding="utf-8")
+    learning_file, local, third_party = _import_from(package)
+    assert Path(learning_file).resolve() == (package / "learning" / "__init__.py").resolve()
+    assert all(name == "learning" or name.startswith("learning.control_plane") for name in local.split(","))
+    assert set(filter(None, third_party.split(","))) <= CONTROL_THIRD_PARTY
+
+
+def test_the_control_requirements_pin_exactly_what_the_control_plane_imports(tmp_path):
+    package = build_control_package(tmp_path / "package")
+    lines = [line.strip() for line in (package / "requirements-control.txt").read_text(encoding="utf-8").splitlines()
+             if line.strip() and not line.startswith("#")]
+    pinned = dict(line.split("==", 1) for line in lines)
+    assert set(pinned) == {"pydantic", "websockets"} and all(pinned.values())
+    from importlib.metadata import version
+
+    # The guest installs what the control plane's tests pass with here.
+    assert pinned == {"pydantic": version("pydantic"), "websockets": version("websockets")}
+
+
+def test_the_package_digest_follows_the_code_and_ignores_caches(tmp_path):
+    package = build_control_package(tmp_path / "package")
+    first = package_digest(package)
+    assert first == package_digest(build_control_package(tmp_path / "again"))
+    cache = package / "learning" / "control_plane" / "__pycache__"
+    cache.mkdir()
+    (cache / "daemon.cpython-312.pyc").write_bytes(b"compiled")
+    assert package_digest(package) == first
+    with (package / "learning" / "control_plane" / "daemon.py").open("a", encoding="utf-8") as handle:
+        handle.write("\n# changed\n")
+    assert package_digest(package) != first
+
+
+def test_building_the_package_twice_leaves_no_stale_files(tmp_path):
+    package = build_control_package(tmp_path / "package")
+    (package / "learning" / "control_plane" / "removed_module.py").write_text("x = 1\n", encoding="utf-8")
+    rebuilt = build_control_package(tmp_path / "package")
+    assert not (rebuilt / "learning" / "control_plane" / "removed_module.py").exists()
