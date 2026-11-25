@@ -138,11 +138,14 @@ def release_freed_memory() -> None:
 
 
 class Run:
-    def __init__(self, job: TrainingJob, root: Path, output: Path, stop_file: Path | None):
+    def __init__(self, job: TrainingJob, root: Path, output: Path, stop_file: Path | None, *,
+                 propagate: tuple[type[BaseException], ...] = ()):
         import torch
 
         self.torch = torch
         self.job, self.root, self.output, self.stop_file = job, root, output, stop_file
+        # Exceptions an in-process host raises to stop the run (its own yield): never a stage failure.
+        self.propagate = tuple(propagate)
         self.cache = Path(os.environ.get("JANUS_WORKER_CACHE", output / "cache"))
         if job.threads:
             torch.set_num_threads(job.threads)
@@ -581,7 +584,9 @@ class Run:
             started = time.monotonic()
             try:
                 outcome = getattr(self, name)(current)
-            except Interrupted:
+            except (Interrupted, NotAdmitted, *self.propagate):
+                # A yield and a host refusal end the whole run (interrupted / refused); neither is a
+                # stage that merely failed, so neither may let the run report "trained".
                 raise
             except Exception as error:  # a later stage failing must not discard an earlier kept one
                 self.collect()
@@ -670,7 +675,7 @@ def run(job_path: Path, output: Path, *, stop_file: Path | None = None,
     else:
         worker = None
         try:
-            worker = Run(job, root, output, stop_file)
+            worker = Run(job, root, output, stop_file, propagate=propagate)
             record["worker"] = worker.describe()
             record |= worker.execute()
         except propagate:

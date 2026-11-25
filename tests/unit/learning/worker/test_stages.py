@@ -347,8 +347,10 @@ def test_dpo_raises_its_budget_so_trls_prompt_filter_cannot_empty_the_dataset(tm
     _write_jsonl(job.parent / "data/preferences.jsonl",
                  [{"prompt_messages": long_messages, "chosen": ANSWER, "rejected": "I cannot help."}])
     runner = _stage_runner(tmp_path, tiny_base, monkeypatch, job_path=job)
-    monkeypatch.setattr(runner, "args",
-                        lambda directory, **overrides: ({"save_only_model": True}, _FakeArguments))
+    # The real DPOConfig is built from these arguments: pin CPU precision, or TRL's bf16 default makes the
+    # test depend on whether this machine's GPU is visible and supports bf16 (Run.args always sets them).
+    monkeypatch.setattr(runner, "args", lambda directory, **overrides: (
+        {"save_only_model": True, "use_cpu": True, "bf16": False, "fp16": False}, _FakeArguments))
     monkeypatch.setattr(runner, "with_adapter", lambda current, trainable: _FakeModel())
     monkeypatch.setattr(runner, "evaluate", lambda model, label: {
         "passed": 1, "total": 2, "cases_sha256": runner.cases_sha256, "needs_host_policy": 0})
@@ -410,3 +412,55 @@ def test_a_failed_later_stage_keeps_the_earlier_kept_stage_as_the_final_one(tmp_
     assert sft_stage["kept"] is True and sft_stage["passed"] == 1
     assert dpo_stage["ran"] is False and "num_samples=0" in dpo_stage["reason"]
     assert (tmp_path / "out" / "final" / "adapter_model.safetensors").is_file()
+
+
+def test_a_refusal_inside_a_later_stage_refuses_the_run_instead_of_passing_as_a_stage_failure(tmp_path, tiny_base,
+                                                                                               monkeypatch):
+    # A stage failure keeps the earlier stage; the host's refusal to admit an artifact is a policy outcome
+    # for the whole run and must reach run() as "refused", never hide inside a "trained" result.
+    from learning.worker.job import load_job
+    from learning.worker.stages import Run
+
+    job, root = load_job(make_job(tmp_path, tiny_base, stages=["sft", "dpo"]))
+    runner = Run(job, root, tmp_path / "out", None)
+    monkeypatch.setattr(runner, "base", lambda: None)
+    monkeypatch.setattr(runner, "evaluate", lambda model, label: {
+        "passed": 0, "total": 2, "cases_sha256": runner.cases_sha256, "needs_host_policy": 0})
+
+    def sft(current):
+        adapter = runner.output / "stages" / "sft" / "adapter"
+        adapter.mkdir(parents=True)
+        (adapter / "adapter_model.safetensors").write_bytes(b"weights")
+        return {"ran": True, "adapter": adapter, "passed": 1, "total": 2, "needs_host_policy": 0}
+
+    def dpo(current):
+        raise NotAdmitted("the host did not admit: local:stages/sft/adapter")
+
+    runner.sft = sft
+    runner.dpo = dpo
+
+    with pytest.raises(NotAdmitted):
+        runner.execute()
+
+
+def test_an_in_process_hosts_own_yield_inside_a_stage_stops_the_run(tmp_path, tiny_base, monkeypatch):
+    # run(propagate=...) promises an in-process host that its yield exception stops the run; the per-stage
+    # failure handling must not turn it into "dpo failed" and carry on.
+    from learning.worker.job import load_job
+    from learning.worker.stages import Run
+
+    class HostYield(Exception):
+        pass
+
+    job, root = load_job(make_job(tmp_path, tiny_base, stages=["sft", "dpo"]))
+    runner = Run(job, root, tmp_path / "out", None, propagate=(HostYield,))
+    monkeypatch.setattr(runner, "base", lambda: None)
+    monkeypatch.setattr(runner, "evaluate", lambda model, label: {
+        "passed": 0, "total": 2, "cases_sha256": runner.cases_sha256, "needs_host_policy": 0})
+
+    def sft(current):
+        raise HostYield("request waiting")
+
+    runner.sft = sft
+    with pytest.raises(HostYield):
+        runner.execute()
