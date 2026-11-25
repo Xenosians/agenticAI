@@ -19,8 +19,11 @@ from learning.control_plane.jobs import (
     JobStoreError,
     Lease,
     LeaseLost,
+    Reconciliation,
+    ReconcileOutcome,
 )
 from learning.control_plane.protocol import (
+    ALL_MESSAGES,
     INBOUND_TYPES,
     MAX_MESSAGE_BYTES,
     OUTBOUND_TYPES,
@@ -43,10 +46,14 @@ from learning.control_plane.protocol import (
     parse_message,
     parse_outbound,
 )
+from learning.control_plane.service import ActiveJob, ControlPlaneService, WorkerSession
 
 __all__ = [
     "ACTIVE_STATES",
+    "ALL_MESSAGES",
+    "ActiveJob",
     "ContractError",
+    "ControlPlaneService",
     "EnqueueResult",
     "FailedMessage",
     "HeartbeatMessage",
@@ -67,14 +74,17 @@ __all__ = [
     "OUTBOUND_TYPES",
     "PROTOCOL",
     "ProgressMessage",
+    "ReconcileOutcome",
     "ReconcileRequestMessage",
     "ReconcileResultMessage",
+    "Reconciliation",
     "RenewedMessage",
     "SCHEMA_VERSION",
     "StartedMessage",
     "SucceededMessage",
     "TERMINAL_STATES",
     "VERSION",
+    "WorkerSession",
     "message_json",
     "new_message_id",
     "parse_inbound",

@@ -9,6 +9,7 @@ import pytest
 
 from learning.control_plane import canonical
 from learning.control_plane.jobs import (
+    SCHEMA_VERSION,
     IdempotencyConflict,
     JobConflict,
     JobNotFound,
@@ -123,6 +124,22 @@ def test_lease_can_be_restricted_to_one_kind(store: JobStore):
 
 def test_lease_returns_none_when_nothing_is_queued(store: JobStore):
     assert store.lease(worker_id="worker-a", now=START) is None
+
+
+def test_held_by_returns_only_this_workers_unfinished_jobs(store: JobStore):
+    enqueue(store, job_id="job-a", key="key-a")
+    enqueue(store, job_id="job-b", key="key-b", now=START + timedelta(seconds=1))
+    first = store.lease(worker_id="worker-a", now=START)
+    second = store.lease(worker_id="worker-b", now=START)
+    assert first is not None and second is not None
+
+    assert [job.job_id for job in store.held_by("worker-a")] == ["job-a"]
+
+    store.start(first.job_id, first.lease_token, now=START)
+    assert [job.job_id for job in store.held_by("worker-a")] == ["job-a"]
+
+    store.succeed(first.job_id, first.lease_token, result={"ok": True}, now=START)
+    assert store.held_by("worker-a") == []
 
 
 def test_an_empty_kind_filter_leases_nothing(store: JobStore):
@@ -418,6 +435,83 @@ def test_a_database_from_a_newer_control_plane_is_refused(tmp_path: Path):
 
     with pytest.raises(JobStoreError):
         JobStore(path).initialize()
+
+
+def test_initialize_is_repeatable_and_sets_the_schema_version(tmp_path: Path):
+    path = tmp_path / "jobs.sqlite3"
+    JobStore(path).initialize()
+    JobStore(path).initialize()
+
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        tables = {row[0] for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'")}
+    assert {"jobs", "messages", "reconciliations"} <= tables
+
+
+def test_a_worker_report_is_recorded_without_resolving_the_job(store: JobStore):
+    enqueue(store, payload={}, retry_safe=False)
+    store.lease(worker_id="worker-a", now=START)
+    store.reconcile_expired(now=START + timedelta(seconds=301))
+
+    report = store.record_reconciliation(
+        message_id="message-reconcile", job_id="job-1", sender="worker-a",
+        outcome="succeeded", result={"adapter": "a"}, now=START + timedelta(seconds=302),
+    )
+
+    assert report.outcome == "succeeded"
+    assert report.result == {"adapter": "a"}
+    assert report.result_sha256 == canonical.digest({"adapter": "a"})
+    assert store.get("job-1").state == "needs_reconcile"
+    assert store.reconciliations("job-1") == [report]
+
+
+def test_the_same_worker_report_is_a_no_op_and_another_one_conflicts(store: JobStore):
+    enqueue(store, payload={})
+    arguments = {
+        "message_id": "message-reconcile",
+        "job_id": "job-1",
+        "sender": "worker-a",
+        "outcome": "failed",
+        "reason_code": "crashed",
+        "now": START,
+    }
+    first = store.record_reconciliation(**arguments)
+    replay = store.record_reconciliation(**arguments)
+
+    assert replay == first
+    assert len(store.reconciliations("job-1")) == 1
+
+    with pytest.raises(JobConflict):
+        store.record_reconciliation(**{**arguments, "reason_code": "bad_dataset"})
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"outcome": "succeeded"},
+        {"outcome": "failed"},
+        {"outcome": "absent", "result": {"adapter": "a"}},
+        {"outcome": "absent", "result_sha256": canonical.digest({})},
+        {"outcome": "unknown"},
+    ],
+)
+def test_an_inconsistent_worker_report_is_refused(store: JobStore, values: dict):
+    enqueue(store, payload={})
+    arguments = {"message_id": "message-reconcile", "job_id": "job-1",
+                 "sender": "worker-a", "now": START}
+    arguments.update(values)
+
+    with pytest.raises(canonical.ContractError):
+        store.record_reconciliation(**arguments)
+
+    assert store.reconciliations("job-1") == []
+
+
+def test_a_worker_report_for_a_missing_job_is_refused(store: JobStore):
+    with pytest.raises(JobNotFound):
+        store.record_reconciliation(message_id="message-reconcile", job_id="job-missing",
+                                    sender="worker-a", outcome="absent", now=START)
 
 
 def test_missing_jobs_are_reported_as_not_found(store: JobStore):

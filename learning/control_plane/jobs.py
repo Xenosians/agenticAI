@@ -30,7 +30,8 @@ JobState = Literal[
 TERMINAL_STATES = frozenset({"succeeded", "failed", "cancelled"})
 ACTIVE_STATES = frozenset({"leased", "running"})
 ResolveOutcome = Literal["succeeded", "failed", "retry", "cancelled"]
-SCHEMA_VERSION = 1
+ReconcileOutcome = Literal["succeeded", "failed", "absent"]
+SCHEMA_VERSION = 2
 
 
 class JobStoreError(RuntimeError):
@@ -114,6 +115,35 @@ class Lease:
 class EnqueueResult:
     created: bool
     job: JobRecord
+
+
+@dataclass(frozen=True)
+class Reconciliation:
+    """A worker's report about an uncertain job; it is evidence, never a state transition."""
+
+    message_id: str
+    job_id: str
+    sender: str
+    outcome: ReconcileOutcome
+    result: dict[str, Any] | None
+    result_sha256: str | None
+    reason_code: str | None
+    detail: str | None
+    received_at: str
+
+
+def _reconciliation(row: sqlite3.Row) -> Reconciliation:
+    return Reconciliation(
+        message_id=row["message_id"],
+        job_id=row["job_id"],
+        sender=row["sender"],
+        outcome=row["outcome"],
+        result=None if row["result_json"] is None else json.loads(row["result_json"]),
+        result_sha256=row["result_sha256"],
+        reason_code=row["reason_code"],
+        detail=row["detail"],
+        received_at=row["received_at"],
+    )
 
 
 def _record(row: sqlite3.Row) -> JobRecord:
@@ -204,6 +234,21 @@ class JobStore:
 
                 CREATE INDEX IF NOT EXISTS idx_messages_received
                     ON messages(received_at);
+
+                CREATE TABLE IF NOT EXISTS reconciliations (
+                    message_id TEXT PRIMARY KEY,
+                    job_id TEXT NOT NULL,
+                    sender TEXT NOT NULL,
+                    outcome TEXT NOT NULL,
+                    result_json TEXT,
+                    result_sha256 TEXT,
+                    reason_code TEXT,
+                    detail TEXT,
+                    received_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_reconciliations_job
+                    ON reconciliations(job_id, received_at);
                 """
             )
             conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
@@ -314,6 +359,21 @@ class JobStore:
         with self._connect() as conn:
             rows = conn.execute("SELECT state, COUNT(*) AS total FROM jobs GROUP BY state").fetchall()
         return {row["state"]: int(row["total"]) for row in rows}
+
+    def held_by(self, worker_id: str) -> list[JobRecord]:
+        """Every job this worker still owns by lease, so a reconnect never gets a second one."""
+        canonical.require(canonical.WORKER_ID, worker_id, "worker id")
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM jobs
+                 WHERE worker_id = ?
+                   AND state IN ('leased', 'running')
+                 ORDER BY lease_expires_at, job_id
+                """,
+                (worker_id,),
+            ).fetchall()
+        return [_record(row) for row in rows]
 
     # -- leases -----------------------------------------------------------------------------------------
 
@@ -615,6 +675,96 @@ class JobStore:
         with self._write() as conn:
             deleted = conn.execute("DELETE FROM messages WHERE received_at < ?", (cutoff,))
             return int(deleted.rowcount)
+
+    # -- worker reconciliation reports ------------------------------------------------------------------
+
+    def record_reconciliation(self, *, message_id: str, job_id: str, sender: str,
+                              outcome: ReconcileOutcome,
+                              result: dict[str, Any] | None = None,
+                              result_sha256: str | None = None,
+                              reason_code: str | None = None, detail: str | None = None,
+                              now: datetime | None = None) -> Reconciliation:
+        """Store what a worker says it observed, without changing the job's state.
+
+        An operator still has to resolve a ``needs_reconcile`` job. The report is keyed by
+        ``message_id``; replaying the same report is a no-op, while a different report under the
+        same id is a conflict.
+        """
+        canonical.require(canonical.MESSAGE_ID, message_id, "message id")
+        canonical.require(canonical.JOB_ID, job_id, "job id")
+        canonical.require(canonical.SENDER, sender, "sender")
+        if outcome not in ("succeeded", "failed", "absent"):
+            raise canonical.ContractError("a reconciliation outcome must be succeeded, failed or absent")
+        if result is not None and not isinstance(result, dict):
+            raise canonical.ContractError("a reconciled result must be an object")
+        if outcome == "succeeded":
+            if result is None:
+                raise canonical.ContractError("a reconciled success must carry its result")
+            computed = canonical.digest(result)
+            if result_sha256 is not None:
+                canonical.require(canonical.SHA256, result_sha256, "sha256")
+                if result_sha256 != computed:
+                    raise canonical.ContractError("result digest does not cover the result")
+            result_sha256 = computed
+        elif result is not None or result_sha256 is not None:
+            raise canonical.ContractError("only a reconciled success may carry a result")
+        if outcome == "failed" and reason_code is None:
+            raise canonical.ContractError("a reconciled failure must name its reason")
+        if reason_code is not None:
+            canonical.require(canonical.REASON_CODE, reason_code, "reason code")
+        bounded = canonical.detail(detail)
+        stamp = canonical.iso(now)
+
+        with self._write() as conn:
+            if conn.execute("SELECT 1 FROM jobs WHERE job_id = ?", (job_id,)).fetchone() is None:
+                raise JobNotFound(f"no job {job_id!r}")
+            existing = conn.execute(
+                "SELECT * FROM reconciliations WHERE message_id = ?", (message_id,)
+            ).fetchone()
+            if existing is not None:
+                record = _reconciliation(existing)
+                if (
+                    record.job_id == job_id
+                    and record.sender == sender
+                    and record.outcome == outcome
+                    and record.result_sha256 == result_sha256
+                    and record.reason_code == reason_code
+                    and record.detail == bounded
+                ):
+                    return record
+                raise JobConflict(
+                    f"message {message_id!r} already names another reconciliation report"
+                )
+            conn.execute(
+                """
+                INSERT INTO reconciliations(
+                    message_id, job_id, sender, outcome, result_json, result_sha256,
+                    reason_code, detail, received_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (message_id, job_id, sender, outcome,
+                 None if result is None else canonical.json_text(result),
+                 result_sha256, reason_code, bounded, stamp),
+            )
+            return _reconciliation(conn.execute(
+                "SELECT * FROM reconciliations WHERE message_id = ?", (message_id,)
+            ).fetchone())
+
+    def reconciliations(self, job_id: str, *, limit: int = 100) -> list[Reconciliation]:
+        canonical.require(canonical.JOB_ID, job_id, "job id")
+        if limit < 1:
+            raise canonical.ContractError("limit must be at least 1")
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM reconciliations
+                 WHERE job_id = ?
+                 ORDER BY received_at, message_id
+                 LIMIT ?
+                """,
+                (job_id, int(limit)),
+            ).fetchall()
+        return [_reconciliation(row) for row in rows]
 
     # -- internals --------------------------------------------------------------------------------------
 
