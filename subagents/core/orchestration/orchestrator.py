@@ -40,12 +40,21 @@ from subagents.core.orchestration.runtime import (
     AgentRuntime,
 )
 
+from subagents.core.orchestration.target_resolution import (
+    proxmox_inventory,
+    resolvable,
+    resolve_proxmox_target,
+    resolves_target,
+)
+
 from subagents.core.definitions.types import (
     AgentResult,
     AgentTask,
     HubResult,
     ResultCondition,
 )
+
+from tools.registry import get_tool
 
 
 def _accepts_context_keyword(callback) -> bool:
@@ -266,6 +275,69 @@ class Orchestrator:
             )
 
         return False
+
+    async def _resolve_targets(
+        self,
+        grounding: str,
+        delegations: list,
+    ) -> tuple[list, dict]:
+        """Look up the Proxmox targets the request named without their exact identity.
+
+        Only a step that stopped for clarification, allows exactly one Proxmox capability, and is
+        missing nothing but that capability's guest identity (node and VMID) or node is looked up. One
+        clear match from the account's own inventory completes the step with the real values (still
+        checked by binding, SemanticGuard, the gateway, the policy freeze and approval); otherwise the
+        step stays a clarification and carries the owner's question. Inventory is read at most once
+        per request.
+        """
+        pending = []
+        for index, delegation in enumerate(delegations):
+            intent = delegation.semantic_intent
+            if (intent is None or not intent.clarification_required or len(intent.allowed_tools) != 1
+                    or not resolves_target(intent.allowed_tools[0])):
+                continue
+            tool = get_tool(intent.allowed_tools[0])
+            if tool is None or not resolvable(tool, intent.missing_required_arguments):
+                continue
+            pending.append((index, delegation, tool))
+        if not pending:
+            return delegations, {}
+
+        read: list = []
+
+        def inventory_once():
+            if not read:
+                read.append(proxmox_inventory())
+            return read[0]
+
+        def resolve_all():
+            return [
+                (index, delegation, resolve_proxmox_target(
+                    grounding, tool=tool, missing=delegation.semantic_intent.missing_required_arguments,
+                    inventory=inventory_once, bound=delegation.semantic_intent.allowed_arguments,
+                    forbidden=delegation.semantic_intent.forbidden_arguments))
+                for index, delegation, tool in pending
+            ]
+
+        resolved = list(delegations)
+        resolutions = {}
+        for index, delegation, resolution in await asyncio.to_thread(resolve_all):
+            if resolution is None:
+                continue
+            resolutions[index] = resolution
+            if resolution.status != "resolved":
+                continue
+            intent = delegation.semantic_intent
+            # The real values replace what the step was missing and any description the router put into
+            # an identity argument ("lab" as vmid); a literal VMID or node the request named stays.
+            resolved[index] = replace(delegation, semantic_intent=replace(
+                intent,
+                allowed_arguments={**{name: values for name, values in intent.allowed_arguments.items()
+                                      if name not in resolution.arguments}, **resolution.arguments},
+                clarification_required=False,
+                missing_required_arguments=[],
+            ))
+        return resolved, resolutions
 
     @staticmethod
     def _clarification_answer(
@@ -609,6 +681,19 @@ class Orchestrator:
         if onboarding is not None:
             delegations = delegations[:1]
 
+        # Human context: a Proxmox step that stopped only for the guest's or node's identity is looked
+        # up in the account's own inventory (owner decision, 26 November 2026). One clear match becomes
+        # the step's exact target, and only that step's grounding gains the trusted line naming it;
+        # several or none become the owner's question. A reviewed workflow keeps its own targets.
+        resolutions: dict = {}
+        if workflow_contract is None:
+            delegations, resolutions = await self._resolve_targets(grounding, delegations)
+        step_grounding = {
+            index: f"{grounding}\n{resolution.grounding_line}"
+            for index, resolution in resolutions.items()
+            if resolution.status == "resolved" and resolution.grounding_line
+        }
+
         # Only unconditional executions may become trusted
         # conditional-workflow sources.
         source_results: dict[
@@ -635,7 +720,7 @@ class Orchestrator:
             return AgentTask(
                 task_id=task_ids[index],
                 agent_name=delegation.agent_name,
-                user_request=grounding,
+                user_request=step_grounding.get(index, grounding),
                 instructions=delegation.instructions,
                 semantic_intent=delegation.semantic_intent,
                 context={"conversation_context": conversation_context},
@@ -672,6 +757,7 @@ class Orchestrator:
                 read_ahead=read_ahead,
                 source_results=source_results,
                 runtime_decisions_by_task_id=runtime_decisions_by_task_id,
+                resolutions=resolutions,
             )
         finally:
             await read_ahead.cancel()
@@ -684,6 +770,8 @@ class Orchestrator:
             onboarding=onboarding,
             conversation_context=conversation_context,
             grounding=grounding,
+            notes=[resolution.note for resolution in resolutions.values()
+                   if resolution.status == "resolved" and resolution.note],
         )
 
     async def _run_delegations(
@@ -696,9 +784,11 @@ class Orchestrator:
         read_ahead: _ReadAhead,
         source_results: dict[str, AgentResult],
         runtime_decisions_by_task_id: dict[str, dict],
+        resolutions: dict | None = None,
     ) -> tuple[list[AgentResult], list[str]]:
         """Runs (or collects) every step in the request's order."""
 
+        resolutions = resolutions or {}
         results: list[AgentResult] = []
         routes: list[str] = []
 
@@ -844,6 +934,11 @@ class Orchestrator:
                 .clarification_required
             ):
 
+                # A target Janus looked up but could not pin to one guest or node: the owner's
+                # choice, with the real candidates (or what exists) from inventory.
+                looked_up = resolutions.get(index)
+                question = looked_up.question if looked_up is not None else None
+
                 result = (
                     AgentResult(
                         task_id=(
@@ -865,13 +960,16 @@ class Orchestrator:
                         ),
 
                         answer=(
-                            self._clarification_answer(
+                            question
+                            or self._clarification_answer(
                                 delegation.semantic_intent
                             )
                         ),
 
                         outcome_code=(
-                            "semantic_clarification_required"
+                            f"target_{looked_up.status}"
+                            if question
+                            else "semantic_clarification_required"
                         ),
 
                         error=None,
@@ -985,6 +1083,7 @@ class Orchestrator:
         onboarding,
         conversation_context,
         grounding: str,
+        notes: list[str] | None = None,
     ) -> HubResult:
         from agent.onboarding import can_suspend_onboarding, encode_plan
 
@@ -1105,6 +1204,11 @@ class Orchestrator:
                         results
                     )
                 )
+
+        # What Janus found in live inventory comes first, so the owner sees the real target (name,
+        # type, VMID, node) before any approval or answer about it.
+        if notes:
+            answer = "\n".join([*dict.fromkeys(notes), answer] if answer else dict.fromkeys(notes))
 
         hub_result = (
             HubResult(

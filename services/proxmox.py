@@ -548,6 +548,30 @@ class ProxmoxService:
         return self._result({"truncated": len(nodes) > MAX_ROWS or len(guests) > MAX_ROWS,
                              "nodes": nodes[:MAX_ROWS], "guests": guests[:MAX_ROWS]})
 
+    def guest_inventory(self) -> dict:
+        """Every node, and every real guest (templates left out) with its name, state and tags, from one
+        cluster read.
+
+        What Janus matches a person's wording against ("the lab container", "the postgres vm") to find
+        the guest they mean; names, states and tags only.
+        """
+        nodes, guests = set(), []
+        for row in self._rows(self._get("/cluster/resources"), required=("type",)):
+            if row["type"] == "node":
+                nodes.add(_text(row, "node", required=True))
+                continue
+            if row["type"] not in ("qemu", "lxc") or _boolean(row, "template"):
+                continue
+            vmid = row.get("vmid")
+            if type(vmid) is not int or not (1 <= vmid <= MAX_VMID):
+                raise _invalid()
+            guests.append({"vmid": vmid, "node": _text(row, "node", required=True), "type": row["type"],
+                           "name": _text(row, "name"), "status": _text(row, "status") or "unknown",
+                           "tags": list(_tag_set(_tags(row)))})
+        guests.sort(key=lambda row: (row["node"].lower(), row["vmid"]))
+        return self._result({"truncated": len(guests) > MAX_ROWS or len(nodes) > MAX_ROWS,
+                             "nodes": sorted(nodes, key=str.lower)[:MAX_ROWS], "guests": guests[:MAX_ROWS]})
+
     def _inventory_guest(self, node: str, vmid: int) -> dict:
         """The one inventory row for an exact node and VMID (its type is qemu or lxc)."""
         if not isinstance(node, str) or not NODE_ID.fullmatch(node):

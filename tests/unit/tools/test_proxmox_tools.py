@@ -661,3 +661,13 @@ def test_node_disks_read_in_words():
         "/dev/nvme0n1 (nvme, INTEL SSDPEKNW512G8, 476.9 GiB, used by BIOS boot): SMART passed; 12% of rated "
         "life used.",
     ]
+
+
+def test_the_specialist_takes_a_guest_janus_resolved_from_inventory_as_the_users_target():
+    """A target Janus looked up in live inventory ("the lab container" -> LXC 990 on hummingbird) is the
+    user's target: the specialist uses that exact node and VMID and never searches for another guest."""
+    from pathlib import Path
+
+    definition = Path("subagents/agents/proxmox-specialist.md").read_text(encoding="utf-8")
+    assert "[Janus resolved from live Proxmox inventory]" in definition
+    assert "the exact node and integer VMID the user named in this request" not in definition
